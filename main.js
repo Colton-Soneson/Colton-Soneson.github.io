@@ -1,14 +1,39 @@
 //imports
 //import * as mShaders from './Shaders.js';
 //import shaderModuleLoadStatement from './Shaders';
+//import fragment from "./fragment.glsl";
+//import vertex from "./vertex.glsl";
 
 //run main line of code
 main();
 
-function resizeToFullScreen() {
-	canvas = document.getElementById("glcanvas");
-	canvas.width = window.innerWidth;
-	canvas.height = window.innerHeight;
+function initShaderProgram(glCanv, vs, fs)
+{
+	const vertexShader = loadShader(glCanv, glCanv.VERTEX_SHADER, vs);
+	const fragmentShader = loadShader(glCanv, glCanv.FRAGMENT_SHADER, fs);
+
+	const shaderProg = glCanv.createProgram();
+	glCanv.attachShader(shaderProg, vertexShader);
+	glCanv.attachShader(shaderProg, fragmentShader);
+	glCanv.linkProgram(shaderProg);
+
+	if(!gl.getProgramParameter(shaderProg, glCanv.LINK_STATUS))
+	{
+		alert('Shader Program Fail: ' + glCanv.getProgramInfoLog(shaderProg));
+		return null;
+	}
+	
+	return shaderProg;
+}
+
+function getDefaultShaderProgram(glCanv, vs, fs)
+{
+	return initShaderProgram(glCanv, vs, fs);
+}
+
+function resizeToFullScreen(canv) {
+	canv.width = window.innerWidth;
+	canv.height = window.innerHeight;
 }
 
 function main() {
@@ -20,7 +45,7 @@ function main() {
 	//console.log(shaderModuleLoadStatement);
 	
 	//resize if need be
-	window.addEventListener('resize', resizeToFullScreen());
+	window.addEventListener('resize', resizeToFullScreen(canvas));
 
 	// If we don't have a GL context, give up now
 	// Only continue if WebGL is available and working
@@ -36,17 +61,17 @@ function main() {
 	gl.clear(gl.COLOR_BUFFER_BIT);
 
 
-	function render(currentTime)
-	{
-		currentTime *= 0.001;
-		const deltaTime = currentTime - prevDeltaTime;
-		prevDeltaTime = currentTime;
-
-		//where animation and possibly physics can happen
-		
-
-		requestAnimationFrame(render);
-	}
-
-	requestAnimationFrame(render);
+	//function render(currentTime)
+	//{
+	//	currentTime *= 0.001;
+	//	const deltaTime = currentTime - prevDeltaTime;
+	//	prevDeltaTime = currentTime;
+	//
+	//	//where animation and possibly physics can happen
+	//	
+	//
+	//	requestAnimationFrame(render);
+	//}
+	//
+	//requestAnimationFrame(render);
 }

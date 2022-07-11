@@ -3,17 +3,32 @@
 <head>
     <title>Colton Soneson's Portfolio</title>
     <meta charset="utf-8">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gl-matrix/2.8.1/gl-matrix-min.js"
+            integrity="sha512-zhHQR0/H5SEBL3Wn6yYSaTTZej12z0hVZKOv3TwCUXT1z5qeqGcXJLLrbERYRScEDDpYIJhPC1fk31gqR783iQ=="
+            crossorigin="anonymous" defer>
+    </script>
 </head>
 
 <body>
     <canvas id="glcanvas" width="640" height="480"></canvas>
+
+    <!--
+    <script src="./main.js" defer></script>
+    <script type="module" src="https://colton-soneson.github.io/main.js" defer></script>
+     -->
+    <!--
+    How to run webserver to do this shit
+        https://www.dev2qa.com/how-to-fix-error-access-to-script-at-from-origin-null-has-been-blocked-by-cors-policy-cross-origin-requests-are-only-supported-for-protocol-schemes-http-data-chrome-chrome-extension-chrome-u/
+
+    Run this command in cmd on this directory
+        python -m http.server
+
+    Then open this in the webbrowser
+        http://localhost:8000/index.html
+    -->
+    <script type="module" src="main.js" defer></script>
 </body>
 
-
-<script src="./main.js" defer></script>
- <!--    
-<script type="module" src="https://colton-soneson.github.io/main.js" defer></script>
- --> 
 
 
 </html>

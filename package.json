@@ -1,3 +1,36 @@
 {
-  "type": "module"
+  "type": "module",
+  "name": "colton-soneson.github.io",
+  "version": "1.0.0",
+  "description": "",
+  "main": "main.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
 }
+
+//{
+//  "type": "module",
+//  "name": "colton-soneson.github.io",
+//  "version": "1.0.0",
+//  "description": "",
+//  "main": "main.js",
+//  "scripts": {
+//    "test": "echo \"Error: no test specified\" && exit 1"
+//  },
+//  "repository": {
+//    "type": "git",
+//    "url": "git+https://github.com/Colton-Soneson/Colton-Soneson.github.io.git"
+//  },
+//  "keywords": [],
+//  "author": "",
+//  "license": "ISC",
+//  "bugs": {
+//    "url": "https://github.com/Colton-Soneson/Colton-Soneson.github.io/issues"
+//  },
+//  "homepage": "https://github.com/Colton-Soneson/Colton-Soneson.github.io#readme"
+//}
+//

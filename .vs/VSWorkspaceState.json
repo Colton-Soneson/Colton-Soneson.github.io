@@ -1,8 +1,9 @@
 {
   "ExpandedNodes": [
     "",
-    "\\GLSL"
+    "\\GLSL",
+    "\\ShadersJS"
   ],
-  "SelectedNode": "\\main.js",
+  "SelectedNode": "\\ShadersJS",
   "PreviewInSolutionExplorer": false
 }

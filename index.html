@@ -32,7 +32,7 @@
 			device: device,
 			format: canvasFormat,	//format is the texture format that should be used
 		});
-		
+		/*
 		//interface to record GPU Commands, necessary for basically everything
 		const encoder = device.createCommandEncoder();
 		
@@ -74,7 +74,7 @@
 		
 		device.queue.submit([encoder2.finish()]);
 		//--------------------------------------------
-		
+		*/
 		const vertices = new Float32Array([
 		//   X,    Y,
 			-0.8, -0.8, // Triangle 1 (Blue)
@@ -91,8 +91,16 @@
 		label: "Cell shader",
 		code: `
 			@vertex
-			fn vertexMain() -> @builtin(position) vec4f {	// -> is for what the function returns, value returned is assigned with @builtin 
-				return vec4f(0, 0, 0, 1); // (X, Y, Z, W) W is always 1 for 4x4 mat math
+			fn vertexMain(@location(0) pos: vec2f) -> 	// location and type to match whats described in vertexBufferLayout below
+														//		the 0 in location is for shaderLocation attribute and vec2f = float32x2
+				@builtin(position) vec4f {	// -> is for what the function returns, value returned is assigned with @builtin 
+				return vec4f(pos, 0, 1); // (X, Y, Z, W) W is always 1 for 4x4 mat math
+			}
+			
+			@fragment
+			fn fragmentMain() -> @location(0) vec4f {	//return value to indicate which coloarAttachnment from beginRenderPass is written to
+														//	Just one attachment of color means location is 0
+				return vec4f(1,0,0,1);
 			}
 		`
 		});
@@ -122,6 +130,41 @@
 		};
 		
 		
+		//finally creating render pipeline
+		const cellPipeline = device.createRenderPipeline({
+			label: "Cell pipeline",
+			layout: "auto",						// types of inputs other than vertex buffers needed can be passed
+			vertex: {							// vertex stage details
+				module: cellShaderModule,		// 
+				entryPoint: "vertexMain",		// our name of function, as you can have multiple vertex/fragment functions in one shader module
+				buffers: [vertexBufferLayout]	// GPUVertexBufferLayout that describe data packed into vertex buffers used
+			},
+			fragment: {							// fragment stage details
+				module: cellShaderModule,		
+				entryPoint: "fragmentMain",
+				targets: [{						// array of dictionaries giving details (like the texture "format") of color attachments pipeline outputs to
+				format: canvasFormat			// we used textures from canvas context, and value saved from canvasFormat for format, so pass the same here
+				}]
+			}
+		});
+		
+		const encoder3 = device.createCommandEncoder();
+		const pass3 = encoder3.beginRenderPass({
+		colorAttachments: [{
+			view: context.getCurrentTexture().createView(),
+			loadOp: "clear",
+			clearValue: { r: 0, g: 0.2, b: 0, a: 1 },
+			storeOp: "store",
+			}],
+		});
+		
+		pass3.setPipeline(cellPipeline);			// shaders used, layout of vertex data, other relevant state data
+		pass3.setVertexBuffer(0, vertexBuffer);		// bugger containing vertices for square, with 0th element in cellPipeline's vertex.buffers definition 
+		pass3.draw(vertices.length / 2);			// passed in is number of vertices to render, 12 floats / 2 coords per float = 6 vertices
+		
+		pass3.end();
+		
+		device.queue.submit([encoder3.finish()]);
 		
     </script>
   </body>

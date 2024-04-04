@@ -69,7 +69,10 @@ device.queue.submit([encoder2.finish()]);
 //--------------------------------------------
 */
 
-const vertices = primitives.pTriangle.vertices;
+const vertices = primitives.pSquare.vertices;
+const vertStride = primitives.pSquare.dimensions * 4;	//4 for number of bytes in a float
+
+const GRID_SIZE = 4;
 
 //function should return GPUShaderModule object if compiled with valid results, code itself is WGSL
 const cellShaderModule = device.createShaderModule({
@@ -91,7 +94,7 @@ device.queue.writeBuffer(vertexBuffer, /*bufferOffset=*/0, vertices);
 
 //now tell WebGPU what the hell to do with the info
 const vertexBufferLayout = {
-arrayStride: 8,			//number of bytes gpu needs to skip forward to get to the next vertex (with two vertices per vertex, thats 
+arrayStride: vertStride,//number of bytes gpu needs to skip forward to get to the next vertex (with two vertices per vertex, thats 
 						//	two 32 bit floats, so 2 x 4(bytes) = 8 bytes. in 3D it would be 12
 attributes: [{			//stuff like color, normal direction, etc
 	format: "float32x2",//cant be anything, there is a list of GPUVertexFormat types in this case, its specific to pass in

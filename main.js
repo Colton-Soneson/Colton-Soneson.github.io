@@ -1,4 +1,5 @@
 import { vf_p_generic } from './shaders/js/vf_p_generic.js'
+import { vf_p_gridGeneric } from './shaders/js/vf_p_gridGeneric.js'
 import * as primitives from './models/primitives.js'
 
 const canvas = document.querySelector("canvas");
@@ -70,14 +71,14 @@ device.queue.submit([encoder2.finish()]);
 */
 
 const vertices = primitives.pSquare.vertices;
-const vertStride = primitives.pSquare.dimensions * 4;	//4 for number of bytes in a float
-
+const vertDim = primitives.pSquare.dimensions;
+const vertStride = vertDim * 4;	//4 for number of bytes in a float
 const GRID_SIZE = 4;
 
 //function should return GPUShaderModule object if compiled with valid results, code itself is WGSL
 const cellShaderModule = device.createShaderModule({
 label: "Cell shader",
-code: vf_p_generic
+code: vf_p_gridGeneric
 });
 
 
@@ -122,6 +123,28 @@ const cellPipeline = device.createRenderPipeline({
 	}
 });
 
+// Create a uniform buffer that describes the grid.
+const uniformArray = new Float32Array([GRID_SIZE, GRID_SIZE]); //do floats for sake of not casting in shader code
+const uniformBuffer = device.createBuffer({
+  label: "Grid Uniforms",
+  size: uniformArray.byteLength,
+  usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,	//this makes it another GPUBuffer Object but this time uniform
+});
+device.queue.writeBuffer(uniformBuffer, 0, uniformArray);
+
+//GPUBindGroup, bind groups connect uniform in the shader
+//	collection of resources for shader to access, cant change resources in bind group but you can change their contents
+const bindGroup = device.createBindGroup({
+  label: "Cell renderer bind group",
+  layout: cellPipeline.getBindGroupLayout(0),	//types of resources included, layout: "auto" works with bind group layout from
+												//	bindings declared in shader code itself, then you use getBindGroupLayout(0) 0 via @group(0)
+  entries: [{
+    binding: 0,									//corresponds with @binding() value in shader
+    resource: { buffer: uniformBuffer }			//actual resource to expose at binding index
+  }],
+});
+
+
 const encoder3 = device.createCommandEncoder();
 const pass3 = encoder3.beginRenderPass({
 colorAttachments: [{
@@ -134,7 +157,8 @@ colorAttachments: [{
 
 pass3.setPipeline(cellPipeline);			// shaders used, layout of vertex data, other relevant state data
 pass3.setVertexBuffer(0, vertexBuffer);		// bugger containing vertices for square, with 0th element in cellPipeline's vertex.buffers definition 
-pass3.draw(vertices.length / 2);			// passed in is number of vertices to render, 12 floats / 2 coords per float = 6 vertices
+pass3.setBindGroup(0, bindGroup);			// 0 for @group(0) in shader code, and @binding part of it
+pass3.draw(vertices.length / vertDim);		// passed in is number of vertices to render, 12 floats / coords per float = 6 vertices
 
 pass3.end();
 

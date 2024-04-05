@@ -73,7 +73,7 @@ device.queue.submit([encoder2.finish()]);
 const vertices = primitives.pSquare.vertices;
 const vertDim = primitives.pSquare.dimensions;
 const vertStride = vertDim * 4;	//4 for number of bytes in a float
-const GRID_SIZE = 4;
+const GRID_SIZE = 32;
 
 //function should return GPUShaderModule object if compiled with valid results, code itself is WGSL
 const cellShaderModule = device.createShaderModule({
@@ -158,8 +158,8 @@ colorAttachments: [{
 pass3.setPipeline(cellPipeline);			// shaders used, layout of vertex data, other relevant state data
 pass3.setVertexBuffer(0, vertexBuffer);		// bugger containing vertices for square, with 0th element in cellPipeline's vertex.buffers definition 
 pass3.setBindGroup(0, bindGroup);			// 0 for @group(0) in shader code, and @binding part of it
-pass3.draw(vertices.length / vertDim);		// passed in is number of vertices to render, 12 floats / coords per float = 6 vertices
-
+pass3.draw(vertices.length / vertDim, GRID_SIZE * GRID_SIZE);		// passed in is number of vertices to render, 12 floats / coords per float = 6 vertices
+																	//	second arg is number of instances of this draw call
 pass3.end();
 
 device.queue.submit([encoder3.finish()]);

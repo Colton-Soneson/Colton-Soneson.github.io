@@ -17,6 +17,7 @@ export const pSquare = new Primitive(
 		0.8,  0.8,
 		-0.8,  0.8,
 	]),
+	0,
 );
 
 export const pTriangle = new Primitive(
@@ -26,6 +27,7 @@ export const pTriangle = new Primitive(
 		-0.5, -0.5,
 		0.5, -0.5,
 	]),
+	0,
 );
 
 //--------------------------3D----------------------------

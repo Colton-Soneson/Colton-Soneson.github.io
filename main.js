@@ -132,6 +132,24 @@ const uniformBuffer = device.createBuffer({
 });
 device.queue.writeBuffer(uniformBuffer, 0, uniformArray);
 
+//array representing active state of each cell
+const cellStateArray = new Uint32Array(GRID_SIZE * GRID_SIZE);
+
+//storage buffers can be read by vertex shaders, and RW to compute. Large data storage
+const cellStateStorage = device.createBuffer({
+  label: "Cell State",
+  size: cellStateArray.byteLength,
+  usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,	//new buff with storage tag
+});
+
+// Mark every third cell of the grid as active.
+for (let i = 0; i < cellStateArray.length; i += 3) {
+  cellStateArray[i] = 1;
+}
+
+//copy cellstatearray data to storage buffer
+device.queue.writeBuffer(cellStateStorage, /*bufferOffset=*/0, cellStateArray);
+
 //GPUBindGroup, bind groups connect uniform in the shader
 //	collection of resources for shader to access, cant change resources in bind group but you can change their contents
 const bindGroup = device.createBindGroup({
@@ -139,11 +157,14 @@ const bindGroup = device.createBindGroup({
   layout: cellPipeline.getBindGroupLayout(0),	//types of resources included, layout: "auto" works with bind group layout from
 												//	bindings declared in shader code itself, then you use getBindGroupLayout(0) 0 via @group(0)
   entries: [{
-    binding: 0,									//corresponds with @binding() value in shader
-    resource: { buffer: uniformBuffer }			//actual resource to expose at binding index
-  }],
+		binding: 0,									//corresponds with @binding() value in shader
+		resource: { buffer: uniformBuffer }			//actual resource to expose at binding index
+	},
+	{
+		binding: 1,							// number has to match binding number in shader
+		resource: { buffer: cellStateStorage } 
+	}],
 });
-
 
 const encoder3 = device.createCommandEncoder();
 const pass3 = encoder3.beginRenderPass({

@@ -74,6 +74,8 @@ const vertices = primitives.pSquare.vertices;
 const vertDim = primitives.pSquare.dimensions;
 const vertStride = vertDim * 4;	//4 for number of bytes in a float
 const GRID_SIZE = 32;
+const UPDATE_INTERVAL = 200; // Update every 200ms (5 times/sec)
+let step = 0; // Track how many simulation steps have been run
 
 //function should return GPUShaderModule object if compiled with valid results, code itself is WGSL
 const cellShaderModule = device.createShaderModule({
@@ -136,22 +138,35 @@ device.queue.writeBuffer(uniformBuffer, 0, uniformArray);
 const cellStateArray = new Uint32Array(GRID_SIZE * GRID_SIZE);
 
 //storage buffers can be read by vertex shaders, and RW to compute. Large data storage
-const cellStateStorage = device.createBuffer({
-  label: "Cell State",
-  size: cellStateArray.byteLength,
-  usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,	//new buff with storage tag
-});
+//	this creates two and holds them in an array
+const cellStateStorage = [
+  device.createBuffer({
+    label: "Cell State A",
+    size: cellStateArray.byteLength,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+  }),
+  device.createBuffer({
+    label: "Cell State B",
+     size: cellStateArray.byteLength,
+     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+  })
+];
 
-// Mark every third cell of the grid as active.
-for (let i = 0; i < cellStateArray.length; i += 3) {
+// Mark every third cell of the first grid as active.
+for (let i = 0; i < cellStateArray.length; i+=3) {
   cellStateArray[i] = 1;
 }
+device.queue.writeBuffer(cellStateStorage[0], 0, cellStateArray);
 
-//copy cellstatearray data to storage buffer
-device.queue.writeBuffer(cellStateStorage, /*bufferOffset=*/0, cellStateArray);
+// Mark every other cell of the second grid as active.
+for (let i = 0; i < cellStateArray.length; i++) {
+  cellStateArray[i] = i % 2;
+}
+device.queue.writeBuffer(cellStateStorage[1], 0, cellStateArray);
 
 //GPUBindGroup, bind groups connect uniform in the shader
 //	collection of resources for shader to access, cant change resources in bind group but you can change their contents
+/*
 const bindGroup = device.createBindGroup({
   label: "Cell renderer bind group",
   layout: cellPipeline.getBindGroupLayout(0),	//types of resources included, layout: "auto" works with bind group layout from
@@ -165,22 +180,60 @@ const bindGroup = device.createBindGroup({
 		resource: { buffer: cellStateStorage } 
 	}],
 });
+*/
 
-const encoder3 = device.createCommandEncoder();
-const pass3 = encoder3.beginRenderPass({
-colorAttachments: [{
-	view: context.getCurrentTexture().createView(),
-	loadOp: "clear",
-	clearValue: { r: 0, g: 0.2, b: 0, a: 1 },
-	storeOp: "store",
-	}],
-});
+//multi bind group
+const bindGroups = [
+  device.createBindGroup({
+    label: "Cell renderer bind group A",
+    layout: cellPipeline.getBindGroupLayout(0),
+    entries: [{
+      binding: 0,
+      resource: { buffer: uniformBuffer }
+    }, {
+      binding: 1,
+      resource: { buffer: cellStateStorage[0] }
+    }],
+  }),
+   device.createBindGroup({
+    label: "Cell renderer bind group B",
+    layout: cellPipeline.getBindGroupLayout(0),
+    entries: [{
+      binding: 0,
+      resource: { buffer: uniformBuffer }
+    }, {
+      binding: 1,
+      resource: { buffer: cellStateStorage[1] }
+    }],
+  })
+];
 
-pass3.setPipeline(cellPipeline);			// shaders used, layout of vertex data, other relevant state data
-pass3.setVertexBuffer(0, vertexBuffer);		// bugger containing vertices for square, with 0th element in cellPipeline's vertex.buffers definition 
-pass3.setBindGroup(0, bindGroup);			// 0 for @group(0) in shader code, and @binding part of it
-pass3.draw(vertices.length / vertDim, GRID_SIZE * GRID_SIZE);		// passed in is number of vertices to render, 12 floats / coords per float = 6 vertices
-																	//	second arg is number of instances of this draw call
-pass3.end();
 
-device.queue.submit([encoder3.finish()]);
+// Move all of our rendering code into a function
+function updateGridPass() {
+	step++; // Increment the step count
+	
+	// Start a render pass 
+	const encoder3 = device.createCommandEncoder();
+	const pass3 = encoder3.beginRenderPass({
+		colorAttachments: [{
+		view: context.getCurrentTexture().createView(),
+		loadOp: "clear",
+		clearValue: { r: 0, g: 0, b: 0.4, a: 1.0 },
+		storeOp: "store",
+		}]
+	});
+
+	pass3.setPipeline(cellPipeline);			// shaders used, layout of vertex data, other relevant state data
+	pass3.setVertexBuffer(0, vertexBuffer);		// bugger containing vertices for square, with 0th element in cellPipeline's vertex.buffers definition 
+	//pass3.setBindGroup(0, bindGroup);			// 0 for @group(0) in shader code, and @binding part of it
+	pass3.setBindGroup(0, bindGroups[step % 2]);
+	pass3.draw(vertices.length / vertDim, GRID_SIZE * GRID_SIZE);		// passed in is number of vertices to render, 12 floats / coords per float = 6 vertices
+																		//	second arg is number of instances of this draw call
+	pass3.end();
+
+	device.queue.submit([encoder3.finish()]);
+}
+
+//built in function to run a function at a set interval
+setInterval(updateGridPass, UPDATE_INTERVAL);

@@ -1,5 +1,7 @@
 import { vf_p_generic } from './shaders/js/vf_p_generic.js'
 import { vf_p_gridGeneric } from './shaders/js/vf_p_gridGeneric.js'
+import { c_gridSim } from './shaders/js/c_gridSim.js'
+import { WORKGROUP_SIZE } from './shaders/js/c_gridSim.js'
 import * as primitives from './models/primitives.js'
 
 const canvas = document.querySelector("canvas");
@@ -83,6 +85,12 @@ label: "Cell shader",
 code: vf_p_gridGeneric
 });
 
+// Create the compute shader that will process the simulation.
+const simulationShaderModule = device.createShaderModule({
+  label: "Game of Life simulation shader",
+  code: c_gridSim		//computes can be dispatched along x y z axis, this grid is divided into workgroups (we just use 8x8)
+});
+
 
 //GPU Side memory management done through GPUBuffer objects
 //	since its so simple, theres no need to do index buffer, but the process I imagine is similar
@@ -105,25 +113,6 @@ attributes: [{			//stuff like color, normal direction, etc
 	shaderLocation: 0, // Position, see vertex shader, can be 0 - 15 and is unique to each attribute
 	}],
 };
-
-
-//finally creating render pipeline
-const cellPipeline = device.createRenderPipeline({
-	label: "Cell pipeline",
-	layout: "auto",						// types of inputs other than vertex buffers needed can be passed
-	vertex: {							// vertex stage details
-		module: cellShaderModule,		// 
-		entryPoint: "vertexMain",		// our name of function, as you can have multiple vertex/fragment functions in one shader module
-		buffers: [vertexBufferLayout]	// GPUVertexBufferLayout that describe data packed into vertex buffers used
-	},
-	fragment: {							// fragment stage details
-		module: cellShaderModule,		
-		entryPoint: "fragmentMain",
-		targets: [{						// array of dictionaries giving details (like the texture "format") of color attachments pipeline outputs to
-		format: canvasFormat			// we used textures from canvas context, and value saved from canvasFormat for format, so pass the same here
-		}]
-	}
-});
 
 // Create a uniform buffer that describes the grid.
 const uniformArray = new Float32Array([GRID_SIZE, GRID_SIZE]); //do floats for sake of not casting in shader code
@@ -182,39 +171,110 @@ const bindGroup = device.createBindGroup({
 });
 */
 
+
+// Create the bind group layout and pipeline layout.
+const bindGroupLayout = device.createBindGroupLayout({
+  label: "Cell Bind Group Layout",
+  entries: [{
+    binding: 0,
+    visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT | GPUShaderStage.COMPUTE,	//visibility is GPUShaderStage flags that indicate which shader stages can use resource
+    buffer: {} //buffer key, other options are things like "texture" or "sampler", default is uniform (like for our grid uniform buffer), leave empty for binding 0
+  }, {
+    binding: 1,
+    visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
+    buffer: { type: "read-only-storage"} // Cell state input buffer
+  }, {
+    binding: 2,
+    visibility: GPUShaderStage.COMPUTE,
+    buffer: { type: "storage"} // Cell state output buffer, storage because you do need RW access
+  }]
+});
+
 //multi bind group
 const bindGroups = [
   device.createBindGroup({
     label: "Cell renderer bind group A",
-    layout: cellPipeline.getBindGroupLayout(0),
+    layout: bindGroupLayout, //OLD: cellPipeline.getBindGroupLayout(0),
     entries: [{
       binding: 0,
-      resource: { buffer: uniformBuffer }
+      resource: { buffer: uniformBuffer }	//buffer key, other options are things like "texture" or "sampler"
     }, {
       binding: 1,
       resource: { buffer: cellStateStorage[0] }
+    }, {
+      binding: 2, // New Entry
+      resource: { buffer: cellStateStorage[1] }
     }],
   }),
    device.createBindGroup({
     label: "Cell renderer bind group B",
-    layout: cellPipeline.getBindGroupLayout(0),
+    layout: bindGroupLayout,
     entries: [{
       binding: 0,
       resource: { buffer: uniformBuffer }
     }, {
       binding: 1,
       resource: { buffer: cellStateStorage[1] }
+    }, {
+      binding: 2, // New Entry
+      resource: { buffer: cellStateStorage[0] }
     }],
   })
 ];
 
+const pipelineLayout = device.createPipelineLayout({
+  label: "Cell Pipeline Layout",
+  bindGroupLayouts: [ bindGroupLayout ],
+});
+
+//finally creating render pipeline
+const cellPipeline = device.createRenderPipeline({
+	label: "Cell pipeline",
+	layout: pipelineLayout,				// types of inputs other than vertex buffers needed can be passed, can be "auto"
+	vertex: {							// vertex stage details
+		module: cellShaderModule,		// 
+		entryPoint: "vertexMain",		// our name of function, as you can have multiple vertex/fragment functions in one shader module
+		buffers: [vertexBufferLayout]	// GPUVertexBufferLayout that describe data packed into vertex buffers used
+	},
+	fragment: {							// fragment stage details
+		module: cellShaderModule,		
+		entryPoint: "fragmentMain",
+		targets: [{						// array of dictionaries giving details (like the texture "format") of color attachments pipeline outputs to
+		format: canvasFormat			// we used textures from canvas context, and value saved from canvasFormat for format, so pass the same here
+		}]
+	}
+});
+
+// Create a compute pipeline that updates the game state.
+const simulationPipeline = device.createComputePipeline({
+  label: "Simulation pipeline",
+  layout: pipelineLayout,	//allows for use of same bind groups as the renderpipeline
+  compute: {
+    module: simulationShaderModule,
+    entryPoint: "computeMain",
+  }
+});
 
 // Move all of our rendering code into a function
 function updateGridPass() {
-	step++; // Increment the step count
+	
+	const encoder3 = device.createCommandEncoder();
+	
+	// Start a compute pass 
+	const computePass = encoder3.beginComputePass();	//do before render pass so RP can take latest CP results
+	
+	computePass.setPipeline(simulationPipeline);
+	computePass.setBindGroup(0, bindGroups[step % 2]);	//same bind groups as rendering pass
+	const workgroupCount = Math.ceil(GRID_SIZE / WORKGROUP_SIZE);
+	computePass.dispatchWorkgroups(workgroupCount, workgroupCount);	//not number of invocations, its number of workgroups to execute (DEFINED IN SHADER)
+																	// if workload isnt even divisor of workgroup size, then you can round up and have an early return with 
+																	// a "global_invocation_id" check in the shader itself
+	
+	computePass.end();
+	
+	step++; // Increment the step count, done between compute and render so output buffer of compute pipeline is input buffer for render pipeline
 	
 	// Start a render pass 
-	const encoder3 = device.createCommandEncoder();
 	const pass3 = encoder3.beginRenderPass({
 		colorAttachments: [{
 		view: context.getCurrentTexture().createView(),

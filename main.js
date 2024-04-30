@@ -141,9 +141,12 @@ const cellStateStorage = [
   })
 ];
 
+
+//initialize cell state array
+/*
 // Mark every third cell of the first grid as active.
 for (let i = 0; i < cellStateArray.length; i+=3) {
-  cellStateArray[i] = 1;
+  cellStateArray[i] = i;
 }
 device.queue.writeBuffer(cellStateStorage[0], 0, cellStateArray);
 
@@ -152,6 +155,14 @@ for (let i = 0; i < cellStateArray.length; i++) {
   cellStateArray[i] = i % 2;
 }
 device.queue.writeBuffer(cellStateStorage[1], 0, cellStateArray);
+*/
+// Set each cell to a random state, then copy the JavaScript array 
+// into the storage buffer.
+for (let i = 0; i < cellStateArray.length; ++i) {
+  cellStateArray[i] = Math.random() > 0.6 ? 1 : 0;
+}
+device.queue.writeBuffer(cellStateStorage[0], 0, cellStateArray);
+
 
 //GPUBindGroup, bind groups connect uniform in the shader
 //	collection of resources for shader to access, cant change resources in bind group but you can change their contents

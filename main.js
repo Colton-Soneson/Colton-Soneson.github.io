@@ -1,10 +1,12 @@
 import {updateGridPass} from './code/googleTutorial.js'
+import {updateRotatingCubePass} from './code/rotatingCube.js'
 
-const UPDATE_INTERVAL = 200; // Update every 200ms (5 times/sec)
+const UPDATE_INTERVAL = 17; // Update every 17ms
 
 function mainLoop() {
 	
-	updateGridPass();
+	//updateGridPass();
+	updateRotatingCubePass();
 	
 }
 

@@ -1,0 +1,10 @@
+3d volume for dynamic wind volume around player
+	3d velocity volume
+	
+diffusion in this case is to "blur" between the wind cells
+
+motors gen wind in volume, they include
+	omni (inward/outward of a center point)
+	directional (wind in a specific direction)
+	vortex (around a specified axis)
+	Moving (str and dir calculated from movement of motor)

@@ -1,4 +1,4 @@
-const canvas = document.querySelector("canvas");
+export const canvas = document.querySelector("canvas");
 
 if (!navigator.gpu) 
 {

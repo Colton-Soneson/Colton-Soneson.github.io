@@ -1,21 +1,48 @@
 import {device} from './deviceSelection.js'
+import {canvas} from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
+
+import { mat4, vec3 } from 'https://wgpu-matrix.org/dist/3.x/wgpu-matrix.module.js';
 
 import {postEffectPass} from './postEffectPass.js'
 import * as primitives from '../models/primitives.js'
 
-import { vf_p_generic } from '../shaders/js/vf_p_generic.js'
+import { vf_p_generic3D } from '../shaders/js/vf_p_generic.js'
 
-const vertices = primitives.pSquare.vertices;
-const vertDim = primitives.pSquare.dimensions;
+const devicePixelRatio = window.devicePixelRatio;
+canvas.width = canvas.clientWidth * devicePixelRatio;
+canvas.height = canvas.clientHeight * devicePixelRatio;
+
+const vertices = primitives.pCube.vertices;
+const vertDim = primitives.pCube.dimensions;
 const vertStride = vertDim * 4;	//4 for number of bytes in a float
 let step = 0; // Track how many simulation steps have been run
+
+const aspect = canvas.width / canvas.height;
+const projectionMatrix = mat4.perspective((2 * Math.PI) / 5, aspect, 1, 100.0);
+const modelViewProjectionMatrix = mat4.create();
+
+function getTransformationMatrix() {
+  const viewMatrix = mat4.identity();
+  mat4.translate(viewMatrix, vec3.fromValues(0, 0, -4), viewMatrix);
+  const now = Date.now() / 1000;
+  mat4.rotate(
+    viewMatrix,
+    vec3.fromValues(Math.sin(now), Math.cos(now), 0),
+    1,
+    viewMatrix
+  );
+  
+  mat4.multiply(projectionMatrix, viewMatrix, modelViewProjectionMatrix);
+
+  return modelViewProjectionMatrix;
+}
 
 //function should return GPUShaderModule object if compiled with valid results, code itself is WGSL
 const genericShaderModule = device.createShaderModule({
 label: "generic vf shader",
-code: vf_p_generic
+code: vf_p_generic3D
 });
 
 
@@ -34,20 +61,26 @@ const vertexBufferLayout = {
 arrayStride: vertStride,//number of bytes gpu needs to skip forward to get to the next vertex (with two vertices per vertex, thats 
 						//	two 32 bit floats, so 2 x 4(bytes) = 8 bytes. in 3D it would be 12
 attributes: [{			//stuff like color, normal direction, etc
-	format: "float32x2",//cant be anything, there is a list of GPUVertexFormat types in this case, its specific to pass in
+	format: "float32x4",//cant be anything, there is a list of GPUVertexFormat types in this case, its specific to pass in
 	offset: 0,			//how many bytes into the vertex this attribute starts, use if you have more than one attribute
 	shaderLocation: 0, // Position, see vertex shader, can be 0 - 15 and is unique to each attribute
 	}],
 };
 
-const uniformArray = new Float32Array([1, 1]); //do floats for sake of not casting in shader code
-const uniformBuffer = device.createBuffer({
-  label: "Generic Uniforms",
-  size: uniformArray.byteLength,
+const uniformArrayTRS = 4 * 16; // 4x4 matrix for TRS
+const uniformBufferTRS = device.createBuffer({
+  label: "3D TRS Matrix Uniform Buffer",
+  size: uniformArrayTRS,
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,	//this makes it another GPUBuffer Object but this time uniform
 });
-device.queue.writeBuffer(uniformBuffer, 0, uniformArray);
 
+//const uniformArrayGU = new Float32Array([1, 1]); //do floats for sake of not casting in shader code
+//const uniformBufferGU = device.createBuffer({
+//  label: "Generic Uniforms",
+//  size: uniformArrayGU.byteLength,
+//  usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,	//this makes it another GPUBuffer Object but this time uniform
+//});
+//device.queue.writeBuffer(uniformBufferGU, 1, uniformArrayGU);
 
 //GPUBindGroup, bind groups connect uniform in the shader
 //	collection of resources for shader to access, cant change resources in bind group but you can change their contents
@@ -69,7 +102,7 @@ const bindGroups = [
     layout: bindGroupLayout,
     entries: [{
       binding: 0,
-      resource: { buffer: uniformBuffer }	//buffer key, other options are things like "texture" or "sampler"
+      resource: { buffer: uniformBufferTRS }	//buffer key, other options are things like "texture" or "sampler"
     }],
   })
 ];
@@ -107,6 +140,13 @@ export function updateRotatingCubePass() {
 	//postEffectPass(encoder, bindGroups, step);
 	
 	step++; // Increment the step count, done between compute and render so output buffer of compute pipeline is input buffer for render pipeline
+	
+	const transformationMatrix = getTransformationMatrix();
+	device.queue.writeBuffer(uniformBufferTRS, 
+							0, 
+							transformationMatrix.buffer,
+							transformationMatrix.byteOffset,
+							transformationMatrix.byteLength);
 	
 	// Start a render pass 
 	const pass = encoder.beginRenderPass({

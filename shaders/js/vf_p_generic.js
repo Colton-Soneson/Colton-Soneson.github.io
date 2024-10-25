@@ -53,6 +53,6 @@ export const vf_p_generic3D =
 	fn fragmentMain(input: FragInput) -> //could also use input: VertexOutput instead because its contained within the same file here
 		@location(0) vec4f {
 		
-		return vec4f(1, 0, 0, 1);
+		return input.fragPos;
 	}
 `;

@@ -82,6 +82,12 @@ const uniformBufferTRS = device.createBuffer({
 //});
 //device.queue.writeBuffer(uniformBufferGU, 1, uniformArrayGU);
 
+const depthTexture = device.createTexture({
+  size: [canvas.width, canvas.height],
+  format: 'depth24plus',
+  usage: GPUTextureUsage.RENDER_ATTACHMENT,
+});
+
 //GPUBindGroup, bind groups connect uniform in the shader
 //	collection of resources for shader to access, cant change resources in bind group but you can change their contents
 
@@ -127,7 +133,24 @@ const genericPipeline = device.createRenderPipeline({
 		targets: [{						// array of dictionaries giving details (like the texture "format") of color attachments pipeline outputs to
 		format: canvasFormat			// we used textures from canvas context, and value saved from canvasFormat for format, so pass the same here
 		}]
-	}
+	},
+	
+	primitive: {
+		topology: 'triangle-list',
+	
+		// Backface culling since the cube is solid piece of geometry.
+		// Faces pointing away from the camera will be occluded by faces
+		// pointing toward the camera.
+		cullMode: 'back',
+	},
+
+	// Enable depth testing so that the fragment closest to the camera
+	// is rendered in front.
+	depthStencil: {
+		depthWriteEnabled: true,
+		depthCompare: 'less',
+		format: 'depth24plus',
+	},
 });
 
 
@@ -155,7 +178,14 @@ export function updateRotatingCubePass() {
 		loadOp: "clear",
 		clearValue: { r: 0, g: 0, b: 0.4, a: 1.0 },
 		storeOp: "store",
-		}]
+		}],
+		depthStencilAttachment: {
+			view: depthTexture.createView(),
+		
+			depthClearValue: 1.0,
+			depthLoadOp: 'clear',
+			depthStoreOp: 'store',
+		},
 	});
 
 	pass.setPipeline(genericPipeline);			// shaders used, layout of vertex data, other relevant state data

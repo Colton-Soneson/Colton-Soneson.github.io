@@ -23,7 +23,7 @@ export const vf_p_generic3D =
 	@group(0) @binding(0) var<uniform> UBO: Uniforms;
 	
 	struct VertexInput {
-		@location(0) pos: vec4f,
+		@location(0) pos: vec3f,
 	};
 	
 	struct VertexOutput {				//into frag
@@ -52,7 +52,7 @@ export const vf_p_generic3D =
 	@fragment
 	fn fragmentMain(input: FragInput) -> //could also use input: VertexOutput instead because its contained within the same file here
 		@location(0) vec4f {
-		
+		//return vec4f(1.0,1.0,1.0,1.0);
 		return input.fragPos;
 	}
 `;

@@ -15,7 +15,9 @@ canvas.width = canvas.clientWidth * devicePixelRatio;
 canvas.height = canvas.clientHeight * devicePixelRatio;
 
 const vertices = primitives.pCube.vertices;
+const faces = primitives.pCube.faces;
 const vertDim = primitives.pCube.dimensions;
+const numPositions = vertices / vertDim;	//actual vertex count
 const vertStride = vertDim * 4;	//4 for number of bytes in a float
 let step = 0; // Track how many simulation steps have been run
 
@@ -45,27 +47,70 @@ label: "generic vf shader",
 code: vf_p_generic3D
 });
 
+//https://pastebin.com/DXKEmvap
+
+const positions = [];
+for(let posCount = 0; posCount < (vertices.length / vertDim); posCount++)
+{
+	positions[posCount] = [vertices[(posCount * vertDim) + 0], vertices[(posCount * vertDim) + 1], vertices[(posCount * vertDim) + 2]];
+}
+console.log("---position list-----");
+console.log(positions);
+
+const faceList = [];
+for(let faceCount = 0; faceCount < (faces.length / 3); faceCount++)
+{
+	faceList[faceCount] = [faces[(faceCount * 3) + 0] - 1, 
+							faces[(faceCount * 3) + 1] - 1, 
+							faces[(faceCount * 3) + 2] - 1,
+							];
+}
+console.log("---face list-----");
+console.log(faceList);
+
+const result = [];
+
+for(let faceRows = 0; faceRows < (faces.length / 3); faceRows++)
+{
+	
+	result.push(positions[faceList[faceRows][0]][0]);
+	result.push(positions[faceList[faceRows][0]][1]);
+	result.push(positions[faceList[faceRows][0]][2]);
+	
+	result.push(positions[faceList[faceRows][1]][0]);
+	result.push(positions[faceList[faceRows][1]][1]);
+	result.push(positions[faceList[faceRows][1]][2]);
+	
+	result.push(positions[faceList[faceRows][2]][0]);
+	result.push(positions[faceList[faceRows][2]][1]);
+	result.push(positions[faceList[faceRows][2]][2]);
+}
+
+const vertsFromPositionsAndFaces = new Float32Array(result);	//triangle count by verts per tri by vert dimensions
+console.log(vertsFromPositionsAndFaces);
 
 //GPU Side memory management done through GPUBuffer objects
 const vertexBuffer = device.createBuffer({
-	label: "Cell vertices",		//just helps to identify object, can be anything you type
-	size: vertices.byteLength,	//for 12 float vertices thats 48 bytes, cant be resized after creation
+	label: "cube vertices",		//just helps to identify object, can be anything you type
+	size: vertsFromPositionsAndFaces.byteLength,	//for 12 float vertices thats 48 bytes, cant be resized after creation
 	usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,	//its use is for vertex data, and that you want to copy data into it
 });
 
 //copy vertex data to buffer
-device.queue.writeBuffer(vertexBuffer, /*bufferOffset=*/0, vertices);
+device.queue.writeBuffer(vertexBuffer, /*bufferOffset=*/0, vertsFromPositionsAndFaces);
+
 
 //now tell WebGPU what the hell to do with the info
 const vertexBufferLayout = {
 arrayStride: vertStride,//number of bytes gpu needs to skip forward to get to the next vertex (with two vertices per vertex, thats 
 						//	two 32 bit floats, so 2 x 4(bytes) = 8 bytes. in 3D it would be 12
 attributes: [{			//stuff like color, normal direction, etc
-	format: "float32x4",//cant be anything, there is a list of GPUVertexFormat types in this case, its specific to pass in
+	format: "float32x3",//cant be anything, there is a list of GPUVertexFormat types in this case, its specific to pass in
 	offset: 0,			//how many bytes into the vertex this attribute starts, use if you have more than one attribute
 	shaderLocation: 0, // Position, see vertex shader, can be 0 - 15 and is unique to each attribute
 	}],
 };
+
 
 const uniformArrayTRS = 4 * 16; // 4x4 matrix for TRS
 const uniformBufferTRS = device.createBuffer({
@@ -141,7 +186,7 @@ const genericPipeline = device.createRenderPipeline({
 		// Backface culling since the cube is solid piece of geometry.
 		// Faces pointing away from the camera will be occluded by faces
 		// pointing toward the camera.
-		cullMode: 'back',
+		cullMode: 'none',
 	},
 
 	// Enable depth testing so that the fragment closest to the camera
@@ -176,7 +221,7 @@ export function updateRotatingCubePass() {
 		colorAttachments: [{
 		view: context.getCurrentTexture().createView(),
 		loadOp: "clear",
-		clearValue: { r: 0, g: 0, b: 0.4, a: 1.0 },
+		clearValue: { r: 0, g: 0, b: 0, a: 1.0 },
 		storeOp: "store",
 		}],
 		depthStencilAttachment: {
@@ -189,9 +234,9 @@ export function updateRotatingCubePass() {
 	});
 
 	pass.setPipeline(genericPipeline);			// shaders used, layout of vertex data, other relevant state data
-	pass.setVertexBuffer(0, vertexBuffer);	
+	pass.setVertexBuffer(0, vertexBuffer);
 	pass.setBindGroup(0, bindGroups[0]);
-	pass.draw(vertices.length / vertDim, 1);		// passed in is number of vertices to render, 12 floats / coords per float = 6 vertices
+	pass.draw(vertsFromPositionsAndFaces.length / vertDim, 1);		// passed in is number of vertices to render, 12 floats / coords per float = 6 vertices
 																		//	second arg is number of instances of this draw call
 	pass.end();
 

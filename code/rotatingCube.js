@@ -14,9 +14,9 @@ const devicePixelRatio = window.devicePixelRatio;
 canvas.width = canvas.clientWidth * devicePixelRatio;
 canvas.height = canvas.clientHeight * devicePixelRatio;
 
-const vertices = primitives.pCube.vertices;
-const faces = primitives.pCube.faces;
-const vertDim = primitives.pCube.dimensions;
+const vertices = primitives.pSuzanne.vertices;
+const faces = primitives.pSuzanne.faces;
+const vertDim = primitives.pSuzanne.dimensions;
 const numPositions = vertices / vertDim;	//actual vertex count
 const vertStride = vertDim * 4;	//4 for number of bytes in a float
 let step = 0; // Track how many simulation steps have been run

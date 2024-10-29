@@ -1,8 +1,17 @@
+import {loadObjFileVerts, loadObjFileFaces} from '../code/objLoader.js'
+
 function Primitive(dimensions, vertices, faces) {
 	this.dimensions = dimensions;
 	this.vertices = vertices;
 	this.faces = faces;
 }
+
+//-------------------------OBJ----------------------------
+export const pSuzanne = new Primitive(
+	3, 
+	new Float32Array(await loadObjFileVerts('./models/monkey.obj')),
+	new Float32Array(await loadObjFileFaces('./models/monkey.obj')),
+);
 
 //--------------------------2D----------------------------
 export const pSquare = new Primitive(
@@ -59,19 +68,6 @@ export const pCube = new Primitive(
 		5, 1, 2,
 	]),
 );
-
-export const pMonkey = new Primitive(
-	3, 
-	new Float32Array([
-		//   X,    Y,	Z
-		 
-	]),
-	new Float32Array([
-		
-	]),
-);
-
-
 
 export const pCubeOld = new Primitive(
 	4, 

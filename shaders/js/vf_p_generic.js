@@ -24,12 +24,15 @@ export const vf_p_generic3D =
 	
 	struct VertexInput {
 		@location(0) pos: vec3f,
+		@location(1) uv: vec3f,
+		@location(2) norm: vec3f,
 	};
 	
 	struct VertexOutput {				//into frag
 		@builtin(position) pos: vec4f,
 		@location(0) fragUV: vec2f,
 		@location(1) fragPos: vec4f,
+		@location(2) light: vec3f,
 	};
 	
 	@vertex
@@ -39,6 +42,15 @@ export const vf_p_generic3D =
 		output.pos = UBO.modelViewProjectionMatrix * vec4f(input.pos.x, input.pos.y, input.pos.z, 1);
 		output.fragUV = vec2f(0,0);
 		output.fragPos = 0.5 * (vec4f(input.pos.x, input.pos.y, input.pos.z, 1) + vec4f(1.0,1.0,1.0,1.0));
+		
+		//light
+		//vec3f lightPos = vec3f(0.0f, 5.0f, 5.0f);
+		
+		//vec3f normal = normalize(input.norm);
+		//vec3f lightDir = normalize(lightPos - output.fragPos);  
+		//float diff = max(dot(normal, lightDir), 0.0);
+		//output.light = vec3f(diff, diff, diff);
+		output.light = vec3f(1., 1., 1.);
 		return output;
 	}
 	
@@ -46,6 +58,7 @@ export const vf_p_generic3D =
 	struct FragInput {
 		@location(0) fragUV: vec2f,
 		@location(1) fragPos: vec4f,
+		@location(2) light: vec3f,
 	};
 
 	
@@ -53,6 +66,7 @@ export const vf_p_generic3D =
 	fn fragmentMain(input: FragInput) -> //could also use input: VertexOutput instead because its contained within the same file here
 		@location(0) vec4f {
 		//return vec4f(1.0,1.0,1.0,1.0);
-		return input.fragPos;
+		
+		return input.fragPos;// * input.light;
 	}
 `;

@@ -14,9 +14,9 @@ const devicePixelRatio = window.devicePixelRatio;
 canvas.width = canvas.clientWidth * devicePixelRatio;
 canvas.height = canvas.clientHeight * devicePixelRatio;
 
-const vertices = primitives.pSuzanne.vertices;
-const faces = primitives.pSuzanne.faces;
-const vertDim = primitives.pSuzanne.dimensions;
+const vertices = primitives.pTotoro.vertices;
+const faces = primitives.pTotoro.faces;
+const vertDim = primitives.pTotoro.dimensions;
 const numPositions = vertices / vertDim;	//actual vertex count
 const vertStride = vertDim * 4;	//4 for number of bytes in a float
 let step = 0; // Track how many simulation steps have been run
@@ -35,6 +35,7 @@ function getTransformationMatrix() {
     1,
     viewMatrix
   );
+  mat4.scale( viewMatrix, vec3.fromValues(0.025,0.025,0.025), viewMatrix);
   
   mat4.multiply(projectionMatrix, viewMatrix, modelViewProjectionMatrix);
 

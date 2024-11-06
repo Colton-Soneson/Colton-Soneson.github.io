@@ -13,6 +13,12 @@ export const pSuzanne = new Primitive(
 	new Float32Array(await loadObjFileFaces('./models/monkey.obj')),
 );
 
+export const pTotoro = new Primitive(
+	3, 
+	new Float32Array(await loadObjFileVerts('./models/totoro.obj')),
+	new Float32Array(await loadObjFileFaces('./models/totoro.obj')),
+);
+
 //--------------------------2D----------------------------
 export const pSquare = new Primitive(
 	2, 

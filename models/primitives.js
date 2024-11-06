@@ -1,23 +1,40 @@
-import {loadObjFileVerts, loadObjFileFaces} from '../code/objLoader.js'
+import {loadObjFileVerts, loadObjFileFaces, loadObjFileNormals, loadObjFileUVs} from '../code/objLoader.js'
 
-function Primitive(dimensions, vertices, faces) {
+function Primitive(dimensions, vertices, faces, normals, uvs) {
 	this.dimensions = dimensions;
 	this.vertices = vertices;
 	this.faces = faces;
+	this.normals = normals;
+	this.uvs = uvs;
 }
 
 //-------------------------OBJ----------------------------
-export const pSuzanne = new Primitive(
+//export const pIslandHouse = new Primitive(
+//	3, 
+//	new Float32Array(await loadObjFileVerts('./models/islandhouse.obj')),
+//	new Float32Array(await loadObjFileFaces('./models/islandhouse.obj')),
+//	new Float32Array(await loadObjFileNormals('./models/islandhouse.obj')),
+//	new Float32Array(await loadObjFileUVs('./models/islandhouse.obj')),
+//);
+export const pTest = new Primitive(
 	3, 
-	new Float32Array(await loadObjFileVerts('./models/monkey.obj')),
-	new Float32Array(await loadObjFileFaces('./models/monkey.obj')),
+	new Float32Array(await loadObjFileVerts('./models/test.obj')),
+	new Float32Array(await loadObjFileFaces('./models/test.obj')),
+	new Float32Array(await loadObjFileNormals('./models/test.obj')),
+	new Float32Array(await loadObjFileUVs('./models/test.obj')),
 );
 
-export const pTotoro = new Primitive(
-	3, 
-	new Float32Array(await loadObjFileVerts('./models/totoro.obj')),
-	new Float32Array(await loadObjFileFaces('./models/totoro.obj')),
-);
+//export const pSuzanne = new Primitive(
+//	3, 
+//	new Float32Array(await loadObjFileVerts('./models/monkey.obj')),
+//	new Float32Array(await loadObjFileFaces('./models/monkey.obj')),
+//);
+//
+//export const pTotoro = new Primitive(
+//	3, 
+//	new Float32Array(await loadObjFileVerts('./models/totoro.obj')),
+//	new Float32Array(await loadObjFileFaces('./models/totoro.obj')),
+//);
 
 //--------------------------2D----------------------------
 export const pSquare = new Primitive(

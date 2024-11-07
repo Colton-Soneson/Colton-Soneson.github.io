@@ -16,7 +16,7 @@ export async function loadObjFileVerts(url) {
         }
     }
 	
-	console.log(vertices);
+	//console.log(vertices);
     return new Float32Array(vertices);
 }
 
@@ -37,7 +37,7 @@ export async function loadObjFileUVs(url) {
         }
     }
 	
-	console.log(UVs);
+	//console.log(UVs);
     return new Float32Array(UVs);
 }
 
@@ -59,7 +59,7 @@ export async function loadObjFileNormals(url) {
         }
     }
 	
-	console.log(normals);
+	//console.log(normals);
     return new Float32Array(normals);
 }
 
@@ -99,7 +99,7 @@ export async function loadObjFileFaces(url) {
         }
     }
 	
-	console.log(faces);
+	//console.log(faces);
     return new Float32Array(faces);
 }
 

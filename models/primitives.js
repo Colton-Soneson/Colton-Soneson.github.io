@@ -9,13 +9,13 @@ function Primitive(dimensions, vertices, faces, normals, uvs) {
 }
 
 //-------------------------OBJ----------------------------
-//export const pIslandHouse = new Primitive(
-//	3, 
-//	new Float32Array(await loadObjFileVerts('./models/islandhouse.obj')),
-//	new Float32Array(await loadObjFileFaces('./models/islandhouse.obj')),
-//	new Float32Array(await loadObjFileNormals('./models/islandhouse.obj')),
-//	new Float32Array(await loadObjFileUVs('./models/islandhouse.obj')),
-//);
+export const pIslandHouse = new Primitive(
+	3, 
+	new Float32Array(await loadObjFileVerts('./models/islandhouse.obj')),
+	new Float32Array(await loadObjFileFaces('./models/islandhouse.obj')),
+	new Float32Array(await loadObjFileNormals('./models/islandhouse.obj')),
+	new Float32Array(await loadObjFileUVs('./models/islandhouse.obj')),
+);
 export const pTest = new Primitive(
 	3, 
 	new Float32Array(await loadObjFileVerts('./models/test.obj')),

@@ -32,7 +32,7 @@ export const vf_p_generic3D =
 		@builtin(position) pos: vec4f,
 		@location(0) fragUV: vec2f,
 		@location(1) fragPos: vec4f,
-		@location(2) light: vec3f,
+		@location(2) light: f32,
 	};
 	
 	@vertex
@@ -44,13 +44,16 @@ export const vf_p_generic3D =
 		output.fragPos = 0.5 * (vec4f(input.pos.x, input.pos.y, input.pos.z, 1) + vec4f(1.0,1.0,1.0,1.0));
 		
 		//light
-		//vec3f lightPos = vec3f(0.0f, 5.0f, 5.0f);
+		var lightPos = vec4f(20.0, 0.0, 0.0, 1.0);
+		var diffuseStrength = 1.2;
+		var ambient = 0.01;
 		
-		//vec3f normal = normalize(input.norm);
-		//vec3f lightDir = normalize(lightPos - output.fragPos);  
-		//float diff = max(dot(normal, lightDir), 0.0);
-		//output.light = vec3f(diff, diff, diff);
-		output.light = vec3f(1., 1., 1.);
+		var vNormal = normalize(input.norm);
+		var lightDir = normalize(lightPos.xyz - output.fragPos.xyz);  
+		var lightMag = dot(vNormal, lightDir);
+		var diff : f32 = diffuseStrength * max(lightMag, 0.0);
+		
+		output.light = diff + ambient;
 		return output;
 	}
 	
@@ -58,15 +61,14 @@ export const vf_p_generic3D =
 	struct FragInput {
 		@location(0) fragUV: vec2f,
 		@location(1) fragPos: vec4f,
-		@location(2) light: vec3f,
+		@location(2) light: f32,
 	};
 
 	
 	@fragment
 	fn fragmentMain(input: FragInput) -> //could also use input: VertexOutput instead because its contained within the same file here
 		@location(0) vec4f {
-		//return vec4f(1.0,1.0,1.0,1.0);
-		
-		return input.fragPos;// * input.light;
+					
+		return vec4f(1.0,0.0,0.0,1.0) * input.light;
 	}
 `;

@@ -10,21 +10,44 @@ import * as primitives from '../models/primitives.js'
 
 import { vf_p_generic3D } from '../shaders/js/vf_p_generic.js'
 
+//----------------CANVAS-----------------------
 const devicePixelRatio = window.devicePixelRatio;
 canvas.width = canvas.clientWidth * devicePixelRatio;
 canvas.height = canvas.clientHeight * devicePixelRatio;
 
-const vertices = primitives.pTest.vertices;
-const faces = primitives.pTest.faces;
-const vertDim = primitives.pTest.dimensions;
-const normals = primitives.pTest.normals;
-const uvs = primitives.pTest.uvs;
+//---------------OBJ MODEL---------------------
+const vertices = primitives.pIslandHouse.vertices;
+const faces = primitives.pIslandHouse.faces;
+const vertDim = primitives.pIslandHouse.dimensions;
+const normals = primitives.pIslandHouse.normals;
+const uvs = primitives.pIslandHouse.uvs;
+
+//---------------VERT BUF ARRAY----------------
 const numPositions = vertices / vertDim;	//actual vertex count
 const vertStride = vertDim * 4;	//4 for number of bytes in a float
 const normStride = vertDim * 4;	//4 for number of bytes in a float
 const uvStride = 2 * 4;	//4 for number of bytes in a float
 const totalStride = vertStride + uvStride + normStride;	//4 for number of bytes in a float
+
+//--------------------TIME---------------------
 let step = 0; // Track how many simulation steps have been run
+
+//---------------------TRS---------------------
+const translateX = -2.0;
+const translateY = -1.0;
+const translateZ = -5.0;
+const rotationX = degToRad(0.0);
+const rotationY = degToRad(-45.0);
+const rotationZ = degToRad(0.0);
+const uniformScale = 0.05;
+
+function radToDeg(rad) {
+	return rad * (180.0 / Math.PI);
+}
+
+function degToRad(degrees) {
+	return degrees * Math.PI / 180.0;
+}
 
 const aspect = canvas.width / canvas.height;
 const projectionMatrix = mat4.perspective((2 * Math.PI) / 5, aspect, 1, 100.0);
@@ -32,20 +55,20 @@ const modelViewProjectionMatrix = mat4.create();
 
 function getTransformationMatrix() {
   const viewMatrix = mat4.identity();
-  mat4.translate(viewMatrix, vec3.fromValues(0, 0, -4), viewMatrix);
   const now = Date.now() / 1000;
-  mat4.rotate(
-    viewMatrix,
-    vec3.fromValues(Math.sin(now), Math.cos(now), 0),
-    1,
-    viewMatrix
-  );
-  mat4.scale( viewMatrix, vec3.fromValues(1.05,1.05,1.05), viewMatrix);
+  //trs
+  mat4.translate(viewMatrix, vec3.fromValues(translateX,translateY,translateZ), viewMatrix);
+  mat4.rotateX( viewMatrix, rotationX, viewMatrix);
+  mat4.rotateY( viewMatrix,  Math.sin(now), viewMatrix);
+  mat4.rotateZ( viewMatrix, rotationZ, viewMatrix);
+  mat4.scale( viewMatrix, vec3.fromValues(uniformScale,uniformScale,uniformScale), viewMatrix);
   
   mat4.multiply(projectionMatrix, viewMatrix, modelViewProjectionMatrix);
 
   return modelViewProjectionMatrix;
 }
+
+//-------------------MAIN-----------------------
 
 //function should return GPUShaderModule object if compiled with valid results, code itself is WGSL
 const genericShaderModule = device.createShaderModule({
@@ -58,30 +81,28 @@ for(let posCount = 0; posCount < (vertices.length / vertDim); posCount++)
 {
 	positions[posCount] = [vertices[(posCount * vertDim) + 0], vertices[(posCount * vertDim) + 1], vertices[(posCount * vertDim) + 2]];
 }
-console.log("---position list-----");
-console.log(positions);
+//console.log("---position list-----");
+//console.log(positions);
 
 const uvSplitting = [];
 for(let uvsCount = 0; uvsCount < (uvs.length / 2); uvsCount++)
 {
 	uvSplitting[uvsCount] = [uvs[(uvsCount * 2) + 0], uvs[(uvsCount * 2) + 1]];
 }
-console.log("---uvs list-----");
-console.log(uvSplitting);
+//console.log("---uvs list-----");
+//console.log(uvSplitting);
 
 const normalSplitting = [];
 for(let normCount = 0; normCount < (normals.length / vertDim); normCount++)
 {
 	normalSplitting[normCount] = [normals[(normCount * vertDim) + 0], normals[(normCount * vertDim) + 1], normals[(normCount * vertDim) + 2]];
 }
-console.log("---normals list-----");
-console.log(normalSplitting);
+//console.log("---normals list-----");
+//console.log(normalSplitting);
 
 
 const result = [];
 //for the entire length of faces (ordered v1,vt1,vn1,v2,vt2,vn2,...) assign accordingly
-
-//const faceList = [];
 for(let faceCount = 0; faceCount < (faces.length / 3); faceCount++)	//3 for divider: v, vt, vn. If there was a vp then its 4
 {
 	result.push(positions[faces[(faceCount * 3) + 0] - 1][0]);
@@ -95,45 +116,7 @@ for(let faceCount = 0; faceCount < (faces.length / 3); faceCount++)	//3 for divi
 	result.push(normalSplitting[faces[(faceCount * 3) + 2] - 1][1]);
 	result.push(normalSplitting[faces[(faceCount * 3) + 2] - 1][2]);
 }
-//{
-//							//1st set locations
-//	faceList[faceCount] = [faces[(faceCount * 9) + 0] - 1, 
-//							faces[(faceCount * 9) + 1] - 1, 
-//							faces[(faceCount * 9) + 2] - 1,
-//							
-//							//2nd set locations
-//							faces[(faceCount * 9) + 3] - 1,
-//							faces[(faceCount * 9) + 4] - 1,
-//							faces[(faceCount * 9) + 5] - 1,
-//							
-//							//3rd set locations
-//							faces[(faceCount * 8) + 6] - 1,
-//							faces[(faceCount * 8) + 7] - 1,
-//							faces[(faceCount * 8) + 8] - 1,
-//							];
-//}
-//console.log("---face list-----");
-//console.log(faceList);
 
-//
-//
-//const result = [];
-//
-//for(let faceRows = 0; faceRows < (faces.length / 8); faceRows++)
-//{
-//	
-//	result.push(positions[faceList[faceRows][0]][0]);
-//	result.push(positions[faceList[faceRows][0]][1]);
-//	result.push(positions[faceList[faceRows][0]][2]);
-//	
-//	result.push(positions[faceList[faceRows][1]][0]);
-//	result.push(positions[faceList[faceRows][1]][1]);
-//	result.push(positions[faceList[faceRows][1]][2]);
-//
-//	result.push(positions[faceList[faceRows][2]][0]);
-//	result.push(positions[faceList[faceRows][2]][1]);
-//	result.push(positions[faceList[faceRows][2]][2]);
-//}
 
 const vertexBufferArray = new Float32Array(result);	//triangle count by verts per tri by vert dimensions
 console.log("-------Final Vertex Buffer Array-------");

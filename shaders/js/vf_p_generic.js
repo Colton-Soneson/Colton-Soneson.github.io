@@ -16,11 +16,21 @@ export const vf_p_generic =
 
 export const vf_p_generic3D = 
 `
-	struct Uniforms
+	struct SpacesUniforms
 	{
 		modelViewProjectionMatrix : mat4x4f,
+		normalMatrix : mat4x4f,
 	}
-	@group(0) @binding(0) var<uniform> UBO: Uniforms;
+	
+	struct LightsUniforms
+	{
+		sunPos : vec4f,
+		sunCol : vec4f,
+		sunIntensity : f32,
+	}
+	
+	@group(0) @binding(0) var<uniform> UBO: SpacesUniforms;
+	@group(0) @binding(1) var<uniform> Lights: LightsUniforms;
 	
 	struct VertexInput {
 		@location(0) pos: vec3f,
@@ -33,6 +43,7 @@ export const vf_p_generic3D =
 		@location(0) fragUV: vec2f,
 		@location(1) fragPos: vec4f,
 		@location(2) light: f32,
+		@location(3) test: vec4f,
 	};
 	
 	@vertex
@@ -44,16 +55,22 @@ export const vf_p_generic3D =
 		output.fragPos = 0.5 * (vec4f(input.pos.x, input.pos.y, input.pos.z, 1) + vec4f(1.0,1.0,1.0,1.0));
 		
 		//light
-		var lightPos = vec4f(20.0, 0.0, 0.0, 1.0);
-		var diffuseStrength = 1.2;
-		var ambient = 0.01;
+		let lightPos = Lights.sunPos;
+		let diffuseStrength = 1.2;
+		let ambient = 0.01;
 		
-		var vNormal = normalize(input.norm);
-		var lightDir = normalize(lightPos.xyz - output.fragPos.xyz);  
-		var lightMag = dot(vNormal, lightDir);
-		var diff : f32 = diffuseStrength * max(lightMag, 0.0);
+		//test
+		
+		
+		let vNormal = normalize(UBO.normalMatrix * vec4f(input.norm.x, input.norm.y, input.norm.z, 1.0));
+		let lightDir = normalize(lightPos.xyz - output.fragPos.xyz);  
+		let lightMag = dot(vNormal.xyz, lightDir);
+		let diff : f32 = diffuseStrength * max(lightMag, 0.0);
 		
 		output.light = diff + ambient;
+		
+		output.test = vNormal;
+		
 		return output;
 	}
 	
@@ -62,6 +79,7 @@ export const vf_p_generic3D =
 		@location(0) fragUV: vec2f,
 		@location(1) fragPos: vec4f,
 		@location(2) light: f32,
+		@location(3) test: vec4f,
 	};
 
 	
@@ -69,6 +87,7 @@ export const vf_p_generic3D =
 	fn fragmentMain(input: FragInput) -> //could also use input: VertexOutput instead because its contained within the same file here
 		@location(0) vec4f {
 					
-		return vec4f(1.0,0.0,0.0,1.0) * input.light;
+		//return vec4f(input.light, input.light, input.light, 1.0);
+		return input.test;
 	}
 `;

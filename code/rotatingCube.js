@@ -33,13 +33,25 @@ const totalStride = vertStride + uvStride + normStride;	//4 for number of bytes 
 let step = 0; // Track how many simulation steps have been run
 
 //---------------------TRS---------------------
+const camPosX = 0.0;
+const camPosY = 1.0;
+const camPosZ = 1.5;
 const translateX = -2.0;
 const translateY = -1.0;
 const translateZ = -5.0;
 const rotationX = degToRad(0.0);
 const rotationY = degToRad(-45.0);
 const rotationZ = degToRad(0.0);
-const uniformScale = 0.05;
+const uniformScale = 0.025;
+
+//-----------------SUN SETTINGS----------------
+const sunPosX = 0.0;
+const sunPosY = 0.0;
+const sunPosZ = 0.5;
+const sunPosWS = vec3.create(sunPosX, sunPosY, sunPosZ);
+const sunColor = vec3.create(1.0, 1.0, 0.9);
+const sunIntensity = 0.5;
+const sunPadding = 1.0;
 
 function radToDeg(rad) {
 	return rad * (180.0 / Math.PI);
@@ -51,21 +63,66 @@ function degToRad(degrees) {
 
 const aspect = canvas.width / canvas.height;
 const projectionMatrix = mat4.perspective((2 * Math.PI) / 5, aspect, 1, 100.0);
-const modelViewProjectionMatrix = mat4.create();
 
-function getTransformationMatrix() {
-  const viewMatrix = mat4.identity();
-  const now = Date.now() / 1000;
-  //trs
-  mat4.translate(viewMatrix, vec3.fromValues(translateX,translateY,translateZ), viewMatrix);
-  mat4.rotateX( viewMatrix, rotationX, viewMatrix);
-  mat4.rotateY( viewMatrix,  Math.sin(now), viewMatrix);
-  mat4.rotateZ( viewMatrix, rotationZ, viewMatrix);
-  mat4.scale( viewMatrix, vec3.fromValues(uniformScale,uniformScale,uniformScale), viewMatrix);
+function getViewMatrix() {
+	return mat4.lookAt([camPosX, camPosY, camPosZ],
+					   [0,		 0,		  0],
+					   [0,		 1,		  0]);
+}
+
+function getModelMatrix() { 
+	const modelMatrix = mat4.create();
+	mat4.identity(modelMatrix);
+	const now = Date.now() / 1000;
+	//trs
+	mat4.scale( modelMatrix, vec3.fromValues(uniformScale,uniformScale,uniformScale), modelMatrix);
+	mat4.rotateX( modelMatrix, rotationX, modelMatrix);
+	mat4.rotateY( modelMatrix,  now, modelMatrix);
+	mat4.rotateZ( modelMatrix, rotationZ, modelMatrix);
+	mat4.translate(modelMatrix, vec3.fromValues(translateX,translateY,translateZ), modelMatrix);
+	
+	return modelMatrix;
+}
+
+function getMatrixTransformSpaces() {
+  const spaceBuffer = [];
   
-  mat4.multiply(projectionMatrix, viewMatrix, modelViewProjectionMatrix);
+  const viewMatrix = getViewMatrix();
+  const modelMatrix = getModelMatrix();
+  const modelViewMat = mat4.mul(viewMatrix, modelMatrix);
+  const modelViewProjectionMatrix = mat4.mul(projectionMatrix, modelViewMat);
+  var normalMat = mat4.create();
+  normalMat = mat4.transpose(mat4.invert(modelMatrix));
+  //normalMat = mat4.transpose(mat4.invert(modelViewMat));
+  
+  for(let i = 0; i < 16; i++) {
+	  spaceBuffer.push(modelViewProjectionMatrix[i]);
+  }
+  for(let i = 0; i < 16; i++) {
+	  spaceBuffer.push(normalMat[i]);
+  }
+  
+  return new Float32Array(spaceBuffer);
+}
 
-  return modelViewProjectionMatrix;
+function getLightsInfo() {
+	const lightsBuffer = [];
+	
+	const sunPosViewSpace = vec3.transformMat4(sunPosWS, getViewMatrix());
+	lightsBuffer.push(sunPosViewSpace[0]);
+	lightsBuffer.push(sunPosViewSpace[1]);
+	lightsBuffer.push(sunPosViewSpace[2]);
+	lightsBuffer.push(1.0);//uniform buffers HATE vec3f, keep it to scalars, 2, and 4 bytes. Otherwise shit will break.
+	
+	lightsBuffer.push(sunColor[0]);
+	lightsBuffer.push(sunColor[1]);
+	lightsBuffer.push(sunColor[2]);
+	lightsBuffer.push(1.0);//uniform buffers HATE vec3f, keep it to scalars, 2, and 4 bytes. Otherwise shit will break.
+	
+	lightsBuffer.push(sunIntensity);
+	
+	
+	return new Float32Array(lightsBuffer);
 }
 
 //-------------------MAIN-----------------------
@@ -76,49 +133,52 @@ label: "generic vf shader",
 code: vf_p_generic3D
 });
 
-const positions = [];
-for(let posCount = 0; posCount < (vertices.length / vertDim); posCount++)
-{
-	positions[posCount] = [vertices[(posCount * vertDim) + 0], vertices[(posCount * vertDim) + 1], vertices[(posCount * vertDim) + 2]];
-}
-//console.log("---position list-----");
-//console.log(positions);
-
-const uvSplitting = [];
-for(let uvsCount = 0; uvsCount < (uvs.length / 2); uvsCount++)
-{
-	uvSplitting[uvsCount] = [uvs[(uvsCount * 2) + 0], uvs[(uvsCount * 2) + 1]];
-}
-//console.log("---uvs list-----");
-//console.log(uvSplitting);
-
-const normalSplitting = [];
-for(let normCount = 0; normCount < (normals.length / vertDim); normCount++)
-{
-	normalSplitting[normCount] = [normals[(normCount * vertDim) + 0], normals[(normCount * vertDim) + 1], normals[(normCount * vertDim) + 2]];
-}
-//console.log("---normals list-----");
-//console.log(normalSplitting);
-
-
-const result = [];
-//for the entire length of faces (ordered v1,vt1,vn1,v2,vt2,vn2,...) assign accordingly
-for(let faceCount = 0; faceCount < (faces.length / 3); faceCount++)	//3 for divider: v, vt, vn. If there was a vp then its 4
-{
-	result.push(positions[faces[(faceCount * 3) + 0] - 1][0]);
-	result.push(positions[faces[(faceCount * 3) + 0] - 1][1]);
-	result.push(positions[faces[(faceCount * 3) + 0] - 1][2]);
+function loadModel() {
+	const positions = [];
+	for(let posCount = 0; posCount < (vertices.length / vertDim); posCount++)
+	{
+		positions[posCount] = [vertices[(posCount * vertDim) + 0], vertices[(posCount * vertDim) + 1], vertices[(posCount * vertDim) + 2]];
+	}
+	//console.log("---position list-----");
+	//console.log(positions);
 	
-	result.push(uvSplitting[faces[(faceCount * 3) + 1] - 1][0]);
-	result.push(uvSplitting[faces[(faceCount * 3) + 1] - 1][1]);
+	const uvSplitting = [];
+	for(let uvsCount = 0; uvsCount < (uvs.length / 2); uvsCount++)
+	{
+		uvSplitting[uvsCount] = [uvs[(uvsCount * 2) + 0], uvs[(uvsCount * 2) + 1]];
+	}
+	//console.log("---uvs list-----");
+	//console.log(uvSplitting);
 	
-	result.push(normalSplitting[faces[(faceCount * 3) + 2] - 1][0]);
-	result.push(normalSplitting[faces[(faceCount * 3) + 2] - 1][1]);
-	result.push(normalSplitting[faces[(faceCount * 3) + 2] - 1][2]);
+	const normalSplitting = [];
+	for(let normCount = 0; normCount < (normals.length / vertDim); normCount++)
+	{
+		normalSplitting[normCount] = [normals[(normCount * vertDim) + 0], normals[(normCount * vertDim) + 1], normals[(normCount * vertDim) + 2]];
+	}
+	//console.log("---normals list-----");
+	//console.log(normalSplitting);
+	
+	
+	const result = [];
+	//for the entire length of faces (ordered v1,vt1,vn1,v2,vt2,vn2,...) assign accordingly
+	for(let faceCount = 0; faceCount < (faces.length / 3); faceCount++)	//3 for divider: v, vt, vn. If there was a vp then its 4
+	{
+		result.push(positions[faces[(faceCount * 3) + 0] - 1][0]);
+		result.push(positions[faces[(faceCount * 3) + 0] - 1][1]);
+		result.push(positions[faces[(faceCount * 3) + 0] - 1][2]);
+		
+		result.push(uvSplitting[faces[(faceCount * 3) + 1] - 1][0]);
+		result.push(uvSplitting[faces[(faceCount * 3) + 1] - 1][1]);
+		
+		result.push(normalSplitting[faces[(faceCount * 3) + 2] - 1][0]);
+		result.push(normalSplitting[faces[(faceCount * 3) + 2] - 1][1]);
+		result.push(normalSplitting[faces[(faceCount * 3) + 2] - 1][2]);
+	}
+	
+	return result;
 }
 
-
-const vertexBufferArray = new Float32Array(result);	//triangle count by verts per tri by vert dimensions
+const vertexBufferArray = new Float32Array(loadModel());	//triangle count by verts per tri by vert dimensions
 console.log("-------Final Vertex Buffer Array-------");
 console.log(vertexBufferArray);
 
@@ -156,13 +216,7 @@ attributes: [{			//stuff like color, normal direction, etc
 
 };
 
-
-const uniformArrayTRS = 4 * 16; // 4x4 matrix for TRS
-const uniformBufferTRS = device.createBuffer({
-  label: "3D TRS Matrix Uniform Buffer",
-  size: uniformArrayTRS,
-  usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,	//this makes it another GPUBuffer Object but this time uniform
-});
+//-----------------Buffer Binding-----------------------
 
 //const uniformArrayGU = new Float32Array([1, 1]); //do floats for sake of not casting in shader code
 //const uniformBufferGU = device.createBuffer({
@@ -178,17 +232,38 @@ const depthTexture = device.createTexture({
   usage: GPUTextureUsage.RENDER_ATTACHMENT,
 });
 
+const uniformArraySpaces = 128; //(4 * 4 * 4) + (4 * 4 * 4) 4x4 matrix for MVP + normal
+const uniformBufferSpaces = device.createBuffer({
+  label: "3D Space Transformations Uniform Buffer",
+  size: uniformArraySpaces,
+  usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,	//this makes it another GPUBuffer Object but this time uniform
+});
+
+const uniformArrayLights = 48; //(4 * 4) + (4 * 4) + 4 + 12   vec4 + vec4 + scalar + padding to 48
+const uniformBufferLights = device.createBuffer({
+  label: "Lights Uniform Buffer",
+  size: uniformArrayLights,
+  usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,	//this makes it another GPUBuffer Object but this time uniform
+});
+
 //GPUBindGroup, bind groups connect uniform in the shader
 //	collection of resources for shader to access, cant change resources in bind group but you can change their contents
 
 // Create the bind group layout and pipeline layout.
 const bindGroupLayout = device.createBindGroupLayout({
   label: "Bind Group Layout",
-  entries: [{
+  entries: [
+  {
     binding: 0,
     visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT | GPUShaderStage.COMPUTE,	//visibility is GPUShaderStage flags that indicate which shader stages can use resource
     buffer: {} //buffer key, other options are things like "texture" or "sampler", default is uniform, leave empty for binding 0
-  }]
+  },
+  {
+    binding: 1,
+    visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT | GPUShaderStage.COMPUTE,
+    buffer: {}
+  }
+  ]
 });
 
 //multi bind group
@@ -196,9 +271,14 @@ const bindGroups = [
   device.createBindGroup({
     label: "renderer bind group",
     layout: bindGroupLayout,
-    entries: [{
+    entries: [
+	{
       binding: 0,
-      resource: { buffer: uniformBufferTRS }	//buffer key, other options are things like "texture" or "sampler"
+      resource: { buffer: uniformBufferSpaces }	//buffer key, other options are things like "texture" or "sampler"
+    },
+	{
+      binding: 1,
+      resource: { buffer: uniformBufferLights }
     }],
   })
 ];
@@ -254,12 +334,19 @@ export function updateRotatingCubePass() {
 	
 	step++; // Increment the step count, done between compute and render so output buffer of compute pipeline is input buffer for render pipeline
 	
-	const transformationMatrix = getTransformationMatrix();
-	device.queue.writeBuffer(uniformBufferTRS, 
+	const spaceTrans = getMatrixTransformSpaces();
+	device.queue.writeBuffer(uniformBufferSpaces, 
 							0, 
-							transformationMatrix.buffer,
-							transformationMatrix.byteOffset,
-							transformationMatrix.byteLength);
+							spaceTrans.buffer,
+							spaceTrans.byteOffset,
+							spaceTrans.byteLength);
+	
+	const lights = getLightsInfo();
+	device.queue.writeBuffer(uniformBufferLights, 
+							0, 
+							lights.buffer,
+							lights.byteOffset,
+							lights.byteLength);
 	
 	// Start a render pass 
 	const pass = encoder.beginRenderPass({

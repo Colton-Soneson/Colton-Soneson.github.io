@@ -16,14 +16,9 @@ canvas.width = canvas.clientWidth * devicePixelRatio;
 canvas.height = canvas.clientHeight * devicePixelRatio;
 
 //---------------OBJ MODEL---------------------
-const vertices = primitives.pIslandHouse.vertices;
-const faces = primitives.pIslandHouse.faces;
-const vertDim = primitives.pIslandHouse.dimensions;
-const normals = primitives.pIslandHouse.normals;
-const uvs = primitives.pIslandHouse.uvs;
+const vertDim = 3; //primitives.pIslandHouse.dimensions;
 
-//---------------VERT BUF ARRAY----------------
-const numPositions = vertices / vertDim;	//actual vertex count
+//---------------VERT BUF ARRAYS----------------
 const vertStride = vertDim * 4;	//4 for number of bytes in a float
 const normStride = vertDim * 4;	//4 for number of bytes in a float
 const uvStride = 2 * 4;	//4 for number of bytes in a float
@@ -36,13 +31,6 @@ let step = 0; // Track how many simulation steps have been run
 const camPosX = 0.0;
 const camPosY = 1.0;
 const camPosZ = 1.5;
-const translateX = -2.0;
-const translateY = -1.0;
-const translateZ = -5.0;
-const rotationX = degToRad(0.0);
-const rotationY = degToRad(-45.0);
-const rotationZ = degToRad(0.0);
-const uniformScale = 0.025;
 
 //-----------------SUN SETTINGS----------------
 const sunPosX = 0.0;
@@ -70,25 +58,25 @@ function getViewMatrix() {
 					   [0,		 1,		  0]);
 }
 
-function getModelMatrix() { 
+function getModelMatrix(t, r, s) { 
 	const modelMatrix = mat4.create();
 	mat4.identity(modelMatrix);
 	const now = Date.now() / 1000;
 	//trs
-	mat4.scale( modelMatrix, vec3.fromValues(uniformScale,uniformScale,uniformScale), modelMatrix);
-	mat4.rotateX( modelMatrix, rotationX, modelMatrix);
-	mat4.rotateY( modelMatrix,  now, modelMatrix);
-	mat4.rotateZ( modelMatrix, rotationZ, modelMatrix);
-	mat4.translate(modelMatrix, vec3.fromValues(translateX,translateY,translateZ), modelMatrix);
+	mat4.scale( modelMatrix, vec3.fromValues(s[0],s[1],s[2]), modelMatrix);
+	mat4.rotateX( modelMatrix, degToRad(r[0]), modelMatrix);
+	mat4.rotateY( modelMatrix,  degToRad(r[1]), modelMatrix);
+	mat4.rotateZ( modelMatrix, degToRad(r[2]), modelMatrix);
+	mat4.translate(modelMatrix, vec3.fromValues(t[0],t[1],t[2]), modelMatrix);
 	
 	return modelMatrix;
 }
 
-function getMatrixTransformSpaces() {
+function getMatrixTransformSpaces(model) {
   const spaceBuffer = [];
   
   const viewMatrix = getViewMatrix();
-  const modelMatrix = getModelMatrix();
+  const modelMatrix = getModelMatrix(model.worldTranslation, model.worldRotation, model.worldScale);
   const modelViewMat = mat4.mul(viewMatrix, modelMatrix);
   const modelViewProjectionMatrix = mat4.mul(projectionMatrix, modelViewMat);
   var normalMat = mat4.create();
@@ -133,7 +121,7 @@ label: "generic vf shader",
 code: vf_p_generic3D
 });
 
-function loadModel() {
+function loadModel(vertices, faces, normals, uvs) {
 	const positions = [];
 	for(let posCount = 0; posCount < (vertices.length / vertDim); posCount++)
 	{
@@ -178,7 +166,10 @@ function loadModel() {
 	return result;
 }
 
-const vertexBufferArray = new Float32Array(loadModel());	//triangle count by verts per tri by vert dimensions
+const vertexBufferArray = new Float32Array(loadModel(primitives.pIslandHouse.vertices,
+													primitives.pIslandHouse.faces,
+													primitives.pIslandHouse.normals,
+													primitives.pIslandHouse.uvs));	//triangle count by verts per tri by vert dimensions
 console.log("-------Final Vertex Buffer Array-------");
 console.log(vertexBufferArray);
 
@@ -334,7 +325,7 @@ export function updateRotatingCubePass() {
 	
 	step++; // Increment the step count, done between compute and render so output buffer of compute pipeline is input buffer for render pipeline
 	
-	const spaceTrans = getMatrixTransformSpaces();
+	const spaceTrans = getMatrixTransformSpaces(primitives.pIslandHouse);
 	device.queue.writeBuffer(uniformBufferSpaces, 
 							0, 
 							spaceTrans.buffer,

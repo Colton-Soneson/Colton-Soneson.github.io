@@ -1,11 +1,16 @@
 import {loadObjFileVerts, loadObjFileFaces, loadObjFileNormals, loadObjFileUVs} from '../code/objLoader.js'
 
-function Primitive(dimensions, vertices, faces, normals, uvs) {
+function Primitive(dimensions, vertices, faces, normals, uvs, texture, worldTranslation, worldRotation, worldScale) {
 	this.dimensions = dimensions;
 	this.vertices = vertices;
 	this.faces = faces;
 	this.normals = normals;
 	this.uvs = uvs;
+	this.texture = texture;
+	this.worldTranslation = worldTranslation;
+	this.worldRotation = worldRotation;
+	this.worldScale = worldScale;
+	
 }
 
 //-------------------------OBJ----------------------------
@@ -15,13 +20,46 @@ export const pIslandHouse = new Primitive(
 	new Float32Array(await loadObjFileFaces('./models/islandhouse.obj')),
 	new Float32Array(await loadObjFileNormals('./models/islandhouse.obj')),
 	new Float32Array(await loadObjFileUVs('./models/islandhouse.obj')),
+	'blankForNow',
+	new Float32Array([-2.0,-1.0,-5.0]),
+	new Float32Array([0.0,-45.0,0.0]),
+	new Float32Array([0.025, 0.025, 0.025]),
 );
+
+export const pBench = new Primitive(
+	3, 
+	new Float32Array(await loadObjFileVerts('./models/bench.obj')),
+	new Float32Array(await loadObjFileFaces('./models/bench.obj')),
+	new Float32Array(await loadObjFileNormals('./models/bench.obj')),
+	new Float32Array(await loadObjFileUVs('./models/bench.obj')),
+	'blankForNow',
+	new Float32Array(),
+	new Float32Array(),
+	new Float32Array(),
+);
+
+export const pGround = new Primitive(
+	3, 
+	new Float32Array(await loadObjFileVerts('./models/ground.obj')),
+	new Float32Array(await loadObjFileFaces('./models/ground.obj')),
+	new Float32Array(await loadObjFileNormals('./models/ground.obj')),
+	new Float32Array(await loadObjFileUVs('./models/ground.obj')),
+	'blankForNow',
+	new Float32Array(),
+	new Float32Array(),
+	new Float32Array(),
+);
+
 export const pTest = new Primitive(
 	3, 
 	new Float32Array(await loadObjFileVerts('./models/test.obj')),
 	new Float32Array(await loadObjFileFaces('./models/test.obj')),
 	new Float32Array(await loadObjFileNormals('./models/test.obj')),
 	new Float32Array(await loadObjFileUVs('./models/test.obj')),
+	'blankForNow',
+	new Float32Array([0,0,0]),
+	new Float32Array([0,0,0]),
+	new Float32Array([1,1,1]),
 );
 
 //export const pSuzanne = new Primitive(

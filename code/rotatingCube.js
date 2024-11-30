@@ -29,8 +29,8 @@ let step = 0; // Track how many simulation steps have been run
 
 //---------------------TRS---------------------
 const camPosX = 0.0;
-const camPosY = 1.0;
-const camPosZ = 1.5;
+const camPosY = 5.0;
+const camPosZ = 80.0;
 
 //-----------------SUN SETTINGS----------------
 const sunPosX = 0.0;
@@ -166,9 +166,11 @@ function loadModel(vertices, faces, normals, uvs) {
 	return result;
 }
 
+const entityModelsStride = [];
 
 function loadModelsToVBArray(entityModelList, modelCount, name) {
 	const result = [];
+	console.log("Vertex Buffer Array Model Load Function:" , name);	
 	
 	for(let i = 0; i < modelCount; ++i)
 	{
@@ -180,9 +182,10 @@ function loadModelsToVBArray(entityModelList, modelCount, name) {
 		{
 			result.push(tempModelArray[j]);
 		}
+		entityModelsStride.push(tempModelArray.length);
+		console.log("Model: ", i, "  Array Total Stride: ", tempModelArray.length);
 	}
 	
-	console.log("Vertex Buffer Array Model Load Function:" , name);	
 	return new Float32Array(result);
 }
 
@@ -195,7 +198,7 @@ const genericShaderVertexBufferArray = loadModelsToVBArray(entityModels, entityM
 //-----------------VB OF GENERIC SHADER MODELS-----------------------
 //GPU Side memory management done through GPUBuffer objects
 const vertexBuffer = device.createBuffer({
-	label: "cube vertices",		//just helps to identify object, can be anything you type
+	label: "generic model vertices",		//just helps to identify object, can be anything you type
 	size: genericShaderVertexBufferArray.byteLength,	//for 12 float vertices thats 48 bytes, cant be resized after creation
 	usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,	//its use is for vertex data, and that you want to copy data into it
 });
@@ -243,10 +246,14 @@ const depthTexture = device.createTexture({
   usage: GPUTextureUsage.RENDER_ATTACHMENT,
 });
 
-const uniformArraySpaces = 128; //(4 * 4 * 4) + (4 * 4 * 4) 4x4 matrix for MVP + normal
+const singleObjectUniformArraySpacesSize = 128; //(4 * 4 * 4) + (4 * 4 * 4) 4x4 matrix for MVP + normal
+const uboOffset = 256;	//this is a defaulted max for UBO, nothing I wrote equals up to 256, its a limiter
+//const totalUniformArraySpacesSize = uboOffset + singleObjectUniformArraySpacesSize * (entityModels.length - 1);
+const totalUniformArraySpacesSize = uboOffset + singleObjectUniformArraySpacesSize;
+
 const uniformBufferSpaces = device.createBuffer({
   label: "3D Space Transformations Uniform Buffer",
-  size: uniformArraySpaces,
+  size: totalUniformArraySpacesSize,
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,	//this makes it another GPUBuffer Object but this time uniform
 });
 
@@ -280,12 +287,25 @@ const bindGroupLayout = device.createBindGroupLayout({
 //multi bind group
 const bindGroups = [
   device.createBindGroup({
-    label: "renderer bind group",
+    label: "renderer bind group 1",
     layout: bindGroupLayout,
     entries: [
 	{
       binding: 0,
-      resource: { buffer: uniformBufferSpaces }	//buffer key, other options are things like "texture" or "sampler"
+      resource: { buffer: uniformBufferSpaces, offset: 0, size: singleObjectUniformArraySpacesSize, }	//buffer key, other options are things like "texture" or "sampler"
+    },
+	{
+      binding: 1,
+      resource: { buffer: uniformBufferLights }
+    }],
+  }),
+  device.createBindGroup({
+    label: "renderer bind group 2",
+    layout: bindGroupLayout,
+    entries: [
+	{
+      binding: 0,
+      resource: { buffer: uniformBufferSpaces, offset: uboOffset , size: singleObjectUniformArraySpacesSize, }	//buffer key, other options are things like "texture" or "sampler"
     },
 	{
       binding: 1,
@@ -345,14 +365,23 @@ export function updateRotatingCubePass() {
 	
 	step++; // Increment the step count, done between compute and render so output buffer of compute pipeline is input buffer for render pipeline
 	
-	const spaceTrans = getMatrixTransformSpaces(primitives.pIslandHouse);
+	const spaceTrans1 = getMatrixTransformSpaces(entityModels[0]);
+	const spaceTrans2 = getMatrixTransformSpaces(entityModels[1]);
+	const lights = getLightsInfo();
+
+	
 	device.queue.writeBuffer(uniformBufferSpaces, 
 							0, 
-							spaceTrans.buffer,
-							spaceTrans.byteOffset,
-							spaceTrans.byteLength);
+							spaceTrans1.buffer,
+							spaceTrans1.byteOffset,
+							spaceTrans1.byteLength);
 	
-	const lights = getLightsInfo();
+	device.queue.writeBuffer(uniformBufferSpaces, 
+							uboOffset,	//apparently uniform buffer size defaults to a need of 256 
+							spaceTrans2.buffer,
+							spaceTrans2.byteOffset,
+							spaceTrans2.byteLength);
+	
 	device.queue.writeBuffer(uniformBufferLights, 
 							0, 
 							lights.buffer,
@@ -380,8 +409,23 @@ export function updateRotatingCubePass() {
 	
 	//generic shader pass
 	pass.setVertexBuffer(0, vertexBuffer);
+	
+	const VBAStrideOut = genericShaderVertexBufferArray.length / (totalStride / 4);
+	const mod1 = entityModelsStride[0] / (totalStride / 4);
+	const mod2 = entityModelsStride[1] / (totalStride / 4);
+	
+	//first object
 	pass.setBindGroup(0, bindGroups[0]);
-	pass.draw(genericShaderVertexBufferArray.length / (totalStride / 4), 1);		// passed in is total stride / float size = 8 
+	pass.draw(mod1, 1);
+	
+	//second object
+	pass.setBindGroup(0, bindGroups[1]);
+	pass.draw(mod2, 1, mod1);
+	
+	//third object
+	
+	
+	//pass.draw(genericShaderVertexBufferArray.length / (totalStride / 4), 1);		// passed in is total stride / float size = 8 
 																		//	second arg is number of instances of this draw call
 																		//using ".length()" method here will just draw out the whole VBA, all objects included
 	pass.end();

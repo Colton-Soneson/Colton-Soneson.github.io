@@ -21,9 +21,9 @@ export const pIslandHouse = new Primitive(
 	new Float32Array(await loadObjFileNormals('./models/islandhouse.obj')),
 	new Float32Array(await loadObjFileUVs('./models/islandhouse.obj')),
 	'blankForNow',
-	new Float32Array([-2.0,-1.0,-5.0]),
+	new Float32Array([-20.0,-1.0,-5.0]),
 	new Float32Array([0.0,-45.0,0.0]),
-	new Float32Array([0.025, 0.025, 0.025]),
+	new Float32Array([1.0, 1.0, 1.0]),
 );
 
 export const pBench = new Primitive(
@@ -35,7 +35,7 @@ export const pBench = new Primitive(
 	'blankForNow',
 	new Float32Array([-2.0,-1.0,-5.0]),
 	new Float32Array([0.0,-45.0,0.0]),
-	new Float32Array([0.25, 0.25, 0.25]),
+	new Float32Array([0.5, 0.5, 0.5]),
 );
 
 export const pGround = new Primitive(

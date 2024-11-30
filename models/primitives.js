@@ -21,9 +21,9 @@ export const pIslandHouse = new Primitive(
 	new Float32Array(await loadObjFileNormals('./models/islandhouse.obj')),
 	new Float32Array(await loadObjFileUVs('./models/islandhouse.obj')),
 	'blankForNow',
-	new Float32Array([-20.0,-1.0,-5.0]),
+	new Float32Array([-30.0,10.0,65.0]),
 	new Float32Array([0.0,-45.0,0.0]),
-	new Float32Array([1.0, 1.0, 1.0]),
+	new Float32Array([0.8, 0.8, 0.8]),
 );
 
 export const pBench = new Primitive(
@@ -33,9 +33,9 @@ export const pBench = new Primitive(
 	new Float32Array(await loadObjFileNormals('./models/bench.obj')),
 	new Float32Array(await loadObjFileUVs('./models/bench.obj')),
 	'blankForNow',
-	new Float32Array([-2.0,-1.0,-5.0]),
+	new Float32Array([55.0,50.0,0.0]),
 	new Float32Array([0.0,-45.0,0.0]),
-	new Float32Array([0.5, 0.5, 0.5]),
+	new Float32Array([0.175, 0.175, 0.175]),
 );
 
 export const pGround = new Primitive(
@@ -45,9 +45,9 @@ export const pGround = new Primitive(
 	new Float32Array(await loadObjFileNormals('./models/ground.obj')),
 	new Float32Array(await loadObjFileUVs('./models/ground.obj')),
 	'blankForNow',
-	new Float32Array([0.0,-10.0,0.0]),
-	new Float32Array([0.0,0.0,0.0]),
-	new Float32Array([0.25,0.25,0.25]),
+	new Float32Array([0.0,-20.0,0.0]),
+	new Float32Array([0.0,90.0,0.0]),
+	new Float32Array([0.45,0.45,0.45]),
 );
 
 export const pTest = new Primitive(

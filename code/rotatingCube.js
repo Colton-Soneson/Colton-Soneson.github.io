@@ -29,12 +29,14 @@ let step = 0; // Track how many simulation steps have been run
 
 //---------------------TRS---------------------
 const camPosX = 0.0;
-const camPosY = 5.0;
-const camPosZ = 80.0;
+const camPosY = 50.0;
+const camPosZ = 150.0;
+const camFarPlane = 300.0;
+const camNearPlane = 1.0;
 
 //-----------------SUN SETTINGS----------------
 const sunPosX = 0.0;
-const sunPosY = 0.0;
+const sunPosY = 400.0;
 const sunPosZ = 0.5;
 const sunPosWS = vec3.create(sunPosX, sunPosY, sunPosZ);
 const sunColor = vec3.create(1.0, 1.0, 0.9);
@@ -50,7 +52,7 @@ function degToRad(degrees) {
 }
 
 const aspect = canvas.width / canvas.height;
-const projectionMatrix = mat4.perspective((2 * Math.PI) / 5, aspect, 1, 100.0);
+const projectionMatrix = mat4.perspective((2 * Math.PI) / 5, aspect, camNearPlane, camFarPlane);
 
 function getViewMatrix() {
 	return mat4.lookAt([camPosX, camPosY, camPosZ],

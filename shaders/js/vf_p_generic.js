@@ -88,6 +88,6 @@ export const vf_p_generic3D =
 		@location(0) vec4f {
 					
 		//return vec4f(input.light, input.light, input.light, 1.0);
-		return input.test;
+		return input.test * 4.5;
 	}
 `;

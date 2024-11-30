@@ -45,9 +45,9 @@ export const pGround = new Primitive(
 	new Float32Array(await loadObjFileNormals('./models/ground.obj')),
 	new Float32Array(await loadObjFileUVs('./models/ground.obj')),
 	'blankForNow',
-	new Float32Array(),
-	new Float32Array(),
-	new Float32Array(),
+	new Float32Array([0.0,-10.0,0.0]),
+	new Float32Array([0.0,0.0,0.0]),
+	new Float32Array([0.25,0.25,0.25]),
 );
 
 export const pTest = new Primitive(

@@ -166,22 +166,42 @@ function loadModel(vertices, faces, normals, uvs) {
 	return result;
 }
 
-const vertexBufferArray = new Float32Array(loadModel(primitives.pIslandHouse.vertices,
-													primitives.pIslandHouse.faces,
-													primitives.pIslandHouse.normals,
-													primitives.pIslandHouse.uvs));	//triangle count by verts per tri by vert dimensions
-console.log("-------Final Vertex Buffer Array-------");
-console.log(vertexBufferArray);
 
+function loadModelsToVBArray(entityModelList, modelCount, name) {
+	const result = [];
+	
+	for(let i = 0; i < modelCount; ++i)
+	{
+		const tempModelArray = loadModel(entityModelList[i].vertices,
+										entityModelList[i].faces,
+										entityModelList[i].normals,
+										entityModelList[i].uvs);
+		for(let j = 0; j < tempModelArray.length; ++j)
+		{
+			result.push(tempModelArray[j]);
+		}
+	}
+	
+	console.log("Vertex Buffer Array Model Load Function:" , name);	
+	return new Float32Array(result);
+}
+
+const entityModels = [];
+entityModels.push(primitives.pIslandHouse);
+entityModels.push(primitives.pBench);
+console.log(entityModels);
+const genericShaderVertexBufferArray = loadModelsToVBArray(entityModels, entityModels.length, "generic shader VBA");
+
+//-----------------VB OF GENERIC SHADER MODELS-----------------------
 //GPU Side memory management done through GPUBuffer objects
 const vertexBuffer = device.createBuffer({
 	label: "cube vertices",		//just helps to identify object, can be anything you type
-	size: vertexBufferArray.byteLength,	//for 12 float vertices thats 48 bytes, cant be resized after creation
+	size: genericShaderVertexBufferArray.byteLength,	//for 12 float vertices thats 48 bytes, cant be resized after creation
 	usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,	//its use is for vertex data, and that you want to copy data into it
 });
 
 //copy vertex data to buffer
-device.queue.writeBuffer(vertexBuffer, /*bufferOffset=*/0, vertexBufferArray);
+device.queue.writeBuffer(vertexBuffer, /*bufferOffset=*/0, genericShaderVertexBufferArray);
 
 
 //now tell WebGPU what the hell to do with the info
@@ -357,10 +377,13 @@ export function updateRotatingCubePass() {
 	});
 
 	pass.setPipeline(genericPipeline);			// shaders used, layout of vertex data, other relevant state data
+	
+	//generic shader pass
 	pass.setVertexBuffer(0, vertexBuffer);
 	pass.setBindGroup(0, bindGroups[0]);
-	pass.draw(vertexBufferArray.length / (totalStride / 4), 1);		// passed in is total stride / float size = 8 
+	pass.draw(genericShaderVertexBufferArray.length / (totalStride / 4), 1);		// passed in is total stride / float size = 8 
 																		//	second arg is number of instances of this draw call
+																		//using ".length()" method here will just draw out the whole VBA, all objects included
 	pass.end();
 
 	device.queue.submit([encoder.finish()]);

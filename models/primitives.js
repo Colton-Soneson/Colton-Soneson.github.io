@@ -33,9 +33,9 @@ export const pBench = new Primitive(
 	new Float32Array(await loadObjFileNormals('./models/bench.obj')),
 	new Float32Array(await loadObjFileUVs('./models/bench.obj')),
 	'blankForNow',
-	new Float32Array(),
-	new Float32Array(),
-	new Float32Array(),
+	new Float32Array([-2.0,-1.0,-5.0]),
+	new Float32Array([0.0,-45.0,0.0]),
+	new Float32Array([0.25, 0.25, 0.25]),
 );
 
 export const pGround = new Primitive(

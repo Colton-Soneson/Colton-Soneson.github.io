@@ -192,6 +192,7 @@ function loadModelsToVBArray(entityModelList, modelCount, name) {
 const entityModels = [];
 entityModels.push(primitives.pIslandHouse);
 entityModels.push(primitives.pBench);
+entityModels.push(primitives.pGround);
 console.log(entityModels);
 const genericShaderVertexBufferArray = loadModelsToVBArray(entityModels, entityModels.length, "generic shader VBA");
 
@@ -248,8 +249,8 @@ const depthTexture = device.createTexture({
 
 const singleObjectUniformArraySpacesSize = 128; //(4 * 4 * 4) + (4 * 4 * 4) 4x4 matrix for MVP + normal
 const uboOffset = 256;	//this is a defaulted max for UBO, nothing I wrote equals up to 256, its a limiter
-//const totalUniformArraySpacesSize = uboOffset + singleObjectUniformArraySpacesSize * (entityModels.length - 1);
-const totalUniformArraySpacesSize = uboOffset + singleObjectUniformArraySpacesSize;
+const totalUniformArraySpacesSize = uboOffset + singleObjectUniformArraySpacesSize * (entityModels.length);	// !!!!! Check this !!!!!
+//const totalUniformArraySpacesSize = uboOffset + singleObjectUniformArraySpacesSize;
 
 const uniformBufferSpaces = device.createBuffer({
   label: "3D Space Transformations Uniform Buffer",
@@ -285,34 +286,35 @@ const bindGroupLayout = device.createBindGroupLayout({
 });
 
 //multi bind group
-const bindGroups = [
-  device.createBindGroup({
-    label: "renderer bind group 1",
-    layout: bindGroupLayout,
-    entries: [
-	{
-      binding: 0,
-      resource: { buffer: uniformBufferSpaces, offset: 0, size: singleObjectUniformArraySpacesSize, }	//buffer key, other options are things like "texture" or "sampler"
-    },
-	{
-      binding: 1,
-      resource: { buffer: uniformBufferLights }
-    }],
-  }),
-  device.createBindGroup({
-    label: "renderer bind group 2",
-    layout: bindGroupLayout,
-    entries: [
-	{
-      binding: 0,
-      resource: { buffer: uniformBufferSpaces, offset: uboOffset , size: singleObjectUniformArraySpacesSize, }	//buffer key, other options are things like "texture" or "sampler"
-    },
-	{
-      binding: 1,
-      resource: { buffer: uniformBufferLights }
-    }],
-  })
-];
+
+function createGenericBindGroups(numModels){
+	//essentially we want a bind group per model, and thats okay
+	//	its only not okay if we use different groups per instance of the same model, then its inefficient
+	
+	const result = [];
+	for(let i = 0; i < numModels; ++i) {
+		
+			result.push(device.createBindGroup({
+				label: "renderer generic model uniform bind group",
+				layout: bindGroupLayout,
+				entries: [
+				{
+				binding: 0,
+				resource: { buffer: uniformBufferSpaces, offset: i * uboOffset, size: singleObjectUniformArraySpacesSize, }	//buffer key, other options are things like "texture" or "sampler"
+				},
+				{
+				binding: 1,
+				resource: { buffer: uniformBufferLights }
+				}],
+			}));
+			
+			console.log("Generic Bind Group Buffer offset: ", i * uboOffset);
+	}
+	
+	return result;
+}
+
+const bindGroups = createGenericBindGroups(entityModels.length);
 
 const pipelineLayout = device.createPipelineLayout({
   label: "Generic Pipeline Layout",
@@ -355,6 +357,27 @@ const genericPipeline = device.createRenderPipeline({
 });
 
 
+function genericUniformBufferUpdates(models) {
+	for(let i = 0; i < models.length; ++i)
+	{	
+		const spaceTrans = getMatrixTransformSpaces(models[i]);
+
+		device.queue.writeBuffer(uniformBufferSpaces, 
+								i * uboOffset,	//apparently uniform buffer size defaults to a need of 256 
+								spaceTrans.buffer,
+								spaceTrans.byteOffset,
+								spaceTrans.byteLength);
+	}
+	
+	const lights = getLightsInfo();
+	device.queue.writeBuffer(uniformBufferLights, 
+								0, 
+								lights.buffer,
+								lights.byteOffset,
+								lights.byteLength);
+}
+
+
 // Move all of our rendering code into a function
 export function updateRotatingCubePass() {
 	
@@ -365,28 +388,8 @@ export function updateRotatingCubePass() {
 	
 	step++; // Increment the step count, done between compute and render so output buffer of compute pipeline is input buffer for render pipeline
 	
-	const spaceTrans1 = getMatrixTransformSpaces(entityModels[0]);
-	const spaceTrans2 = getMatrixTransformSpaces(entityModels[1]);
-	const lights = getLightsInfo();
-
-	
-	device.queue.writeBuffer(uniformBufferSpaces, 
-							0, 
-							spaceTrans1.buffer,
-							spaceTrans1.byteOffset,
-							spaceTrans1.byteLength);
-	
-	device.queue.writeBuffer(uniformBufferSpaces, 
-							uboOffset,	//apparently uniform buffer size defaults to a need of 256 
-							spaceTrans2.buffer,
-							spaceTrans2.byteOffset,
-							spaceTrans2.byteLength);
-	
-	device.queue.writeBuffer(uniformBufferLights, 
-							0, 
-							lights.buffer,
-							lights.byteOffset,
-							lights.byteLength);
+	//generate per-draw uniforms (not with dynamic uniform buffers though)
+	genericUniformBufferUpdates(entityModels);
 	
 	// Start a render pass 
 	const pass = encoder.beginRenderPass({
@@ -413,6 +416,7 @@ export function updateRotatingCubePass() {
 	const VBAStrideOut = genericShaderVertexBufferArray.length / (totalStride / 4);
 	const mod1 = entityModelsStride[0] / (totalStride / 4);
 	const mod2 = entityModelsStride[1] / (totalStride / 4);
+	const mod3 = entityModelsStride[2] / (totalStride / 4);
 	
 	//first object
 	pass.setBindGroup(0, bindGroups[0]);
@@ -423,11 +427,10 @@ export function updateRotatingCubePass() {
 	pass.draw(mod2, 1, mod1);
 	
 	//third object
+	pass.setBindGroup(0, bindGroups[2]);
+	pass.draw(mod3, 1, mod1 + mod2);
 	
 	
-	//pass.draw(genericShaderVertexBufferArray.length / (totalStride / 4), 1);		// passed in is total stride / float size = 8 
-																		//	second arg is number of instances of this draw call
-																		//using ".length()" method here will just draw out the whole VBA, all objects included
 	pass.end();
 
 	device.queue.submit([encoder.finish()]);

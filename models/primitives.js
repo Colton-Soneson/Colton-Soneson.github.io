@@ -20,10 +20,10 @@ export const pIslandHouse = new Primitive(
 	new Float32Array(await loadObjFileFaces('./models/islandhouse.obj')),
 	new Float32Array(await loadObjFileNormals('./models/islandhouse.obj')),
 	new Float32Array(await loadObjFileUVs('./models/islandhouse.obj')),
-	'blankForNow',
-	new Float32Array([-30.0,10.0,65.0]),
+	'house',
+	new Float32Array([-60.0,-7.0,15.0]),
 	new Float32Array([0.0,-45.0,0.0]),
-	new Float32Array([0.8, 0.8, 0.8]),
+	new Float32Array([0.7, 0.7, 0.7]),
 );
 
 export const pBench = new Primitive(
@@ -33,9 +33,9 @@ export const pBench = new Primitive(
 	new Float32Array(await loadObjFileNormals('./models/bench.obj')),
 	new Float32Array(await loadObjFileUVs('./models/bench.obj')),
 	'blankForNow',
-	new Float32Array([55.0,50.0,0.0]),
-	new Float32Array([0.0,-45.0,0.0]),
-	new Float32Array([0.175, 0.175, 0.175]),
+	new Float32Array([18.0,-5.25,1.0]),
+	new Float32Array([10.0,-45.0,10.0]),
+	new Float32Array([0.1, 0.1, 0.1]),
 );
 
 export const pGround = new Primitive(
@@ -48,6 +48,18 @@ export const pGround = new Primitive(
 	new Float32Array([0.0,-20.0,0.0]),
 	new Float32Array([0.0,90.0,0.0]),
 	new Float32Array([0.45,0.45,0.45]),
+);
+
+export const pWavePlane = new Primitive(
+	3, 
+	new Float32Array(await loadObjFileVerts('./models/waveplane.obj')),
+	new Float32Array(await loadObjFileFaces('./models/waveplane.obj')),
+	new Float32Array(await loadObjFileNormals('./models/waveplane.obj')),
+	new Float32Array(await loadObjFileUVs('./models/waveplane.obj')),
+	'blankForNow',
+	new Float32Array([0,-18.5,0]),
+	new Float32Array([0,0,0]),
+	new Float32Array([10,10,10]),
 );
 
 export const pTest = new Primitive(

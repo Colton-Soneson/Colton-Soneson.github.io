@@ -28,10 +28,10 @@ const totalStride = vertStride + uvStride + normStride;	//4 for number of bytes 
 let step = 0; // Track how many simulation steps have been run
 
 //---------------------TRS---------------------
-const camPosX = 0.0;
-const camPosY = 50.0;
-const camPosZ = 150.0;
-const camFarPlane = 300.0;
+let camPosX = 0.0;
+let camPosY = 40.0;
+let camPosZ = 150.0;
+const camFarPlane = 500.0;
 const camNearPlane = 1.0;
 
 //-----------------SUN SETTINGS----------------
@@ -51,6 +51,14 @@ function degToRad(degrees) {
 	return degrees * Math.PI / 180.0;
 }
 
+function updateCameraPosition() {
+	const now = Date.now() / 1000;
+	//spin the camera around 0
+	const radius = 150.0;
+	camPosX = (Math.cos(now) * radius); 
+	camPosZ = (Math.sin(now) * radius); 
+}
+
 const aspect = canvas.width / canvas.height;
 const projectionMatrix = mat4.perspective((2 * Math.PI) / 5, aspect, camNearPlane, camFarPlane);
 
@@ -63,20 +71,20 @@ function getViewMatrix() {
 function getModelMatrix(t, r, s) { 
 	const modelMatrix = mat4.create();
 	mat4.identity(modelMatrix);
-	const now = Date.now() / 1000;
 	//trs
-	mat4.scale( modelMatrix, vec3.fromValues(s[0],s[1],s[2]), modelMatrix);
+	mat4.translate(modelMatrix, vec3.fromValues(t[0],t[1],t[2]), modelMatrix);
 	mat4.rotateX( modelMatrix, degToRad(r[0]), modelMatrix);
 	mat4.rotateY( modelMatrix,  degToRad(r[1]), modelMatrix);
 	mat4.rotateZ( modelMatrix, degToRad(r[2]), modelMatrix);
-	mat4.translate(modelMatrix, vec3.fromValues(t[0],t[1],t[2]), modelMatrix);
-	
+	mat4.scale( modelMatrix, vec3.fromValues(s[0],s[1],s[2]), modelMatrix);
+
 	return modelMatrix;
 }
 
 function getMatrixTransformSpaces(model) {
   const spaceBuffer = [];
-  
+  const now = Date.now() / 1000;
+
   const viewMatrix = getViewMatrix();
   const modelMatrix = getModelMatrix(model.worldTranslation, model.worldRotation, model.worldScale);
   const modelViewMat = mat4.mul(viewMatrix, modelMatrix);
@@ -195,6 +203,7 @@ const entityModels = [];
 entityModels.push(primitives.pIslandHouse);
 entityModels.push(primitives.pBench);
 entityModels.push(primitives.pGround);
+entityModels.push(primitives.pWavePlane);
 console.log(entityModels);
 const genericShaderVertexBufferArray = loadModelsToVBArray(entityModels, entityModels.length, "generic shader VBA");
 
@@ -251,7 +260,7 @@ const depthTexture = device.createTexture({
 
 const singleObjectUniformArraySpacesSize = 128; //(4 * 4 * 4) + (4 * 4 * 4) 4x4 matrix for MVP + normal
 const uboOffset = 256;	//this is a defaulted max for UBO, nothing I wrote equals up to 256, its a limiter
-const totalUniformArraySpacesSize = uboOffset + singleObjectUniformArraySpacesSize * (entityModels.length);	// !!!!! Check this !!!!!
+const totalUniformArraySpacesSize = (uboOffset * (entityModels.length - 1)) + (singleObjectUniformArraySpacesSize * (entityModels.length));	// !!!!! Check this !!!!!
 //const totalUniformArraySpacesSize = uboOffset + singleObjectUniformArraySpacesSize;
 
 const uniformBufferSpaces = device.createBuffer({
@@ -390,6 +399,9 @@ export function updateRotatingCubePass() {
 	
 	step++; // Increment the step count, done between compute and render so output buffer of compute pipeline is input buffer for render pipeline
 	
+	//update camera Position
+	updateCameraPosition();
+	
 	//generate per-draw uniforms (not with dynamic uniform buffers though)
 	genericUniformBufferUpdates(entityModels);
 	
@@ -419,6 +431,7 @@ export function updateRotatingCubePass() {
 	const mod1 = entityModelsStride[0] / (totalStride / 4);
 	const mod2 = entityModelsStride[1] / (totalStride / 4);
 	const mod3 = entityModelsStride[2] / (totalStride / 4);
+	const mod4 = entityModelsStride[3] / (totalStride / 4);
 	
 	//first object
 	pass.setBindGroup(0, bindGroups[0]);
@@ -431,6 +444,10 @@ export function updateRotatingCubePass() {
 	//third object
 	pass.setBindGroup(0, bindGroups[2]);
 	pass.draw(mod3, 1, mod1 + mod2);
+	
+	//fourth object
+	pass.setBindGroup(0, bindGroups[3]);
+	pass.draw(mod4, 1, mod1 + mod2 + mod3);
 	
 	
 	pass.end();

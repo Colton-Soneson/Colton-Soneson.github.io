@@ -74,6 +74,9 @@ export const vf_p_generic3D =
 		return output;
 	}
 	
+	@group(0) @binding(2) var mySampler: sampler;
+	@group(0) @binding(3) var myTexture: texture_2d<f32>;
+	
 	//same as vertexoutput without builtin bits
 	struct FragInput {
 		@location(0) fragUV: vec2f,

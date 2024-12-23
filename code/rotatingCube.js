@@ -269,6 +269,7 @@ const uniformBufferSpaces = device.createBuffer({
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,	//this makes it another GPUBuffer Object but this time uniform
 });
 
+//lights
 const uniformArrayLights = 48; //(4 * 4) + (4 * 4) + 4 + 12   vec4 + vec4 + scalar + padding to 48
 const uniformBufferLights = device.createBuffer({
   label: "Lights Uniform Buffer",
@@ -276,24 +277,77 @@ const uniformBufferLights = device.createBuffer({
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,	//this makes it another GPUBuffer Object but this time uniform
 });
 
+//textures
+const modelsTexturesList = [];
+function loadModelTextures (models)
+{
+	for(let i = 0; i < models.length; ++i)
+	{
+		const resultTexture = device.createTexture({
+			size: [models[i].textureBitmap.width, models[i].textureBitmap.height, 1],
+			format: 'rgba8unorm',
+			usage:
+			GPUTextureUsage.TEXTURE_BINDING |
+			GPUTextureUsage.COPY_DST |
+			GPUTextureUsage.RENDER_ATTACHMENT,
+		});
+		
+		device.queue.copyExternalImageToTexture(
+			{ source: models[i].textureBitmap },
+			{ texture: resultTexture },
+			[models[i].textureBitmap.width, models[i].textureBitmap.height]
+		);
+		
+		modelsTexturesList.push(resultTexture);
+	}
+}
+
+loadModelTextures(entityModels);
+console.log("Textures: ", modelsTexturesList);
+
+//linear sampling
+const linSampler = device.createSampler({
+  magFilter: 'linear',
+  minFilter: 'linear',
+});
+
 //GPUBindGroup, bind groups connect uniform in the shader
 //	collection of resources for shader to access, cant change resources in bind group but you can change their contents
 
 // Create the bind group layout and pipeline layout.
 const bindGroupLayout = device.createBindGroupLayout({
-  label: "Bind Group Layout",
+  label: "Uniform Bind Group Layout",
   entries: [
   {
     binding: 0,
     visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT | GPUShaderStage.COMPUTE,	//visibility is GPUShaderStage flags that indicate which shader stages can use resource
-    buffer: {} //buffer key, other options are things like "texture" or "sampler", default is uniform, leave empty for binding 0
+    buffer: {}, //buffer key, other options are things like "texture" or "sampler", default is uniform, leave empty for binding 0
+	//resource: { type: 'uniform-buffer' }
   },
   {
     binding: 1,
     visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT | GPUShaderStage.COMPUTE,
-    buffer: {}
-  }
-  ]
+    buffer: {},
+	//resource: { type: 'uniform-buffer' }
+  },
+  {
+    binding: 2,
+    visibility: GPUShaderStage.FRAGMENT | GPUShaderStage.COMPUTE,
+    texture: {
+		sampleType: 'float',
+		viewDimension: '2d',
+		multiSample: false,
+	},
+	//resource: { type: 'sampled-texture', viewDimension: '2d', textureSampleType: 'float' }
+  },
+  {
+    binding: 3,
+    visibility: GPUShaderStage.FRAGMENT | GPUShaderStage.COMPUTE,	//not sure if sampler is allowed on compute
+    sampler: {
+		type: 'filtering',
+	},
+	//resource: { type: 'sampler' }
+  }]
 });
 
 //multi bind group
@@ -316,6 +370,14 @@ function createGenericBindGroups(numModels){
 				{
 				binding: 1,
 				resource: { buffer: uniformBufferLights }
+				},
+				{
+				binding: 2,
+				resource: modelsTexturesList[i].createView()
+				},
+				{
+				binding: 3,
+				resource: linSampler 
 				}],
 			}));
 			

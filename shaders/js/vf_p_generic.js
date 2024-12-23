@@ -34,7 +34,7 @@ export const vf_p_generic3D =
 	
 	struct VertexInput {
 		@location(0) pos: vec3f,
-		@location(1) uv: vec3f,
+		@location(1) uv: vec2f,
 		@location(2) norm: vec3f,
 	};
 	
@@ -71,11 +71,13 @@ export const vf_p_generic3D =
 		
 		output.test = vNormal;
 		
+		output.fragUV = input.uv;
+		
 		return output;
 	}
 	
-	@group(0) @binding(2) var mySampler: sampler;
-	@group(0) @binding(3) var myTexture: texture_2d<f32>;
+	@group(0) @binding(2) var myTexture: texture_2d<f32>;
+	@group(0) @binding(3) var mySampler: sampler;
 	
 	//same as vertexoutput without builtin bits
 	struct FragInput {
@@ -91,6 +93,7 @@ export const vf_p_generic3D =
 		@location(0) vec4f {
 					
 		//return vec4f(input.light, input.light, input.light, 1.0);
-		return input.test * 4.5;
+		//return input.test * 4.5;
+		return textureSample(myTexture, mySampler, input.fragUV) * input.fragPos;
 	}
 `;

@@ -1,6 +1,6 @@
 import {loadObjFileVerts, loadObjFileFaces, loadObjFileNormals, loadObjFileUVs} from '../code/objLoader.js'
 
-function Primitive(dimensions, vertices, faces, normals, uvs, textureBitmap, worldTranslation, worldRotation, worldScale) {
+function Primitive(dimensions, vertices, faces, normals, uvs, textureBitmap, worldTranslation, worldRotation, worldScale, name) {
 	this.dimensions = dimensions;
 	this.vertices = vertices;
 	this.faces = faces;
@@ -10,6 +10,7 @@ function Primitive(dimensions, vertices, faces, normals, uvs, textureBitmap, wor
 	this.worldTranslation = worldTranslation;
 	this.worldRotation = worldRotation;
 	this.worldScale = worldScale;
+	this.name = name;
 	
 }
 
@@ -33,6 +34,7 @@ export const pIslandHouse = new Primitive(
 	new Float32Array([-63.0,-7.0,7.0]),
 	new Float32Array([0.0,-45.0,0.0]),
 	new Float32Array([0.7, 0.7, 0.7]),
+	"IslandHouse",
 );
 
 export const pBench = new Primitive(
@@ -45,6 +47,7 @@ export const pBench = new Primitive(
 	new Float32Array([18.0,-5.25,1.0]),
 	new Float32Array([10.0,-45.0,10.0]),
 	new Float32Array([0.1, 0.1, 0.1]),
+	"Bench",
 );
 
 export const pGround = new Primitive(
@@ -57,6 +60,7 @@ export const pGround = new Primitive(
 	new Float32Array([0.0,-20.0,0.0]),
 	new Float32Array([0.0,90.0,0.0]),
 	new Float32Array([0.45,0.45,0.45]),
+	"Ground",
 );
 
 export const pWavePlane = new Primitive(
@@ -69,6 +73,7 @@ export const pWavePlane = new Primitive(
 	new Float32Array([0,-16.0,0]),
 	new Float32Array([0,0,0]),
 	new Float32Array([10,10,10]),
+	"Waves",
 );
 
 export const pTest = new Primitive(
@@ -81,6 +86,7 @@ export const pTest = new Primitive(
 	new Float32Array([0,0,0]),
 	new Float32Array([0,0,0]),
 	new Float32Array([1,1,1]),
+	"Test",
 );
 
 //export const pSuzanne = new Primitive(

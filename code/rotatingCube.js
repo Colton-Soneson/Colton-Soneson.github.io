@@ -450,6 +450,141 @@ function genericUniformBufferUpdates(models) {
 								lights.byteLength);
 }
 
+//input tracking section
+const pressedKeys = new Set();
+let selectedEntity = 0;
+const editModes = ["translate","rotate","scale","camera"];
+let selectedEditMode = 0;
+const rotSpeed = 1.0;
+const transSpeed = 1.0;
+const scaleSpeed = 0.1;
+const camSpeed = 10.0;
+window.addEventListener("keydown", function (event) {
+	const keyPressed = event.key;
+	
+	switch(keyPressed){
+		case "w":
+			if(selectedEditMode == 0) {
+				entityModels[selectedEntity].worldTranslation[2] -= transSpeed;
+			}
+			else if(selectedEditMode == 1) {
+				entityModels[selectedEntity].worldRotation[0] += rotSpeed;
+			}
+			else if(selectedEditMode == 2) {
+				entityModels[selectedEntity].worldScale[2] += scaleSpeed;
+			}
+			else {
+				camPosZ -= camSpeed;
+			}
+		break;
+		case "a":
+			if(selectedEditMode == 0) {
+				entityModels[selectedEntity].worldTranslation[0] -= transSpeed;
+			}
+			else if(selectedEditMode == 1) {
+				entityModels[selectedEntity].worldRotation[2] -= rotSpeed;
+			}
+			else if(selectedEditMode == 2) {
+				entityModels[selectedEntity].worldScale[0] -= scaleSpeed;
+			}
+			else {
+				camPosX -= camSpeed;
+			}
+		break;
+		case "s":
+			if(selectedEditMode == 0) {
+				entityModels[selectedEntity].worldTranslation[2] += transSpeed;
+			}
+			else if(selectedEditMode == 1) {
+				entityModels[selectedEntity].worldRotation[0] -= rotSpeed;
+			}
+			else if(selectedEditMode == 2) {
+				entityModels[selectedEntity].worldScale[2] -= scaleSpeed;
+			}
+			else {
+				camPosZ += camSpeed;
+			}
+		break;
+		case "d":
+			if(selectedEditMode == 0) {
+				entityModels[selectedEntity].worldTranslation[0] += transSpeed;
+			}
+			else if(selectedEditMode == 1) {
+				entityModels[selectedEntity].worldRotation[2] += rotSpeed;
+			}
+			else if(selectedEditMode == 2) {
+				entityModels[selectedEntity].worldScale[0] += scaleSpeed;
+			}
+			else {
+				camPosX += camSpeed;
+			}
+		break;
+		case "q":
+			if(selectedEditMode == 0) {
+				entityModels[selectedEntity].worldTranslation[1] -= transSpeed;
+			}
+			else if(selectedEditMode == 1) {
+				entityModels[selectedEntity].worldRotation[1] -= rotSpeed;
+			}
+			else if(selectedEditMode == 2) {
+				entityModels[selectedEntity].worldScale[1] -= scaleSpeed;
+			}
+			else {
+				camPosY -= camSpeed;
+			}
+		break;
+		case "e":
+			if(selectedEditMode == 0) {
+				entityModels[selectedEntity].worldTranslation[1] += transSpeed;
+			}
+			else if(selectedEditMode == 1) {
+				entityModels[selectedEntity].worldRotation[1] += rotSpeed;
+			}
+			else if(selectedEditMode == 2) {
+				entityModels[selectedEntity].worldScale[1] += scaleSpeed;
+			}
+			else {
+				camPosY += camSpeed;
+			}
+		break;
+		case "ArrowLeft":
+			if(selectedEntity >= 1) {
+				selectedEntity--;
+			}
+			else {
+				selectedEntity = entityModels.length - 1;
+			}
+			console.log("Selected Entity: ", entityModels[selectedEntity].name);
+		break;
+		case "ArrowRight":
+			if(selectedEntity < entityModels.length - 1) {
+				selectedEntity++;
+			}
+			else {
+				selectedEntity = 0;
+			}
+			console.log("Selected Entity: ", entityModels[selectedEntity].name);
+		break;
+		case "ArrowDown":
+			if(selectedEditMode >= 1) {
+				selectedEditMode--;
+			}
+			else {
+				selectedEditMode = editModes.length - 1;
+			}
+			console.log("Selected Edit Mode: ", editModes[selectedEditMode]);
+		break;
+		case "ArrowUp":
+			if(selectedEditMode < editModes.length - 1) {
+				selectedEditMode++;
+			}
+			else {
+				selectedEditMode = 0;
+			}
+			console.log("Selected Edit Mode: ", editModes[selectedEditMode]);
+		break;
+	}
+});
 
 // Move all of our rendering code into a function
 export function updateRotatingCubePass() {
@@ -461,8 +596,8 @@ export function updateRotatingCubePass() {
 	
 	step++; // Increment the step count, done between compute and render so output buffer of compute pipeline is input buffer for render pipeline
 	
-	//update camera Position
-	updateCameraPosition();
+	//rotate update camera Position
+	//updateCameraPosition();
 	
 	//generate per-draw uniforms (not with dynamic uniform buffers though)
 	genericUniformBufferUpdates(entityModels);

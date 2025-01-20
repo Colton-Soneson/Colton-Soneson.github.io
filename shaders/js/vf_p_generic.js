@@ -51,7 +51,6 @@ export const vf_p_generic3D =
 		
 		var output: VertexOutput;
 		output.pos = UBO.modelViewProjectionMatrix * vec4f(input.pos.x, input.pos.y, input.pos.z, 1);
-		output.fragUV = vec2f(0,0);
 		output.fragPos = 0.5 * (vec4f(input.pos.x, input.pos.y, input.pos.z, 1) + vec4f(1.0,1.0,1.0,1.0));
 		
 		//light
@@ -94,6 +93,6 @@ export const vf_p_generic3D =
 					
 		//return vec4f(input.light, input.light, input.light, 1.0);
 		//return input.test * 4.5;
-		return textureSample(myTexture, mySampler, input.fragUV) * input.fragPos;
+		return textureSample(myTexture, mySampler, input.fragUV);// * input.fragPos;
 	}
 `;

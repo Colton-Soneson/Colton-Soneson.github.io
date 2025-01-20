@@ -56,7 +56,7 @@ export const pGround = new Primitive(
 	new Float32Array(await loadObjFileFaces('./models/ground.obj')),
 	new Float32Array(await loadObjFileNormals('./models/ground.obj')),
 	new Float32Array(await loadObjFileUVs('./models/ground.obj')),
-	await loadTextureImageBitmap('./textures/default.png'),
+	await loadTextureImageBitmap('./textures/groundTexture.png'),
 	new Float32Array([0.0,-20.0,0.0]),
 	new Float32Array([0.0,90.0,0.0]),
 	new Float32Array([0.45,0.45,0.45]),

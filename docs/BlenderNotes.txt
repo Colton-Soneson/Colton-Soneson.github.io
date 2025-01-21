@@ -1,0 +1,11 @@
+When doing a texture for multiple objects in one blend file to be on a singular texture:
+1) Object mode, select all (hit 'a')
+2) Hit Ctrl + J to join everything
+3) then to edit mode, select all (hit 'a')
+4) unwrap menu (hit 'u'), unwrap > smart UV Project
+5) make island margin 0.04 to get some spacing 
+This makes everything in one texture, which depending on level of detail wanted, can be a lot (look into texture atlas then maybe
+to do seperate objects)
+
+Say you want to paint two objects, with two different textures each, then join both into one object and one big texture
+This is baking multiple textures into one UV tile

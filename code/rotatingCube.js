@@ -31,7 +31,7 @@ let step = 0; // Track how many simulation steps have been run
 let camPosX = 0.0;
 let camPosY = 40.0;
 let camPosZ = 150.0;
-const camFarPlane = 500.0;
+const camFarPlane = 800.0;
 const camNearPlane = 1.0;
 
 //-----------------SUN SETTINGS----------------
@@ -204,6 +204,10 @@ entityModels.push(primitives.pIslandHouse);
 entityModels.push(primitives.pBench);
 entityModels.push(primitives.pGround);
 entityModels.push(primitives.pWavePlane);
+//entityModels.push(primitives.pTest);
+
+//for now, always leave skybox as last or this will break
+entityModels.push(primitives.pSkybox);
 console.log(entityModels);
 const genericShaderVertexBufferArray = loadModelsToVBArray(entityModels, entityModels.length, "generic shader VBA");
 
@@ -586,6 +590,15 @@ window.addEventListener("keydown", function (event) {
 	}
 });
 
+
+//skybox
+function updateSkyboxPosition(skyboxEntity)
+{
+	skyboxEntity.worldTranslation[0] = camPosX;
+	skyboxEntity.worldTranslation[1] = 0.0;
+	skyboxEntity.worldTranslation[2] = camPosZ;
+}
+
 // Move all of our rendering code into a function
 export function updateRotatingCubePass() {
 	
@@ -598,6 +611,9 @@ export function updateRotatingCubePass() {
 	
 	//rotate update camera Position
 	//updateCameraPosition();
+	
+	//update skybox to position onto camera
+	updateSkyboxPosition(entityModels[entityModels.length - 1]);
 	
 	//generate per-draw uniforms (not with dynamic uniform buffers though)
 	genericUniformBufferUpdates(entityModels);
@@ -624,27 +640,37 @@ export function updateRotatingCubePass() {
 	//generic shader pass
 	pass.setVertexBuffer(0, vertexBuffer);
 	
-	const VBAStrideOut = genericShaderVertexBufferArray.length / (totalStride / 4);
-	const mod1 = entityModelsStride[0] / (totalStride / 4);
-	const mod2 = entityModelsStride[1] / (totalStride / 4);
-	const mod3 = entityModelsStride[2] / (totalStride / 4);
-	const mod4 = entityModelsStride[3] / (totalStride / 4);
+	let prevModCombo = 0;
+	for(let i = 0; i < entityModels.length; ++i)
+	{
+		let mod = entityModelsStride[i] / (totalStride / 4);
+		pass.setBindGroup(0, bindGroups[i]);
+		pass.draw(mod, 1, prevModCombo);
+		prevModCombo += mod;
+	}
 	
-	//first object
-	pass.setBindGroup(0, bindGroups[0]);
-	pass.draw(mod1, 1);
 	
-	//second object
-	pass.setBindGroup(0, bindGroups[1]);
-	pass.draw(mod2, 1, mod1);
-	
-	//third object
-	pass.setBindGroup(0, bindGroups[2]);
-	pass.draw(mod3, 1, mod1 + mod2);
-	
-	//fourth object
-	pass.setBindGroup(0, bindGroups[3]);
-	pass.draw(mod4, 1, mod1 + mod2 + mod3);
+	//const VBAStrideOut = genericShaderVertexBufferArray.length / (totalStride / 4);
+	//const mod1 = entityModelsStride[0] / (totalStride / 4);
+	//const mod2 = entityModelsStride[1] / (totalStride / 4);
+	//const mod3 = entityModelsStride[2] / (totalStride / 4);
+	//const mod4 = entityModelsStride[3] / (totalStride / 4);
+	//
+	////first object
+	//pass.setBindGroup(0, bindGroups[0]);
+	//pass.draw(mod1, 1);
+	//
+	////second object
+	//pass.setBindGroup(0, bindGroups[1]);
+	//pass.draw(mod2, 1, mod1);
+	//
+	////third object
+	//pass.setBindGroup(0, bindGroups[2]);
+	//pass.draw(mod3, 1, mod1 + mod2);
+	//
+	////fourth object
+	//pass.setBindGroup(0, bindGroups[3]);
+	//pass.draw(mod4, 1, mod1 + mod2 + mod3);
 	
 	
 	pass.end();

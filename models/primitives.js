@@ -43,7 +43,7 @@ export const pBench = new Primitive(
 	new Float32Array(await loadObjFileFaces('./models/bench.obj')),
 	new Float32Array(await loadObjFileNormals('./models/bench.obj')),
 	new Float32Array(await loadObjFileUVs('./models/bench.obj')),
-	await loadTextureImageBitmap('./textures/default.png'),
+	await loadTextureImageBitmap('./textures/BenchTextureFlipY.png'),
 	new Float32Array([18.0,-5.25,1.0]),
 	new Float32Array([10.0,-45.0,10.0]),
 	new Float32Array([0.1, 0.1, 0.1]),
@@ -56,7 +56,7 @@ export const pGround = new Primitive(
 	new Float32Array(await loadObjFileFaces('./models/ground.obj')),
 	new Float32Array(await loadObjFileNormals('./models/ground.obj')),
 	new Float32Array(await loadObjFileUVs('./models/ground.obj')),
-	await loadTextureImageBitmap('./textures/groundTexture.png'),
+	await loadTextureImageBitmap('./textures/groundFlipY.png'),
 	new Float32Array([0.0,-20.0,0.0]),
 	new Float32Array([0.0,90.0,0.0]),
 	new Float32Array([0.45,0.45,0.45]),
@@ -69,11 +69,24 @@ export const pWavePlane = new Primitive(
 	new Float32Array(await loadObjFileFaces('./models/waveplane.obj')),
 	new Float32Array(await loadObjFileNormals('./models/waveplane.obj')),
 	new Float32Array(await loadObjFileUVs('./models/waveplane.obj')),
-	await loadTextureImageBitmap('./textures/default.png'),
+	await loadTextureImageBitmap('./textures/STOCKanimewater.png'),
 	new Float32Array([0,-16.0,0]),
 	new Float32Array([0,0,0]),
 	new Float32Array([10,10,10]),
 	"Waves",
+);
+
+export const pSkybox = new Primitive(
+	3, 
+	new Float32Array(await loadObjFileVerts('./models/skybox.obj')),
+	new Float32Array(await loadObjFileFaces('./models/skybox.obj')),
+	new Float32Array(await loadObjFileNormals('./models/skybox.obj')),
+	new Float32Array(await loadObjFileUVs('./models/skybox.obj')),
+	await loadTextureImageBitmap('./textures/skyboxTexture.png'),
+	new Float32Array([0.0,0,0]),
+	new Float32Array([0,0,0]),
+	new Float32Array([15,15,15]),
+	"Skybox",
 );
 
 export const pTest = new Primitive(
@@ -82,10 +95,10 @@ export const pTest = new Primitive(
 	new Float32Array(await loadObjFileFaces('./models/test.obj')),
 	new Float32Array(await loadObjFileNormals('./models/test.obj')),
 	new Float32Array(await loadObjFileUVs('./models/test.obj')),
-	await loadTextureImageBitmap('./textures/default.png'),
+	await loadTextureImageBitmap('./textures/testFlipY.png'),
+	new Float32Array([18.0,-5.25,1.0]),
 	new Float32Array([0,0,0]),
-	new Float32Array([0,0,0]),
-	new Float32Array([1,1,1]),
+	new Float32Array([10,10,10]),
 	"Test",
 );
 

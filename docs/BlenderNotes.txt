@@ -9,3 +9,9 @@ to do seperate objects)
 
 Say you want to paint two objects, with two different textures each, then join both into one object and one big texture
 This is baking multiple textures into one UV tile
+
+create final image for everything to render to through image editor (just do new image)
+Make sure in shader editor, that all the materials have this final image attached as a node, and that node selected
+create new UV Map under UV map section of each object, name all "bake", select it on all objects
+highlight all objects, no need to join, go into edit mode, uv unwrap to the selected final image
+go to the render section, cahnge from EEVEE to cycles, scroll down to bake section, change to diffuse with just color attachment, bake button

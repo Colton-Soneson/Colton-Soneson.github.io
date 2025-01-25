@@ -37,6 +37,19 @@ export const pIslandHouse = new Primitive(
 	"IslandHouse",
 );
 
+export const pLightHouse = new Primitive(
+	3, 
+	new Float32Array(await loadObjFileVerts('./models/lighthouse.obj')),
+	new Float32Array(await loadObjFileFaces('./models/lighthouse.obj')),
+	new Float32Array(await loadObjFileNormals('./models/lighthouse.obj')),
+	new Float32Array(await loadObjFileUVs('./models/lighthouse.obj')),
+	await loadTextureImageBitmap('./textures/FinalLighthouseTextureFlipY.png'),
+	new Float32Array([-53.0,-7.0,-5.0]),
+	new Float32Array([0.0,90.0,0.0]),
+	new Float32Array([0.7, 0.7, 0.7]),
+	"Lighthouse",
+);
+
 export const pBench = new Primitive(
 	3, 
 	new Float32Array(await loadObjFileVerts('./models/bench.obj')),

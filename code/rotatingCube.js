@@ -201,6 +201,7 @@ function loadModelsToVBArray(entityModelList, modelCount, name) {
 
 const entityModels = [];
 entityModels.push(primitives.pIslandHouse);
+entityModels.push(primitives.pLightHouse);
 entityModels.push(primitives.pBench);
 entityModels.push(primitives.pGround);
 entityModels.push(primitives.pWavePlane);
@@ -651,26 +652,6 @@ export function updateRotatingCubePass() {
 	
 	
 	//const VBAStrideOut = genericShaderVertexBufferArray.length / (totalStride / 4);
-	//const mod1 = entityModelsStride[0] / (totalStride / 4);
-	//const mod2 = entityModelsStride[1] / (totalStride / 4);
-	//const mod3 = entityModelsStride[2] / (totalStride / 4);
-	//const mod4 = entityModelsStride[3] / (totalStride / 4);
-	//
-	////first object
-	//pass.setBindGroup(0, bindGroups[0]);
-	//pass.draw(mod1, 1);
-	//
-	////second object
-	//pass.setBindGroup(0, bindGroups[1]);
-	//pass.draw(mod2, 1, mod1);
-	//
-	////third object
-	//pass.setBindGroup(0, bindGroups[2]);
-	//pass.draw(mod3, 1, mod1 + mod2);
-	//
-	////fourth object
-	//pass.setBindGroup(0, bindGroups[3]);
-	//pass.draw(mod4, 1, mod1 + mod2 + mod3);
 	
 	
 	pass.end();

@@ -26,11 +26,11 @@ async function loadTextureImageBitmap(path){
 //-------------------------OBJ----------------------------
 export const pIslandHouse = new Primitive(
 	3, 
-	new Float32Array(await loadObjFileVerts('./models/islandhouse.obj')),
-	new Float32Array(await loadObjFileFaces('./models/islandhouse.obj')),
-	new Float32Array(await loadObjFileNormals('./models/islandhouse.obj')),
-	new Float32Array(await loadObjFileUVs('./models/islandhouse.obj')),
-	await loadTextureImageBitmap('./textures/default.png'),
+	new Float32Array(await loadObjFileVerts('./models/islandhouse2.obj')),
+	new Float32Array(await loadObjFileFaces('./models/islandhouse2.obj')),
+	new Float32Array(await loadObjFileNormals('./models/islandhouse2.obj')),
+	new Float32Array(await loadObjFileUVs('./models/islandhouse2.obj')),
+	await loadTextureImageBitmap('./textures/FinalIslandHouse2FlipY.png'),
 	new Float32Array([-63.0,-7.0,7.0]),
 	new Float32Array([0.0,-45.0,0.0]),
 	new Float32Array([0.7, 0.7, 0.7]),

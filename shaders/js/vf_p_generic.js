@@ -94,6 +94,7 @@ export const vf_p_generic3D =
 		//return vec4f(input.light, input.light, input.light, 1.0);
 		//return input.test * 4.5;
 		//return vec4f(input.fragUV.x, input.fragUV.y, 0.0,1.0);
-		return textureSample(myTexture, mySampler, input.fragUV);// * input.fragPos;
+		
+		return textureSample(myTexture, mySampler, input.fragUV);
 	}
 `;

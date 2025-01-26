@@ -109,9 +109,9 @@ export const pTest = new Primitive(
 	new Float32Array(await loadObjFileNormals('./models/test.obj')),
 	new Float32Array(await loadObjFileUVs('./models/test.obj')),
 	await loadTextureImageBitmap('./textures/testFlipY.png'),
-	new Float32Array([18.0,-5.25,1.0]),
+	new Float32Array([0.0,0,0.0]),
 	new Float32Array([0,0,0]),
-	new Float32Array([10,10,10]),
+	new Float32Array([3,3,3]),
 	"Test",
 );
 

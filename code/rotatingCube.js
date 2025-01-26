@@ -36,10 +36,10 @@ const camNearPlane = 1.0;
 
 //-----------------SUN SETTINGS----------------
 let sunPosX = 0.0;
-let sunPosY = 10.0;
+let sunPosY = 0.0;
 let sunPosZ = 0.0;
 const sunColor = vec3.create(1.0, 1.0, 0.9);
-const sunIntensity = 10.5;
+const sunIntensity = 100.5;
 const sunPadding = 1.0;
 
 //--------------------DEBUG--------------------
@@ -52,14 +52,6 @@ function radToDeg(rad) {
 
 function degToRad(degrees) {
 	return degrees * Math.PI / 180.0;
-}
-
-function updateCameraPosition() {
-	const now = Date.now() / 1000;
-	//spin the camera around 0
-	const radius = 150.0;
-	camPosX = (Math.cos(now) * radius); 
-	camPosZ = (Math.sin(now) * radius); 
 }
 
 const aspect = canvas.width / canvas.height;
@@ -101,7 +93,7 @@ function getMatrixTransformSpaces(model) {
 	  spaceBuffer.push(modelViewProjectionMatrix[i]);
   }
    for(let i = 0; i < 16; i++) {
-	  spaceBuffer.push(inverseModelViewMat[i]);
+	  spaceBuffer.push(modelMatrix[i]);
   }
   for(let i = 0; i < 16; i++) {
 	  spaceBuffer.push(normalMat[i]);
@@ -720,7 +712,6 @@ export function updateRotatingCubePass() {
 	
 	
 	//const VBAStrideOut = genericShaderVertexBufferArray.length / (totalStride / 4);
-	
 	
 	pass.end();
 

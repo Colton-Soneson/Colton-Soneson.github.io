@@ -29,7 +29,7 @@ let step = 0; // Track how many simulation steps have been run
 
 //---------------------TRS---------------------
 let camPosX = 0.0;
-let camPosY = 40.0;
+let camPosY = 35.0;
 let camPosZ = 150.0;
 const camFarPlane = 800.0;
 const camNearPlane = 1.0;
@@ -37,9 +37,9 @@ const camNearPlane = 1.0;
 //-----------------SUN SETTINGS----------------
 let sunPosX = 0.0;
 let sunPosY = 0.0;
-let sunPosZ = 0.0;
-const sunColor = vec3.create(1.0, 1.0, 0.9);
-const sunIntensity = 100.5;
+let sunPosZ = -420.0;
+const sunColor = vec3.create(0.992, 0.37, 0.325);
+let sunIntensity = 34000.0;
 const sunPadding = 1.0;
 
 //--------------------DEBUG--------------------
@@ -482,6 +482,7 @@ const rotSpeed = 1.0;
 const transSpeed = 1.0;
 const scaleSpeed = 0.1;
 const camSpeed = 10.0;
+const sunIntensitySpeed = 100.0;
 window.addEventListener("keydown", function (event) {
 	const keyPressed = event.key;
 	
@@ -610,6 +611,18 @@ window.addEventListener("keydown", function (event) {
 					console.log("SunPos: ", sunPosX, sunPosY, sunPosZ);
 					entityModels[searchListIndexForEntityByName(entityModels, "Test")].worldTranslation[1] = sunPosY;
 				}
+			}
+		break;
+		case "r":
+			if(selectedEditMode == 4) {
+				sunIntensity -= sunIntensitySpeed;
+				console.log("Sun Intensity: ", sunIntensity)
+			}
+		break;
+		case "t":
+			if(selectedEditMode == 4) {
+				sunIntensity += sunIntensitySpeed;
+				console.log("Sun Intensity: ", sunIntensity)
 			}
 		break;
 		case "ArrowLeft":

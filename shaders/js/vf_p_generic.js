@@ -51,16 +51,18 @@ export const vf_p_generic3D =
 		
 	var output: VertexOutput;
     output.pos = UBO.modelViewProjectionMatrix * vec4f(input.pos.x, input.pos.y, input.pos.z, 1.0);
-	let vertexInputPosWS = (UBO.modelMatrix * vec4f(input.pos.xyz, 1.0)).xyz;
+	let vertexInputPosWS = (UBO.modelMatrix * vec4f(input.pos.xyz, 1.0)).xyz;	
+    
+	//----------------POINT LIGHTS-------------------
+    // Calculate light intensity (inverse square law)
+	let dist = length(Lights.sunPos.xyz - vertexInputPosWS);  // Calculate distance in world space
+    output.light = Lights.sunIntensity / (dist * dist);    
+    //output.light *= 5000.0;  // Scale for intensity
+	//-----------------------------------------------
 	
     // Normal transformation
     let vNormal = normalize(UBO.normalMatrix * vec4f(input.norm.x, input.norm.y, input.norm.z, 0.0));
       
-    let dist = length(Lights.sunPos.xyz - vertexInputPosWS);  // Calculate distance in world space
-    
-    // Calculate light intensity (inverse square law)
-    output.light = 1.0 / (dist * dist);    
-    output.light *= 5000.0;  // Scale for intensity
     
     output.fragUV = input.uv;
     
@@ -82,8 +84,8 @@ export const vf_p_generic3D =
 	fn fragmentMain(input: FragInput) -> //could also use input: VertexOutput instead because its contained within the same file here
 		@location(0) vec4f {
 		
-		return vec4f(input.light , 0.0, 0.0, 1.0);
+		//return vec4f(input.light , 0.0, 0.0, 1.0);
 		//return textureSample(myTexture, mySampler, input.fragUV);
-		//return textureSample(myTexture, mySampler, input.fragUV) * input.light;
+		return textureSample(myTexture, mySampler, input.fragUV) * (Lights.sunCol * input.light);
 	}
 `;

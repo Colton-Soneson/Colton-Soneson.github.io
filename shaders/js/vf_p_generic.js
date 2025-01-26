@@ -19,7 +19,7 @@ export const vf_p_generic3D =
 	struct SpacesUniforms
 	{
 		modelViewProjectionMatrix : mat4x4f,
-		inverseModelViewMatrix : mat4x4f,
+		modelMatrix : mat4x4f,
 		normalMatrix : mat4x4f,
 	}
 	
@@ -49,22 +49,18 @@ export const vf_p_generic3D =
 	@vertex
 	fn vertexMain(input: VertexInput) -> VertexOutput {	
 		
-		var output: VertexOutput;
+	var output: VertexOutput;
     output.pos = UBO.modelViewProjectionMatrix * vec4f(input.pos.x, input.pos.y, input.pos.z, 1.0);
-    
+	let vertexInputPosWS = (UBO.modelMatrix * vec4f(input.pos.xyz, 1.0)).xyz;
+	
     // Normal transformation
     let vNormal = normalize(UBO.normalMatrix * vec4f(input.norm.x, input.norm.y, input.norm.z, 0.0));
-    
-    // Light position is in world space (do not transform it)
-    let lightPosWorldSpace = Lights.sunPos.xyz;  // Use the light's world space position directly
-    
-    // Compute direction to light and distance in world space
-    let lightDir = normalize(lightPosWorldSpace - input.pos.xyz);  // Use the input.pos which is already in object space
-    let dist = length(lightPosWorldSpace - input.pos.xyz);  // Calculate distance in world space
+      
+    let dist = length(Lights.sunPos.xyz - vertexInputPosWS);  // Calculate distance in world space
     
     // Calculate light intensity (inverse square law)
     output.light = 1.0 / (dist * dist);    
-    output.light *= 50.0;  // Scale for intensity
+    output.light *= 5000.0;  // Scale for intensity
     
     output.fragUV = input.uv;
     

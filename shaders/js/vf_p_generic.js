@@ -19,6 +19,7 @@ export const vf_p_generic3D =
 	struct SpacesUniforms
 	{
 		modelViewProjectionMatrix : mat4x4f,
+		inverseModelViewMatrix : mat4x4f,
 		normalMatrix : mat4x4f,
 	}
 	
@@ -41,38 +42,33 @@ export const vf_p_generic3D =
 	struct VertexOutput {				//into frag
 		@builtin(position) pos: vec4f,
 		@location(0) fragUV: vec2f,
-		@location(1) fragPos: vec4f,
-		@location(2) light: f32,
-		@location(3) test: vec4f,
+		@location(1) light: f32,
+		@location(2) fragPos: vec4f,
 	};
 	
 	@vertex
 	fn vertexMain(input: VertexInput) -> VertexOutput {	
 		
 		var output: VertexOutput;
-		output.pos = UBO.modelViewProjectionMatrix * vec4f(input.pos.x, input.pos.y, input.pos.z, 1);
-		output.fragPos = 0.5 * (vec4f(input.pos.x, input.pos.y, input.pos.z, 1) + vec4f(1.0,1.0,1.0,1.0));
-		
-		//light
-		let lightPos = Lights.sunPos;
-		let diffuseStrength = 1.2;
-		let ambient = 0.01;
-		
-		//test
-		
-		
-		let vNormal = normalize(UBO.normalMatrix * vec4f(input.norm.x, input.norm.y, input.norm.z, 1.0));
-		let lightDir = normalize(lightPos.xyz - output.fragPos.xyz);  
-		let lightMag = dot(vNormal.xyz, lightDir);
-		let diff : f32 = diffuseStrength * max(lightMag, 0.0);
-		
-		output.light = diff + ambient;
-		
-		output.test = vNormal;
-		
-		output.fragUV = input.uv;
-		
-		return output;
+    output.pos = UBO.modelViewProjectionMatrix * vec4f(input.pos.x, input.pos.y, input.pos.z, 1.0);
+    
+    // Normal transformation
+    let vNormal = normalize(UBO.normalMatrix * vec4f(input.norm.x, input.norm.y, input.norm.z, 0.0));
+    
+    // Light position is in world space (do not transform it)
+    let lightPosWorldSpace = Lights.sunPos.xyz;  // Use the light's world space position directly
+    
+    // Compute direction to light and distance in world space
+    let lightDir = normalize(lightPosWorldSpace - input.pos.xyz);  // Use the input.pos which is already in object space
+    let dist = length(lightPosWorldSpace - input.pos.xyz);  // Calculate distance in world space
+    
+    // Calculate light intensity (inverse square law)
+    output.light = 1.0 / (dist * dist);    
+    output.light *= 50.0;  // Scale for intensity
+    
+    output.fragUV = input.uv;
+    
+    return output;
 	}
 	
 	@group(0) @binding(2) var myTexture: texture_2d<f32>;
@@ -81,20 +77,17 @@ export const vf_p_generic3D =
 	//same as vertexoutput without builtin bits
 	struct FragInput {
 		@location(0) fragUV: vec2f,
-		@location(1) fragPos: vec4f,
-		@location(2) light: f32,
-		@location(3) test: vec4f,
+		@location(1) light: f32,
+		@location(2) fragPos: vec4f,
 	};
 
 	
 	@fragment
 	fn fragmentMain(input: FragInput) -> //could also use input: VertexOutput instead because its contained within the same file here
 		@location(0) vec4f {
-					
-		//return vec4f(input.light, input.light, input.light, 1.0);
-		//return input.test * 4.5;
-		//return vec4f(input.fragUV.x, input.fragUV.y, 0.0,1.0);
 		
-		return textureSample(myTexture, mySampler, input.fragUV);
+		return vec4f(input.light , 0.0, 0.0, 1.0);
+		//return textureSample(myTexture, mySampler, input.fragUV);
+		//return textureSample(myTexture, mySampler, input.fragUV) * input.light;
 	}
 `;

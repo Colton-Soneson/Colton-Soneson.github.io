@@ -35,13 +35,16 @@ const camFarPlane = 800.0;
 const camNearPlane = 1.0;
 
 //-----------------SUN SETTINGS----------------
-const sunPosX = 0.0;
-const sunPosY = 400.0;
-const sunPosZ = 0.5;
-const sunPosWS = vec3.create(sunPosX, sunPosY, sunPosZ);
+let sunPosX = 0.0;
+let sunPosY = 10.0;
+let sunPosZ = 0.0;
 const sunColor = vec3.create(1.0, 1.0, 0.9);
-const sunIntensity = 0.5;
+const sunIntensity = 10.5;
 const sunPadding = 1.0;
+
+//--------------------DEBUG--------------------
+let showDebug = true;
+
 
 function radToDeg(rad) {
 	return rad * (180.0 / Math.PI);
@@ -88,6 +91,7 @@ function getMatrixTransformSpaces(model) {
   const viewMatrix = getViewMatrix();
   const modelMatrix = getModelMatrix(model.worldTranslation, model.worldRotation, model.worldScale);
   const modelViewMat = mat4.mul(viewMatrix, modelMatrix);
+  const inverseModelViewMat = mat4.invert(modelViewMat);
   const modelViewProjectionMatrix = mat4.mul(projectionMatrix, modelViewMat);
   var normalMat = mat4.create();
   normalMat = mat4.transpose(mat4.invert(modelMatrix));
@@ -95,6 +99,9 @@ function getMatrixTransformSpaces(model) {
   
   for(let i = 0; i < 16; i++) {
 	  spaceBuffer.push(modelViewProjectionMatrix[i]);
+  }
+   for(let i = 0; i < 16; i++) {
+	  spaceBuffer.push(inverseModelViewMat[i]);
   }
   for(let i = 0; i < 16; i++) {
 	  spaceBuffer.push(normalMat[i]);
@@ -106,10 +113,10 @@ function getMatrixTransformSpaces(model) {
 function getLightsInfo() {
 	const lightsBuffer = [];
 	
-	const sunPosViewSpace = vec3.transformMat4(sunPosWS, getViewMatrix());
-	lightsBuffer.push(sunPosViewSpace[0]);
-	lightsBuffer.push(sunPosViewSpace[1]);
-	lightsBuffer.push(sunPosViewSpace[2]);
+	//const sunPosViewSpace = vec3.transformMat4(sunPosWS, getViewMatrix());
+	lightsBuffer.push(sunPosX);
+	lightsBuffer.push(sunPosY);
+	lightsBuffer.push(sunPosZ);
 	lightsBuffer.push(1.0);//uniform buffers HATE vec3f, keep it to scalars, 2, and 4 bytes. Otherwise shit will break.
 	
 	lightsBuffer.push(sunColor[0]);
@@ -205,10 +212,18 @@ entityModels.push(primitives.pLightHouse);
 entityModels.push(primitives.pBench);
 entityModels.push(primitives.pGround);
 entityModels.push(primitives.pWavePlane);
-//entityModels.push(primitives.pTest);
+
+//test for lighting right now
+if(showDebug) {
+	entityModels.push(primitives.pTest);
+	entityModels[entityModels.length - 1].worldTranslation[0] = sunPosX;
+	entityModels[entityModels.length - 1].worldTranslation[1] = sunPosY;
+	entityModels[entityModels.length - 1].worldTranslation[2] = sunPosZ;
+}
 
 //for now, always leave skybox as last or this will break
 entityModels.push(primitives.pSkybox);
+
 console.log(entityModels);
 const genericShaderVertexBufferArray = loadModelsToVBArray(entityModels, entityModels.length, "generic shader VBA");
 
@@ -263,7 +278,7 @@ const depthTexture = device.createTexture({
   usage: GPUTextureUsage.RENDER_ATTACHMENT,
 });
 
-const singleObjectUniformArraySpacesSize = 128; //(4 * 4 * 4) + (4 * 4 * 4) 4x4 matrix for MVP + normal
+const singleObjectUniformArraySpacesSize = 192; //(4 * 4 * 4) + (4 * 4 * 4) + (4 x 4 x 4) 4x4 matrix for MVP + iMV + normal
 const uboOffset = 256;	//this is a defaulted max for UBO, nothing I wrote equals up to 256, its a limiter
 const totalUniformArraySpacesSize = (uboOffset * (entityModels.length - 1)) + (singleObjectUniformArraySpacesSize * (entityModels.length));	// !!!!! Check this !!!!!
 //const totalUniformArraySpacesSize = uboOffset + singleObjectUniformArraySpacesSize;
@@ -455,10 +470,21 @@ function genericUniformBufferUpdates(models) {
 								lights.byteLength);
 }
 
+function searchListIndexForEntityByName(ml, name) {
+	for(let i = 0; i < ml.length; ++i) {
+		if(ml[i].name == name) {
+			return i;
+		}
+	}
+	
+	//wasnt found, for now crash condition
+	return ml.length + 1;
+}
+
 //input tracking section
 const pressedKeys = new Set();
 let selectedEntity = 0;
-const editModes = ["translate","rotate","scale","camera"];
+const editModes = ["translate","rotate","scale","camera","sun"];
 let selectedEditMode = 0;
 const rotSpeed = 1.0;
 const transSpeed = 1.0;
@@ -478,8 +504,15 @@ window.addEventListener("keydown", function (event) {
 			else if(selectedEditMode == 2) {
 				entityModels[selectedEntity].worldScale[2] += scaleSpeed;
 			}
-			else {
+			else if(selectedEditMode == 3) {
 				camPosZ -= camSpeed;
+			}
+			else {
+				sunPosZ -= camSpeed;
+				if(showDebug) {
+					console.log("SunPos: ", sunPosX, sunPosY, sunPosZ);
+					entityModels[searchListIndexForEntityByName(entityModels, "Test")].worldTranslation[2] = sunPosZ;
+				}
 			}
 		break;
 		case "a":
@@ -492,8 +525,15 @@ window.addEventListener("keydown", function (event) {
 			else if(selectedEditMode == 2) {
 				entityModels[selectedEntity].worldScale[0] -= scaleSpeed;
 			}
-			else {
+			else if(selectedEditMode == 3) {
 				camPosX -= camSpeed;
+			}
+			else {
+				sunPosX -= camSpeed;
+				if(showDebug) {
+					console.log("SunPos: ", sunPosX, sunPosY, sunPosZ);
+					entityModels[searchListIndexForEntityByName(entityModels, "Test")].worldTranslation[0] = sunPosX;
+				}
 			}
 		break;
 		case "s":
@@ -506,8 +546,15 @@ window.addEventListener("keydown", function (event) {
 			else if(selectedEditMode == 2) {
 				entityModels[selectedEntity].worldScale[2] -= scaleSpeed;
 			}
-			else {
+			else if(selectedEditMode == 3) {
 				camPosZ += camSpeed;
+			}
+			else {
+				sunPosZ += camSpeed;
+				if(showDebug) {
+					console.log("SunPos: ", sunPosX, sunPosY, sunPosZ);
+					entityModels[searchListIndexForEntityByName(entityModels, "Test")].worldTranslation[2] = sunPosZ;
+				}
 			}
 		break;
 		case "d":
@@ -520,8 +567,15 @@ window.addEventListener("keydown", function (event) {
 			else if(selectedEditMode == 2) {
 				entityModels[selectedEntity].worldScale[0] += scaleSpeed;
 			}
-			else {
+			else if(selectedEditMode == 3) {
 				camPosX += camSpeed;
+			}
+			else {
+				sunPosX += camSpeed;
+				if(showDebug) {
+					console.log("SunPos: ", sunPosX, sunPosY, sunPosZ);
+					entityModels[searchListIndexForEntityByName(entityModels, "Test")].worldTranslation[0] = sunPosX;
+				}
 			}
 		break;
 		case "q":
@@ -534,8 +588,15 @@ window.addEventListener("keydown", function (event) {
 			else if(selectedEditMode == 2) {
 				entityModels[selectedEntity].worldScale[1] -= scaleSpeed;
 			}
-			else {
+			else if(selectedEditMode == 3) {
 				camPosY -= camSpeed;
+			}
+			else {
+				sunPosY -= camSpeed;
+				if(showDebug) {
+					console.log("SunPos: ", sunPosX, sunPosY, sunPosZ);
+					entityModels[searchListIndexForEntityByName(entityModels, "Test")].worldTranslation[1] = sunPosY;
+				}
 			}
 		break;
 		case "e":
@@ -548,8 +609,15 @@ window.addEventListener("keydown", function (event) {
 			else if(selectedEditMode == 2) {
 				entityModels[selectedEntity].worldScale[1] += scaleSpeed;
 			}
-			else {
+			else if(selectedEditMode == 3) {
 				camPosY += camSpeed;
+			}
+			else {
+				sunPosY += camSpeed;
+				if(showDebug) {
+					console.log("SunPos: ", sunPosX, sunPosY, sunPosZ);
+					entityModels[searchListIndexForEntityByName(entityModels, "Test")].worldTranslation[1] = sunPosY;
+				}
 			}
 		break;
 		case "ArrowLeft":

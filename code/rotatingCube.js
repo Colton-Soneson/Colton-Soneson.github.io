@@ -9,6 +9,7 @@ import {postEffectPass} from './postEffectPass.js'
 import * as primitives from '../models/primitives.js'
 
 import { vf_p_generic3D } from '../shaders/js/vf_p_generic.js'
+import { vf_p_shadowMap } from '../shaders/js/vf_p_generic.js'
 
 //----------------CANVAS-----------------------
 const devicePixelRatio = window.devicePixelRatio;
@@ -126,12 +127,34 @@ function getLightsInfo() {
 	return new Float32Array(lightsBuffer);
 }
 
+function getShadowMapMatrices(model) {
+	const shadowMapBuff = [];
+	const modelMatrix = getModelMatrix(model.worldTranslation, model.worldRotation, model.worldScale);
+	const lightViewMatrix = mat4.lookAt([sunPosX, sunPosY, sunPosZ], 
+								[0,0,0], 	//this is origin, not sure how to do this for omnidirectional lights
+								[0,1,0]);
+	const lightViewProjMat = mat4.mul(projectionMatrix, lightViewMatrix);
+	for(let k = 0; k < 16; ++k)
+	{
+		shadowMapBuff.push(modelMatrix[k]);
+	}
+	for(let k = 0; k < 16; ++k)
+	{
+		shadowMapBuff.push(lightViewProjMat[k]);
+	}
+	return new Float32Array(shadowMapBuff);
+}
 //-------------------MAIN-----------------------
 
 //function should return GPUShaderModule object if compiled with valid results, code itself is WGSL
 const genericShaderModule = device.createShaderModule({
 label: "generic vf shader",
 code: vf_p_generic3D
+});
+
+const shaderMapModule = device.createShaderModule({
+	label: "shadow map vf shader",
+	code: vf_p_shadowMap
 });
 
 function loadModel(vertices, faces, normals, uvs) {
@@ -230,9 +253,7 @@ const vertexBuffer = device.createBuffer({
 	size: genericShaderVertexBufferArray.byteLength,	//for 12 float vertices thats 48 bytes, cant be resized after creation
 	usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,	//its use is for vertex data, and that you want to copy data into it
 });
-
-//copy vertex data to buffer
-device.queue.writeBuffer(vertexBuffer, /*bufferOffset=*/0, genericShaderVertexBufferArray);
+device.queue.writeBuffer(vertexBuffer, /*bufferOffset=*/0, genericShaderVertexBufferArray); //copy vertex data to buffer
 
 
 //now tell WebGPU what the hell to do with the info
@@ -299,11 +320,20 @@ const shadowMapSampler = device.createSampler({
 	compare: 'less',
 })
 
-const singleObjectUniformArraySpacesSize = 192; //(4 * 4 * 4) + (4 * 4 * 4) + (4 x 4 x 4) 4x4 matrix for MVP + iMV + normal
-const uboOffset = 256;	//this is a defaulted max for UBO, nothing I wrote equals up to 256, its a limiter
-const totalUniformArraySpacesSize = (uboOffset * (entityModels.length - 1)) + (singleObjectUniformArraySpacesSize * (entityModels.length));	// !!!!! Check this !!!!!
-//const totalUniformArraySpacesSize = uboOffset + singleObjectUniformArraySpacesSize;
 
+//-------------------UBO--------------------------------
+const uboOffset = 256;	//this is a defaulted max for UBO, nothing I wrote equals up to 256, its a limiter
+
+const shadowMapUniformSize = 128; //(4 * 4 * 4) + (4 * 4 * 4)   two 4x4 mats
+const totalUniformShadowMapSize = (uboOffset * (entityModels.length - 1)) + (shadowMapUniformSize * (entityModels.length));
+const uniformShadowMap = device.createBuffer({
+  label: "Shadow Map Uniform Buffer",
+  size: totalUniformShadowMapSize,
+  usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+});
+
+const singleObjectUniformArraySpacesSize = 192; //(4 * 4 * 4) + (4 * 4 * 4) + (4 x 4 x 4) 4x4 matrix for MVP + iMV + normal
+const totalUniformArraySpacesSize = (uboOffset * (entityModels.length - 1)) + (singleObjectUniformArraySpacesSize * (entityModels.length));	// !!!!! Check this !!!!!
 const uniformBufferSpaces = device.createBuffer({
   label: "3D Space Transformations Uniform Buffer",
   size: totalUniformArraySpacesSize,
@@ -410,6 +440,16 @@ const bindGroupLayout = device.createBindGroupLayout({
   }]
 });
 
+const shadowMapBindGroupLayout = device.createBindGroupLayout({
+	label: "ShadowMap Bind Group Layout",
+	entries: [
+  {
+    binding: 0,		//contains shadow UBO thats it
+    visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+    buffer: {},
+  }]
+});
+
 //multi bind group
 
 function createGenericBindGroups(numModels){
@@ -457,12 +497,38 @@ function createGenericBindGroups(numModels){
 
 const bindGroups = createGenericBindGroups(entityModels.length);
 
+function createShadowMapBindGroups(numModels){
+	
+	const result = [];
+	for(let i = 0; i < numModels; ++i) {
+		
+			result.push(device.createBindGroup({
+				label: "renderer shadowmap model uniform bind group",
+				layout: shadowMapBindGroupLayout,
+				entries: [
+				{
+				binding: 0,
+				resource: {buffer : uniformShadowMap, offset: i * uboOffset, size: shadowMapUniformSize,}
+				}],
+			}));
+	}
+	
+	return result;
+}
+
+const shadowMapBindGroups = createShadowMapBindGroups(entityModels.length);
+
 const pipelineLayout = device.createPipelineLayout({
   label: "Generic Pipeline Layout",
   bindGroupLayouts: [ bindGroupLayout ],
 });
 
-//finally creating render pipeline
+const shadowMapPipelineLayout = device.createPipelineLayout({
+  label: "Shadow Map Pipeline Layout",
+  bindGroupLayouts: [ shadowMapBindGroupLayout ],
+});
+
+//---------------------PIPELINES----------------------
 const genericPipeline = device.createRenderPipeline({
 	label: "Generic pipeline",
 	layout: pipelineLayout,				// types of inputs other than vertex buffers needed can be passed, can be "auto"
@@ -497,6 +563,25 @@ const genericPipeline = device.createRenderPipeline({
 	},
 });
 
+const shadowMapPipeline = device.createRenderPipeline({
+	label: "Shadow Map pipeline",
+	layout: shadowMapPipelineLayout,	
+  vertex: {
+    module: shaderMapModule,
+	entryPoint: "vertexMain",
+    buffers: [vertexBufferLayout],
+  },
+  depthStencil: {
+    depthWriteEnabled: true,
+    depthCompare: 'less',
+    format: 'depth32float',
+  },
+  primitive: {
+	  topology: 'triangle-list',
+	  cullMode: 'none',
+  },
+});
+
 
 function genericUniformBufferUpdates(models) {
 	for(let i = 0; i < models.length; ++i)
@@ -516,6 +601,19 @@ function genericUniformBufferUpdates(models) {
 								lights.buffer,
 								lights.byteOffset,
 								lights.byteLength);
+}
+
+function shadowMapUniformBufferUpdates(models) {
+	for(let i = 0; i < models.length; ++i)
+	{	
+		const finalShadowMapBuff = getShadowMapMatrices(models[i]);
+		
+		device.queue.writeBuffer(uniformShadowMap, 
+								i * uboOffset,	//apparently uniform buffer size defaults to a need of 256 
+								finalShadowMapBuff.buffer,
+								finalShadowMapBuff.byteOffset,
+								finalShadowMapBuff.byteLength);
+	}
 }
 
 function searchListIndexForEntityByName(ml, name) {
@@ -749,7 +847,12 @@ export function updateRotatingCubePass() {
 	//generate per-draw uniforms (not with dynamic uniform buffers though)
 	genericUniformBufferUpdates(entityModels);
 	
-	// Start render pass for shadowmapping
+	shadowMapUniformBufferUpdates(entityModels);
+	
+	//to go through models
+	let prevModCombo = 0;
+	
+	//-------------SHADOW PASS------------------
 	const shadowPass = encoder.beginRenderPass({
 		colorAttachments: [],
 		depthStencilAttachment: {
@@ -760,12 +863,25 @@ export function updateRotatingCubePass() {
 		},
 	});
 	
+	shadowPass.setPipeline(shadowMapPipeline);
+	
+	shadowPass.setVertexBuffer(0, vertexBuffer);
+	
+	for(let i = 0; i < entityModels.length; ++i)
+	{
+		let mod = entityModelsStride[i] / (totalStride / 4);
+		shadowPass.setBindGroup(0, shadowMapBindGroups[i]);
+		shadowPass.draw(mod, 1, prevModCombo);
+		prevModCombo += mod;
+	}
+	prevModCombo = 0;
+	
 	shadowPass.end();
 	
-	// Start main render pass 
+	//-------------MAIN PASS------------------
 	const pass = encoder.beginRenderPass({
 		colorAttachments: [{
-		view: context.getCurrentTexture().createView(),
+		view: context.getCurrentTexture().createView(),	// i might have to call this function before its usage for shadowmapping
 		loadOp: "clear",
 		clearValue: { r: 0, g: 0, b: 0, a: 1.0 },
 		storeOp: "store",
@@ -784,7 +900,7 @@ export function updateRotatingCubePass() {
 	//generic shader pass
 	pass.setVertexBuffer(0, vertexBuffer);
 	
-	let prevModCombo = 0;
+	
 	for(let i = 0; i < entityModels.length; ++i)
 	{
 		let mod = entityModelsStride[i] / (totalStride / 4);
@@ -792,7 +908,7 @@ export function updateRotatingCubePass() {
 		pass.draw(mod, 1, prevModCombo);
 		prevModCombo += mod;
 	}
-	
+	prevModCombo = 0;
 	
 	//const VBAStrideOut = genericShaderVertexBufferArray.length / (totalStride / 4);
 	

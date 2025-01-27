@@ -25,6 +25,7 @@ export const vf_p_generic3D =
 	
 	struct LightsUniforms
 	{
+		lightViewProjMat : mat4x4f,
 		sunPos : vec4f,
 		sunCol : vec4f,
 		sunIntensity : f32,
@@ -72,8 +73,8 @@ export const vf_p_generic3D =
 	@group(0) @binding(2) var myTexture: texture_2d<f32>;
 	@group(0) @binding(3) var mySampler: sampler;
 	
-	@group(0) @binding(4) var myShadowMap: texture_2d<f32>;
-	@group(0) @binding(5) var myShadowSampler: sampler;
+	@group(0) @binding(4) var myShadowMap: texture_depth_2d;
+	@group(0) @binding(5) var myShadowSampler: sampler_comparison;
 
 	
 	//same as vertexoutput without builtin bits
@@ -90,6 +91,8 @@ export const vf_p_generic3D =
 		
 		//return vec4f(input.light , 0.0, 0.0, 1.0);
 		//return textureSample(myTexture, mySampler, input.fragUV);
+		//return textureSampleCompare(myShadowMap, myShadowSampler, 0.5, input.fragUV);
+		
 		return textureSample(myTexture, mySampler, input.fragUV) * (Lights.sunCol * input.light);
 	}
 `;

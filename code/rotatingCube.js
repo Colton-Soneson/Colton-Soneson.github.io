@@ -38,9 +38,9 @@ const camNearPlane = 1.0;
 //-----------------SUN SETTINGS----------------
 let sunPosX = 0.0;
 let sunPosY = 0.0;
-let sunPosZ = -420.0;
+let sunPosZ = -280.0; //-420 is best lol
 const sunColor = vec3.create(0.992, 0.37, 0.325);
-let sunIntensity = 34000.0;
+let sunIntensity = 75000.0;	//34000 is best
 const sunPadding = 1.0;
 
 //-------------------SHADOWS-------------------
@@ -81,6 +81,13 @@ function getModelMatrix(t, r, s) {
 	return modelMatrix;
 }
 
+function getLightViewProjectionMat() {
+	const lightViewMatrix = mat4.lookAt([sunPosX, sunPosY, sunPosZ], 
+								[0,0,0], 	//this is origin, not sure how to do this for omnidirectional lights
+								[0,1,0]);
+	return mat4.mul(projectionMatrix, lightViewMatrix);
+}
+
 function getMatrixTransformSpaces(model) {
   const spaceBuffer = [];
   const now = Date.now() / 1000;
@@ -109,8 +116,13 @@ function getMatrixTransformSpaces(model) {
 
 function getLightsInfo() {
 	const lightsBuffer = [];
+
+	const lightViewProjMat = getLightViewProjectionMat();
 	
-	//const sunPosViewSpace = vec3.transformMat4(sunPosWS, getViewMatrix());
+	for(let i = 0; i < 16; ++i) {
+		lightsBuffer.push(lightViewProjMat[i]);
+	}
+	
 	lightsBuffer.push(sunPosX);
 	lightsBuffer.push(sunPosY);
 	lightsBuffer.push(sunPosZ);
@@ -130,10 +142,8 @@ function getLightsInfo() {
 function getShadowMapMatrices(model) {
 	const shadowMapBuff = [];
 	const modelMatrix = getModelMatrix(model.worldTranslation, model.worldRotation, model.worldScale);
-	const lightViewMatrix = mat4.lookAt([sunPosX, sunPosY, sunPosZ], 
-								[0,0,0], 	//this is origin, not sure how to do this for omnidirectional lights
-								[0,1,0]);
-	const lightViewProjMat = mat4.mul(projectionMatrix, lightViewMatrix);
+	const lightViewProjMat = getLightViewProjectionMat();
+	
 	for(let k = 0; k < 16; ++k)
 	{
 		shadowMapBuff.push(modelMatrix[k]);
@@ -341,7 +351,7 @@ const uniformBufferSpaces = device.createBuffer({
 });
 
 //lights
-const uniformArrayLights = 48; //(4 * 4) + (4 * 4) + 4 + 12   vec4 + vec4 + scalar + padding to 48
+const uniformArrayLights = 128; //(4 * 4 * 4) + (4 * 4) + (4 * 4) + 4 + 28   mat4 + vec4 + vec4 + scalar + padding to 128
 const uniformBufferLights = device.createBuffer({
   label: "Lights Uniform Buffer",
   size: uniformArrayLights,
@@ -350,8 +360,7 @@ const uniformBufferLights = device.createBuffer({
 
 //textures
 const modelsTexturesList = [];
-function loadModelTextures (models)
-{
+function loadModelTextures (models) {
 	for(let i = 0; i < models.length; ++i)
 	{
 		const resultTexture = device.createTexture({

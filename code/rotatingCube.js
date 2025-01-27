@@ -42,6 +42,10 @@ const sunColor = vec3.create(0.992, 0.37, 0.325);
 let sunIntensity = 34000.0;
 const sunPadding = 1.0;
 
+//-------------------SHADOWS-------------------
+const shadowMapHeight = 1024;
+const shadowMapWidth = 1024;
+
 //--------------------DEBUG--------------------
 let showDebug = true;
 
@@ -270,6 +274,31 @@ const depthTexture = device.createTexture({
   usage: GPUTextureUsage.RENDER_ATTACHMENT,
 });
 
+//---------------------Shadows-------------------------
+const shadowMapDepthTexture = device.createTexture({
+size: {height: shadowMapWidth, width: shadowMapHeight, depthOrArrayLayers: 1},
+	format: 'depth32float',
+	usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+});
+const shadowMapView = shadowMapDepthTexture.createView();
+
+//const shadowMapView = shadowMapDepthTexture.createView({
+//	dimension: '2d',
+//	format: 'depth32float', //has to match texture
+//	aspect: 'depth-only',
+//});
+
+const shadowMapSampler = device.createSampler({
+	label: 'shadowMap Sampler',
+	minFilter: 'nearest',
+	magFilter: 'nearest',
+	mipmapFilter: 'nearest',
+	addressModeU: 'clamp-to-edge',
+	addressModeV: 'clamp-to-edge',
+	addressModeW: 'clamp-to-edge',
+	compare: 'less',
+})
+
 const singleObjectUniformArraySpacesSize = 192; //(4 * 4 * 4) + (4 * 4 * 4) + (4 x 4 x 4) 4x4 matrix for MVP + iMV + normal
 const uboOffset = 256;	//this is a defaulted max for UBO, nothing I wrote equals up to 256, its a limiter
 const totalUniformArraySpacesSize = (uboOffset * (entityModels.length - 1)) + (singleObjectUniformArraySpacesSize * (entityModels.length));	// !!!!! Check this !!!!!
@@ -359,6 +388,25 @@ const bindGroupLayout = device.createBindGroupLayout({
 		type: 'filtering',
 	},
 	//resource: { type: 'sampler' }
+  },
+  
+  {
+    binding: 4,
+    visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+    texture: {
+		sampleType: 'depth',
+		//viewDimension: '2d',
+		//multiSample: false, 
+	},
+	//resource: { type: 'sampled-texture', viewDimension: '2d', textureSampleType: 'float' }
+  },
+  {
+    binding: 5,
+    visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,	//not sure if sampler is allowed on compute
+    sampler: {
+		type: 'comparison',		//check if this needs to be chagned
+	},
+	//resource: { type: 'sampler' }
   }]
 });
 
@@ -390,6 +438,14 @@ function createGenericBindGroups(numModels){
 				{
 				binding: 3,
 				resource: linSampler 
+				},
+				{
+				binding: 4,
+				resource: shadowMapView
+				},
+				{
+				binding: 5,
+				resource: shadowMapSampler
 				}],
 			}));
 			
@@ -470,6 +526,7 @@ function searchListIndexForEntityByName(ml, name) {
 	}
 	
 	//wasnt found, for now crash condition
+	console.log("Critical Failure: entity name not found in model list");
 	return ml.length + 1;
 }
 
@@ -692,7 +749,20 @@ export function updateRotatingCubePass() {
 	//generate per-draw uniforms (not with dynamic uniform buffers though)
 	genericUniformBufferUpdates(entityModels);
 	
-	// Start a render pass 
+	// Start render pass for shadowmapping
+	const shadowPass = encoder.beginRenderPass({
+		colorAttachments: [],
+		depthStencilAttachment: {
+			view: shadowMapView,
+			depthStoreOp: 'store',
+			depthLoadOp: 'clear',
+			depthClearValue: 1.0,
+		},
+	});
+	
+	shadowPass.end();
+	
+	// Start main render pass 
 	const pass = encoder.beginRenderPass({
 		colorAttachments: [{
 		view: context.getCurrentTexture().createView(),

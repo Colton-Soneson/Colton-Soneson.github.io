@@ -64,7 +64,7 @@ export const vf_p_generic3D =
     // Normal transformation
     let vNormal = normalize(UBO.normalMatrix * vec4f(input.norm.x, input.norm.y, input.norm.z, 0.0));
       
-    
+    output.fragPos = output.pos;
     output.fragUV = input.uv;
     
     return output;
@@ -92,6 +92,13 @@ export const vf_p_generic3D =
 		//return vec4f(input.light , 0.0, 0.0, 1.0);
 		//return textureSample(myTexture, mySampler, input.fragUV);
 		//return textureSampleCompare(myShadowMap, myShadowSampler, 0.5, input.fragUV);
+		
+		let lightSpacePos = Lights.lightViewProjMat * input.fragPos;
+		let shadowCoord = lightSpacePos.xy / lightSpacePos.w;
+		let shadowUV = shadowCoord;  // Convert from [-1, 1] to [0, 1] range
+		let isInShadow = textureSampleCompare(myShadowMap, myShadowSampler, shadowUV, lightSpacePos.z);
+		
+		//return vec4f(isInShadow, 0.0,0.0,1.0);
 		
 		return textureSample(myTexture, mySampler, input.fragUV) * (Lights.sunCol * input.light);
 	}

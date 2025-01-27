@@ -72,6 +72,10 @@ export const vf_p_generic3D =
 	@group(0) @binding(2) var myTexture: texture_2d<f32>;
 	@group(0) @binding(3) var mySampler: sampler;
 	
+	@group(0) @binding(4) var myShadowMap: texture_2d<f32>;
+	@group(0) @binding(5) var myShadowSampler: sampler;
+
+	
 	//same as vertexoutput without builtin bits
 	struct FragInput {
 		@location(0) fragUV: vec2f,

@@ -45,6 +45,8 @@ export const vf_p_generic3D =
 		@location(0) fragUV: vec2f,
 		@location(1) light: f32,
 		@location(2) fragPos: vec4f,
+		@location(3) shadowPos: vec4f,
+		@location(4) fragNormal: vec3f,
 	};
 	
 	@vertex
@@ -58,13 +60,22 @@ export const vf_p_generic3D =
     // Calculate light intensity (inverse square law)
 	let dist = length(Lights.sunPos.xyz - vertexInputPosWS);  // Calculate distance in world space
     output.light = Lights.sunIntensity / (dist * dist);    
-    //output.light *= 5000.0;  // Scale for intensity
 	//-----------------------------------------------
 	
     // Normal transformation
     let vNormal = normalize(UBO.normalMatrix * vec4f(input.norm.x, input.norm.y, input.norm.z, 0.0));
-      
+    
+	let pointToLight = Lights.lightViewProjMat * UBO.modelMatrix * vec4(input.pos, 1.0);
+	let sp = pointToLight.xy * vec2f(0.5,-0.5) + vec2f(0.5,0.5);
+	output.shadowPos = vec4f(sp.x, sp.y, pointToLight.z, 1.0);
+	
+	//let shadowCoord = pointToLight.xy / pointToLight.w * 0.5 + 0.5;
+	//let shadowDepth = pointToLight.z;
+	//output.shadowPos = vec4f(shadowCoord, shadowDepth, 1.0);
+	
+	
     output.fragPos = output.pos;
+	output.fragNormal = input.norm;
     output.fragUV = input.uv;
     
     return output;
@@ -82,6 +93,8 @@ export const vf_p_generic3D =
 		@location(0) fragUV: vec2f,
 		@location(1) light: f32,
 		@location(2) fragPos: vec4f,
+		@location(3) shadowPos: vec4f,
+		@location(4) fragNormal: vec3f,
 	};
 
 	
@@ -93,14 +106,55 @@ export const vf_p_generic3D =
 		//return textureSample(myTexture, mySampler, input.fragUV);
 		//return textureSampleCompare(myShadowMap, myShadowSampler, 0.5, input.fragUV);
 		
-		let lightSpacePos = Lights.lightViewProjMat * input.fragPos;
-		let shadowCoord = lightSpacePos.xy / lightSpacePos.w;
-		let shadowUV = shadowCoord;  // Convert from [-1, 1] to [0, 1] range
-		let isInShadow = textureSampleCompare(myShadowMap, myShadowSampler, shadowUV, lightSpacePos.z);
+		//let lightSpacePos = Lights.lightViewProjMat * input.fragPos;
+		//let shadowCoord = lightSpacePos.xy / lightSpacePos.w;
+		//let shadowUV = shadowCoord;  // Convert from [-1, 1] to [0, 1] range
+		//let isInShadow = textureSampleCompare(myShadowMap, myShadowSampler, shadowUV, lightSpacePos.z);
 		
 		//return vec4f(isInShadow, 0.0,0.0,1.0);
 		
-		return textureSample(myTexture, mySampler, input.fragUV) * (Lights.sunCol * input.light);
+		//var visibility = 0.0;
+		//let oneOverShadowDepthTextureSize = 1.0 / 1024.0; // Adjust based on shadow map resolution
+		//for (var y = -1; y <= 1; y++) {
+		//	for (var x = -1; x <= 1; x++) {
+		//		let offset = vec2f(vec2(x, y)) * oneOverShadowDepthTextureSize;
+		//		visibility += textureSampleCompare(
+		//			myShadowMap, myShadowSampler,
+		//			input.shadowPos.xy + offset, input.shadowPos.z
+		//		);
+		//	}
+		//}
+		//visibility /= 9.0; // PCF: Average over 3x3 kernel
+		//
+		//let ambientFactor = 0.2;
+		//let fragPosWorldSpace = (UBO.modelMatrix * input.fragPos).xyz;
+		//let lightDir = normalize(Lights.sunPos.xyz - fragPosWorldSpace);
+		//let lambertFactor = max(dot(lightDir, normalize(input.fragNormal.xyz)), 0.0);
+		//let lightingFactor = min(ambientFactor + visibility * lambertFactor, 1.0);
+		//return vec4(lightingFactor * vec3f(0.9), 1.0);
+		
+		//let test = textureSampleCompare(myShadowMap, myShadowSampler, input.shadowPos.xy, input.shadowPos.z);
+		
+		//if(test < input.fragPos.z)
+		//{
+		//	return vec4f(0.0, 1.0, 0.0, 1.0);
+		//}
+		//else
+		//{
+		//	return vec4f(1.0, 0.0, 0.0, 1.0);
+		//}
+		
+		//return vec4f(input.shadowPos.xyz, 1.0);
+		//return vec4f(textureSampleCompare(myShadowMap, myShadowSampler, input.shadowPos.xy, input.shadowPos.z), 0.0, 0.0, 1.0);
+		//return vec4f(test, 0.0,0.0,1.0);
+		
+		
+		let visibility = textureSampleCompare(myShadowMap, myShadowSampler, input.shadowPos.xy, input.shadowPos.z);
+		return vec4f(visibility, 0.0,0.0,1.0);
+		
+		
+		
+		//return textureSample(myTexture, mySampler, input.fragUV) * (Lights.sunCol * input.light);
 	}
 `;
 

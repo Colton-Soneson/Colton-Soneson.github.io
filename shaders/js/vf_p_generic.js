@@ -69,11 +69,6 @@ export const vf_p_generic3D =
 	let sp = pointToLight.xy * vec2f(0.5,-0.5) + vec2f(0.5,0.5);
 	output.shadowPos = vec4f(sp.x, sp.y, pointToLight.z, 1.0);
 	
-	//let shadowCoord = pointToLight.xy / pointToLight.w * 0.5 + 0.5;
-	//let shadowDepth = pointToLight.z;
-	//output.shadowPos = vec4f(shadowCoord, shadowDepth, 1.0);
-	
-	
     output.fragPos = output.pos;
 	output.fragNormal = input.norm;
     output.fragUV = input.uv;
@@ -102,59 +97,14 @@ export const vf_p_generic3D =
 	fn fragmentMain(input: FragInput) -> //could also use input: VertexOutput instead because its contained within the same file here
 		@location(0) vec4f {
 		
-		//return vec4f(input.light , 0.0, 0.0, 1.0);
-		//return textureSample(myTexture, mySampler, input.fragUV);
-		//return textureSampleCompare(myShadowMap, myShadowSampler, 0.5, input.fragUV);
+		//this has to do with the accuracy of the map, if you see "stripes", take a look at this number (shadowmap resolution doesnt have anything to do with it)
+		let shadowAcneBias = 0.004;
 		
-		//let lightSpacePos = Lights.lightViewProjMat * input.fragPos;
-		//let shadowCoord = lightSpacePos.xy / lightSpacePos.w;
-		//let shadowUV = shadowCoord;  // Convert from [-1, 1] to [0, 1] range
-		//let isInShadow = textureSampleCompare(myShadowMap, myShadowSampler, shadowUV, lightSpacePos.z);
+		let shadowImpactOnAmbient = 0.4;
 		
-		//return vec4f(isInShadow, 0.0,0.0,1.0);
-		
-		//var visibility = 0.0;
-		//let oneOverShadowDepthTextureSize = 1.0 / 1024.0; // Adjust based on shadow map resolution
-		//for (var y = -1; y <= 1; y++) {
-		//	for (var x = -1; x <= 1; x++) {
-		//		let offset = vec2f(vec2(x, y)) * oneOverShadowDepthTextureSize;
-		//		visibility += textureSampleCompare(
-		//			myShadowMap, myShadowSampler,
-		//			input.shadowPos.xy + offset, input.shadowPos.z
-		//		);
-		//	}
-		//}
-		//visibility /= 9.0; // PCF: Average over 3x3 kernel
-		//
-		//let ambientFactor = 0.2;
-		//let fragPosWorldSpace = (UBO.modelMatrix * input.fragPos).xyz;
-		//let lightDir = normalize(Lights.sunPos.xyz - fragPosWorldSpace);
-		//let lambertFactor = max(dot(lightDir, normalize(input.fragNormal.xyz)), 0.0);
-		//let lightingFactor = min(ambientFactor + visibility * lambertFactor, 1.0);
-		//return vec4(lightingFactor * vec3f(0.9), 1.0);
-		
-		//let test = textureSampleCompare(myShadowMap, myShadowSampler, input.shadowPos.xy, input.shadowPos.z);
-		
-		//if(test < input.fragPos.z)
-		//{
-		//	return vec4f(0.0, 1.0, 0.0, 1.0);
-		//}
-		//else
-		//{
-		//	return vec4f(1.0, 0.0, 0.0, 1.0);
-		//}
-		
-		//return vec4f(input.shadowPos.xyz, 1.0);
-		//return vec4f(textureSampleCompare(myShadowMap, myShadowSampler, input.shadowPos.xy, input.shadowPos.z), 0.0, 0.0, 1.0);
-		//return vec4f(test, 0.0,0.0,1.0);
-		
-		
-		let visibility = textureSampleCompare(myShadowMap, myShadowSampler, input.shadowPos.xy, input.shadowPos.z);
-		return vec4f(visibility, 0.0,0.0,1.0);
-		
-		
-		
-		//return textureSample(myTexture, mySampler, input.fragUV) * (Lights.sunCol * input.light);
+		let visibility = textureSampleCompare(myShadowMap, myShadowSampler, input.shadowPos.xy, input.shadowPos.z - shadowAcneBias);
+				
+		return textureSample(myTexture, mySampler, input.fragUV) * (Lights.sunCol * input.light * (visibility + shadowImpactOnAmbient));
 	}
 `;
 

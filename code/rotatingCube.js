@@ -48,7 +48,7 @@ const shadowMapHeight = 2048;
 const shadowMapWidth = 2048;
 
 //--------------------DEBUG--------------------
-let showDebug = true;
+let showDebug = false;
 let activateSkybox = false;
 
 

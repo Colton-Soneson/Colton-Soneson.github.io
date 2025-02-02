@@ -44,11 +44,12 @@ let sunIntensity = 75000.0;	//34000 is best
 const sunPadding = 1.0;
 
 //-------------------SHADOWS-------------------
-const shadowMapHeight = 1024;
-const shadowMapWidth = 1024;
+const shadowMapHeight = 2048;
+const shadowMapWidth = 2048;
 
 //--------------------DEBUG--------------------
 let showDebug = true;
+let activateSkybox = false;
 
 
 function radToDeg(rad) {
@@ -85,7 +86,30 @@ function getLightViewProjectionMat() {
 	const lightViewMatrix = mat4.lookAt([sunPosX, sunPosY, sunPosZ], 
 								[0,0,0], 	//this is origin, not sure how to do this for omnidirectional lights
 								[0,1,0]);
-	return mat4.mul(projectionMatrix, lightViewMatrix);
+	
+	//this is an orthographic projection
+	//	THINK OF THIS AS A BIG BOX
+	//  increase l,r,b,t for more capture
+	
+	const boxSize = 300;
+	
+	const lightProjectionMatrix = mat4.create();
+	{
+	const left = -boxSize;
+	const right = boxSize;
+	const bottom = -boxSize;
+	const top = boxSize;
+	const near = -400;	//the near plane is negative because its behind the lights view to correctly represent scene geometry in light space
+	const far = 600;	//the far plane will increase the extent of the boxes depth at cost of accuracy
+	mat4.ortho(left, right, bottom, top, near, far, lightProjectionMatrix);
+	}
+	
+	const lightViewProjMatrix = mat4.multiply(
+	lightProjectionMatrix,
+	lightViewMatrix
+	);
+	
+	return lightViewProjMatrix;
 }
 
 function getMatrixTransformSpaces(model) {
@@ -251,7 +275,9 @@ if(showDebug) {
 }
 
 //for now, always leave skybox as last or this will break
-entityModels.push(primitives.pSkybox);
+if(activateSkybox) {
+	entityModels.push(primitives.pSkybox);
+}
 
 console.log(entityModels);
 const genericShaderVertexBufferArray = loadModelsToVBArray(entityModels, entityModels.length, "generic shader VBA");
@@ -851,7 +877,9 @@ export function updateRotatingCubePass() {
 	//updateCameraPosition();
 	
 	//update skybox to position onto camera
-	updateSkyboxPosition(entityModels[entityModels.length - 1]);
+	if(activateSkybox) {
+		updateSkyboxPosition(entityModels[entityModels.length - 1]);
+	}
 	
 	//generate per-draw uniforms (not with dynamic uniform buffers though)
 	genericUniformBufferUpdates(entityModels);

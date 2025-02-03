@@ -1,5 +1,15 @@
 import {loadObjFileVerts, loadObjFileFaces, loadObjFileNormals, loadObjFileUVs} from '../code/objLoader.js'
 
+//---------------OBJ MODEL---------------------
+export const vertDim = 3; //primitives.pIslandHouse.dimensions;
+
+//---------------VERT BUF ARRAYS----------------
+export const vertStride = vertDim * 4;	//4 for number of bytes in a float
+export const normStride = vertDim * 4;	//4 for number of bytes in a float
+export const uvStride = 2 * 4;	//4 for number of bytes in a float
+export const totalStride = vertStride + uvStride + normStride;	//4 for number of bytes in a float
+
+
 function Primitive(dimensions, vertices, faces, normals, uvs, textureBitmap, worldTranslation, worldRotation, worldScale, name) {
 	this.dimensions = dimensions;
 	this.vertices = vertices;

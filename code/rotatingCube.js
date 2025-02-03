@@ -41,6 +41,13 @@ function getLightsInfo() {
 	
 	lightsBuffer.push(settings.sunIntensity);
 	
+	lightsBuffer.push(settings.shadowMapPCFKernelSize);
+	
+	lightsBuffer.push(settings.shadowMapSize);
+	
+	lightsBuffer.push(settings.shadowMapAcneBias);
+	
+	lightsBuffer.push(settings.debugViewMode);
 	
 	return new Float32Array(lightsBuffer);
 }
@@ -54,7 +61,6 @@ code: vf_p_generic3D
 
 //-------------------UBO--------------------------------
 const uboOffset = 256;	//this is a defaulted max for UBO, nothing I wrote equals up to 256, its a limiter
-
 const singleObjectUniformArraySpacesSize = 192; //(4 * 4 * 4) + (4 * 4 * 4) + (4 x 4 x 4) 4x4 matrix for MVP + iMV + normal
 const totalUniformArraySpacesSize = (uboOffset * (scene.entityModels.length - 1)) + (singleObjectUniformArraySpacesSize * (scene.entityModels.length));	// !!!!! Check this !!!!!
 const uniformBufferSpaces = device.createBuffer({
@@ -64,7 +70,7 @@ const uniformBufferSpaces = device.createBuffer({
 });
 
 //lights
-const uniformArrayLights = 128; //(4 * 4 * 4) + (4 * 4) + (4 * 4) + 4 + 28   mat4 + vec4 + vec4 + scalar + padding to 128
+const uniformArrayLights = 128; //(4 * 4 * 4) + (4 * 4) + (4 * 4) + 4 + 4 + 4 + 4 + 4 + 12   mat4 + vec4 + vec4 + scalar + scalar + scalar + scalar + scalar + padding to 128
 const uniformBufferLights = device.createBuffer({
   label: "Lights Uniform Buffer",
   size: uniformArrayLights,
@@ -293,7 +299,12 @@ function searchListIndexForEntityByName(ml, name) {
 //input tracking section
 const pressedKeys = new Set();
 let selectedEntity = 0;
-const editModes = ["translate","rotate","scale","camera","sun"];
+let selectedSubEditMode = 0;
+let selectedDebugDisplayMode = 0;
+const editModes = ["translate","rotate","scale","camera","lighting"];
+const camSubEditModes = ["default"];
+const lightSubEditModes = ["Sun Intensity","Shadow Map Kernel Size", "Shadow Map Acne Bias"];
+const debugDisplayModes = ["final", "shadow mapping visibility"];
 let selectedEditMode = 0;
 const rotSpeed = 1.0;
 const transSpeed = 1.0;
@@ -321,7 +332,9 @@ window.addEventListener("keydown", function (event) {
 				settings.sunPosZ -= camSpeed;
 				if(settings.showDebug) {
 					console.log("SunPos: ", settings.sunPosX, settings.sunPosY, settings.sunPosZ);
-					scene.entityModels[searchListIndexForEntityByName(scene.entityModels, "Test")].worldTranslation[2] = settings.sunPosZ;
+					if(settings.showDebugIcons) {
+						scene.entityModels[searchListIndexForEntityByName(scene.entityModels, "Test")].worldTranslation[2] = settings.sunPosZ;
+					}
 				}
 			}
 		break;
@@ -342,7 +355,9 @@ window.addEventListener("keydown", function (event) {
 				settings.sunPosX -= camSpeed;
 				if(settings.showDebug) {
 					console.log("SunPos: ", settings.sunPosX, settings.sunPosY, settings.sunPosZ);
-					scene.entityModels[searchListIndexForEntityByName(scene.entityModels, "Test")].worldTranslation[0] = settings.sunPosX;
+					if(settings.showDebugIcons) {
+						scene.entityModels[searchListIndexForEntityByName(scene.entityModels, "Test")].worldTranslation[0] = settings.sunPosX;
+					}
 				}
 			}
 		break;
@@ -363,7 +378,9 @@ window.addEventListener("keydown", function (event) {
 				settings.sunPosZ += camSpeed;
 				if(settings.showDebug) {
 					console.log("SunPos: ", settings.sunPosX, settings.sunPosY, settings.sunPosZ);
-					scene.entityModels[searchListIndexForEntityByName(scene.entityModels, "Test")].worldTranslation[2] = settings.sunPosZ;
+					if(settings.showDebugIcons) {
+						scene.entityModels[searchListIndexForEntityByName(scene.entityModels, "Test")].worldTranslation[2] = settings.sunPosZ;
+					}
 				}
 			}
 		break;
@@ -384,7 +401,9 @@ window.addEventListener("keydown", function (event) {
 				settings.sunPosX += camSpeed;
 				if(settings.showDebug) {
 					console.log("SunPos: ", settings.sunPosX, settings.sunPosY, settings.sunPosZ);
-					scene.entityModels[searchListIndexForEntityByName(scene.entityModels, "Test")].worldTranslation[0] = settings.sunPosX;
+					if(settings.showDebugIcons) {
+						scene.entityModels[searchListIndexForEntityByName(scene.entityModels, "Test")].worldTranslation[0] = settings.sunPosX;
+					}
 				}
 			}
 		break;
@@ -405,7 +424,9 @@ window.addEventListener("keydown", function (event) {
 				settings.sunPosY -= camSpeed;
 				if(settings.showDebug) {
 					console.log("SunPos: ", settings.sunPosX, settings.sunPosY, settings.sunPosZ);
-					scene.entityModels[searchListIndexForEntityByName(scene.entityModels, "Test")].worldTranslation[1] = settings.sunPosY;
+					if(settings.showDebugIcons) {
+						scene.entityModels[searchListIndexForEntityByName(scene.entityModels, "Test")].worldTranslation[1] = settings.sunPosY;
+					}
 				}
 			}
 		break;
@@ -426,41 +447,126 @@ window.addEventListener("keydown", function (event) {
 				settings.sunPosY += camSpeed;
 				if(settings.showDebug) {
 					console.log("SunPos: ", settings.sunPosX, settings.sunPosY, settings.sunPosZ);
-					scene.entityModels[searchListIndexForEntityByName(scene.entityModels, "Test")].worldTranslation[1] = settings.sunPosY;
+					if(settings.showDebugIcons) {
+						scene.entityModels[searchListIndexForEntityByName(scene.entityModels, "Test")].worldTranslation[1] = settings.sunPosY;
+					}
 				}
 			}
 		break;
 		case "r":
 			if(selectedEditMode == 4) {
-				settings.sunIntensity -= sunIntensitySpeed;
-				console.log("Sun Intensity: ", settings.sunIntensity)
+				if(selectedSubEditMode == 0)
+				{
+					settings.sunIntensity -= sunIntensitySpeed;
+					console.log("Sun Intensity: ", settings.sunIntensity)
+				}
+				else if(selectedSubEditMode == 1)
+				{
+					settings.shadowMapPCFKernelSize -= 1;
+					console.log("ShadowMap PCF Kernel Size: ", settings.shadowMapPCFKernelSize)
+				}
+				else
+				{
+					settings.shadowMapAcneBias -= 0.0005;
+					console.log("ShadowMap Acne Bias: ", settings.shadowMapAcneBias)
+				}
 			}
 		break;
 		case "t":
 			if(selectedEditMode == 4) {
-				settings.sunIntensity += sunIntensitySpeed;
-				console.log("Sun Intensity: ", settings.sunIntensity)
+				if(selectedSubEditMode == 0)
+				{
+					settings.sunIntensity += sunIntensitySpeed;
+					console.log("Sun Intensity: ", settings.sunIntensity)
+				}
+				else if(selectedSubEditMode == 1)
+				{
+					settings.shadowMapPCFKernelSize += 1;
+					console.log("ShadowMap PCF Kernel Size: ", settings.shadowMapPCFKernelSize)
+				}
+				else
+				{
+					settings.shadowMapAcneBias += 0.0005;
+					console.log("ShadowMap Acne Bias: ", settings.shadowMapAcneBias)
+				}
 			}
+		break;
+		case "c":
+			if(selectedDebugDisplayMode < debugDisplayModes.length - 1) {
+				selectedDebugDisplayMode++;
+			}
+			else {
+				selectedDebugDisplayMode = 0;
+			}
+			settings.debugViewMode = selectedDebugDisplayMode;
+			console.log("DEBUG DISPLAY MODE: ", debugDisplayModes[selectedDebugDisplayMode]);
 		break;
 		case "ArrowLeft":
-			if(selectedEntity >= 1) {
-				selectedEntity--;
+			if(selectedEditMode == 0 || selectedEditMode == 1 || selectedEditMode == 2)
+			{
+				if(selectedEntity >= 1) {
+					selectedEntity--;
+				}
+				else {
+					selectedEntity = scene.entityModels.length - 1;
+				}
+				console.log("Selected Entity: ", scene.entityModels[selectedEntity].name);
 			}
-			else {
-				selectedEntity = scene.entityModels.length - 1;
+			else if(selectedEditMode == 3)
+			{
+				if(selectedSubEditMode >= 1) {
+					selectedSubEditMode--;
+				}
+				else {
+					selectedSubEditMode = camSubEditModes.length - 1;
+				}
+				console.log("Selected Camera Sub Edit Mode: ", camSubEditModes[selectedSubEditMode]);
 			}
-			console.log("Selected Entity: ", scene.entityModels[selectedEntity].name);
+			else if(selectedEditMode == 4)
+			{
+				if(selectedSubEditMode >= 1) {
+					selectedSubEditMode--;
+				}
+				else {
+					selectedSubEditMode = lightSubEditModes.length - 1;
+				}
+				console.log("Selected Lighting Sub Edit Mode: ", lightSubEditModes[selectedSubEditMode]);
+			}
 		break;
 		case "ArrowRight":
-			if(selectedEntity < scene.entityModels.length - 1) {
-				selectedEntity++;
+			if(selectedEditMode == 0 || selectedEditMode == 1 || selectedEditMode == 2)
+			{
+				if(selectedEntity < scene.entityModels.length - 1) {
+					selectedEntity++;
+				}
+				else {
+					selectedEntity = 0;
+				}
+				console.log("Selected Entity: ", scene.entityModels[selectedEntity].name);
 			}
-			else {
-				selectedEntity = 0;
+			else if(selectedEditMode == 3)
+			{
+				if(selectedSubEditMode < camSubEditModes.length - 1) {
+					selectedSubEditMode++;
+				}
+				else {
+					selectedSubEditMode = 0;
+				}
+				console.log("Selected Camera Sub Edit Mode: ", camSubEditModes[selectedSubEditMode]);
 			}
-			console.log("Selected Entity: ", scene.entityModels[selectedEntity].name);
+			else if(selectedEditMode == 4)
+			{
+				if(selectedSubEditMode < lightSubEditModes.length - 1) {
+					selectedSubEditMode++;
+				}
+				else {
+					selectedSubEditMode = 0;
+				}
+				console.log("Selected Lighting Sub Edit Mode: ", lightSubEditModes[selectedSubEditMode]);
+			}
 		break;
 		case "ArrowDown":
+			selectedSubEditMode = 0;
 			if(selectedEditMode >= 1) {
 				selectedEditMode--;
 			}
@@ -470,6 +576,7 @@ window.addEventListener("keydown", function (event) {
 			console.log("Selected Edit Mode: ", editModes[selectedEditMode]);
 		break;
 		case "ArrowUp":
+			selectedSubEditMode = 0;
 			if(selectedEditMode < editModes.length - 1) {
 				selectedEditMode++;
 			}
@@ -544,7 +651,7 @@ export function updateRotatingCubePass() {
 		colorAttachments: [{
 		view: context.getCurrentTexture().createView(),	// i might have to call this function before its usage for shadowmapping
 		loadOp: "clear",
-		clearValue: { r: 0, g: 0, b: 0, a: 1.0 },
+		clearValue: { r: 0.8, g: 0.8, b: 0.8, a: 1.0 },
 		storeOp: "store",
 		}],
 		depthStencilAttachment: {

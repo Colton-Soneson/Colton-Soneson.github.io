@@ -29,6 +29,10 @@ export const vf_p_generic3D =
 		sunPos : vec4f,
 		sunCol : vec4f,
 		sunIntensity : f32,
+		shadowMapKernelSize : f32,
+		shadowMapTextureSize : f32,
+		shadowMapAcneBias : f32,
+		debugViewMode : f32,	//find a different space for this, its own UBO, also has to be float for some reason
 	}
 	
 	@group(0) @binding(0) var<uniform> UBO: SpacesUniforms;
@@ -98,45 +102,34 @@ export const vf_p_generic3D =
 		@location(0) vec4f {
 		
 		//this has to do with the accuracy of the map, if you see "stripes", take a look at this number (shadowmap resolution doesnt have anything to do with it)
-		let shadowAcneBias = 0.004;
+		let invShadowMapTextureSize = 1.0 / Lights.shadowMapTextureSize;
+		var visibility = 0.0;
+		let kernelCount = (2.0 * Lights.shadowMapKernelSize + 1.0) * (2.0 * Lights.shadowMapKernelSize + 1.0);
+		let kernelSize = i32(Lights.shadowMapKernelSize);
 		
-		let shadowImpactOnAmbient = 0.4;
+		//PCF
+		for(var x = -kernelSize; x <= kernelSize; x++)
+		{
+			for(var y = -kernelSize; y <= kernelSize; y++)
+			{
+				let kernelOffset = vec2f(f32(x),f32(y)) * invShadowMapTextureSize;
+				visibility += textureSampleCompare(myShadowMap, myShadowSampler, input.shadowPos.xy + kernelOffset, input.shadowPos.z - Lights.shadowMapAcneBias);
+			}
+		}
+		visibility /= kernelCount;
 		
-		let visibility = textureSampleCompare(myShadowMap, myShadowSampler, input.shadowPos.xy, input.shadowPos.z - shadowAcneBias);
-				
-		return textureSample(myTexture, mySampler, input.fragUV) * (Lights.sunCol * input.light * (visibility + shadowImpactOnAmbient));
+		var finalResult = vec4f(0.0,0.0,0.0,1.0);
+		
+		if(Lights.debugViewMode == 1.0)
+		{
+			finalResult = vec4f(visibility, 0.0,0.0,1.0);
+		}
+		else
+		{
+			let shadowImpactOnAmbient = 0.4;
+			finalResult = textureSample(myTexture, mySampler, input.fragUV) * (Lights.sunCol * input.light * (visibility + shadowImpactOnAmbient));
+		}
+		
+		return finalResult;
 	}
-`;
-
-export const vf_p_shadowMap = 
-`
-
-	struct shadowUniforms
-	{
-		modelMatrix : mat4x4f,
-		lightViewProjMat : mat4x4f,
-	}
-	
-	@group(0) @binding(0) var<uniform> UBO: shadowUniforms;
-
-	struct VertexInput {
-		@location(0) pos: vec3f,
-		@location(1) uv: vec2f,
-		@location(2) norm: vec3f,
-	};
-	
-	struct VertexOutput {				
-		@builtin(position) pos: vec4f,
-	};
-	
-	@vertex
-	fn vertexMain(input: VertexInput) -> VertexOutput {	
-		var output: VertexOutput;
-		output.pos = UBO.lightViewProjMat * UBO.modelMatrix * vec4(input.pos, 1.0);
-    
-		return output;
-	}
-	
-	
-
 `;

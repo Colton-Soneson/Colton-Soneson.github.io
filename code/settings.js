@@ -10,16 +10,19 @@ export const settings = {
     camFarPlane: 800.0,
     camNearPlane: 1.0,
 	//-----------------SUN SETTINGS----------------
-    sunPosX: 0.0,
-    sunPosY: 0.0,
+    sunPosX: -40.0,
+    sunPosY: 140.0,
     sunPosZ: -280.0,
     sunColor: vec3.create(0.992, 0.37, 0.325),
     sunIntensity: 75000.0,
     sunPadding: 1.0,
 	//-------------------SHADOWS-------------------
-    shadowMapHeight: 2048,
-    shadowMapWidth: 2048,
+    shadowMapSize: 2048,
+	shadowMapPCFKernelSize: 0,
+	shadowMapAcneBias: 0.005,
 	//--------------------DEBUG--------------------
-    showDebug: false,
-    activateSkybox: false
+    showDebug: true,
+	showDebugIcons: false,
+    activateSkybox: false,
+	debugViewMode: 0
 };

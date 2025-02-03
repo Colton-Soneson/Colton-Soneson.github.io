@@ -1,4 +1,4 @@
-import { vf_p_shadowMap } from '../shaders/js/vf_p_generic.js'
+import { v_shadowMapDepth } from '../shaders/js/v_shadowMapDepth.js'
 import { mat4, vec3 } from 'https://wgpu-matrix.org/dist/3.x/wgpu-matrix.module.js';
 import {device} from './deviceSelection.js'
 
@@ -24,12 +24,12 @@ function getShadowMapMatrices(model) {
 
 const shaderMapModule = device.createShaderModule({
 	label: "shadow map vf shader",
-	code: vf_p_shadowMap
+	code: v_shadowMapDepth
 });
 
 //---------------------Shadow Map Depth Textures-------------------------
 const shadowMapDepthTexture = device.createTexture({
-size: {height: settings.shadowMapWidth, width: settings.shadowMapHeight, depthOrArrayLayers: 1},
+size: {height: settings.shadowMapSize, width: settings.shadowMapSize, depthOrArrayLayers: 1},
 	format: 'depth32float',
 	usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
 });

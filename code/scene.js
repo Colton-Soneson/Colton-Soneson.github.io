@@ -79,11 +79,11 @@ entityModels.push(primitives.pGround);
 entityModels.push(primitives.pWavePlane);
 
 //test for lighting right now
-if(settings.showDebug) {
+if(settings.showDebugIcons) {
 	entityModels.push(primitives.pTest);
-	entityModels[entityModels.length - 1].worldTranslation[0] = sunPosX;
-	entityModels[entityModels.length - 1].worldTranslation[1] = sunPosY;
-	entityModels[entityModels.length - 1].worldTranslation[2] = sunPosZ;
+	entityModels[entityModels.length - 1].worldTranslation[0] = setttings.sunPosX;
+	entityModels[entityModels.length - 1].worldTranslation[1] = setttings.sunPosY;
+	entityModels[entityModels.length - 1].worldTranslation[2] = setttings.sunPosZ;
 }
 
 //for now, always leave skybox as last or this will break

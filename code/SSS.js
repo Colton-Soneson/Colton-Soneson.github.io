@@ -30,22 +30,41 @@ const bindGroupLayout = device.createBindGroupLayout({
   label: "Compute Bind Group Layout",
   entries: [{
     binding: 0,
-    visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT | GPUShaderStage.COMPUTE,	//visibility is GPUShaderStage flags that indicate which shader stages can use resource
+    visibility: GPUShaderStage.COMPUTE,	//visibility is GPUShaderStage flags that indicate which shader stages can use resource
     buffer: {} //buffer key, other options are things like "texture" or "sampler", default is uniform, leave empty for binding 0
-  }]
+  },
+  {
+    binding: 1,
+    visibility:  GPUShaderStage.COMPUTE,
+    storageTexture: {
+                access: "read-write",  // We need both read and write access
+                format: "rgba32float"   // Format must match the swap chain texture
+    }
+  }
+  ]
 });
 
 //multi bind group
-const bindGroups = [
+function createBindGroupsSSS(aTexture) {
+	const bindGroups = [
   device.createBindGroup({
     label: "compute bind group",
     layout: bindGroupLayout,
     entries: [{
       binding: 0,
       resource: { buffer: sssUniformBuffer }	//buffer key, other options are things like "texture" or "sampler"
-    }],
+    },
+	{
+      binding: 1,
+      resource: aTexture.createView()	//we want the current swap chain texture in here
+    }
+	],
   })
 ];
+
+	return bindGroups;
+}
+
 
 const sssPipelineLayout = device.createPipelineLayout({
   label: "compute Pipeline Layout",
@@ -66,7 +85,9 @@ const sssPipeline = device.createComputePipeline({
 });
 
 
-export function postEffectPass(aEncoder, aStep) {
+export function postEffectPassSSS(aEncoder, aTexture) {
+	const bindGroups = createBindGroupsSSS(aTexture);
+	
 	// Start a compute pass 
 	const computePass = aEncoder.beginComputePass();	//do before render pass so RP can take latest CP results
 	

@@ -18,7 +18,7 @@ export const settings = {
     sunPadding: 1.0,
 	//-------------------SHADOWS-------------------
     shadowMapSize: 2048,
-	shadowMapPCFKernelSize: 0,
+	shadowMapPCFKernelSize: 1,
 	shadowMapAcneBias: 0.005,
 	//--------------------DEBUG--------------------
     showDebug: true,

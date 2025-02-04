@@ -5,7 +5,7 @@ import {canvasFormat} from './deviceSelection.js'
 
 import { mat4, vec3 } from 'https://wgpu-matrix.org/dist/3.x/wgpu-matrix.module.js';
 
-import {postEffectPass} from './postEffectPass.js'
+import {postEffectPassSSS} from './SSS.js'
 
 import * as primitives from '../models/primitives.js'
 import * as shadowMapping from './shadowMapping.js'
@@ -153,7 +153,6 @@ const bindGroupLayout = device.createBindGroupLayout({
 	},
 	//resource: { type: 'sampler' }
   },
-  
   {
     binding: 4,
     visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
@@ -602,9 +601,6 @@ export function updateRotatingCubePass() {
 	
 	const encoder = device.createCommandEncoder();
 	
-	//compute section
-	//postEffectPass(encoder, bindGroups, step);
-	
 	//step++; // Increment the step count, done between compute and render so output buffer of compute pipeline is input buffer for render pipeline
 	
 	//update skybox to position onto camera
@@ -649,7 +645,7 @@ export function updateRotatingCubePass() {
 	//-------------MAIN PASS------------------
 	const pass = encoder.beginRenderPass({
 		colorAttachments: [{
-		view: context.getCurrentTexture().createView(),	// i might have to call this function before its usage for shadowmapping
+		view: context.getCurrentTexture().createView(),
 		loadOp: "clear",
 		clearValue: { r: 0.8, g: 0.8, b: 0.8, a: 1.0 },
 		storeOp: "store",
@@ -681,6 +677,9 @@ export function updateRotatingCubePass() {
 	//const VBAStrideOut = genericShaderVertexBufferArray.length / (totalStride / 4);
 	
 	pass.end();
+	
+	//compute section, check to see if this should go before the clear before everything
+	//postEffectPassSSS(encoder, context.getCurrentTexture());
 
 	device.queue.submit([encoder.finish()]);
 }

@@ -20,6 +20,8 @@ export const settings = {
     shadowMapSize: 2048,
 	shadowMapPCFKernelSize: 1,
 	shadowMapAcneBias: 0.005,
+	//-----------------POST EFFECTS----------------
+	enablePostEffects: false,
 	//--------------------DEBUG--------------------
     showDebug: true,
 	showDebugIcons: false,

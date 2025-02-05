@@ -16,7 +16,9 @@ export const c_SSS =
 		let threadID = vec2<u32>(GlobalIvocationID.x, GlobalIvocationID.y);
 		
 		//read input texture
-		let inputCol = textureLoad(inTexture, vec2<u32>(threadID.x, threadID.y));
+		var inputCol = textureLoad(inTexture, vec2<u32>(threadID.x, threadID.y));
+		
+		inputCol *= vec4f(1.0,0.0,0.0,1.0);
 		
 		//write to output
 		textureStore(outTexture, threadID, vec4<f32>(inputCol.r,inputCol.g,inputCol.b,1.0));

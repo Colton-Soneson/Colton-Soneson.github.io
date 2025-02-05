@@ -494,6 +494,10 @@ window.addEventListener("keydown", function (event) {
 			settings.debugViewMode = selectedDebugDisplayMode;
 			console.log("DEBUG DISPLAY MODE: ", debugDisplayModes[selectedDebugDisplayMode]);
 		break;
+		case "p":
+			settings.enablePostEffects = !settings.enablePostEffects;
+			console.log("Post Effects Enabled: ", settings.enablePostEffects);
+		break;
 		case "ArrowLeft":
 			if(selectedEditMode == 0 || selectedEditMode == 1 || selectedEditMode == 2)
 			{
@@ -672,8 +676,12 @@ export function updateRotatingCubePass() {
 	
 	pass.end();
 	
-	//compute section, check to see if this should go before the clear before everything
-	postEffectPassSSS(encoder, context.getCurrentTexture());
+	//post effect section
+	if(settings.enablePostEffects)
+	{
+		postEffectPassSSS(encoder, context.getCurrentTexture());
+	}
+	
 
 	device.queue.submit([encoder.finish()]);
 }

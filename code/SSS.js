@@ -1,5 +1,6 @@
 import {device} from './deviceSelection.js'
 import {context} from './deviceSelection.js'
+import {canvas} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
 
 import { c_SSS } from '../shaders/js/c_SSS.js'
@@ -23,6 +24,19 @@ const sssUniformBuffer = device.createBuffer({
 });
 device.queue.writeBuffer(sssUniformBuffer, 0, sssUniformArray);
 
+//linear sampling
+const linSampler = device.createSampler({
+  magFilter: 'linear',
+  minFilter: 'linear',
+});
+
+//out texture
+const outTexture = device.createTexture({
+	size: {width: canvas.width, height: canvas.height},
+	format: "rgba8unorm",
+	usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
+});
+
 // Layouts
 //-------------------------------------------------
 // Create the bind group layout and pipeline layout.
@@ -34,11 +48,23 @@ const bindGroupLayout = device.createBindGroupLayout({
     buffer: {} //buffer key, other options are things like "texture" or "sampler", default is uniform, leave empty for binding 0
   },
   {
-    binding: 1,
+    binding: 1,								//outTexture
     visibility:  GPUShaderStage.COMPUTE,
     storageTexture: {
-                access: "read-write",  // We need both read and write access
-                format: "rgba32float"   // Format must match the swap chain texture
+        format: canvasFormat,   // Format must match the swap chain texture
+		access: "write-only",
+		dimension: "2d",
+		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
+    }
+  },
+  {
+	binding: 2,								//inTexture
+	visibility:  GPUShaderStage.COMPUTE,
+	storageTexture: {
+		format: canvasFormat,
+		access: "read-only",
+		dimension: "2d",
+		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
     }
   }
   ]
@@ -56,6 +82,10 @@ function createBindGroupsSSS(aTexture) {
     },
 	{
       binding: 1,
+      resource: outTexture.createView()
+    },
+	{
+      binding: 2,
       resource: aTexture.createView()	//we want the current swap chain texture in here
     }
 	],
@@ -93,8 +123,15 @@ export function postEffectPassSSS(aEncoder, aTexture) {
 	
 	computePass.setPipeline(sssPipeline);
 	computePass.setBindGroup(0, bindGroups[0]);	//same bind groups as rendering pass
-	const workgroupCount = Math.ceil(SSS_BUFFER_SIZE / SSS_WORKGROUP_SIZE[0] * SSS_WORKGROUP_SIZE[1] * SSS_WORKGROUP_SIZE[2]);
-	computePass.dispatchWorkgroups(workgroupCount);
+	computePass.dispatchWorkgroups(Math.ceil(canvas.width / SSS_WORKGROUP_SIZE[0]), 
+									Math.ceil(canvas.height / SSS_WORKGROUP_SIZE[1]));
 	
 	computePass.end();
+	
+	//this may seem ridiculous, but for now its to get around the swap chain image format problems with read-write storage
+	aEncoder.copyTextureToTexture(
+		{texture: outTexture},	//the compute pass result
+		{texture: aTexture},	//the swap chain image
+		{width: canvas.width, height: canvas.height}
+	)
 }

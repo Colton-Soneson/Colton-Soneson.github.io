@@ -15,11 +15,6 @@ import { settings } from './settings.js';
 
 import { vf_p_generic3D } from '../shaders/js/vf_p_generic.js'
 
-//----------------CANVAS-----------------------
-const devicePixelRatio = window.devicePixelRatio;
-canvas.width = canvas.clientWidth * devicePixelRatio;
-canvas.height = canvas.clientHeight * devicePixelRatio;
-
 function getLightsInfo() {
 	const lightsBuffer = [];
 
@@ -261,7 +256,6 @@ const genericPipeline = device.createRenderPipeline({
 		format: 'depth24plus',
 	},
 });
-
 
 function genericUniformBufferUpdates(models) {
 	for(let i = 0; i < models.length; ++i)
@@ -679,7 +673,7 @@ export function updateRotatingCubePass() {
 	pass.end();
 	
 	//compute section, check to see if this should go before the clear before everything
-	//postEffectPassSSS(encoder, context.getCurrentTexture());
+	postEffectPassSSS(encoder, context.getCurrentTexture());
 
 	device.queue.submit([encoder.finish()]);
 }

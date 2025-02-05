@@ -17,8 +17,20 @@ export const device = await adapter.requestDevice();
 
 
 export const context = canvas.getContext("webgpu");
-export const canvasFormat = navigator.gpu.getPreferredCanvasFormat();	//webgpu's suggestion for canvas type
+//export const canvasFormat = navigator.gpu.getPreferredCanvasFormat();	//webgpu's suggestion for canvas type
+export const canvasFormat = 'rgba8unorm';	//changed as screen space compute shaders came in, needed specific copy patern for now
+
 context.configure({
 	device: device,
-	format: canvasFormat,	//format is the texture format that should be used
+	format: canvasFormat,
+	usage: GPUTextureUsage.RENDER_ATTACHMENT 
+			| GPUTextureUsage.COPY_SRC 
+			| GPUTextureUsage.COPY_DST 
+			| GPUTextureUsage.TEXTURE_BINDING	//not sure this one is necesary
+			| GPUTextureUsage.STORAGE_BINDING
 });
+
+//----------------CANVAS-----------------------
+const devicePixelRatio = window.devicePixelRatio;
+canvas.width = canvas.clientWidth * devicePixelRatio;
+canvas.height = canvas.clientHeight * devicePixelRatio;

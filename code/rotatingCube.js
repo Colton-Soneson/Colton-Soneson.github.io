@@ -6,6 +6,7 @@ import {canvasFormat} from './deviceSelection.js'
 import { mat4, vec3 } from 'https://wgpu-matrix.org/dist/3.x/wgpu-matrix.module.js';
 
 import {postEffectPassSSS} from './SSS.js'
+import {grassPass} from './computeGrass.js'
 
 import * as primitives from '../models/primitives.js'
 import * as shadowMapping from './shadowMapping.js'
@@ -233,7 +234,7 @@ const genericPipeline = device.createRenderPipeline({
 function genericUniformBufferUpdates(models) {
 	for(let i = 0; i < models.length; ++i)
 	{	
-		const spaceTrans = transformations.getMatrixTransformSpaces(models[i]);
+		const spaceTrans = transformations.getMatrixTransformSpaces(models[i], 1);
 
 		device.queue.writeBuffer(uniformBufferSpaces, 
 								i * uboOffset,	//apparently uniform buffer size defaults to a need of 256 
@@ -643,6 +644,10 @@ export function updateRotatingCubePass() {
 		postEffectPassSSS(encoder, context.getCurrentTexture());
 	}
 	
+	if(settings.enableGrass)
+	{
+		grassPass(encoder);
+	}
 
 	device.queue.submit([encoder.finish()]);
 }

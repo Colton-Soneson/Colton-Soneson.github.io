@@ -50,7 +50,7 @@ function loadModel(vertices, faces, normals, uvs) {
 
 export const entityModelsStride = [];
 
-function loadModelsToVBArray(entityModelList, modelCount, name) {
+export function loadModelsToVBArray(entityModelList, modelCount, name, ems) {
 	const result = [];
 	console.log("Vertex Buffer Array Model Load Function:" , name);	
 	
@@ -64,7 +64,7 @@ function loadModelsToVBArray(entityModelList, modelCount, name) {
 		{
 			result.push(tempModelArray[j]);
 		}
-		entityModelsStride.push(tempModelArray.length);
+		ems.push(tempModelArray.length);
 		console.log("Model: ", i, "  Array Total Stride: ", tempModelArray.length);
 	}
 	
@@ -73,7 +73,7 @@ function loadModelsToVBArray(entityModelList, modelCount, name) {
 
 //textures
 export const modelsTexturesList = [];
-function loadModelTextures (models) {
+export function loadModelTextures (models, mtl) {
 	for(let i = 0; i < models.length; ++i)
 	{
 		const resultTexture = device.createTexture({
@@ -91,7 +91,7 @@ function loadModelTextures (models) {
 			[models[i].textureBitmap.width, models[i].textureBitmap.height]
 		);
 		
-		modelsTexturesList.push(resultTexture);
+		mtl.push(resultTexture);
 	}
 }
 
@@ -122,20 +122,16 @@ if(settings.showDebugIcons) {
 	entityModels[entityModels.length - 1].worldTranslation[2] = setttings.sunPosZ;
 }
 
-if(settings.enableGrass) {
-	entityModels.push(primitives.pGrassBlade);
-}
-
 //for now, always leave skybox as last or this will break
 if(settings.activateSkybox) {
 	entityModels.push(primitives.pSkybox);
 }
 
 console.log(entityModels);
-const genericShaderVertexBufferArray = loadModelsToVBArray(entityModels, entityModels.length, "generic shader VBA");
+const genericShaderVertexBufferArray = loadModelsToVBArray(entityModels, entityModels.length, "generic shader VBA", entityModelsStride);
 
-loadModelTextures(entityModels);
-console.log("Textures: ", modelsTexturesList);
+loadModelTextures(entityModels, modelsTexturesList);
+console.log("Scene Textures: ", modelsTexturesList);
 
 //-----------------VB OF GENERIC SHADER MODELS-----------------------
 //GPU Side memory management done through GPUBuffer objects

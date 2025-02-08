@@ -22,6 +22,9 @@ export const settings = {
 	shadowMapAcneBias: 0.005,
 	//-----------------POST EFFECTS----------------
 	enablePostEffects: false,
+	//--------------------GRASS--------------------
+	enableGrass: true,
+	grassDensityPerTile: 64,	//tile size will determine density using distance from camera
 	//--------------------DEBUG--------------------
     showDebug: true,
 	showDebugIcons: false,

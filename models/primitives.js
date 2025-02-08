@@ -112,6 +112,19 @@ export const pSkybox = new Primitive(
 	"Skybox",
 );
 
+export const pGrassBlade = new Primitive(
+	3, 	//we will need to make this 2
+	new Float32Array(await loadObjFileVerts('./models/basicgrass.obj')),
+	new Float32Array(await loadObjFileFaces('./models/basicgrass.obj')),
+	new Float32Array(await loadObjFileNormals('./models/basicgrass.obj')),
+	new Float32Array(await loadObjFileUVs('./models/basicgrass.obj')),
+	await loadTextureImageBitmap('./textures/default.png'),
+	new Float32Array([0.0,0,0.0]),
+	new Float32Array([0,0,0]),
+	new Float32Array([10,10,10]),
+	"grassBlade",
+);
+
 export const pTest = new Primitive(
 	3, 
 	new Float32Array(await loadObjFileVerts('./models/test.obj')),
@@ -124,18 +137,6 @@ export const pTest = new Primitive(
 	new Float32Array([3,3,3]),
 	"Test",
 );
-
-//export const pSuzanne = new Primitive(
-//	3, 
-//	new Float32Array(await loadObjFileVerts('./models/monkey.obj')),
-//	new Float32Array(await loadObjFileFaces('./models/monkey.obj')),
-//);
-//
-//export const pTotoro = new Primitive(
-//	3, 
-//	new Float32Array(await loadObjFileVerts('./models/totoro.obj')),
-//	new Float32Array(await loadObjFileFaces('./models/totoro.obj')),
-//);
 
 //--------------------------2D----------------------------
 export const pSquare = new Primitive(

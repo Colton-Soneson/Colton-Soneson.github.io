@@ -6,9 +6,6 @@ export const c_SSS =
 @group(0) @binding(1) var outTexture : texture_storage_2d<rgba8unorm, write>;
 @group(0) @binding(2) var inTexture : texture_storage_2d<rgba8unorm, read>;
 
-//@group(0) @binding(2) var inTexture : texture_2d<f32>;
-//@group(0) @binding(3) var mySampler : sampler;
-
 @compute @workgroup_size(${SSS_WORKGROUP_SIZE[0]}, ${SSS_WORKGROUP_SIZE[1]})	
     fn computeMain(
 		@builtin(global_invocation_id) GlobalIvocationID: vec3<u32>

@@ -71,6 +71,42 @@ function loadModelsToVBArray(entityModelList, modelCount, name) {
 	return new Float32Array(result);
 }
 
+//textures
+export const modelsTexturesList = [];
+function loadModelTextures (models) {
+	for(let i = 0; i < models.length; ++i)
+	{
+		const resultTexture = device.createTexture({
+			size: [models[i].textureBitmap.width, models[i].textureBitmap.height, 1],
+			format: 'rgba8unorm',
+			usage:
+			GPUTextureUsage.TEXTURE_BINDING |
+			GPUTextureUsage.COPY_DST |
+			GPUTextureUsage.RENDER_ATTACHMENT,
+		});
+		
+		device.queue.copyExternalImageToTexture(
+			{ source: models[i].textureBitmap },
+			{ texture: resultTexture },
+			[models[i].textureBitmap.width, models[i].textureBitmap.height]
+		);
+		
+		modelsTexturesList.push(resultTexture);
+	}
+}
+
+export function searchListIndexForEntityByName(ml, name) {
+	for(let i = 0; i < ml.length; ++i) {
+		if(ml[i].name == name) {
+			return i;
+		}
+	}
+	
+	//wasnt found, for now crash condition
+	console.log("Critical Failure: entity name not found in model list");
+	return ml.length + 1;
+}
+
 export const entityModels = [];
 entityModels.push(primitives.pIslandHouse);
 entityModels.push(primitives.pLightHouse);
@@ -86,6 +122,10 @@ if(settings.showDebugIcons) {
 	entityModels[entityModels.length - 1].worldTranslation[2] = setttings.sunPosZ;
 }
 
+if(settings.enableGrass) {
+	entityModels.push(primitives.pGrassBlade);
+}
+
 //for now, always leave skybox as last or this will break
 if(settings.activateSkybox) {
 	entityModels.push(primitives.pSkybox);
@@ -93,6 +133,9 @@ if(settings.activateSkybox) {
 
 console.log(entityModels);
 const genericShaderVertexBufferArray = loadModelsToVBArray(entityModels, entityModels.length, "generic shader VBA");
+
+loadModelTextures(entityModels);
+console.log("Textures: ", modelsTexturesList);
 
 //-----------------VB OF GENERIC SHADER MODELS-----------------------
 //GPU Side memory management done through GPUBuffer objects

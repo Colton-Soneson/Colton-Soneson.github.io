@@ -72,33 +72,6 @@ const uniformBufferLights = device.createBuffer({
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,	//this makes it another GPUBuffer Object but this time uniform
 });
 
-//textures
-const modelsTexturesList = [];
-function loadModelTextures (models) {
-	for(let i = 0; i < models.length; ++i)
-	{
-		const resultTexture = device.createTexture({
-			size: [models[i].textureBitmap.width, models[i].textureBitmap.height, 1],
-			format: 'rgba8unorm',
-			usage:
-			GPUTextureUsage.TEXTURE_BINDING |
-			GPUTextureUsage.COPY_DST |
-			GPUTextureUsage.RENDER_ATTACHMENT,
-		});
-		
-		device.queue.copyExternalImageToTexture(
-			{ source: models[i].textureBitmap },
-			{ texture: resultTexture },
-			[models[i].textureBitmap.width, models[i].textureBitmap.height]
-		);
-		
-		modelsTexturesList.push(resultTexture);
-	}
-}
-
-loadModelTextures(scene.entityModels);
-console.log("Textures: ", modelsTexturesList);
-
 const depthTexture = device.createTexture({
   size: [canvas.width, canvas.height],
   format: 'depth24plus',
@@ -191,7 +164,7 @@ function createGenericBindGroups(numModels){
 				},
 				{
 				binding: 2,
-				resource: modelsTexturesList[i].createView()
+				resource: scene.modelsTexturesList[i].createView()
 				},
 				{
 				binding: 3,
@@ -277,18 +250,6 @@ function genericUniformBufferUpdates(models) {
 								lights.byteLength);
 }
 
-function searchListIndexForEntityByName(ml, name) {
-	for(let i = 0; i < ml.length; ++i) {
-		if(ml[i].name == name) {
-			return i;
-		}
-	}
-	
-	//wasnt found, for now crash condition
-	console.log("Critical Failure: entity name not found in model list");
-	return ml.length + 1;
-}
-
 //input tracking section
 const pressedKeys = new Set();
 let selectedEntity = 0;
@@ -326,7 +287,7 @@ window.addEventListener("keydown", function (event) {
 				if(settings.showDebug) {
 					console.log("SunPos: ", settings.sunPosX, settings.sunPosY, settings.sunPosZ);
 					if(settings.showDebugIcons) {
-						scene.entityModels[searchListIndexForEntityByName(scene.entityModels, "Test")].worldTranslation[2] = settings.sunPosZ;
+						scene.entityModels[scene.searchListIndexForEntityByName(scene.entityModels, "Test")].worldTranslation[2] = settings.sunPosZ;
 					}
 				}
 			}
@@ -349,7 +310,7 @@ window.addEventListener("keydown", function (event) {
 				if(settings.showDebug) {
 					console.log("SunPos: ", settings.sunPosX, settings.sunPosY, settings.sunPosZ);
 					if(settings.showDebugIcons) {
-						scene.entityModels[searchListIndexForEntityByName(scene.entityModels, "Test")].worldTranslation[0] = settings.sunPosX;
+						scene.entityModels[scene.searchListIndexForEntityByName(scene.entityModels, "Test")].worldTranslation[0] = settings.sunPosX;
 					}
 				}
 			}
@@ -372,7 +333,7 @@ window.addEventListener("keydown", function (event) {
 				if(settings.showDebug) {
 					console.log("SunPos: ", settings.sunPosX, settings.sunPosY, settings.sunPosZ);
 					if(settings.showDebugIcons) {
-						scene.entityModels[searchListIndexForEntityByName(scene.entityModels, "Test")].worldTranslation[2] = settings.sunPosZ;
+						scene.entityModels[scene.searchListIndexForEntityByName(scene.entityModels, "Test")].worldTranslation[2] = settings.sunPosZ;
 					}
 				}
 			}
@@ -395,7 +356,7 @@ window.addEventListener("keydown", function (event) {
 				if(settings.showDebug) {
 					console.log("SunPos: ", settings.sunPosX, settings.sunPosY, settings.sunPosZ);
 					if(settings.showDebugIcons) {
-						scene.entityModels[searchListIndexForEntityByName(scene.entityModels, "Test")].worldTranslation[0] = settings.sunPosX;
+						scene.entityModels[scene.searchListIndexForEntityByName(scene.entityModels, "Test")].worldTranslation[0] = settings.sunPosX;
 					}
 				}
 			}
@@ -418,7 +379,7 @@ window.addEventListener("keydown", function (event) {
 				if(settings.showDebug) {
 					console.log("SunPos: ", settings.sunPosX, settings.sunPosY, settings.sunPosZ);
 					if(settings.showDebugIcons) {
-						scene.entityModels[searchListIndexForEntityByName(scene.entityModels, "Test")].worldTranslation[1] = settings.sunPosY;
+						scene.entityModels[scene.searchListIndexForEntityByName(scene.entityModels, "Test")].worldTranslation[1] = settings.sunPosY;
 					}
 				}
 			}
@@ -441,7 +402,7 @@ window.addEventListener("keydown", function (event) {
 				if(settings.showDebug) {
 					console.log("SunPos: ", settings.sunPosX, settings.sunPosY, settings.sunPosZ);
 					if(settings.showDebugIcons) {
-						scene.entityModels[searchListIndexForEntityByName(scene.entityModels, "Test")].worldTranslation[1] = settings.sunPosY;
+						scene.entityModels[scene.searchListIndexForEntityByName(scene.entityModels, "Test")].worldTranslation[1] = settings.sunPosY;
 					}
 				}
 			}

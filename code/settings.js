@@ -25,6 +25,7 @@ export const settings = {
 	//--------------------GRASS--------------------
 	enableGrass: true,
 	grassDensityPerTile: 64,	//tile size will determine density using distance from camera
+	grassTotalBladeCount: 2,
 	//--------------------DEBUG--------------------
     showDebug: true,
 	showDebugIcons: false,

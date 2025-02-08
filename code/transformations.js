@@ -58,28 +58,37 @@ export function getLightViewProjectionMat() {
 	return lightViewProjMatrix;
 }
 
-export function getMatrixTransformSpaces(model) {
-  const spaceBuffer = [];
-  const now = Date.now() / 1000;
+export function getMatrixTransformSpaces(model, numInstances) {
+	const spaceBuffer = [];
+	const now = Date.now() / 1000;
 
-  const viewMatrix = getViewMatrix();
-  const modelMatrix = getModelMatrix(model.worldTranslation, model.worldRotation, model.worldScale);
-  const modelViewMat = mat4.mul(viewMatrix, modelMatrix);
-  const inverseModelViewMat = mat4.invert(modelViewMat);
-  const modelViewProjectionMatrix = mat4.mul(projectionMatrix, modelViewMat);
-  var normalMat = mat4.create();
-  normalMat = mat4.transpose(mat4.invert(modelMatrix));
-  //normalMat = mat4.transpose(mat4.invert(modelViewMat));
+	const viewMatrix = getViewMatrix();
   
-  for(let i = 0; i < 16; i++) {
-	  spaceBuffer.push(modelViewProjectionMatrix[i]);
-  }
-   for(let i = 0; i < 16; i++) {
-	  spaceBuffer.push(modelMatrix[i]);
-  }
-  for(let i = 0; i < 16; i++) {
-	  spaceBuffer.push(normalMat[i]);
-  }
+	const modelMatrix = getModelMatrix(model.worldTranslation, model.worldRotation, model.worldScale);
+	const modelViewMat = mat4.mul(viewMatrix, modelMatrix);
+	const inverseModelViewMat = mat4.invert(modelViewMat);
+	const modelViewProjectionMatrix = mat4.mul(projectionMatrix, modelViewMat);
+	var normalMat = mat4.create();
+	normalMat = mat4.transpose(mat4.invert(modelMatrix));
+
+	//with instances, we want the arrays to match up with the shader
+	//	maybe it would be best to have each of these split into multiple functions, to then be done in a compute shader, to save time with async
+	for(let instance = 0; instance < numInstances; instance++) {
+		for(let i = 0; i < 16; i++) {
+			spaceBuffer.push(modelViewProjectionMatrix[i]);
+		}
+	}
+	for(let instance = 0; instance < numInstances; instance++) {
+		for(let i = 0; i < 16; i++) {
+			spaceBuffer.push(modelMatrix[i]);
+		}
+	}
+	for(let instance = 0; instance < numInstances; instance++) {
+		for(let i = 0; i < 16; i++) {
+			spaceBuffer.push(normalMat[i]);
+		}
+	}
+  
   
   return new Float32Array(spaceBuffer);
 }

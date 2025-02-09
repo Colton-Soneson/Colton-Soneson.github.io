@@ -17,9 +17,10 @@ export const v_grass =
 `
 	struct GrassUniforms
 	{
-		modelViewProjectionMatrix : array<mat4x4f, ${settings.grassTotalBladeCount}>,
-		modelMatrix : array<mat4x4f, ${settings.grassTotalBladeCount}>,
-		normalMatrix : array<mat4x4f, ${settings.grassTotalBladeCount}>,
+		modelViewProjectionMatrix : mat4x4f, 	//IT IS UNECESSARY TO HAVE THIS BE PER BLADE
+												//	this should just be a default MVP with no pos, rot, or scale differences
+		
+		guPositions : array<vec4f, ${settings.grassTotalBladeCount}>
 	}
 	@group(0) @binding(0) var<uniform> UBO: GrassUniforms;
 	
@@ -44,7 +45,11 @@ export const v_grass =
     //output.pos = UBO.modelViewProjectionMatrix[input.instanceIdx] * vec4f(input.pos.x, input.pos.y, input.pos.z, 1.0);
     
 	//INSTANCE TEST
-	output.pos = UBO.modelViewProjectionMatrix[input.instanceIdx] * vec4f(input.pos.x + f32(input.instanceIdx), input.pos.y + f32(input.instanceIdx), input.pos.z, 1.0);
+	
+	output.pos = UBO.modelViewProjectionMatrix * vec4f(input.pos.x + UBO.guPositions[input.instanceIdx].x, 
+																			input.pos.y + UBO.guPositions[input.instanceIdx].y, 
+																			input.pos.z + UBO.guPositions[input.instanceIdx].z, 
+																			1.0);
 	
     output.fragPos = output.pos;
 	output.fragNormal = input.norm;

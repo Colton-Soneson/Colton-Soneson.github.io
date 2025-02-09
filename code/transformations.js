@@ -7,7 +7,7 @@ import * as renderMath from './renderMath.js'
 import { settings } from './settings.js';
 
 const aspect = canvas.width / canvas.height;
-const projectionMatrix = mat4.perspective((2 * Math.PI) / 5, aspect, settings.camNearPlane, settings.camFarPlane);
+export const projectionMatrix = mat4.perspective((2 * Math.PI) / 5, aspect, settings.camNearPlane, settings.camFarPlane);
 
 export function getViewMatrix() {
 	return mat4.lookAt([settings.camPosX, settings.camPosY, settings.camPosZ],

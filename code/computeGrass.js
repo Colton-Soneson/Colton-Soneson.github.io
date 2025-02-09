@@ -3,6 +3,8 @@ import {context} from './deviceSelection.js'
 import {canvas} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
 
+import { mat4, vec3 } from 'https://wgpu-matrix.org/dist/3.x/wgpu-matrix.module.js';
+
 import { settings } from './settings.js';
 
 import { c_grass } from '../shaders/js/vfc_grass.js'
@@ -59,14 +61,15 @@ const grassVertexShaderModule = device.createShaderModule({
 
 //model list specific
 const uboOffset = 256;	//this is a defaulted max for UBO, nothing I wrote equals up to 256, its a limiter
-const singleBladeUniformArraySpacesSize = 192; //(4 * 4 * 4) + (4 * 4 * 4) + (4 x 4 x 4) 4x4 matrix for MVP + iMV + normal
-const totalGrassUniformArraySpacesSize = singleBladeUniformArraySpacesSize * settings.grassTotalBladeCount * grassEntityModels.length;
-const grassSpacesUniformBuffer = device.createBuffer({
-  label: "grass spaces Uniform",
-  size: totalGrassUniformArraySpacesSize,
+const singleBladeUniformArraySpacesSize = 64; //(4 * 4 * 4) 4x4 matrix for MVP, forget the rest for in shader
+const grassInstancePositionalData = 16 * settings.grassTotalBladeCount; // (4 * 4) * total blades, later this will be total clumps of blades, which will allow for more blade positions
+const totalGrassUniformArraySize = singleBladeUniformArraySpacesSize + grassInstancePositionalData;
+const grassUniformBuffer = device.createBuffer({
+  label: "grass Uniform",
+  size: totalGrassUniformArraySize,
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 });
-console.log("Buffer size: ", totalGrassUniformArraySpacesSize);
+console.log("Buffer size: ", totalGrassUniformArraySize);
 
 //compute grass anim data
 const uniformArrayComputeGrass= 128;	//default for now
@@ -97,18 +100,70 @@ function getGrassComputeInfo() {
 	return new Float32Array(grassCompBuffer);
 }
 
+//TODO: remove when necessary, only works with even grid
+function testInstancedGrassGridBased(numInstances) {
+	const resultArray = [];
+	
+	const bladeDistanceDivisor = 1;
+	
+	const numInstanceAxis = Math.sqrt(numInstances);
+	if(numInstanceAxis % 1 != 0) {
+		console.error("provided number of total grass blades/clumps is not base 2", numInstanceAxis)
+	}
+	
+	for(let x = 0; x < numInstanceAxis; x++) {
+		for(let y = 0; y < numInstanceAxis; y++) {
+			resultArray.push([(x / bladeDistanceDivisor),
+								(y / bladeDistanceDivisor),
+								0,
+								1]);
+		}
+	}
+	return resultArray;
+}
+
 function grassVFUniformBufferUpdates(grassBladeModels, numInstances) {	//future will have a grass model list with multiple types
+	
+	// !!!!!!!!!!! THIS WILL TAKE IN THE MATH AND POSITIONAL DATA DONE FROM THE COMPUTE SHADER !!!!!!!!!!!!!!!!!
 
 	for(let i = 0; i < grassBladeModels.length; i++) {
-		const spaceTrans = transformations.getMatrixTransformSpaces(grassBladeModels[i], numInstances);
+		//const spaceTrans = transformations.getMatrixTransformSpaces(grassBladeModels[i], numInstances);
 		
-		const offset = i * singleBladeUniformArraySpacesSize;
+		const bufferResult = [];
+		
+		//for now this will be model mat, but its should just be default everything to save time (but scale might be good to avoid model crap)
+		const modelMatrix = transformations.getModelMatrix(grassBladeModels[i].worldTranslation, 
+															grassBladeModels[i].worldRotation, 
+															grassBladeModels[i].worldScale);
+		const modelViewMat = mat4.mul(transformations.getViewMatrix(), modelMatrix);
+		const modelViewProjectionMatrix = mat4.mul(transformations.projectionMatrix, modelViewMat);
+		
+		for(let i = 0; i < 16; i++) {
+			bufferResult.push(modelViewProjectionMatrix[i]);
+		}
+		
+		//TODO: this will have to grab the same positional data from compute shader output.
+		//		for now this will be a grid created by instance number
+		const testGrid = testInstancedGrassGridBased(numInstances);
+		for(let instance = 0; instance < numInstances; instance++) {
+			for(let positionColumn = 0; positionColumn < 4; positionColumn++) {
+				bufferResult.push(testGrid[instance][positionColumn]);
+			}
+		}
+		//include extra information from compute shader necesary for the VF Shader
+		
+		
+		const result = new Float32Array(bufferResult);
+		const offset = i * totalGrassUniformArraySize;
+		
+		//console.log("Grass Uniform Buffer Data:", result)
 
-		device.queue.writeBuffer(grassSpacesUniformBuffer, 
+
+		device.queue.writeBuffer(grassUniformBuffer, 
 								offset,
-								spaceTrans.buffer,
-								spaceTrans.byteOffset,
-								spaceTrans.byteLength);
+								result.buffer,
+								result.byteOffset,
+								result.byteLength);
 	}
 	
 }
@@ -156,7 +211,7 @@ function createVFBindGroupsGrass(numModels) {
 			layout: bindGroupVFLayout,
 			entries: [{
 			binding: 0,
-			resource: { buffer: grassSpacesUniformBuffer }
+			resource: { buffer: grassUniformBuffer }
 			}]
 		}));
 	}
@@ -235,6 +290,19 @@ const grassComputePipeline = device.createComputePipeline({
 
 export function grassPass(aEncoder) {
 	
+	// Start a compute pass place and animate the instances
+	const bindCGroup = createCompBindGroupGrass();
+	grassComputeUniformBufferUpdate();
+	const computePass = aEncoder.beginComputePass();
+	
+	computePass.setPipeline(grassComputePipeline);
+	computePass.setBindGroup(0, bindCGroup);	//
+	computePass.dispatchWorkgroups(Math.ceil(canvas.width / GRASS_WORKGROUP_SIZE[0]), 
+									Math.ceil(canvas.height / GRASS_WORKGROUP_SIZE[1]));
+	
+	computePass.end();
+	
+	
 	const bindVFGroups = createVFBindGroupsGrass(grassEntityModels.length);
 	grassVFUniformBufferUpdates(grassEntityModels, settings.grassTotalBladeCount);
 	
@@ -269,16 +337,4 @@ export function grassPass(aEncoder) {
 	prevModCombo = 0;
 		
 	pass.end();
-	
-	// Start a compute pass place and animate the instances
-	const bindCGroup = createCompBindGroupGrass();
-	grassComputeUniformBufferUpdate();
-	const computePass = aEncoder.beginComputePass();
-	
-	computePass.setPipeline(grassComputePipeline);
-	computePass.setBindGroup(0, bindCGroup);	//
-	computePass.dispatchWorkgroups(Math.ceil(canvas.width / GRASS_WORKGROUP_SIZE[0]), 
-									Math.ceil(canvas.height / GRASS_WORKGROUP_SIZE[1]));
-	
-	computePass.end();
 }

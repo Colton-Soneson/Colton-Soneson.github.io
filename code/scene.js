@@ -127,7 +127,7 @@ if(settings.activateSkybox) {
 	entityModels.push(primitives.pSkybox);
 }
 
-console.log(entityModels);
+console.log("entity models: ", entityModels);
 const genericShaderVertexBufferArray = loadModelsToVBArray(entityModels, entityModels.length, "generic shader VBA", entityModelsStride);
 
 loadModelTextures(entityModels, modelsTexturesList);

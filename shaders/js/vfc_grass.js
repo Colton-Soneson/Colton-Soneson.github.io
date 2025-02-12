@@ -1,7 +1,7 @@
 import { settings } from '../../code/settings.js';
 
-export const GRASS_BUFFER_SIZE = 1000;
-export const GRASS_WORKGROUP_SIZE = [1, 1, 1];
+export const GRASS_BUFFER_SIZE = 10000;
+export const GRASS_WORKGROUP_SIZE = [16, 1, 1];	//stick to 1 for now to get understanding
 
 export const c_grass = 
 `
@@ -28,12 +28,12 @@ export const c_grass =
 	
 	@group(0) @binding(3) var<storage, read_write> totalGrassVertexData: array<f32>;
 
-@compute @workgroup_size(${GRASS_WORKGROUP_SIZE[0]})	
+@compute @workgroup_size(${GRASS_WORKGROUP_SIZE[0]}, ${GRASS_WORKGROUP_SIZE[1]}, ${GRASS_WORKGROUP_SIZE[2]})	
     fn computeMain(
 		@builtin(global_invocation_id) GlobalIvocationID: vec3<u32>
 	) {
 		
-		var bladeIndex = GlobalIvocationID.x; // Single index for current invocation
+		var bladeIndex = GlobalIvocationID.x;
 		let replicationCount = u32(GU.totalBladeCount);
 		
 		//let verticesPerBlade = u32(arrayLength(&singleBladeVertexData));
@@ -64,7 +64,14 @@ export const c_grass =
 		
 		
 		//MAKE A FUCKING TRIANGLE AND REPLICATE TO SEE WHAT THE FUCK IS UP
+		
+		//KEEP THIS, it quits the workgroup
+		if(bladeIndex > replicationCount) {
+			return;
+		}
+		
 		var translatex = f32(bladeIndex) + 2.0;
+		
 		let triangleTotalSize = 24u;
 		
 		//first pos
@@ -108,6 +115,7 @@ export const c_grass =
 		totalGrassVertexData[bladeIndex * triangleTotalSize + 21] = 0;
 		totalGrassVertexData[bladeIndex * triangleTotalSize + 22] = 0;
 		totalGrassVertexData[bladeIndex * triangleTotalSize + 23] = 1;
+		
 	}
 `;
 

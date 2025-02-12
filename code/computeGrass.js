@@ -79,7 +79,10 @@ const uniformBufferComputeGrass = device.createBuffer({
 //compute grass total blade vertex data output
 //	the size has to be set here, BUT the "writeBuffer" functionality is done within the compute shader
 //	!!!ONE ISSUE!!! so this cant be as big as a vertex buffer (max size 256mb), we have to limit it to the max size of a storage buffer (128mb)
-const totalGrassVertexArray = settings.grassTotalBladeCount * grassShaderVertexBufferArray.byteLength;
+//const totalGrassVertexArray = settings.grassTotalBladeCount * grassShaderVertexBufferArray.byteLength;
+const vertexGrassSize = (3 + 2 + 3) * Float32Array.BYTES_PER_ELEMENT; // 3 floats for position, 2 for UV, 3 for normal
+const vertsPerBladeModel = grassEntityModels[0].vertices.length / 3;
+const totalGrassVertexArray = settings.grassTotalBladeCount * vertsPerBladeModel * vertexGrassSize;
 const totalGrassVertexBuffer = device.createBuffer({
 	label: "total grass vertices",		//just helps to identify object, can be anything you type
 	size: totalGrassVertexArray,
@@ -386,7 +389,7 @@ const grassComputePipeline = device.createComputePipeline({
 
 	console.log("Total Grass Vert array size : ", totalGrassVertexArray);
 	console.log("single grass blade vertex num: ", grassEntityModels[0].vertices.length / 3);
-	console.log("Total Grass Vert array size divide by (12 pos + 8 uv + 12 norm = 32) should be number of vertices: ", (totalGrassVertexArray / 32));
+	console.log("Total Grass Vert array size divide by (12 pos + 8 uv + 12 norm = 32) divide by verts per blade model (10) should be number of blades: ", (totalGrassVertexArray / 32 / vertsPerBladeModel));
 
 export function grassPass(aEncoder) {
 	
@@ -400,13 +403,15 @@ export function grassPass(aEncoder) {
 	computePass.setBindGroup(0, bindCGroup);
 	
 	//In WebGPU, the number of times a compute shader will be invoked depends on the number of workgroups you dispatch and the workgroup size
-	//	we take the number of times to invoke, divide by workgroups
+	//	we take the number of times to invoke, divide by workgroups size
 	computePass.dispatchWorkgroups(Math.ceil( settings.grassTotalBladeCount / GRASS_WORKGROUP_SIZE[0]));			//CHECK THIS SIZE!!!!!!!!!!!
 	computePass.end();
 	
+	console.log("Vert gras bufff output ", totalGrassVertexBuffer)
 	
 	const bindVFGroups = createVFBindGroupsGrass(grassEntityModels.length);
 	grassVFUniformBufferUpdates(grassEntityModels, settings.grassTotalBladeCount);
+	
 	
 	// start a pass to render the grass instances
 	const pass = aEncoder.beginRenderPass({
@@ -431,7 +436,13 @@ export function grassPass(aEncoder) {
 	let prevModCombo = 0;
 	for(let i = 0; i < grassEntityModels.length; ++i)
 	{
-		let mod = grassEntityModelsStride[i] / (primitives.totalStride / 4);
+		//let mod = grassEntityModelsStride[i] / (primitives.totalStride / 4);	//WRONG FOR INPUT OF TOTAL GRASS VERTEX BUFF
+		//let mod = (grassEntityModelsStride[i] * settings.grassTotalBladeCount) / (primitives.totalStride / 4);	//ACTUAL
+		
+		//TEST
+		let triModelStride = 24 * 3;
+		let mod = (triModelStride * settings.grassTotalBladeCount) / (primitives.totalStride / 4);	//TEST
+		
 		pass.setBindGroup(0, bindVFGroups[i]);
 		pass.draw(mod, /*settings.grassTotalBladeCount,*/ 1, prevModCombo);		// def for draw here is draw(vertexCount, instanceCount, firstVertex)
 		prevModCombo += mod;

@@ -38,7 +38,7 @@ const grassVertexBuffer = device.createBuffer({
 	usage: GPUBufferUsage.VERTEX | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,	//its use is for vertex data, and that you want to copy data into it, ALSO for use as storage buffer in compute
 });
 device.queue.writeBuffer(grassVertexBuffer, /*bufferOffset=*/0, grassShaderVertexBufferArray); //copy vertex data to buffer
-
+console.log("grass vertex buffer input: ", grassShaderVertexBufferArray);
 
 
 // compute shaders and buffers
@@ -397,13 +397,13 @@ export function grassPass(aEncoder) {
 	const computePass = aEncoder.beginComputePass();
 	
 	computePass.setPipeline(grassComputePipeline);
-	computePass.setBindGroup(0, bindCGroup);	
-	computePass.dispatchWorkgroups(Math.ceil((totalGrassVertexArray) / GRASS_WORKGROUP_SIZE[0]));			//CHECK THIS SIZE!!!!!!!!!!!
+	computePass.setBindGroup(0, bindCGroup);
 	
+	//In WebGPU, the number of times a compute shader will be invoked depends on the number of workgroups you dispatch and the workgroup size
+	//	we take the number of times to invoke, divide by workgroups
+	computePass.dispatchWorkgroups(Math.ceil( settings.grassTotalBladeCount / GRASS_WORKGROUP_SIZE[0]));			//CHECK THIS SIZE!!!!!!!!!!!
 	computePass.end();
 	
-	console.log("TotalGrass Buffer : ", totalGrassVertexBuffer);
-
 	
 	const bindVFGroups = createVFBindGroupsGrass(grassEntityModels.length);
 	grassVFUniformBufferUpdates(grassEntityModels, settings.grassTotalBladeCount);

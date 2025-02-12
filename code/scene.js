@@ -28,7 +28,7 @@ function loadModel(vertices, faces, normals, uvs) {
 	//console.log("---normals list-----");
 	//console.log(normalSplitting);
 	
-	
+	console.log("MEEP ", faces.length / 3);
 	const result = [];
 	//for the entire length of faces (ordered v1,vt1,vn1,v2,vt2,vn2,...) assign accordingly
 	for(let faceCount = 0; faceCount < (faces.length / 3); faceCount++)	//3 for divider: v, vt, vn. If there was a vp then its 4
@@ -145,7 +145,6 @@ device.queue.writeBuffer(vertexBuffer, /*bufferOffset=*/0, genericShaderVertexBu
 //now tell WebGPU what the hell to do with the info
 export const vertexBufferLayout = {
 arrayStride: primitives.totalStride, //number of bytes gpu needs to skip forward to get to the next vertex (with two vertices per vertex, thats 
-						//	two 32 bit floats, so 2 x 4(bytes) = 8 bytes. in 3D it would be 12
 attributes: [{			//stuff like color, normal direction, etc
 	format: "float32x3",//cant be anything, there is a list of GPUVertexFormat types in this case, its specific to pass in
 	offset: 0,			//how many bytes into the vertex this attribute starts, use if you have more than one attribute

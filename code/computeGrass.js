@@ -79,7 +79,6 @@ const uniformBufferComputeGrass = device.createBuffer({
 //compute grass total blade vertex data output
 //	the size has to be set here, BUT the "writeBuffer" functionality is done within the compute shader
 //	!!!ONE ISSUE!!! so this cant be as big as a vertex buffer (max size 256mb), we have to limit it to the max size of a storage buffer (128mb)
-//const totalGrassVertexArray = settings.grassTotalBladeCount * grassShaderVertexBufferArray.byteLength;
 const totalGrassVertexArray = settings.grassTotalBladeCount *  grassEntityModelsStride[0] * Float32Array.BYTES_PER_ELEMENT;
 const totalGrassVertexBuffer = device.createBuffer({
 	label: "total grass vertices",		//just helps to identify object, can be anything you type
@@ -434,14 +433,8 @@ export function grassPass(aEncoder) {
 	let prevModCombo = 0;
 	for(let i = 0; i < grassEntityModels.length; ++i)
 	{
-		//let mod = grassEntityModelsStride[i] / (primitives.totalStride / 4);	//WRONG FOR INPUT OF TOTAL GRASS VERTEX BUFF
-		
+		//with 24 verts to a 8 triangle grass model, thats 24 * ((3 + 2 + 3 for vertex layout) * 4 byte size) = 768.
 		let mod = (grassEntityModelsStride[i] * settings.grassTotalBladeCount) / (primitives.totalStride / 4);	//ACTUAL
-		
-		//TEST with triangles
-		//let triModelStride = 24 * 3;
-		//let mod = (triModelStride * settings.grassTotalBladeCount) / (primitives.totalStride / 4);	//TEST
-		
 		pass.setBindGroup(0, bindVFGroups[i]);
 		pass.draw(mod, /*settings.grassTotalBladeCount,*/ 1, prevModCombo);		// def for draw here is draw(vertexCount, instanceCount, firstVertex)
 		prevModCombo += mod;

@@ -18,18 +18,17 @@ export const c_grass =
 	@group(0) @binding(1) var<uniform> GU: GrassUniforms;
 	
 	
-	//struct VertexData {
-	//	//has to match that of scene
-	//	pos: vec3f,
-	//	uv: vec2f,
-	//	norm: vec3f,
-	//};
-	//@group(0) @binding(2) var<storage, read> singleBladeVertexData: array<VertexData>;
+	//remember hidden padding, just use this struct for math and variables
+	//	kept as vec4f to do matrix mult easier
+	struct Vertex {
+		pos: vec4f,
+		uv: vec2f,
+		norm: vec4f,
+	};
 	
 	@group(0) @binding(2) var<storage, read> singleBladeVertexData: array<f32>;
-	
-	//@group(0) @binding(3) var<storage, read_write> totalGrassVertexData: array<VertexData>;
 	@group(0) @binding(3) var<storage, read_write> totalGrassVertexData: array<f32>;
+
 
 @compute @workgroup_size(${GRASS_WORKGROUP_SIZE[0]}, ${GRASS_WORKGROUP_SIZE[1]}, ${GRASS_WORKGROUP_SIZE[2]})	
     fn computeMain(
@@ -39,63 +38,6 @@ export const c_grass =
 		var bladeIndex = GlobalIvocationID.x;
 		let replicationCount = u32(GU.totalBladeCount);
 		
-		
-		//MAKE A FUCKING TRIANGLE AND REPLICATE TO SEE WHAT THE FUCK IS UP
-		
-		//KEEP THIS, it quits the workgroup
-		//if(bladeIndex > replicationCount) {
-		//	return;
-		//}
-		//
-		//var translatex = f32(bladeIndex) + 2.0;
-		//
-		//let triangleTotalSize = 24u;
-		//
-		////first pos
-		//totalGrassVertexData[bladeIndex * triangleTotalSize + 0] = 0 + translatex;
-		//totalGrassVertexData[bladeIndex * triangleTotalSize + 1] = 0.5;
-		//totalGrassVertexData[bladeIndex * triangleTotalSize + 2] = 0;
-		//
-		////second pos
-		//totalGrassVertexData[bladeIndex * triangleTotalSize + 8] = -0.5 + translatex;
-		//totalGrassVertexData[bladeIndex * triangleTotalSize + 9] = -0.5;
-		//totalGrassVertexData[bladeIndex * triangleTotalSize + 10] = 0;
-		//
-		////third pos
-		//totalGrassVertexData[bladeIndex * triangleTotalSize + 16] = 0.5 + translatex;
-		//totalGrassVertexData[bladeIndex * triangleTotalSize + 17] = -0.5;
-		//totalGrassVertexData[bladeIndex * triangleTotalSize + 18] = 0;
-		//
-		////first uv
-		//totalGrassVertexData[bladeIndex * triangleTotalSize + 3] = 0.5;
-		//totalGrassVertexData[bladeIndex * triangleTotalSize + 4] = 1;
-		//
-		////second uv
-		//totalGrassVertexData[bladeIndex * triangleTotalSize + 11] = 0;
-		//totalGrassVertexData[bladeIndex * triangleTotalSize + 12] = 0;
-		//
-		////third uv
-		//totalGrassVertexData[bladeIndex * triangleTotalSize + 19] = 1;
-		//totalGrassVertexData[bladeIndex * triangleTotalSize + 20] = 0;
-		//
-		////first norm
-		//totalGrassVertexData[bladeIndex * triangleTotalSize + 5] = 0;
-		//totalGrassVertexData[bladeIndex * triangleTotalSize + 6] = 0;
-		//totalGrassVertexData[bladeIndex * triangleTotalSize + 7] = 1;
-		//
-		////second norm
-		//totalGrassVertexData[bladeIndex * triangleTotalSize + 13] = 0;
-		//totalGrassVertexData[bladeIndex * triangleTotalSize + 14] = 0;
-		//totalGrassVertexData[bladeIndex * triangleTotalSize + 15] = 1;
-		//
-		////third norm
-		//totalGrassVertexData[bladeIndex * triangleTotalSize + 21] = 0;
-		//totalGrassVertexData[bladeIndex * triangleTotalSize + 22] = 0;
-		//totalGrassVertexData[bladeIndex * triangleTotalSize + 23] = 1;
-		
-		
-		//////////////////////////////////////////////////////////////////////////////
-		
 		let vertexDataPerBlade = u32(arrayLength(&singleBladeVertexData));
 		let fPerVertexData = u32(3 + 2 + 3);
 		let bladeTotalSize = vertexDataPerBlade * fPerVertexData;	//total floats in the whole thing
@@ -104,53 +46,31 @@ export const c_grass =
 			return;
 		}
 		
-		var translatex = f32(bladeIndex) + 2.0;
+		var translate = vec4f(f32(bladeIndex) * 0.25,0.0,0.0,0.0);
 		
-		
-		//for(var vd = 0u; vd < vertexDataPerBlade; vd++) {
-		//	//pos
-		//	totalGrassVertexData[(bladeIndex * bladeTotalSize) + (vd * fPerVertexData) + 0] = singleBladeVertexData[vd].pos.x + translatex;
-		//	totalGrassVertexData[(bladeIndex * bladeTotalSize) + (vd * fPerVertexData) + 1] = singleBladeVertexData[vd].pos.y;
-		//	totalGrassVertexData[(bladeIndex * bladeTotalSize) + (vd * fPerVertexData) + 2] = singleBladeVertexData[vd].pos.z;
-		//	
-		//	//uv
-		//	totalGrassVertexData[(bladeIndex * bladeTotalSize) + (vd * fPerVertexData) + 3] = singleBladeVertexData[vd].uv.x;
-		//	totalGrassVertexData[(bladeIndex * bladeTotalSize) + (vd * fPerVertexData) + 4] = singleBladeVertexData[vd].uv.y;
-		//	
-		//	//norm
-		//	totalGrassVertexData[(bladeIndex * bladeTotalSize) + (vd * fPerVertexData) + 5] = singleBladeVertexData[vd].norm.x;
-		//	totalGrassVertexData[(bladeIndex * bladeTotalSize) + (vd * fPerVertexData) + 6] = singleBladeVertexData[vd].norm.y;
-		//	totalGrassVertexData[(bladeIndex * bladeTotalSize) + (vd * fPerVertexData) + 7] = singleBladeVertexData[vd].norm.z;
-		//}
-		
-		
-		//THIS WORKS IF BOTH ARE f32 ARRAYS
-		var xPosCount = 0;
-		for(var vd = 0u; vd < vertexDataPerBlade; vd++) {
-			if(xPosCount == 0) {
-				totalGrassVertexData[(bladeIndex * vertexDataPerBlade) + vd] = singleBladeVertexData[vd] + translatex;
-			}
-			else
-			{
-				totalGrassVertexData[(bladeIndex * vertexDataPerBlade) + vd] = singleBladeVertexData[vd];
-			}
+		for(var vd = 0u; vd < vertexDataPerBlade / fPerVertexData; vd++) {
 			
-			xPosCount++;
-			if(xPosCount == 8)
-			{
-				xPosCount = 0;
-			}
+			//index
+			let iVertInd = vd * fPerVertexData;
+			let oVertInd = (bladeIndex * vertexDataPerBlade) + iVertInd;
+			
+			var resultVert = Vertex(vec4f(singleBladeVertexData[iVertInd + 0], singleBladeVertexData[iVertInd + 1], singleBladeVertexData[iVertInd + 2], 1.0),
+									vec2f(singleBladeVertexData[iVertInd + 3], singleBladeVertexData[iVertInd + 4]),
+									vec4f(singleBladeVertexData[iVertInd + 5], singleBladeVertexData[iVertInd + 6], singleBladeVertexData[iVertInd + 7], 1.0));
+			
+			resultVert.pos += translate;
+			
+			totalGrassVertexData[oVertInd + 0] = resultVert.pos.x;
+			totalGrassVertexData[oVertInd + 1] = resultVert.pos.y;
+			totalGrassVertexData[oVertInd + 2] = resultVert.pos.z;
+			totalGrassVertexData[oVertInd + 3] = resultVert.uv.x;
+			totalGrassVertexData[oVertInd + 4] = resultVert.uv.y;
+			totalGrassVertexData[oVertInd + 5] = resultVert.norm.x;
+			totalGrassVertexData[oVertInd + 6] = resultVert.norm.y;
+			totalGrassVertexData[oVertInd + 7] = resultVert.norm.z;
+		
 		}
 		
-		//THIS DOES NOT WORK FOR VERTEX STRUCTS
-		//for(var vd = 0u; vd < vertexDataPerBlade; vd++) {
-		//	
-		//	var temp = singleBladeVertexData[vd];
-		//	
-		//	temp.pos.x = temp.pos.x + translatex;
-		//	
-		//	totalGrassVertexData[(bladeIndex * vertexDataPerBlade) + vd] = temp;
-		//}
 	}
 `;
 

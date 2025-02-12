@@ -17,6 +17,9 @@ import * as transformations from './transformations.js'
 import * as scene from './scene.js'
 import * as primitives from '../models/primitives.js'
 
+//time
+let startTime = Date.now();
+
 //Model Handling
 //-------------------------------------------------
 //models are not among scene entites, but a list just for here
@@ -79,12 +82,17 @@ const uniformBufferComputeGrass = device.createBuffer({
 //compute grass total blade vertex data output
 //	the size has to be set here, BUT the "writeBuffer" functionality is done within the compute shader
 //	!!!ONE ISSUE!!! so this cant be as big as a vertex buffer (max size 256mb), we have to limit it to the max size of a storage buffer (128mb)
-const totalGrassVertexArray = settings.grassTotalBladeCount *  grassEntityModelsStride[0] * Float32Array.BYTES_PER_ELEMENT;
-const totalGrassVertexBuffer = device.createBuffer({
-	label: "total grass vertices",		//just helps to identify object, can be anything you type
-	size: totalGrassVertexArray,
-	usage: GPUBufferUsage.VERTEX | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,	//its use is for vertex data, and that you want to copy data into it, ALSO for use as storage buffer in compute
-});
+function grassStorageVertexBuffer() {
+	const totalGrassVertexArray = settings.grassTotalBladeCount *  grassEntityModelsStride[0] * Float32Array.BYTES_PER_ELEMENT;
+	const GVB = device.createBuffer({
+		label: "total grass vertices",		//just helps to identify object, can be anything you type
+		size: totalGrassVertexArray,
+		usage: GPUBufferUsage.VERTEX | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,	//its use is for vertex data, and that you want to copy data into it, ALSO for use as storage buffer in compute
+	});
+	
+	return GVB;
+}
+let totalGrassVertexBuffer = grassStorageVertexBuffer();
 
 //depth for distance scaling
 const depthTexture = device.createTexture({
@@ -105,6 +113,9 @@ function getGrassComputeInfo() {
 	grassCompBuffer.push(settings.grassTotalBladeCount);
 	grassCompBuffer.push(settings.grassDensityPerTile);
 	
+	const currentTime = (Date.now() - startTime)/ 1000.0; //time in ms
+	grassCompBuffer.push(currentTime);	
+		
 	return new Float32Array(grassCompBuffer);
 }
 
@@ -384,11 +395,13 @@ const grassComputePipeline = device.createComputePipeline({
 });
 
 
-	console.log("Total Grass Vert array size : ", totalGrassVertexArray);
-	console.log("single grass blade vertex num: ", grassEntityModels[0].vertices.length / 3);
-	console.log("Total Grass Vert array size divide by (12 pos + 8 uv + 12 norm = 32) divide by verts per blade model (10) should be number of blades: ", (totalGrassVertexArray / 32 / (grassEntityModels[0].vertices.length / 3)));
+	//console.log("Total Grass Vert array size : ", totalGrassVertexArray);
+	//console.log("single grass blade vertex num: ", grassEntityModels[0].vertices.length / 3);
+	//console.log("Total Grass Vert array size divide by (12 pos + 8 uv + 12 norm = 32) divide by verts per blade model (10) should be number of blades: ", (totalGrassVertexArray / 32 / (grassEntityModels[0].vertices.length / 3)));
 
 export function grassPass(aEncoder) {
+	
+	totalGrassVertexBuffer = grassStorageVertexBuffer();
 	
 	// Start a compute pass place and animate the instances
 	const bindCGroup = createCompBindGroupGrass();
@@ -403,9 +416,7 @@ export function grassPass(aEncoder) {
 	//	we take the number of times to invoke, divide by workgroups size
 	computePass.dispatchWorkgroups(Math.ceil( settings.grassTotalBladeCount / GRASS_WORKGROUP_SIZE[0]));			//CHECK THIS SIZE!!!!!!!!!!!
 	computePass.end();
-	
-	//console.log("Vert gras bufff output ", totalGrassVertexBuffer)
-	
+		
 	const bindVFGroups = createVFBindGroupsGrass(grassEntityModels.length);
 	grassVFUniformBufferUpdates(grassEntityModels, settings.grassTotalBladeCount);
 	
@@ -427,7 +438,7 @@ export function grassPass(aEncoder) {
 		},
 	});
 
-	pass.setPipeline(grassPipeline);			// shaders used, layout of vertex data, other relevant state data
+	pass.setPipeline(grassPipeline);					// shaders used, layout of vertex data, other relevant state data
 	pass.setVertexBuffer(0, totalGrassVertexBuffer);	// swapped from single blade to new total grass blades
 	
 	let prevModCombo = 0;
@@ -436,7 +447,7 @@ export function grassPass(aEncoder) {
 		//with 24 verts to a 8 triangle grass model, thats 24 * ((3 + 2 + 3 for vertex layout) * 4 byte size) = 768.
 		let mod = (grassEntityModelsStride[i] * settings.grassTotalBladeCount) / (primitives.totalStride / 4);	//ACTUAL
 		pass.setBindGroup(0, bindVFGroups[i]);
-		pass.draw(mod, /*settings.grassTotalBladeCount,*/ 1, prevModCombo);		// def for draw here is draw(vertexCount, instanceCount, firstVertex)
+		pass.draw(mod, /*higher instance to increase density */ 1, prevModCombo);		// def for draw here is draw(vertexCount, instanceCount, firstVertex)
 		prevModCombo += mod;
 	}
 	prevModCombo = 0;

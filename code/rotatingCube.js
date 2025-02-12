@@ -256,9 +256,10 @@ const pressedKeys = new Set();
 let selectedEntity = 0;
 let selectedSubEditMode = 0;
 let selectedDebugDisplayMode = 0;
-const editModes = ["translate","rotate","scale","camera","lighting"];
+const editModes = ["translate","rotate","scale","camera","lighting","grass"];
 const camSubEditModes = ["default"];
 const lightSubEditModes = ["Sun Intensity","Shadow Map Kernel Size", "Shadow Map Acne Bias"];
+const grassSubEditModes = ["Grass Total Blade Count"];
 const debugDisplayModes = ["final", "shadow mapping visibility"];
 let selectedEditMode = 0;
 const rotSpeed = 1.0;
@@ -426,6 +427,13 @@ window.addEventListener("keydown", function (event) {
 					console.log("ShadowMap Acne Bias: ", settings.shadowMapAcneBias)
 				}
 			}
+			if(selectedEditMode == 5) {
+				if(selectedSubEditMode == 0)
+				{
+					settings.grassTotalBladeCount /= 2;
+					console.log("Grass Total Blade Count: ", settings.grassTotalBladeCount)
+				}
+			}
 		break;
 		case "t":
 			if(selectedEditMode == 4) {
@@ -443,6 +451,18 @@ window.addEventListener("keydown", function (event) {
 				{
 					settings.shadowMapAcneBias += 0.0005;
 					console.log("ShadowMap Acne Bias: ", settings.shadowMapAcneBias)
+				}
+			}
+			if(selectedEditMode == 5) {
+				if(selectedSubEditMode == 0)
+				{
+					if(settings.grassTotalHARDLIMIT >= settings.grassTotalBladeCount) {
+						settings.grassTotalBladeCount *= 2;
+						console.log("Grass Total Blade Count: ", settings.grassTotalBladeCount);
+					}
+					else {
+						console.log("Restriction: Hit blade count hard limit: ", settings.grassTotalBladeCount, settings.grassTotalHARDLIMIT);
+					}
 				}
 			}
 		break;
@@ -491,6 +511,16 @@ window.addEventListener("keydown", function (event) {
 				}
 				console.log("Selected Lighting Sub Edit Mode: ", lightSubEditModes[selectedSubEditMode]);
 			}
+			else if(selectedEditMode == 5)
+			{
+				if(selectedSubEditMode >= 1) {
+					selectedSubEditMode--;
+				}
+				else {
+					selectedSubEditMode = grassSubEditModes.length - 1;
+				}
+				console.log("Selected Grass Sub Edit Mode: ", grassSubEditModes[selectedSubEditMode]);
+			}
 		break;
 		case "ArrowRight":
 			if(selectedEditMode == 0 || selectedEditMode == 1 || selectedEditMode == 2)
@@ -522,6 +552,16 @@ window.addEventListener("keydown", function (event) {
 					selectedSubEditMode = 0;
 				}
 				console.log("Selected Lighting Sub Edit Mode: ", lightSubEditModes[selectedSubEditMode]);
+			}
+			else if(selectedEditMode == 5)
+			{
+				if(selectedSubEditMode < grassSubEditModes.length - 1) {
+					selectedSubEditMode++;
+				}
+				else {
+					selectedSubEditMode = 0;
+				}
+				console.log("Selected Grass Sub Edit Mode: ", grassSubEditModes[selectedSubEditMode]);
 			}
 		break;
 		case "ArrowDown":

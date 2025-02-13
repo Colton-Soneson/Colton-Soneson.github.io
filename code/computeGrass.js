@@ -82,7 +82,8 @@ const uniformBufferComputeGrass = device.createBuffer({
 //compute grass total blade vertex data output
 //	the size has to be set here, BUT the "writeBuffer" functionality is done within the compute shader
 //	!!!ONE ISSUE!!! so this cant be as big as a vertex buffer (max size 256mb), we have to limit it to the max size of a storage buffer (128mb)
-function grassStorageVertexBuffer() {
+let totalGrassVertexBuffer;
+export function grassUpdateStorageVertexBuffer() {
 	const totalGrassVertexArray = settings.grassTotalBladeCount *  grassEntityModelsStride[0] * Float32Array.BYTES_PER_ELEMENT;
 	const GVB = device.createBuffer({
 		label: "total grass vertices",		//just helps to identify object, can be anything you type
@@ -90,9 +91,9 @@ function grassStorageVertexBuffer() {
 		usage: GPUBufferUsage.VERTEX | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,	//its use is for vertex data, and that you want to copy data into it, ALSO for use as storage buffer in compute
 	});
 	
-	return GVB;
+	totalGrassVertexBuffer = GVB;
 }
-let totalGrassVertexBuffer = grassStorageVertexBuffer();
+grassUpdateStorageVertexBuffer(); // run the function
 
 //depth for distance scaling
 const depthTexture = device.createTexture({
@@ -117,28 +118,6 @@ function getGrassComputeInfo() {
 	grassCompBuffer.push(currentTime);	
 		
 	return new Float32Array(grassCompBuffer);
-}
-
-//TODO: remove when necessary, only works with even grid
-function testInstancedGrassGridBased(numInstances) {
-	const resultArray = [];
-	
-	const bladeDistanceDivisor = 1;
-	
-	const numInstanceAxis = Math.sqrt(numInstances);
-	if(numInstanceAxis % 1 != 0) {
-		console.error("provided number of total grass blades/clumps is not base 2", numInstanceAxis)
-	}
-	
-	for(let x = 0; x < numInstanceAxis; x++) {
-		for(let y = 0; y < numInstanceAxis; y++) {
-			resultArray.push([(x / bladeDistanceDivisor),
-								(y / bladeDistanceDivisor),
-								0,
-								1]);
-		}
-	}
-	return resultArray;
 }
 
 function grassVFUniformBufferUpdates(grassBladeModels, numInstances) {	//future will have a grass model list with multiple types
@@ -173,34 +152,6 @@ function grassVFUniformBufferUpdates(grassBladeModels, numInstances) {	//future 
 	
 }
 
-/*
-//FUNCTION UNECESSARY AS STORAGE BUFFERS NOT POSSIBLE IN VERTEX SHADERS
-function grassVFStorageBufferUpdates(grassBladeModels, numInstances) {
-	
-	for(let i = 0; i < grassBladeModels.length; i++) {
-		const bufferResult = [];
-		
-		//TODO: this will have to grab the same positional data from compute shader output.
-		//		for now this will be a grid created by instance number
-		const testGrid = testInstancedGrassGridBased(numInstances);
-		for(let instance = 0; instance < numInstances; instance++) {
-			for(let positionColumn = 0; positionColumn < 4; positionColumn++) {
-				bufferResult.push(testGrid[instance][positionColumn]);
-			}
-		}
-		//include extra information from compute shader necesary for the VF Shader
-		
-		const result = new Float32Array(bufferResult);
-		const offset = i * totalGrassStorageSize;
-		
-		device.queue.writeBuffer(grassStorageBuffer, 
-									offset,
-									result.buffer,
-									result.byteOffset,
-									result.byteLength);
-	}
-}
-*/
 
 function grassComputeBuffersUpdate(grassBladeModels) {
 	
@@ -400,9 +351,7 @@ const grassComputePipeline = device.createComputePipeline({
 	//console.log("Total Grass Vert array size divide by (12 pos + 8 uv + 12 norm = 32) divide by verts per blade model (10) should be number of blades: ", (totalGrassVertexArray / 32 / (grassEntityModels[0].vertices.length / 3)));
 
 export function grassPass(aEncoder) {
-	
-	totalGrassVertexBuffer = grassStorageVertexBuffer();
-	
+		
 	// Start a compute pass place and animate the instances
 	const bindCGroup = createCompBindGroupGrass();
 	grassComputeBuffersUpdate(grassEntityModels);

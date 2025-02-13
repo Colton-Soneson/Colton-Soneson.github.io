@@ -26,7 +26,7 @@ export const settings = {
 	enableGrass: true,
 	grassDensityPerTile: 64,	//tile size will determine density using distance from camera
 	grassTotalBladeCount: 4,	//make this base 2 for testing purposes
-	grassTotalHARDLIMIT: 65536, //the buffers Can handle more than this, but my pc wants to crash if i try
+	grassTotalHARDLIMIT: 131072, //the buffers Can handle more than this, but doubling will go over the 128mb size of storage buffer
 	//--------------------DEBUG--------------------
     showDebug: true,
 	showDebugIcons: false,

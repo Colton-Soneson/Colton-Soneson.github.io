@@ -1,7 +1,7 @@
 import { settings } from '../../code/settings.js';
 
 export const GRASS_BUFFER_SIZE = 10000;
-export const GRASS_WORKGROUP_SIZE = [16, 1, 1];	//stick to 1 for now to get understanding
+export const GRASS_WORKGROUP_SIZE = [32, 1, 1];	//stick to 1 for now to get understanding
 
 export const c_grass = 
 `

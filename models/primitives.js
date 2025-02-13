@@ -121,7 +121,7 @@ export const pGrassBlade = new Primitive(
 	await loadTextureImageBitmap('./textures/default.png'),
 	new Float32Array([0.0,0,0.0]),
 	new Float32Array([0,0,0]),
-	new Float32Array([10,10,10]),
+	new Float32Array([3,3,3]),
 	"grassBlade",
 );
 

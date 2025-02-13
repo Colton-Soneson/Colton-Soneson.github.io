@@ -12,6 +12,7 @@ import * as primitives from '../models/primitives.js'
 import * as shadowMapping from './shadowMapping.js'
 import * as transformations from './transformations.js'
 import * as scene from './scene.js'
+import * as grass from './computeGrass.js'
 import { settings } from './settings.js';
 
 import { vf_p_generic3D } from '../shaders/js/vf_p_generic.js'
@@ -430,8 +431,11 @@ window.addEventListener("keydown", function (event) {
 			if(selectedEditMode == 5) {
 				if(selectedSubEditMode == 0)
 				{
-					settings.grassTotalBladeCount /= 2;
-					console.log("Grass Total Blade Count: ", settings.grassTotalBladeCount)
+					if(1 <= settings.grassTotalBladeCount) {
+						settings.grassTotalBladeCount /= 2;
+						grass.grassUpdateStorageVertexBuffer();
+						console.log("Grass Total Blade Count: ", settings.grassTotalBladeCount)
+					}
 				}
 			}
 		break;
@@ -456,8 +460,9 @@ window.addEventListener("keydown", function (event) {
 			if(selectedEditMode == 5) {
 				if(selectedSubEditMode == 0)
 				{
-					if(settings.grassTotalHARDLIMIT >= settings.grassTotalBladeCount) {
+					if(settings.grassTotalHARDLIMIT > settings.grassTotalBladeCount) {
 						settings.grassTotalBladeCount *= 2;
+						grass.grassUpdateStorageVertexBuffer();
 						console.log("Grass Total Blade Count: ", settings.grassTotalBladeCount);
 					}
 					else {

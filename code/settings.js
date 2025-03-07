@@ -1,4 +1,4 @@
-import { mat4, vec3 } from 'https://wgpu-matrix.org/dist/3.x/wgpu-matrix.module.js';
+import { mat4, vec3, vec2 } from 'https://wgpu-matrix.org/dist/3.x/wgpu-matrix.module.js';
 
 export const settings = {
 	//--------------------TIME---------------------
@@ -27,6 +27,13 @@ export const settings = {
 	grassDensityPerTile: 64,	//tile size will determine density using distance from camera
 	grassTotalBladeCount: 4,	//make this base 2 for testing purposes
 	grassTotalHARDLIMIT: 131072, //the buffers Can handle more than this, but doubling will go over the 128mb size of storage buffer
+	//--------------------WATER--------------------
+	enableWater: true,
+	windDirection: vec2.create(0.5,0.5),
+	waterWaveHeight: 3.0,
+	waterTileResolution: 1024,
+	waterTileInstanceCount: 3,
+	waterWorldPosY: -16,
 	//--------------------DEBUG--------------------
     showDebug: true,
 	showDebugIcons: false,

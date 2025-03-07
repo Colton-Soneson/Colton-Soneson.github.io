@@ -7,12 +7,14 @@ import { mat4, vec3 } from 'https://wgpu-matrix.org/dist/3.x/wgpu-matrix.module.
 
 import {postEffectPassSSS} from './SSS.js'
 import {grassPass} from './computeGrass.js'
+import {waterPass} from './water.js'
 
 import * as primitives from '../models/primitives.js'
 import * as shadowMapping from './shadowMapping.js'
 import * as transformations from './transformations.js'
 import * as scene from './scene.js'
 import * as grass from './computeGrass.js'
+import * as water from './water.js'
 import { settings } from './settings.js';
 
 import { vf_p_generic3D } from '../shaders/js/vf_p_generic.js'
@@ -692,6 +694,11 @@ export function updateRotatingCubePass() {
 	if(settings.enableGrass)
 	{
 		grassPass(encoder);
+	}
+	
+	if(settings.enableWater)
+	{
+		waterPass(encoder);
 	}
 
 	device.queue.submit([encoder.finish()]);

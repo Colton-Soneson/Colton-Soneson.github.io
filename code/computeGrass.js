@@ -41,8 +41,7 @@ const grassVertexBuffer = device.createBuffer({
 	usage: GPUBufferUsage.VERTEX | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,	//its use is for vertex data, and that you want to copy data into it, ALSO for use as storage buffer in compute
 });
 device.queue.writeBuffer(grassVertexBuffer, /*bufferOffset=*/0, grassShaderVertexBufferArray); //copy vertex data to buffer
-console.log("grass vertex buffer input: ", grassShaderVertexBufferArray);
-
+//console.log("grass vertex buffer input: ", grassShaderVertexBufferArray);
 
 // compute shaders and buffers
 //-------------------------------------------------

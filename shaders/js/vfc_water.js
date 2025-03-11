@@ -16,6 +16,7 @@ export const c_water =
 		@location(2) resolution: f32,			//the resolution of the plane is fixed, however, converge closer to camera position
 		@location(3) waveHieght: f32,	
 		@location(4) step: f32,					//to be used in place of time, but locked to frame rate i suppose
+		@location(5) planeYPos: f32,
 	};
 	@group(0) @binding(1) var<uniform> WU: WaterUniforms;
 	
@@ -41,6 +42,29 @@ export const c_water =
 		
 		let waterPlaneNumberOfTriangles = ((WU.resolution - 1) * (WU.resolution - 1)) / 2;	//	(res - 1) * (res - 1) is the amount of cells in a grid. IE 5 points by 5 points is a 16 cell grid, where a cell is made of 4 points
 																							//			then divide by triangles per cell, 2
+	
+	
+		let gridSpacing = f32(2.0);
+		let gridWidth = u32(sqrt(WU.resolution * WU.resolution));
+		
+		let vertGridPosX = f32(gIndex % gridWidth) * gridSpacing;
+		let vertGridPosZ = f32(gIndex / gridWidth) * gridSpacing;
+	
+			
+		//index
+		let oVertInd = gIndex * fPerVertexData;
+		
+		
+		var translate = vec4f(vertGridPosX,WU.planeYPos,vertGridPosZ,0.0);
+				
+		waterVertexData[oVertInd + 0] = translate.x;
+		waterVertexData[oVertInd + 1] = translate.y;
+		waterVertexData[oVertInd + 2] = translate.z;
+		waterVertexData[oVertInd + 3] = 0.5;
+		waterVertexData[oVertInd + 4] = 0.5;
+		waterVertexData[oVertInd + 5] = 0;
+		waterVertexData[oVertInd + 6] = 0;
+		waterVertexData[oVertInd + 7] = 1;
 	}
 `;
 
@@ -95,6 +119,6 @@ export const f_water =
 	fn fragmentMain(input: FragInput) -> //could also use input: VertexOutput instead because its contained within the same file here
 		@location(0) vec4f {
 		
-		return vec4f(input.fragUV.x,input.fragUV.y,0.0,1.0);
+		return vec4f(0.0,0.0,1.0,1.0);
 	}
 `;

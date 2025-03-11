@@ -28,7 +28,6 @@ function loadModel(vertices, faces, normals, uvs) {
 	//console.log("---normals list-----");
 	//console.log(normalSplitting);
 	
-	console.log("MEEP ", faces.length / 3);
 	const result = [];
 	//for the entire length of faces (ordered v1,vt1,vn1,v2,vt2,vn2,...) assign accordingly
 	for(let faceCount = 0; faceCount < (faces.length / 3); faceCount++)	//3 for divider: v, vt, vn. If there was a vp then its 4
@@ -112,7 +111,7 @@ entityModels.push(primitives.pIslandHouse);
 entityModels.push(primitives.pLightHouse);
 entityModels.push(primitives.pBench);
 entityModels.push(primitives.pGround);
-entityModels.push(primitives.pWavePlane);
+//entityModels.push(primitives.pWavePlane);
 
 //test for lighting right now
 if(settings.showDebugIcons) {

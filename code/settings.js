@@ -31,7 +31,7 @@ export const settings = {
 	enableWater: true,
 	windDirection: vec2.create(0.5,0.5),
 	waterWaveHeight: 3.0,
-	waterTileResolution: 1024,
+	waterTileResolution: 32,
 	waterTileInstanceCount: 3,
 	waterWorldPosY: -16,
 	//--------------------DEBUG--------------------

@@ -95,10 +95,12 @@ function getwaterComputeInfo() {
 	
 	waterCompBuffer.push(settings.windDirection[0]);
 	waterCompBuffer.push(settings.windDirection[1]);
+	
 	waterCompBuffer.push(settings.waterTileResolution);
 	waterCompBuffer.push(settings.waterWaveHeight);
-	
 	waterCompBuffer.push(step);	
+	waterCompBuffer.push(settings.waterWorldPosY);
+
 		
 	return new Float32Array(waterCompBuffer);
 }
@@ -108,7 +110,7 @@ function waterVFUniformBufferUpdates(numInstances) {	//future will have a water 
 		const bufferResult = [];
 		
 		//for now this will be model mat, but its should just be default everything to save time (but scale might be good to avoid model crap)
-		const modelMatrix = transformations.getModelMatrix(new Float32Array([settings.camPosX,settings.waterWorldPosY,settings.camPosZ]), 
+		const modelMatrix = transformations.getModelMatrix(new Float32Array([0.0,0.0,0.0]), 
 															new Float32Array([0.0,0.0,0.0]),
 															new Float32Array([1.0,1.0,1.0]));
 		const modelViewMat = mat4.mul(transformations.getViewMatrix(), modelMatrix);
@@ -132,7 +134,7 @@ function waterComputeBuffersUpdate() {
 	const bufferResult = [];
 	
 	//for now this will be model mat, but its should just be default everything to save time (but scale might be good to avoid model crap)
-	const modelMatrix = transformations.getModelMatrix(new Float32Array([settings.camPosX,settings.waterWorldPosY,settings.camPosZ]), 
+	const modelMatrix = transformations.getModelMatrix(new Float32Array([0.0,0.0,0.0]), 
 														new Float32Array([0.0,0.0,0.0]), 
 														new Float32Array([1.0,1.0,1.0]));
 	const modelViewMat = mat4.mul(transformations.getViewMatrix(), modelMatrix);
@@ -200,11 +202,7 @@ const bindGroupCLayout = device.createBindGroupLayout({
 
 //multi bind group
 function createVFBindGroupswater() {
-	
-	const result = [];
-	{
-		result.push(
-		device.createBindGroup({
+	return device.createBindGroup({
 			label: "water VF bind group",
 			layout: bindGroupVFLayout,
 			entries: [
@@ -213,9 +211,7 @@ function createVFBindGroupswater() {
 				resource: { buffer: waterUniformBuffer }
 			}
 			]
-		}));
-	}
-	return result;
+		});
 }
 
 function createCompBindGroupwater() {
@@ -234,7 +230,7 @@ function createCompBindGroupwater() {
 				resource: { buffer: uniformBufferComputewater }
 			},
 			{
-				binding: 3,
+				binding: 2,
 				resource: { buffer: totalwaterVertexBuffer }
 			}
 			]
@@ -350,12 +346,16 @@ export function waterPass(aEncoder) {
 	//		       |__\ /__|
 	//		    	  CAM
 	
+	
+	//console.log("water vert buf: ", totalwaterVertexBuffer)
+	
 	let prevModCombo = 0;
-	for(let i = 0; i < settings.waterTileInstanceCount; ++i)
+	//for(let i = 0; i < settings.waterTileInstanceCount; ++i)
 	{
-		let mod = (waterEntityModelsStride * waterPlaneNumberOfVerts) / (primitives.totalStride / 4);	//ACTUAL
+		let mod = waterEntityModelsStride / (primitives.totalStride / 4);	//ACTUAL
+		//console.log("mod: ", mod);
 		pass.setBindGroup(0, bindVFGroups);
-		pass.draw(mod, i, prevModCombo);		// def for draw here is draw(vertexCount, instanceCount, firstVertex)
+		pass.draw(mod, 1/*i*/, prevModCombo);		// def for draw here is draw(vertexCount, instanceCount, firstVertex)
 		prevModCombo += mod;
 	}
 	prevModCombo = 0;

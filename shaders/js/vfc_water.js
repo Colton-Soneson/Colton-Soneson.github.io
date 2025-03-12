@@ -14,9 +14,10 @@ export const c_water =
 		@location(0) cameraPosition: vec4f,
 		@location(1) windDirection: vec2f,
 		@location(2) resolution: f32,			//the resolution of the plane is fixed, however, converge closer to camera position
-		@location(3) waveHieght: f32,	
+		@location(3) waveHeight: f32,	
 		@location(4) step: f32,					//to be used in place of time, but locked to frame rate i suppose
 		@location(5) planeYPos: f32,
+		@location(6) waveLength: f32,
 	};
 	@group(0) @binding(1) var<uniform> WU: WaterUniforms;
 	
@@ -30,6 +31,8 @@ export const c_water =
 	};
 	
 	@group(0) @binding(2) var<storage, read_write> waterVertexData: array<f32>;
+	@group(0) @binding(3) var<storage, read_write> waterIndexData: array<u32>;
+
 
 @compute @workgroup_size(${WATER_WORKGROUP_SIZE[0]}, ${WATER_WORKGROUP_SIZE[1]}, ${WATER_WORKGROUP_SIZE[2]})	
     fn computeMain(
@@ -38,25 +41,57 @@ export const c_water =
 		
 		var gIndex = GlobalIvocationID.x;
 		
+		if(gIndex >= u32(WU.resolution * WU.resolution))
+		{
+			return;
+		}
+		
+		
+		//------------------------------FORM GRID-------------------------------
+		
 		let fPerVertexData = u32(3 + 2 + 3);
+	
+		let gridSpacing = f32(0.5);									//this is just how big the grid is in the end
+		let gridWidth = u32(WU.resolution);
 		
-		let waterPlaneNumberOfTriangles = ((WU.resolution - 1) * (WU.resolution - 1)) / 2;	//	(res - 1) * (res - 1) is the amount of cells in a grid. IE 5 points by 5 points is a 16 cell grid, where a cell is made of 4 points
-																							//			then divide by triangles per cell, 2
-	
-	
-		let gridSpacing = f32(2.0);
-		let gridWidth = u32(sqrt(WU.resolution * WU.resolution));
 		
-		let vertGridPosX = f32(gIndex % gridWidth) * gridSpacing;
-		let vertGridPosZ = f32(gIndex / gridWidth) * gridSpacing;
-	
-			
-		//index
+		let vertGridPosX = f32(gIndex) % f32(gridWidth) * gridSpacing;
+		let vertGridPosZ = f32(gIndex) / f32(gridWidth) * gridSpacing;
+		
 		let oVertInd = gIndex * fPerVertexData;
 		
+		//---------------------WAVE EQUATION ON GRID POINTS----------------------
+		//https://www.youtube.com/watch?v=kGEqaX4Y4bQ
+		//https://catlikecoding.com/unity/tutorials/flow/waves/
 		
-		var translate = vec4f(vertGridPosX,WU.planeYPos,vertGridPosZ,0.0);
-				
+		//var gridPosLimiter = (vertGridPosX * 1.5) + (vertGridPosZ * 0.5);
+
+		//var height = sin(gridPosLimiter * 0.1 + WU.step * WU.waveSpeed) * WU.waveHieght;
+		
+		let A = WU.waveHeight;       								// Amplitude
+		let k = (2 * 3.14) / WU.waveLength;       					// Wave number
+		let wSpeed = sqrt(9.81/k);									// Speed, based on gravity constant and wave number
+		let omega = k * wSpeed;   									// Angular frequency
+		let theta = atan2(WU.windDirection.x, WU.windDirection.y);   // Direction of the wave propagation, on positive x axis
+		let waveDirection = vec2f(cos(theta), sin(theta));  		// Propagation direction
+	
+		let time = WU.step * 0.01;  // Current time adjusted
+		let position = vec3f(vertGridPosX, WU.planeYPos, vertGridPosZ); // Position of the point
+	
+		// Calculate the wave's displacement along the X and Z axes using Gerstner's formula
+		let waveOffset = A * sin(k * position.x + omega * time); // Sine wave variation
+	
+		// Update position based on Gerstner wave
+		let new_x = position.x + waveOffset * waveDirection.x;
+		let new_z = position.z + waveOffset * waveDirection.y;
+		let new_y = position.y + A * cos(k * (position.x * waveDirection.x + position.z * waveDirection.y) - omega * time); // Displacement in Y direction
+
+		var translate = vec3f(new_x, new_y, new_z);
+		
+		//var translate = vec3f(vertGridPosX,
+		//					WU.planeYPos + height,
+		//					vertGridPosZ);
+		//		
 		waterVertexData[oVertInd + 0] = translate.x;
 		waterVertexData[oVertInd + 1] = translate.y;
 		waterVertexData[oVertInd + 2] = translate.z;
@@ -65,6 +100,28 @@ export const c_water =
 		waterVertexData[oVertInd + 5] = 0;
 		waterVertexData[oVertInd + 6] = 0;
 		waterVertexData[oVertInd + 7] = 1;
+		
+		
+		//--------------------FORM TRIANGLES IN INDEX BUFFER---------------------
+		// Generate triangles: use the grid to form triangles between four points
+		let gridIndexX = f32(gIndex) % f32(gridWidth);
+		let gridIndexZ = f32(gIndex) / f32(gridWidth);
+	
+		// For each square, define two triangles
+		if (gridIndexX < f32(gridWidth - 1) && gridIndexZ < f32(gridWidth - 1)) {
+			let baseIndex = gIndex;
+	
+			// First triangle (bottom-left, top-left, bottom-right)
+			waterIndexData[gIndex * 6 + 0] = baseIndex;
+			waterIndexData[gIndex * 6 + 1] = baseIndex + 1;
+			waterIndexData[gIndex * 6 + 2] = baseIndex + gridWidth;
+	
+			// Second triangle (bottom-right, top-left, top-right)
+			waterIndexData[gIndex * 6 + 3] = baseIndex + gridWidth;
+			waterIndexData[gIndex * 6 + 4] = baseIndex + 1;
+			waterIndexData[gIndex * 6 + 5] = baseIndex + gridWidth + 1;
+		}
+		
 	}
 `;
 
@@ -90,6 +147,7 @@ export const v_water =
 		@location(0) fragUV: vec2f,
 		@location(1) fragPos: vec4f,
 		@location(2) fragNormal: vec3f,
+		@location(3) pointInWave: f32,
 	};
 	
 	@vertex
@@ -97,7 +155,9 @@ export const v_water =
 	
 	var output: VertexOutput;
     output.pos = UBO.modelViewProjectionMatrix * vec4f(input.pos.x, input.pos.y, input.pos.z, 1.0);
-    	
+    
+	output.pointInWave = input.pos.y + 16.0;
+	
     output.fragPos = output.pos;
 	output.fragNormal = input.norm;
     output.fragUV = input.uv;
@@ -113,12 +173,13 @@ export const f_water =
 		@location(0) fragUV: vec2f,
 		@location(1) fragPos: vec4f,
 		@location(2) fragNormal: vec3f,
+		@location(3) pointInWave: f32,
 	};
 
 	@fragment
 	fn fragmentMain(input: FragInput) -> //could also use input: VertexOutput instead because its contained within the same file here
 		@location(0) vec4f {
 		
-		return vec4f(0.0,0.0,1.0,1.0);
+		return vec4f(0.0,1.0 - input.pointInWave,input.pointInWave,1.0);
 	}
 `;

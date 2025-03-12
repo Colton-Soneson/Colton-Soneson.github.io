@@ -263,7 +263,7 @@ const editModes = ["translate","rotate","scale","camera","lighting","grass"];
 const camSubEditModes = ["default"];
 const lightSubEditModes = ["Sun Intensity","Shadow Map Kernel Size", "Shadow Map Acne Bias"];
 const grassSubEditModes = ["Grass Total Blade Count"];
-const debugDisplayModes = ["final", "shadow mapping visibility"];
+const debugDisplayModes = ["final", "shadow mapping visibility","water line topology"];
 let selectedEditMode = 0;
 const rotSpeed = 1.0;
 const transSpeed = 1.0;
@@ -481,6 +481,14 @@ window.addEventListener("keydown", function (event) {
 				selectedDebugDisplayMode = 0;
 			}
 			settings.debugViewMode = selectedDebugDisplayMode;
+			
+			if(selectedDebugDisplayMode == 2) {	//water line topology
+				water.waterPipelineSignalUpdate('line-list');
+			}
+			else {
+				water.waterPipelineSignalUpdate('triangle-list');
+			}
+			
 			console.log("DEBUG DISPLAY MODE: ", debugDisplayModes[selectedDebugDisplayMode]);
 		break;
 		case "p":
@@ -654,7 +662,7 @@ export function updateRotatingCubePass() {
 		colorAttachments: [{
 		view: context.getCurrentTexture().createView(),
 		loadOp: "clear",
-		clearValue: { r: 0.8, g: 0.8, b: 0.8, a: 1.0 },
+		clearValue: { r: 0.6, g: 0.6, b: 0.6, a: 1.0 },
 		storeOp: "store",
 		}],
 		depthStencilAttachment: {

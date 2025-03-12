@@ -14,7 +14,7 @@ export const c_water =
 		@location(0) cameraPosition: vec4f,
 		@location(1) windDirection: vec2f,
 		@location(2) resolution: f32,			//the resolution of the plane is fixed, however, converge closer to camera position
-		@location(3) waveHeight: f32,	
+		@location(3) waveSteepness: f32,	
 		@location(4) step: f32,					//to be used in place of time, but locked to frame rate i suppose
 		@location(5) planeYPos: f32,
 		@location(6) waveLength: f32,
@@ -33,6 +33,22 @@ export const c_water =
 	@group(0) @binding(2) var<storage, read_write> waterVertexData: array<f32>;
 	@group(0) @binding(3) var<storage, read_write> waterIndexData: array<u32>;
 
+fn gerstnerWave(position: vec3f, waveLength: f32, waveSteepness: f32, windDirection: vec2f, step: f32) -> vec3f {
+		let k = (2 * 3.14) / waveLength;     		// Wave number
+		let A = waveSteepness / k;;       			// Amplitude
+		let c = sqrt(9.81/k);						// Speed, based on gravity constant and wave number
+		let omega = k * c;   						// Angular frequency
+		let normWaveDir = normalize(windDirection);	// Wave Direction Normalized
+		let time = WU.step * 0.01;  				// Current time adjusted to a hundreth	
+	
+		//Gerstners
+		let f = k * (dot(normWaveDir, position.xz) - c * time);
+		let new_x = position.x + (normWaveDir.x * (A * cos(f)));
+	    let new_z = position.z + (normWaveDir.y * (A * cos(f)));
+		let new_y = position.y + (A * sin(f));
+		
+		return vec3f(new_x, new_y, new_z);
+}
 
 @compute @workgroup_size(${WATER_WORKGROUP_SIZE[0]}, ${WATER_WORKGROUP_SIZE[1]}, ${WATER_WORKGROUP_SIZE[2]})	
     fn computeMain(
@@ -40,12 +56,6 @@ export const c_water =
 	) {
 		
 		var gIndex = GlobalIvocationID.x;
-		
-		if(gIndex >= u32(WU.resolution * WU.resolution))
-		{
-			return;
-		}
-		
 		
 		//------------------------------FORM GRID-------------------------------
 		
@@ -64,37 +74,12 @@ export const c_water =
 		//https://www.youtube.com/watch?v=kGEqaX4Y4bQ
 		//https://catlikecoding.com/unity/tutorials/flow/waves/
 		
-		//var gridPosLimiter = (vertGridPosX * 1.5) + (vertGridPosZ * 0.5);
-
-		//var height = sin(gridPosLimiter * 0.1 + WU.step * WU.waveSpeed) * WU.waveHieght;
+		var position = vec3f(vertGridPosX, WU.planeYPos, vertGridPosZ);
+		position = gerstnerWave(position, WU.waveLength, WU.waveSteepness, WU.windDirection, WU.step);
 		
-		let A = WU.waveHeight;       								// Amplitude
-		let k = (2 * 3.14) / WU.waveLength;       					// Wave number
-		let wSpeed = sqrt(9.81/k);									// Speed, based on gravity constant and wave number
-		let omega = k * wSpeed;   									// Angular frequency
-		let theta = atan2(WU.windDirection.x, WU.windDirection.y);   // Direction of the wave propagation, on positive x axis
-		let waveDirection = vec2f(cos(theta), sin(theta));  		// Propagation direction
-	
-		let time = WU.step * 0.01;  // Current time adjusted
-		let position = vec3f(vertGridPosX, WU.planeYPos, vertGridPosZ); // Position of the point
-	
-		// Calculate the wave's displacement along the X and Z axes using Gerstner's formula
-		let waveOffset = A * sin(k * position.x + omega * time); // Sine wave variation
-	
-		// Update position based on Gerstner wave
-		let new_x = position.x + waveOffset * waveDirection.x;
-		let new_z = position.z + waveOffset * waveDirection.y;
-		let new_y = position.y + A * cos(k * (position.x * waveDirection.x + position.z * waveDirection.y) - omega * time); // Displacement in Y direction
-
-		var translate = vec3f(new_x, new_y, new_z);
-		
-		//var translate = vec3f(vertGridPosX,
-		//					WU.planeYPos + height,
-		//					vertGridPosZ);
-		//		
-		waterVertexData[oVertInd + 0] = translate.x;
-		waterVertexData[oVertInd + 1] = translate.y;
-		waterVertexData[oVertInd + 2] = translate.z;
+		waterVertexData[oVertInd + 0] = position.x;
+		waterVertexData[oVertInd + 1] = position.y;
+		waterVertexData[oVertInd + 2] = position.z;
 		waterVertexData[oVertInd + 3] = 0.5;
 		waterVertexData[oVertInd + 4] = 0.5;
 		waterVertexData[oVertInd + 5] = 0;

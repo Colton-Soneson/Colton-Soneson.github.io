@@ -113,7 +113,7 @@ function getwaterComputeInfo() {
 	waterCompBuffer.push(settings.windDirection[1]);
 	
 	waterCompBuffer.push(settings.waterTileResolution);
-	waterCompBuffer.push(settings.waterWaveHeight);
+	waterCompBuffer.push(settings.waterWaveSteepness);
 	waterCompBuffer.push(step);	
 	waterCompBuffer.push(settings.waterWorldPosY);
 	waterCompBuffer.push(settings.waterWaveLength);

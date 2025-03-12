@@ -29,8 +29,8 @@ export const settings = {
 	grassTotalHARDLIMIT: 131072, //the buffers Can handle more than this, but doubling will go over the 128mb size of storage buffer
 	//--------------------WATER--------------------
 	enableWater: true,
-	windDirection: vec2.create(0.2,0.5),
-	waterWaveHeight: 2.0,
+	windDirection: vec2.create(0.5,0.0),
+	waterWaveSteepness: 0.5,	//0 - 1
 	waterWaveLength: 40.0,
 	waterTileResolution: 256,
 	waterTileInstanceCount: 3,

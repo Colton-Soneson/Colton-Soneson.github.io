@@ -72,6 +72,22 @@ export function waterUpdateStorageVertexBuffer() {
 }
 waterUpdateStorageVertexBuffer(); // run the function
 
+let totalwaterIndexBuffer;
+const totalPlaneTriangles = ((settings.waterTileResolution - 1) * (settings.waterTileResolution - 1)) / 2;	//grid cells / tris per cell (2)
+export function waterUpdateStorageIndexBuffer() {
+	const totalwaterIndexArray = totalPlaneTriangles * (3 + 2 + 3) * Float32Array.BYTES_PER_ELEMENT;
+	const GIB = device.createBuffer({
+		label: "total water indices",	
+		size: totalwaterIndexArray,
+		usage: GPUBufferUsage.INDEX | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,	//its use is for vertex data, and that you want to copy data into it, ALSO for use as storage buffer in compute
+	});
+	
+	totalwaterIndexBuffer = GIB;
+}
+waterUpdateStorageIndexBuffer(); // run the function
+
+
+
 //depth for distance scaling
 const depthTexture = device.createTexture({
   size: [canvas.width, canvas.height],
@@ -100,6 +116,7 @@ function getwaterComputeInfo() {
 	waterCompBuffer.push(settings.waterWaveHeight);
 	waterCompBuffer.push(step);	
 	waterCompBuffer.push(settings.waterWorldPosY);
+	waterCompBuffer.push(settings.waterWaveLength);
 
 		
 	return new Float32Array(waterCompBuffer);
@@ -196,6 +213,14 @@ const bindGroupCLayout = device.createBindGroupLayout({
 		type: "storage",
 		access: "read-write",
 	}
+  },
+  {
+	binding: 3,								
+    visibility:  GPUShaderStage.COMPUTE,	//output index data for all blades
+    buffer: {
+		type: "storage",
+		access: "read-write",
+	}
   }
   ]
 });
@@ -232,6 +257,10 @@ function createCompBindGroupwater() {
 			{
 				binding: 2,
 				resource: { buffer: totalwaterVertexBuffer }
+			},
+			{
+				binding: 3,
+				resource: { buffer: totalwaterIndexBuffer }
 			}
 			]
 		});
@@ -251,7 +280,17 @@ const waterCompPipelineLayout = device.createPipelineLayout({
 // Pipelines
 //-------------------------------------------------
 //WebGPU handles render and computer pipelines seperately, they cannot be combined as one
-const waterPipeline = device.createRenderPipeline({
+let waterPipeline;
+let waterPipelineUpdateFlag = false;
+let waterPipelineTopologyType = 'triangle-list';
+
+export function waterPipelineSignalUpdate(inputTopology) {
+	waterPipelineUpdateFlag = true;
+	waterPipelineTopologyType = inputTopology;
+}
+
+function recreateWaterPipeline(inputTopology) {
+  waterPipeline = device.createRenderPipeline({
   label: "water VF pipeline",
   layout: waterVFPipelineLayout,	//allows for use of same bind groups as the renderpipeline
 	vertex: {							// vertex stage details
@@ -268,7 +307,7 @@ const waterPipeline = device.createRenderPipeline({
 	},
 	
 	primitive: {
-		topology: 'triangle-list',
+		topology: inputTopology,
 	
 		// Backface culling since the cube is solid piece of geometry.
 		// Faces pointing away from the camera will be occluded by faces
@@ -282,6 +321,8 @@ const waterPipeline = device.createRenderPipeline({
 		format: 'depth24plus',
 	},
 });
+}
+recreateWaterPipeline(waterPipelineTopologyType);
 
 // Compute Pipeline has to be seperate
 const waterComputePipeline = device.createComputePipeline({
@@ -297,6 +338,11 @@ export function waterPass(aEncoder) {
 	
 	step++;
 	
+	if(waterPipelineUpdateFlag) {
+		recreateWaterPipeline(waterPipelineTopologyType)
+		waterPipelineUpdateFlag = false;
+	}
+	
 	// Start a compute pass place and animate the instances
 	const bindCGroup = createCompBindGroupwater();
 	waterComputeBuffersUpdate();
@@ -306,14 +352,11 @@ export function waterPass(aEncoder) {
 	computePass.setPipeline(waterComputePipeline);
 	computePass.setBindGroup(0, bindCGroup);
 	
-	//In WebGPU, the number of times a compute shader will be invoked depends on the number of workgroups you dispatch and the workgroup size
-	//	we take the number of times to invoke, divide by workgroups size
 	computePass.dispatchWorkgroups(Math.ceil( (settings.waterTileResolution * settings.waterTileResolution) / WATER_WORKGROUP_SIZE[0]));			//you want to do it per vertex, not per cell
 	computePass.end();
 		
 	const bindVFGroups = createVFBindGroupswater();
 	waterVFUniformBufferUpdates(settings.waterTileResolution * settings.waterTileResolution);
-	
 	
 	// start a pass to render the water instances
 	const pass = aEncoder.beginRenderPass({
@@ -333,7 +376,8 @@ export function waterPass(aEncoder) {
 	});
 
 	pass.setPipeline(waterPipeline);					// shaders used, layout of vertex data, other relevant state data
-	pass.setVertexBuffer(0, totalwaterVertexBuffer);	// swapped from single blade to new total water blades
+	pass.setVertexBuffer(0, totalwaterVertexBuffer);	
+	pass.setIndexBuffer(totalwaterIndexBuffer, 'uint32');	
 	
 	//3 instance view in viewport
 	//
@@ -355,7 +399,8 @@ export function waterPass(aEncoder) {
 		let mod = waterEntityModelsStride / (primitives.totalStride / 4);	//ACTUAL
 		//console.log("mod: ", mod);
 		pass.setBindGroup(0, bindVFGroups);
-		pass.draw(mod, 1/*i*/, prevModCombo);		// def for draw here is draw(vertexCount, instanceCount, firstVertex)
+		//pass.draw(mod, 1/*i*/, prevModCombo);		// def for draw here is draw(vertexCount, instanceCount, firstVertex)
+		pass.drawIndexed(totalPlaneTriangles * (3 + 2 + 3), 1, 0, 0, 0); // Drawing the mesh
 		prevModCombo += mod;
 	}
 	prevModCombo = 0;

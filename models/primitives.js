@@ -143,13 +143,13 @@ export const pSquare = new Primitive(
 	2, 
 	new Float32Array([
 		//   X,    Y,
-		-0.8, -0.8, // Triangle 1 
-		0.8, -0.8,
-		0.8,  0.8,
-		
-		-0.8, -0.8, // Triangle 2 
-		0.8,  0.8,
-		-0.8,  0.8,
+			-1, -1, // Triangle 1 
+			1, -1,
+			1,  1,
+			
+			-1, -1, // Triangle 2 
+			1,  1,
+			-1,  1,
 	]),
 	0,
 );

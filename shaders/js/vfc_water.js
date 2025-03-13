@@ -81,17 +81,17 @@ fn gerstnerWave(position: vec3f, waveLength: f32, waveSteepness: f32, windDirect
 		position = gerstnerWave(position, WU.waveLength, WU.waveSteepness, WU.windDirection, WU.step);
 
 		//wave B
-		position = gerstnerWave(position, 30.0, 0.2, vec2f(0.2,-0.3), WU.step * 1.2);
+		position = gerstnerWave(position, 10.0, 0.2, vec2f(0.2,-0.3), WU.step * 1.2);
 		
 		//MEDIUM STEEP WAVE
-		position = gerstnerWave(position, 20.0, 0.5, vec2f(0.0, 0.6), WU.step * 1.75);
+		position = gerstnerWave(position, 5.0, 0.2, vec2f(0.0, 0.6), WU.step * 1.75);
 		
 		//SMALL STEEP WAVES
 		//wave D
-		position = gerstnerWave(position, 2.0, 0.8 / (position.y * 0.5), vec2f(-0.1,-0.4), WU.step * 2.0);
+		position = gerstnerWave(position, 0.5, 0.8 / (position.y * 0.5), vec2f(-0.1,-0.4), WU.step * 2.0);
 		
 		//wave E
-		position = gerstnerWave(position, 2.0, 0.6 / (position.y * 0.25), vec2f(0.5,0.1), WU.step * 3.0);
+		position = gerstnerWave(position, 0.2, 0.6 / (position.y * 0.25), vec2f(0.5,0.1), WU.step * 3.0);
 		
 		
 		

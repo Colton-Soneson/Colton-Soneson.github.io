@@ -75,7 +75,26 @@ fn gerstnerWave(position: vec3f, waveLength: f32, waveSteepness: f32, windDirect
 		//https://catlikecoding.com/unity/tutorials/flow/waves/
 		
 		var position = vec3f(vertGridPosX, WU.planeYPos, vertGridPosZ);
+		
+		//LARGE ROLLING WAVES
+		//wave A
 		position = gerstnerWave(position, WU.waveLength, WU.waveSteepness, WU.windDirection, WU.step);
+
+		//wave B
+		position = gerstnerWave(position, 30.0, 0.2, vec2f(0.2,-0.3), WU.step * 1.2);
+		
+		//MEDIUM STEEP WAVE
+		position = gerstnerWave(position, 20.0, 0.5, vec2f(0.0, 0.6), WU.step * 1.75);
+		
+		//SMALL STEEP WAVES
+		//wave D
+		position = gerstnerWave(position, 2.0, 0.8 / (position.y * 0.5), vec2f(-0.1,-0.4), WU.step * 2.0);
+		
+		//wave E
+		position = gerstnerWave(position, 2.0, 0.6 / (position.y * 0.25), vec2f(0.5,0.1), WU.step * 3.0);
+		
+		
+		
 		
 		waterVertexData[oVertInd + 0] = position.x;
 		waterVertexData[oVertInd + 1] = position.y;
@@ -141,7 +160,7 @@ export const v_water =
 	var output: VertexOutput;
     output.pos = UBO.modelViewProjectionMatrix * vec4f(input.pos.x, input.pos.y, input.pos.z, 1.0);
     
-	output.pointInWave = input.pos.y + 16.0;
+	output.pointInWave = (input.pos.y + 16.0) * 0.045;	//hardcode, 16.0 is the -y pos of the plane
 	
     output.fragPos = output.pos;
 	output.fragNormal = input.norm;
@@ -161,10 +180,18 @@ export const f_water =
 		@location(3) pointInWave: f32,
 	};
 
+	fn lerp(a: vec4<f32>, b: vec4<f32>, t: f32) -> vec4<f32> {
+		return a + t * (b - a);
+	}	
+
 	@fragment
 	fn fragmentMain(input: FragInput) -> //could also use input: VertexOutput instead because its contained within the same file here
 		@location(0) vec4f {
 		
-		return vec4f(0.0,1.0 - input.pointInWave,input.pointInWave,1.0);
+		let baseBlue = vec4f(0.486,0.486,0.788,1.0);
+		let deepBlue = vec4f(0.125,0.125,0.451,1.0);
+		let peakCrest = vec4f(0.957, 0.957, 0.969, 1.0);
+		
+		return vec4f(lerp(lerp(baseBlue, peakCrest, input.pointInWave), deepBlue, 1.0 - input.pointInWave).xyz, 1.0);
 	}
 `;

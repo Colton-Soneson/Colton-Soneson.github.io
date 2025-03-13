@@ -35,7 +35,7 @@ const waterVertexShaderModule = device.createShaderModule({
 });
 
 //anim
-let step = 0;
+let step = 0.0;
 
 //if settings change live, this will have to be changed out from constants													!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 const waterPlaneNumberOfVerts = settings.waterTileResolution * settings.waterTileResolution;
@@ -334,9 +334,16 @@ const waterComputePipeline = device.createComputePipeline({
 	},
 });
 
+function redirectWindDirectionTemp() {
+	settings.windDirection[0] = Math.cos(step * 0.00075);
+	settings.windDirection[1] = Math.sin(step * 0.00053);
+}
+
 export function waterPass(aEncoder) {
 	
 	step++;
+	
+	redirectWindDirectionTemp();	//just for testing wave redirection from CPU side
 	
 	if(waterPipelineUpdateFlag) {
 		recreateWaterPipeline(waterPipelineTopologyType)

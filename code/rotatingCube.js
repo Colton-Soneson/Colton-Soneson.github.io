@@ -706,7 +706,7 @@ export function updateRotatingCubePass() {
 	
 	if(settings.enableWater)
 	{
-		waterPass(encoder);
+		waterPass(encoder, depthTexture);
 	}
 
 	device.queue.submit([encoder.finish()]);

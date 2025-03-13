@@ -89,11 +89,11 @@ waterUpdateStorageIndexBuffer(); // run the function
 
 
 //depth for distance scaling
-const depthTexture = device.createTexture({
-  size: [canvas.width, canvas.height],
-  format: 'depth24plus',
-  usage: GPUTextureUsage.RENDER_ATTACHMENT,
-});
+//const depthTexture = device.createTexture({
+//  size: [canvas.width, canvas.height],
+//  format: 'depth24plus',
+//  usage: GPUTextureUsage.RENDER_ATTACHMENT,
+//});
 
 //linear sampling
 const linSampler = device.createSampler({
@@ -127,7 +127,9 @@ function waterVFUniformBufferUpdates(numInstances) {	//future will have a water 
 		const bufferResult = [];
 		
 		//for now this will be model mat, but its should just be default everything to save time (but scale might be good to avoid model crap)
-		const modelMatrix = transformations.getModelMatrix(new Float32Array([0.0,0.0,0.0]), 
+		const modelMatrix = transformations.getModelMatrix(new Float32Array([-(settings.waterTileResolution * 0.25),
+																				0.0,
+																				-(settings.waterTileResolution * 0.25) ]), 
 															new Float32Array([0.0,0.0,0.0]),
 															new Float32Array([1.0,1.0,1.0]));
 		const modelViewMat = mat4.mul(transformations.getViewMatrix(), modelMatrix);
@@ -151,7 +153,9 @@ function waterComputeBuffersUpdate() {
 	const bufferResult = [];
 	
 	//for now this will be model mat, but its should just be default everything to save time (but scale might be good to avoid model crap)
-	const modelMatrix = transformations.getModelMatrix(new Float32Array([0.0,0.0,0.0]), 
+	const modelMatrix = transformations.getModelMatrix(new Float32Array([-(settings.waterTileResolution * 0.25),
+																			0.0,
+																			-(settings.waterTileResolution * 0.25)]), 
 														new Float32Array([0.0,0.0,0.0]), 
 														new Float32Array([1.0,1.0,1.0]));
 	const modelViewMat = mat4.mul(transformations.getViewMatrix(), modelMatrix);
@@ -339,7 +343,7 @@ function redirectWindDirectionTemp() {
 	settings.windDirection[1] = Math.sin(step * 0.00053);
 }
 
-export function waterPass(aEncoder) {
+export function waterPass(aEncoder, mainpassDepthTexture) {
 	
 	step++;
 	
@@ -374,10 +378,10 @@ export function waterPass(aEncoder) {
 		storeOp: "store",
 		}],
 		depthStencilAttachment: {
-			view: depthTexture.createView(),
-		
-			depthClearValue: 1.0,
-			depthLoadOp: 'clear',	//check if load instead
+			view: mainpassDepthTexture.createView(),
+			
+			//depth testing
+			depthLoadOp: 'load',	
 			depthStoreOp: 'store',
 		},
 	});

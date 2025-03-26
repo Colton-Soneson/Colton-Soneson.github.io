@@ -2,6 +2,9 @@ import * as primitives from '../models/primitives.js'
 import { settings } from './settings.js';
 import {device} from './deviceSelection.js'
 import {canvas} from './deviceSelection.js'
+import * as transformations from './transformations.js'
+
+import { v_heightMapDepth } from '../shaders/js/v_heightMap.js'
 
 function loadModel(vertices, faces, normals, uvs) {
 	const positions = [];
@@ -132,6 +135,8 @@ const genericShaderVertexBufferArray = loadModelsToVBArray(entityModels, entityM
 loadModelTextures(entityModels, modelsTexturesList);
 console.log("Scene Textures: ", modelsTexturesList);
 
+
+
 //-----------------VB OF GENERIC SHADER MODELS-----------------------
 //GPU Side memory management done through GPUBuffer objects
 export const vertexBuffer = device.createBuffer({
@@ -162,3 +167,120 @@ attributes: [{			//stuff like color, normal direction, etc
 	],
 
 };
+
+//---------------------Height Map Depth Texture-------------------------
+function getHeightMapMatrices(model) {
+	const heightMapBuff = [];
+	const modelMatrix = transformations.getModelMatrix(model.worldTranslation, model.worldRotation, model.worldScale);
+	const topDownViewProjMat = transformations.getTopDownViewProjectionMat();
+	
+	for(let k = 0; k < 16; ++k)
+	{
+		heightMapBuff.push(modelMatrix[k]);
+	}
+	for(let k = 0; k < 16; ++k)
+	{
+		heightMapBuff.push(topDownViewProjMat[k]);
+	}
+	return new Float32Array(heightMapBuff);
+}
+
+const shaderHeightMapModule = device.createShaderModule({
+	label: "height map vf shader",
+	code: v_heightMapDepth
+});
+
+export const heightMapDepthTexture = device.createTexture({
+size: {height: settings.heightMapResolution, width: settings.heightMapResolution, depthOrArrayLayers: 1},
+	label: "height map depth texture",
+	format: 'depth32float',
+	usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+});
+
+export const heightMapView = heightMapDepthTexture.createView();
+
+export const heightMapSampler = device.createSampler({
+	label: 'heightMap Sampler',
+	minFilter: 'nearest',
+	magFilter: 'nearest',
+	mipmapFilter: 'nearest',
+	addressModeU: 'clamp-to-edge',
+	addressModeV: 'clamp-to-edge',
+	addressModeW: 'clamp-to-edge',
+	compare: 'less',
+});
+
+const uboOffset = 256;	//this is a defaulted max for UBO, nothing I wrote equals up to 256, its a limiter
+const heightMapUniformSize = 128; //(4 * 4 * 4) + (4 * 4 * 4)   two 4x4 mats
+const totalUniformHeightMapSize = (uboOffset * (entityModels.length - 1)) + (heightMapUniformSize * (entityModels.length));
+const uniformHeightMap = device.createBuffer({
+  label: "height Map Uniform Buffer",
+  size: totalUniformHeightMapSize,
+  usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+});
+
+const heightMapBindGroupLayout = device.createBindGroupLayout({
+	label: "heightMap Bind Group Layout",
+	entries: [
+  {
+    binding: 0,		
+    visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+    buffer: {},
+  }]
+});
+
+export function createHeightMapBindGroups(numModels){
+	
+	const result = [];
+	for(let i = 0; i < numModels; ++i) {
+		
+			result.push(device.createBindGroup({
+				label: "renderer heightmap model uniform bind group",
+				layout: heightMapBindGroupLayout,
+				entries: [
+				{
+				binding: 0,
+				resource: {buffer : uniformHeightMap, offset: i * uboOffset, size: heightMapUniformSize,}
+				}],
+			}));
+	}
+	
+	return result;
+}
+
+const heightMapPipelineLayout = device.createPipelineLayout({
+  label: "Height Map Pipeline Layout",
+  bindGroupLayouts: [ heightMapBindGroupLayout ],
+});
+
+export const heightMapPipeline = device.createRenderPipeline({
+	label: "Height Map pipeline",
+	layout: heightMapPipelineLayout,	
+  vertex: {
+    module: shaderHeightMapModule,
+	entryPoint: "vertexMain",
+    buffers: [vertexBufferLayout],
+  },
+  depthStencil: {
+    depthWriteEnabled: true,
+    depthCompare: 'less',
+    format: 'depth32float',
+  },
+  primitive: {
+	  topology: 'triangle-list',
+	  cullMode: 'none',
+  },
+});
+
+export function heightMapUniformBufferUpdates(models) {
+	for(let i = 0; i < models.length; ++i)
+	{	
+		const finalHeightMapBuff = getHeightMapMatrices(models[i]);
+		
+		device.queue.writeBuffer(uniformHeightMap, 
+								i * uboOffset,	//apparently uniform buffer size defaults to a need of 256 
+								finalHeightMapBuff.buffer,
+								finalHeightMapBuff.byteOffset,
+								finalHeightMapBuff.byteLength);
+	}
+}

@@ -28,7 +28,7 @@ const shaderMapModule = device.createShaderModule({
 });
 
 //---------------------Shadow Map Depth Textures-------------------------
-const shadowMapDepthTexture = device.createTexture({
+export const shadowMapDepthTexture = device.createTexture({
 size: {height: settings.shadowMapSize, width: settings.shadowMapSize, depthOrArrayLayers: 1},
 	format: 'depth32float',
 	usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,

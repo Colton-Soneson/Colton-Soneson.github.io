@@ -94,13 +94,6 @@ export function grassUpdateStorageVertexBuffer() {
 }
 grassUpdateStorageVertexBuffer(); // run the function
 
-//depth for distance scaling
-const depthTexture = device.createTexture({
-  size: [canvas.width, canvas.height],
-  format: 'depth24plus',
-  usage: GPUTextureUsage.RENDER_ATTACHMENT,
-});
-
 //linear sampling
 const linSampler = device.createSampler({
   magFilter: 'linear',
@@ -349,7 +342,7 @@ const grassComputePipeline = device.createComputePipeline({
 	//console.log("single grass blade vertex num: ", grassEntityModels[0].vertices.length / 3);
 	//console.log("Total Grass Vert array size divide by (12 pos + 8 uv + 12 norm = 32) divide by verts per blade model (10) should be number of blades: ", (totalGrassVertexArray / 32 / (grassEntityModels[0].vertices.length / 3)));
 
-export function grassPass(aEncoder) {
+export function grassPass(aEncoder, mainpassDepthTexture) {
 		
 	// Start a compute pass place and animate the instances
 	const bindCGroup = createCompBindGroupGrass();
@@ -378,10 +371,9 @@ export function grassPass(aEncoder) {
 		storeOp: "store",
 		}],
 		depthStencilAttachment: {
-			view: depthTexture.createView(),
-		
-			depthClearValue: 1.0,
-			depthLoadOp: 'clear',	//check if load instead
+			view: mainpassDepthTexture.createView(),
+			
+			depthLoadOp: 'load',	//check if load instead
 			depthStoreOp: 'store',
 		},
 	});

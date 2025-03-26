@@ -6,6 +6,8 @@ import {canvasFormat} from './deviceSelection.js'
 import { mat4, vec3 } from 'https://wgpu-matrix.org/dist/3.x/wgpu-matrix.module.js';
 
 import {postEffectPassSSS} from './SSS.js'
+import {postEffectPassTextureDebug_DEPTH32FLOAT} from './debugTextureDisplay.js'
+import {postEffectPassTextureDebug_RGBA8UNORM} from './debugTextureDisplay.js'
 import {grassPass} from './computeGrass.js'
 import {waterPass} from './water.js'
 
@@ -194,6 +196,8 @@ const bindGroups = createGenericBindGroups(scene.entityModels.length);
 
 const shadowMapBindGroups = shadowMapping.createShadowMapBindGroups(scene.entityModels.length);
 
+const heightMapBindGroups = scene.createHeightMapBindGroups(scene.entityModels.length);
+
 const pipelineLayout = device.createPipelineLayout({
   label: "Generic Pipeline Layout",
   bindGroupLayouts: [ bindGroupLayout ],
@@ -263,7 +267,7 @@ const editModes = ["translate","rotate","scale","camera","lighting","grass"];
 const camSubEditModes = ["default"];
 const lightSubEditModes = ["Sun Intensity","Shadow Map Kernel Size", "Shadow Map Acne Bias"];
 const grassSubEditModes = ["Grass Total Blade Count"];
-const debugDisplayModes = ["final", "shadow mapping visibility","water line topology"];
+const debugDisplayModes = ["final", "shadow mapping visibility","water line topology","heightMap"];
 let selectedEditMode = 0;
 const rotSpeed = 1.0;
 const transSpeed = 1.0;
@@ -274,7 +278,7 @@ window.addEventListener("keydown", function (event) {
 	const keyPressed = event.key;
 	
 	switch(keyPressed){
-		case "w":
+		case "w": {
 			if(selectedEditMode == 0) {
 				scene.entityModels[selectedEntity].worldTranslation[2] -= transSpeed;
 			}
@@ -296,8 +300,9 @@ window.addEventListener("keydown", function (event) {
 					}
 				}
 			}
+		}
 		break;
-		case "a":
+		case "a": {
 			if(selectedEditMode == 0) {
 				scene.entityModels[selectedEntity].worldTranslation[0] -= transSpeed;
 			}
@@ -319,8 +324,9 @@ window.addEventListener("keydown", function (event) {
 					}
 				}
 			}
+		}
 		break;
-		case "s":
+		case "s": {
 			if(selectedEditMode == 0) {
 				scene.entityModels[selectedEntity].worldTranslation[2] += transSpeed;
 			}
@@ -342,8 +348,9 @@ window.addEventListener("keydown", function (event) {
 					}
 				}
 			}
+		}
 		break;
-		case "d":
+		case "d": {
 			if(selectedEditMode == 0) {
 				scene.entityModels[selectedEntity].worldTranslation[0] += transSpeed;
 			}
@@ -365,8 +372,9 @@ window.addEventListener("keydown", function (event) {
 					}
 				}
 			}
+		}
 		break;
-		case "q":
+		case "q": {
 			if(selectedEditMode == 0) {
 				scene.entityModels[selectedEntity].worldTranslation[1] -= transSpeed;
 			}
@@ -388,8 +396,9 @@ window.addEventListener("keydown", function (event) {
 					}
 				}
 			}
+		}
 		break;
-		case "e":
+		case "e": {
 			if(selectedEditMode == 0) {
 				scene.entityModels[selectedEntity].worldTranslation[1] += transSpeed;
 			}
@@ -411,8 +420,9 @@ window.addEventListener("keydown", function (event) {
 					}
 				}
 			}
+		}
 		break;
-		case "r":
+		case "r": {
 			if(selectedEditMode == 4) {
 				if(selectedSubEditMode == 0)
 				{
@@ -440,8 +450,9 @@ window.addEventListener("keydown", function (event) {
 					}
 				}
 			}
+		}
 		break;
-		case "t":
+		case "t": {
 			if(selectedEditMode == 4) {
 				if(selectedSubEditMode == 0)
 				{
@@ -472,8 +483,9 @@ window.addEventListener("keydown", function (event) {
 					}
 				}
 			}
+		}
 		break;
-		case "c":
+		case "c": {
 			if(selectedDebugDisplayMode < debugDisplayModes.length - 1) {
 				selectedDebugDisplayMode++;
 			}
@@ -489,13 +501,22 @@ window.addEventListener("keydown", function (event) {
 				water.waterPipelineSignalUpdate('triangle-list');
 			}
 			
+			if(selectedDebugDisplayMode == 3) {
+				settings.displayHeightMap = true;
+			}
+			else {
+				settings.displayHeightMap = false;
+			}
+			
 			console.log("DEBUG DISPLAY MODE: ", debugDisplayModes[selectedDebugDisplayMode]);
+		}
 		break;
-		case "p":
+		case "p": {
 			settings.enablePostEffects = !settings.enablePostEffects;
 			console.log("Post Effects Enabled: ", settings.enablePostEffects);
+		}
 		break;
-		case "ArrowLeft":
+		case "ArrowLeft": {
 			if(selectedEditMode == 0 || selectedEditMode == 1 || selectedEditMode == 2)
 			{
 				if(selectedEntity >= 1) {
@@ -536,8 +557,9 @@ window.addEventListener("keydown", function (event) {
 				}
 				console.log("Selected Grass Sub Edit Mode: ", grassSubEditModes[selectedSubEditMode]);
 			}
+		}
 		break;
-		case "ArrowRight":
+		case "ArrowRight": {
 			if(selectedEditMode == 0 || selectedEditMode == 1 || selectedEditMode == 2)
 			{
 				if(selectedEntity < scene.entityModels.length - 1) {
@@ -578,8 +600,9 @@ window.addEventListener("keydown", function (event) {
 				}
 				console.log("Selected Grass Sub Edit Mode: ", grassSubEditModes[selectedSubEditMode]);
 			}
+		}
 		break;
-		case "ArrowDown":
+		case "ArrowDown": {
 			selectedSubEditMode = 0;
 			if(selectedEditMode >= 1) {
 				selectedEditMode--;
@@ -588,8 +611,9 @@ window.addEventListener("keydown", function (event) {
 				selectedEditMode = editModes.length - 1;
 			}
 			console.log("Selected Edit Mode: ", editModes[selectedEditMode]);
+		}
 		break;
-		case "ArrowUp":
+		case "ArrowUp": {
 			selectedSubEditMode = 0;
 			if(selectedEditMode < editModes.length - 1) {
 				selectedEditMode++;
@@ -598,6 +622,7 @@ window.addEventListener("keydown", function (event) {
 				selectedEditMode = 0;
 			}
 			console.log("Selected Edit Mode: ", editModes[selectedEditMode]);
+		}
 		break;
 	}
 });
@@ -657,6 +682,38 @@ export function updateRotatingCubePass() {
 	
 	shadowPass.end();
 	
+	
+	//-------------HEIGHT PASS------------------
+	
+	//update the heightmap
+	scene.heightMapUniformBufferUpdates(scene.entityModels);
+	
+	const heightPass = encoder.beginRenderPass({
+		colorAttachments: [],
+		depthStencilAttachment: {
+			view: scene.heightMapView,
+			depthStoreOp: 'store',
+			depthLoadOp: 'clear',
+			depthClearValue: 1.0,
+		},
+	});
+	
+	heightPass.setPipeline(scene.heightMapPipeline);
+	
+	heightPass.setVertexBuffer(0, scene.vertexBuffer);
+	
+	for(let i = 0; i < scene.entityModels.length; ++i)
+	{
+		let mod = scene.entityModelsStride[i] / (primitives.totalStride / 4);
+		heightPass.setBindGroup(0, heightMapBindGroups[i]);
+		heightPass.draw(mod, 1, prevModCombo);
+		prevModCombo += mod;
+	}
+	prevModCombo = 0;
+	
+	heightPass.end();
+	
+	
 	//-------------MAIN PASS------------------
 	const pass = encoder.beginRenderPass({
 		colorAttachments: [{
@@ -688,9 +745,7 @@ export function updateRotatingCubePass() {
 		prevModCombo += mod;
 	}
 	prevModCombo = 0;
-	
-	//const VBAStrideOut = genericShaderVertexBufferArray.length / (totalStride / 4);
-	
+		
 	pass.end();
 	
 	//post effect section
@@ -701,13 +756,23 @@ export function updateRotatingCubePass() {
 	
 	if(settings.enableGrass)
 	{
-		grassPass(encoder);
+		grassPass(encoder, depthTexture);
 	}
 	
 	if(settings.enableWater)
 	{
 		waterPass(encoder, depthTexture);
 	}
+	
+	if(settings.displayHeightMap)
+	{
+		postEffectPassTextureDebug_DEPTH32FLOAT(encoder, context.getCurrentTexture(), scene.heightMapDepthTexture, scene.heightMapSampler);
+		//postEffectPassTextureDebug_RGBA8UNORM(encoder, context.getCurrentTexture(), context.getCurrentTexture());
+	}
+	
+	//if(settings.displayShadowMapDepth) {
+	//	postEffectPassTextureDebug_DEPTH32FLOAT(encoder, context.getCurrentTexture(), scene.shadowMapDepthTexture, scene.shadowMapSampler);
+	//}
 
 	device.queue.submit([encoder.finish()]);
 }

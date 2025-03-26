@@ -16,6 +16,9 @@ export const settings = {
     sunColor: vec3.create(0.992, 0.37, 0.325),
     sunIntensity: 75000.0,
     sunPadding: 1.0,
+	//--------------------SCENE--------------------
+	heightMapResolution: 2048,
+	topDownCameraHeight: 60.0,
 	//-------------------SHADOWS-------------------
     shadowMapSize: 2048,
 	shadowMapPCFKernelSize: 1,
@@ -25,7 +28,7 @@ export const settings = {
 	//--------------------GRASS--------------------
 	enableGrass: true,
 	grassDensityPerTile: 64,	//tile size will determine density using distance from camera
-	grassTotalBladeCount: 4,	//make this base 2 for testing purposes
+	grassTotalBladeCount: 64,	//make this base 2 for testing purposes
 	grassTotalHARDLIMIT: 131072, //the buffers Can handle more than this, but doubling will go over the 128mb size of storage buffer
 	//--------------------WATER--------------------
 	enableWater: true,
@@ -39,5 +42,8 @@ export const settings = {
     showDebug: true,
 	showDebugIcons: false,
     activateSkybox: false,
+	displayHeightMap: false,
+	displayHeightMapDebugRange: 0.5,
+	displayShadowMapDepth: true,
 	debugViewMode: 0
 };

@@ -58,6 +58,34 @@ export function getLightViewProjectionMat() {
 	return lightViewProjMatrix;
 }
 
+export function getTopDownViewProjectionMat() {
+	
+	//we look from above camera view, to beneath it
+	//		!!!!SEE IF THIS CAUSES RENDER PROBLEMS!!!!
+	const topDownViewMatrix = mat4.lookAt([settings.camPosX, settings.topDownCameraHeight, settings.camPosZ], 
+								[settings.camPosX,0,settings.camPosZ], 	
+								[0,1,0]);
+	
+	const boxSize = 300;	
+	const topDownProjectionMatrix = mat4.create();
+	{
+	const left = -boxSize;
+	const right = boxSize;
+	const bottom = -boxSize;
+	const top = boxSize;
+	const near = -400;	//the near plane is negative because its behind the lights view to correctly represent scene geometry in light space
+	const far = 600;	//the far plane will increase the extent of the boxes depth at cost of accuracy
+	mat4.ortho(left, right, bottom, top, near, far, topDownProjectionMatrix);
+	}
+	
+	const topDownViewProjMatrix = mat4.multiply(
+	topDownProjectionMatrix,
+	topDownViewMatrix
+	);
+	
+	return topDownViewProjMatrix;
+}
+
 export function getMatrixTransformSpaces(model, numInstances) {
 	const spaceBuffer = [];
 	const now = Date.now() / 1000;

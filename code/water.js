@@ -340,7 +340,7 @@ const waterComputePipeline = device.createComputePipeline({
 
 function redirectWindDirectionTemp() {
 	settings.windDirection[0] = Math.cos(step * 0.00075);
-	settings.windDirection[1] = Math.sin(step * 0.00053);
+	//settings.windDirection[1] = Math.sin(step * 0.00053);
 }
 
 export function waterPass(aEncoder, mainpassDepthTexture) {

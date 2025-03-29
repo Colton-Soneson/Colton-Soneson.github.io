@@ -44,6 +44,6 @@ export const settings = {
     activateSkybox: false,
 	displayHeightMap: false,
 	displayHeightMapDebugRange: 0.5,
-	displayShadowMapDepth: true,
+	displayShadowMapDepth: false,
 	debugViewMode: 0
 };

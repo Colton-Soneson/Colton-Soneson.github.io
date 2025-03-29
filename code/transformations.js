@@ -10,6 +10,14 @@ const aspect = canvas.width / canvas.height;
 export const projectionMatrix = mat4.perspective((2 * Math.PI) / 5, aspect, settings.camNearPlane, settings.camFarPlane);
 
 export function getViewMatrix() {
+	
+	//this is to handle if we have our camera position parallel to the up vector, so change the up vector to right facing
+	if (settings.camPosY > 0 && Math.abs(settings.camPosX) < 1e-6 && Math.abs(settings.camPosZ) < 1e-6) {
+		return mat4.lookAt([settings.camPosX, settings.camPosY, settings.camPosZ],
+					   [0,		 0,		  0],
+					   [0,		 0,		  1]);
+    }
+	
 	return mat4.lookAt([settings.camPosX, settings.camPosY, settings.camPosZ],
 					   [0,		 0,		  0],
 					   [0,		 1,		  0]);
@@ -29,9 +37,15 @@ export function getModelMatrix(t, r, s) {
 }
 
 export function getLightViewProjectionMat() {
+	
+	let upDir = [0,1,0];
+	if (settings.sunPosY > 0 && Math.abs(settings.sunPosX) < 1e-6 && Math.abs(settings.sunPosZ) < 1e-6) {
+		upDir = [0,0,1];
+    }
+	
 	const lightViewMatrix = mat4.lookAt([settings.sunPosX, settings.sunPosY, settings.sunPosZ], 
 								[0,0,0], 	//this is origin, not sure how to do this for omnidirectional lights
-								[0,1,0]);
+								upDir);
 	
 	//this is an orthographic projection
 	//	THINK OF THIS AS A BIG BOX
@@ -60,11 +74,9 @@ export function getLightViewProjectionMat() {
 
 export function getTopDownViewProjectionMat() {
 	
-	//we look from above camera view, to beneath it
-	//		!!!!SEE IF THIS CAUSES RENDER PROBLEMS!!!!
 	const topDownViewMatrix = mat4.lookAt([settings.camPosX, settings.topDownCameraHeight, settings.camPosZ], 
 								[settings.camPosX,0,settings.camPosZ], 	
-								[0,1,0]);
+								[0,0,-1]);	//changed the up-vector to prevent camera being parallel to up axis
 	
 	const boxSize = 300;	
 	const topDownProjectionMatrix = mat4.create();
@@ -88,7 +100,6 @@ export function getTopDownViewProjectionMat() {
 
 export function getMatrixTransformSpaces(model, numInstances) {
 	const spaceBuffer = [];
-	const now = Date.now() / 1000;
 
 	const viewMatrix = getViewMatrix();
   
@@ -116,7 +127,6 @@ export function getMatrixTransformSpaces(model, numInstances) {
 			spaceBuffer.push(normalMat[i]);
 		}
 	}
-  
   
   return new Float32Array(spaceBuffer);
 }

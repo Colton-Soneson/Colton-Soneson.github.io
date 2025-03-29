@@ -37,6 +37,8 @@ const waterVertexShaderModule = device.createShaderModule({
 //anim
 let step = 0.0;
 
+const centerWaterPlanePosition = [-(settings.waterTileResolution * 0.25), 0.0, -(settings.waterTileResolution * 0.25)];
+
 //if settings change live, this will have to be changed out from constants													!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 const waterPlaneNumberOfVerts = settings.waterTileResolution * settings.waterTileResolution;
 const waterPlaneVertexStride = (3 + 2 + 3);
@@ -73,7 +75,7 @@ export function waterUpdateStorageVertexBuffer() {
 waterUpdateStorageVertexBuffer(); // run the function
 
 let totalwaterIndexBuffer;
-const totalPlaneTriangles = ((settings.waterTileResolution - 1) * (settings.waterTileResolution - 1)) / 2;	//grid cells / tris per cell (2)
+const totalPlaneTriangles = ((settings.waterTileResolution - 1) * (settings.waterTileResolution - 1));	//grid cells / tris per cell (2)
 export function waterUpdateStorageIndexBuffer() {
 	const totalwaterIndexArray = totalPlaneTriangles * (3 + 2 + 3) * Float32Array.BYTES_PER_ELEMENT;
 	const GIB = device.createBuffer({
@@ -122,14 +124,15 @@ function getwaterComputeInfo() {
 	return new Float32Array(waterCompBuffer);
 }
 
-function waterVFUniformBufferUpdates(numInstances) {	//future will have a water model list with multiple types
+function waterVFUniformBufferUpdates(numInstances, pos) {
 	
 		const bufferResult = [];
+		const adjustedPos = [centerWaterPlanePosition[0] + pos[0], 
+							centerWaterPlanePosition[1] + pos[1], 
+							centerWaterPlanePosition[2] + pos[2]];
 		
 		//for now this will be model mat, but its should just be default everything to save time (but scale might be good to avoid model crap)
-		const modelMatrix = transformations.getModelMatrix(new Float32Array([-(settings.waterTileResolution * 0.25),
-																				0.0,
-																				-(settings.waterTileResolution * 0.25) ]), 
+		const modelMatrix = transformations.getModelMatrix(new Float32Array(adjustedPos), 
 															new Float32Array([0.0,0.0,0.0]),
 															new Float32Array([1.0,1.0,1.0]));
 		const modelViewMat = mat4.mul(transformations.getViewMatrix(), modelMatrix);
@@ -153,9 +156,7 @@ function waterComputeBuffersUpdate() {
 	const bufferResult = [];
 	
 	//for now this will be model mat, but its should just be default everything to save time (but scale might be good to avoid model crap)
-	const modelMatrix = transformations.getModelMatrix(new Float32Array([-(settings.waterTileResolution * 0.25),
-																			0.0,
-																			-(settings.waterTileResolution * 0.25)]), 
+	const modelMatrix = transformations.getModelMatrix(new Float32Array(centerWaterPlanePosition), 
 														new Float32Array([0.0,0.0,0.0]), 
 														new Float32Array([1.0,1.0,1.0]));
 	const modelViewMat = mat4.mul(transformations.getViewMatrix(), modelMatrix);
@@ -367,7 +368,7 @@ export function waterPass(aEncoder, mainpassDepthTexture) {
 	computePass.end();
 		
 	const bindVFGroups = createVFBindGroupswater();
-	waterVFUniformBufferUpdates(settings.waterTileResolution * settings.waterTileResolution);
+	waterVFUniformBufferUpdates(1, [0,0,0]);
 	
 	// start a pass to render the water instances
 	const pass = aEncoder.beginRenderPass({

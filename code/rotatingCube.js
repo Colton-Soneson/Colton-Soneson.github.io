@@ -148,7 +148,6 @@ const bindGroupLayout = device.createBindGroupLayout({
 });
 
 //multi bind group
-
 function createGenericBindGroups(numModels){
 	//essentially we want a bind group per model, and thats okay
 	//	its only not okay if we use different groups per instance of the same model, then its inefficient

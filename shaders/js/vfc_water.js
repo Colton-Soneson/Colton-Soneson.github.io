@@ -50,6 +50,60 @@ fn gerstnerWave(position: vec3f, waveLength: f32, waveSteepness: f32, windDirect
 		return vec3f(new_x, new_y, new_z);
 }
 
+fn gerstner(vertGridPosX: f32, vertGridPosZ: f32) -> vec3f {
+	
+		//---------------------WAVE EQUATION ON GRID POINTS----------------------
+		//https://www.youtube.com/watch?v=kGEqaX4Y4bQ
+		//https://catlikecoding.com/unity/tutorials/flow/waves/
+	
+		var position = vec3f(vertGridPosX, WU.planeYPos, vertGridPosZ);
+		
+		//LARGE ROLLING WAVES
+		//wave A
+		position = gerstnerWave(position, WU.waveLength, WU.waveSteepness, WU.windDirection, WU.step);
+
+		//wave B
+		position = gerstnerWave(position, 10.0, 0.2, vec2f(0.2,-0.3), WU.step * 1.2);
+		
+		//MEDIUM STEEP WAVE
+		position = gerstnerWave(position, 5.0, 0.2, vec2f(0.0, 0.6), WU.step * 1.75);
+		
+		//SMALL STEEP WAVES
+		//wave D
+		position = gerstnerWave(position, 0.5, 0.8 / (position.y * 0.5), vec2f(-0.1,-0.4), WU.step * 2.0);
+		
+		//wave E
+		position = gerstnerWave(position, 0.2, 0.6 / (position.y * 0.25), vec2f(0.5,0.1), WU.step * 3.0);
+		
+		return position;
+}
+
+fn FFT(vertGridPosX: f32, vertGridPosZ: f32) -> vec3f {
+	
+	// vector fields with e^it
+	// https://www.youtube.com/watch?v=v0YEaeIClKY
+	// e : eulers number (2.7...)
+	// i : sqrt(-1), will take this 1D equation and create orthogonal vector of velocity, velocity WILL be 90deg of that position
+	// t : time
+	// e^it = cosx + isinx    this is how we remove the sin and cos that gerstners rely on
+	
+	//tessendorf paper
+	//https://people.computing.clemson.edu/~jtessen/reports/papers_files/coursenotes2002.pdf
+	let e = f32(2.71828);		// eulers num
+	let pi = f32(3.14159);		//PI
+	let g = f32(9.18);			//grav constant
+	let lambda;				//wavelength
+	let k = (2 * pi) / lambda;	//wavevector
+	let w;	//frequency
+	
+	
+	var position;
+	
+	
+	
+	return position;
+}
+
 @compute @workgroup_size(${WATER_WORKGROUP_SIZE[0]}, ${WATER_WORKGROUP_SIZE[1]}, ${WATER_WORKGROUP_SIZE[2]})	
     fn computeMain(
 		@builtin(global_invocation_id) GlobalIvocationID: vec3<u32>
@@ -70,30 +124,11 @@ fn gerstnerWave(position: vec3f, waveLength: f32, waveSteepness: f32, windDirect
 		
 		let oVertInd = gIndex * fPerVertexData;
 		
-		//---------------------WAVE EQUATION ON GRID POINTS----------------------
-		//https://www.youtube.com/watch?v=kGEqaX4Y4bQ
-		//https://catlikecoding.com/unity/tutorials/flow/waves/
+		//-----------------------[BASIC] Gerstner Waves-------------------------
+		//var position = gerstner(vertGridPosX, vertGridPosZ);
 		
-		var position = vec3f(vertGridPosX, WU.planeYPos, vertGridPosZ);
-		
-		//LARGE ROLLING WAVES
-		//wave A
-		position = gerstnerWave(position, WU.waveLength, WU.waveSteepness, WU.windDirection, WU.step);
-
-		//wave B
-		position = gerstnerWave(position, 10.0, 0.2, vec2f(0.2,-0.3), WU.step * 1.2);
-		
-		//MEDIUM STEEP WAVE
-		position = gerstnerWave(position, 5.0, 0.2, vec2f(0.0, 0.6), WU.step * 1.75);
-		
-		//SMALL STEEP WAVES
-		//wave D
-		position = gerstnerWave(position, 0.5, 0.8 / (position.y * 0.5), vec2f(-0.1,-0.4), WU.step * 2.0);
-		
-		//wave E
-		position = gerstnerWave(position, 0.2, 0.6 / (position.y * 0.25), vec2f(0.5,0.1), WU.step * 3.0);
-		
-		
+		//------------------[REALISTIC] FFT Oceanographic Waves-----------------
+		var position;
 		
 		
 		waterVertexData[oVertInd + 0] = position.x;

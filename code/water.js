@@ -90,12 +90,12 @@ waterUpdateStorageIndexBuffer(); // run the function
 
 
 
-//depth for distance scaling
-//const depthTexture = device.createTexture({
-//  size: [canvas.width, canvas.height],
-//  format: 'depth24plus',
-//  usage: GPUTextureUsage.RENDER_ATTACHMENT,
-//});
+//Phillips Spectrum
+export const phillipsSpectrumTexture = device.createTexture({
+  size: [settings.waterTileResolution, settings.waterTileResolution],
+  format: 'rgba8unorm',
+  usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
+});
 
 //linear sampling
 const linSampler = device.createSampler({
@@ -226,6 +226,16 @@ const bindGroupCLayout = device.createBindGroupLayout({
 		type: "storage",
 		access: "read-write",
 	}
+  },
+  {
+    binding: 4,								//outTexture for PS
+    visibility:  GPUShaderStage.COMPUTE,
+    storageTexture: {
+        format: canvasFormat,   // Format must match the swap chain texture
+		access: "write-only",
+		dimension: "2d",
+		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
+    }
   }
   ]
 });
@@ -266,6 +276,10 @@ function createCompBindGroupwater() {
 			{
 				binding: 3,
 				resource: { buffer: totalwaterIndexBuffer }
+			},
+			{
+				binding: 4,
+				resource: phillipsSpectrumTexture.createView()
 			}
 			]
 		});
@@ -348,7 +362,7 @@ export function waterPass(aEncoder, mainpassDepthTexture) {
 	
 	step++;
 	
-	redirectWindDirectionTemp();	//just for testing wave redirection from CPU side
+	//redirectWindDirectionTemp();	//just for testing wave redirection from CPU side
 	
 	if(waterPipelineUpdateFlag) {
 		recreateWaterPipeline(waterPipelineTopologyType)

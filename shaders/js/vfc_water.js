@@ -32,6 +32,8 @@ export const c_water =
 	
 	@group(0) @binding(2) var<storage, read_write> waterVertexData: array<f32>;
 	@group(0) @binding(3) var<storage, read_write> waterIndexData: array<u32>;
+	
+	@group(0) @binding(4) var phillipsSpectrumOutTexture : texture_storage_2d<rgba8unorm, write>;
 
 fn gerstnerWave(position: vec3f, waveLength: f32, waveSteepness: f32, windDirection: vec2f, step: f32) -> vec3f {
 		let k = (2 * 3.14) / waveLength;     		// Wave number
@@ -79,7 +81,7 @@ fn gerstner(vertGridPosX: f32, vertGridPosZ: f32) -> vec3f {
 }
 
 
-fn FFT(vertGridPosX: f32, vertGridPosZ: f32 ) -> vec3f {
+fn FFT(vertGridPosX: f32, vertGridPosZ: f32) -> vec3f {
 	
 	//an FFTs are methods of rapid sum evaluation
 	
@@ -95,6 +97,8 @@ fn FFT(vertGridPosX: f32, vertGridPosZ: f32 ) -> vec3f {
 	let e = f32(2.71828);		// eulers num, but the "exp(f32 x)" function does e^x 
 	let pi = f32(3.14159);		//PI
 	let g = f32(9.18);			//grav constant
+	
+	
 	//let lambda = f32(0.0);		//wavelength
 	//let k = (2 * pi) / lambda;	//wavevector
 	//let D = f32(99999);			//water depth
@@ -109,15 +113,15 @@ fn FFT(vertGridPosX: f32, vertGridPosZ: f32 ) -> vec3f {
 	// Lx and Lz are the actually lengths in meters of the patch
 	// discrete sample points is the WU.resolution
 	
-	let oceanSizeL = 25.0;	//the size of the tile, what to scale the grid by
+	let oceanSizeL = 100.0;	//the size of the tile, what to scale the grid by
 	let kx = ((2.0 * pi) / oceanSizeL) * (vertGridPosX - (WU.resolution / 2.0));
 	let ky = ((2.0 * pi) / oceanSizeL) * (vertGridPosZ - (WU.resolution / 2.0));
 	let k = vec2f(kx, ky);	//THE WAVE VECTOR FOR OCEAN PATCH
 	
 	//phillips spectrum
-	let V = 10.0; 			//wind speed, i made this up
+	let V = 30.0; 			//wind speed, i made this up
 	let L = (V * V) / g;	//largest possible waves from a continuous wind
-	let A = 1.0;			//"a numeric constant" ???
+	let A = 0.01;			//"a numeric constant" ???
 	let wHat = normalize(WU.windDirection);	//wind direction
 	let kHat = normalize(k);
 	let kw = dot(kHat, wHat);
@@ -128,7 +132,11 @@ fn FFT(vertGridPosX: f32, vertGridPosZ: f32 ) -> vec3f {
 		//dont divide by 0
 		PS = A * (exp(-1.0 / dot(k * L, k * L))/  k4) * (kw * kw);
 	}
-		
+	
+	//THIS IS FOR DEBUG FOR NOW
+	//	the "* 1e6" portion was done to give better visuals in debug mode, its suggested to do so. However I don't believe it should be done for the waves themselves.
+	textureStore(phillipsSpectrumOutTexture, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4<f32>(PS * 1e6,0.0,0.0,1.0));
+
 	var position = vec3f(0.0,0.0,0.0);
 	
 	
@@ -159,7 +167,7 @@ fn FFT(vertGridPosX: f32, vertGridPosZ: f32 ) -> vec3f {
 		
 		//------------------[REALISTIC] FFT Oceanographic Waves-----------------
 		var position = FFT(vertGridPosX, vertGridPosZ);
-		
+	
 		
 		waterVertexData[oVertInd + 0] = position.x;
 		waterVertexData[oVertInd + 1] = position.y;

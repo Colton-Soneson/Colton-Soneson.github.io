@@ -78,7 +78,10 @@ fn gerstner(vertGridPosX: f32, vertGridPosZ: f32) -> vec3f {
 		return position;
 }
 
-fn FFT(vertGridPosX: f32, vertGridPosZ: f32) -> vec3f {
+
+fn FFT(vertGridPosX: f32, vertGridPosZ: f32 ) -> vec3f {
+	
+	//an FFTs are methods of rapid sum evaluation
 	
 	// vector fields with e^it
 	// https://www.youtube.com/watch?v=v0YEaeIClKY
@@ -89,15 +92,44 @@ fn FFT(vertGridPosX: f32, vertGridPosZ: f32) -> vec3f {
 	
 	//tessendorf paper
 	//https://people.computing.clemson.edu/~jtessen/reports/papers_files/coursenotes2002.pdf
-	let e = f32(2.71828);		// eulers num
+	let e = f32(2.71828);		// eulers num, but the "exp(f32 x)" function does e^x 
 	let pi = f32(3.14159);		//PI
 	let g = f32(9.18);			//grav constant
-	let lambda;				//wavelength
-	let k = (2 * pi) / lambda;	//wavevector
-	let w;	//frequency
+	//let lambda = f32(0.0);		//wavelength
+	//let k = (2 * pi) / lambda;	//wavevector
+	//let D = f32(99999);			//water depth
+	//let LS = f32(1.0);			//magnitude of surface tension effect
+	//
+	//let w2 = g * k;				//frequency squared, infinite depth
+	//let w2_withDepth = g * k * tan(k * D);			//frequency squared, adjusted for depth
+	//let w2_rippleWaves = g * k * (1 + (k * k) * (LS * LS));		//frequency squared, but for small waves < 1cm
 	
+	//"waveheight is a random variable of horizontal position and time, h(x,t)"
+	// wave number = grid point number
+	// Lx and Lz are the actually lengths in meters of the patch
+	// discrete sample points is the WU.resolution
 	
-	var position;
+	let oceanSizeL = 25.0;	//the size of the tile, what to scale the grid by
+	let kx = ((2.0 * pi) / oceanSizeL) * (vertGridPosX - (WU.resolution / 2.0));
+	let ky = ((2.0 * pi) / oceanSizeL) * (vertGridPosZ - (WU.resolution / 2.0));
+	let k = vec2f(kx, ky);	//THE WAVE VECTOR FOR OCEAN PATCH
+	
+	//phillips spectrum
+	let V = 10.0; 			//wind speed, i made this up
+	let L = (V * V) / g;	//largest possible waves from a continuous wind
+	let A = 1.0;			//"a numeric constant" ???
+	let wHat = normalize(WU.windDirection);	//wind direction
+	let kHat = normalize(k);
+	let kw = dot(kHat, wHat);
+	let k4 = dot(k,k) * dot(k,k);
+	
+	var PS = 0.0;
+	if(k4 != 0.0) {
+		//dont divide by 0
+		PS = A * (exp(-1.0 / dot(k * L, k * L))/  k4) * (kw * kw);
+	}
+		
+	var position = vec3f(0.0,0.0,0.0);
 	
 	
 	
@@ -115,12 +147,10 @@ fn FFT(vertGridPosX: f32, vertGridPosZ: f32) -> vec3f {
 		
 		let fPerVertexData = u32(3 + 2 + 3);
 	
-		let gridSpacing = f32(0.5);									//this is just how big the grid is in the end
 		let gridWidth = u32(WU.resolution);
 		
-		
-		let vertGridPosX = f32(gIndex) % f32(gridWidth) * gridSpacing;
-		let vertGridPosZ = f32(gIndex) / f32(gridWidth) * gridSpacing;
+		let vertGridPosX = f32(gIndex) % f32(gridWidth);
+		let vertGridPosZ = f32(gIndex) / f32(gridWidth);
 		
 		let oVertInd = gIndex * fPerVertexData;
 		
@@ -128,7 +158,7 @@ fn FFT(vertGridPosX: f32, vertGridPosZ: f32) -> vec3f {
 		//var position = gerstner(vertGridPosX, vertGridPosZ);
 		
 		//------------------[REALISTIC] FFT Oceanographic Waves-----------------
-		var position;
+		var position = FFT(vertGridPosX, vertGridPosZ);
 		
 		
 		waterVertexData[oVertInd + 0] = position.x;

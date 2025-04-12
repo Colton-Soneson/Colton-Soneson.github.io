@@ -119,6 +119,8 @@ function getwaterComputeInfo() {
 	waterCompBuffer.push(step);	
 	waterCompBuffer.push(settings.waterWorldPosY);
 	waterCompBuffer.push(settings.waterWaveLength);
+	waterCompBuffer.push(settings.waterOceanPlanePhysicalSize);
+	waterCompBuffer.push(settings.waterWindSpeed);
 
 		
 	return new Float32Array(waterCompBuffer);

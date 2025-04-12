@@ -18,6 +18,8 @@ export const c_water =
 		@location(4) step: f32,					//to be used in place of time, but locked to frame rate i suppose
 		@location(5) planeYPos: f32,
 		@location(6) waveLength: f32,
+		@location(7) oceanPlanePhysicalSize: f32,
+		@location(8) windSpeed: f32,
 	};
 	@group(0) @binding(1) var<uniform> WU: WaterUniforms;
 	
@@ -33,7 +35,7 @@ export const c_water =
 	@group(0) @binding(2) var<storage, read_write> waterVertexData: array<f32>;
 	@group(0) @binding(3) var<storage, read_write> waterIndexData: array<u32>;
 	
-	@group(0) @binding(4) var phillipsSpectrumOutTexture : texture_storage_2d<rgba8unorm, write>;
+	@group(0) @binding(4) var initialHeightField : texture_storage_2d<rgba8unorm, read>;
 
 fn gerstnerWave(position: vec3f, waveLength: f32, waveSteepness: f32, windDirection: vec2f, step: f32) -> vec3f {
 		let k = (2 * 3.14) / waveLength;     		// Wave number
@@ -93,6 +95,7 @@ fn FFT(vertGridPosX: f32, vertGridPosZ: f32) -> vec3f {
 	// e^it = cosx + isinx    this is how we remove the sin and cos that gerstners rely on
 	
 	//tessendorf paper
+	//	the test parameters are ones from section 3.5
 	//https://people.computing.clemson.edu/~jtessen/reports/papers_files/coursenotes2002.pdf
 	let e = f32(2.71828);		// eulers num, but the "exp(f32 x)" function does e^x 
 	let pi = f32(3.14159);		//PI
@@ -113,31 +116,27 @@ fn FFT(vertGridPosX: f32, vertGridPosZ: f32) -> vec3f {
 	// Lx and Lz are the actually lengths in meters of the patch
 	// discrete sample points is the WU.resolution
 	
-	let oceanSizeL = 100.0;	//the size of the tile, what to scale the grid by
+	let oceanSizeL = WU.oceanPlanePhysicalSize;	//the size of the tile, what to scale the grid by
 	let kx = ((2.0 * pi) / oceanSizeL) * (vertGridPosX - (WU.resolution / 2.0));
 	let ky = ((2.0 * pi) / oceanSizeL) * (vertGridPosZ - (WU.resolution / 2.0));
 	let k = vec2f(kx, ky);	//THE WAVE VECTOR FOR OCEAN PATCH
 	
 	//phillips spectrum
-	let V = 30.0; 			//wind speed, i made this up
+	let V = WU.windSpeed; 			//wind speed, i made this up
 	let L = (V * V) / g;	//largest possible waves from a continuous wind
 	let A = 0.01;			//"a numeric constant" ???
 	let wHat = normalize(WU.windDirection);	//wind direction
 	let kHat = normalize(k);
 	let kw = dot(kHat, wHat);
-	let k4 = dot(k,k) * dot(k,k);
-	
-	var PS = 0.0;
-	if(k4 != 0.0) {
-		//dont divide by 0
-		PS = A * (exp(-1.0 / dot(k * L, k * L))/  k4) * (kw * kw);
-	}
-	
-	//THIS IS FOR DEBUG FOR NOW
-	//	the "* 1e6" portion was done to give better visuals in debug mode, its suggested to do so. However I don't believe it should be done for the waves themselves.
-	textureStore(phillipsSpectrumOutTexture, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4<f32>(PS * 1e6,0.0,0.0,1.0));
 
-	var position = vec3f(0.0,0.0,0.0);
+	let h0k = textureLoad(initialHeightField, vec2u(u32(vertGridPosX), u32(vertGridPosZ))).xy;
+	let h0Negk = textureLoad(initialHeightField, vec2u(u32(vertGridPosX), u32(vertGridPosZ))).zw;
+	
+	//let hkt = ;
+	let finalWaveHeight = 0.0; //h(x,t) is our final wave height, where x is the (x,z) gridpos
+
+
+	var position = vec3f(vertGridPosX,finalWaveHeight,vertGridPosZ);
 	
 	
 	
@@ -199,6 +198,110 @@ fn FFT(vertGridPosX: f32, vertGridPosZ: f32) -> vec3f {
 			waterIndexData[gIndex * 6 + 5] = baseIndex + gridWidth + 1;
 		}
 		
+	}
+`;
+
+export const c_h0k =
+`
+	struct WaterUniforms {
+		@location(0) cameraPosition: vec4f,
+		@location(1) windDirection: vec2f,
+		@location(2) resolution: f32,			//the resolution of the plane is fixed, however, converge closer to camera position
+		@location(3) waveSteepness: f32,	
+		@location(4) step: f32,					//to be used in place of time, but locked to frame rate i suppose
+		@location(5) planeYPos: f32,
+		@location(6) waveLength: f32,
+		@location(7) oceanPlanePhysicalSize: f32,
+		@location(8) windSpeed: f32,
+	};
+	@group(0) @binding(0) var<uniform> WU: WaterUniforms;
+	
+	@group(0) @binding(1) var phillipsSpectrumOutTexture : texture_storage_2d<rgba8unorm, write>;
+	@group(0) @binding(2) var initialHeightField : texture_storage_2d<rgba8unorm, write>;
+
+fn box_muller(u1: f32, u2: f32) -> vec2f {
+    let r = sqrt(-2.0 * log(max(u1, 1e-6)));
+    let theta = 2.0 * 3.1415926 * u2;
+    return vec2f(r * cos(theta), r * sin(theta)); // returns 2 normal(0,1) values
+}
+
+// Simple hash to make repeatable pseudo-random numbers from coords
+fn rand2(uv: vec2u) -> vec2f {
+    let a = f32(uv.x * 1664525u + uv.y * 1013904223u);
+    let b = f32((uv.x ^ uv.y) * 1103515245u + 12345u);
+    return fract(vec2f(a, b) * 0.000001); // gives [0,1)
+}
+
+fn phillipsSpectrum()(vertGridPosX: f32, vertGridPosZ: f32, inv : f32) -> f32 {
+	let pi = f32(3.14159);		//PI
+	let g = f32(9.18);			//grav constant
+	
+	//"waveheight is a random variable of horizontal position and time, h(x,t)"
+	// wave number = grid point number
+	// Lx and Lz are the actually lengths in meters of the patch
+	// discrete sample points is the WU.resolution
+	
+	let oceanSizeL = WU.oceanPlanePhysicalSize;	//the size of the tile, what to scale the grid by
+	let kx = ((2.0 * pi) / oceanSizeL) * (vertGridPosX - (WU.resolution / 2.0));
+	let ky = ((2.0 * pi) / oceanSizeL) * (vertGridPosZ - (WU.resolution / 2.0));
+	let k = vec2f(kx, ky) * inv;	//THE WAVE VECTOR FOR OCEAN PATCH, the inverse HAS TO BE 1 or -1!!!!
+									//								CHECK THIS!!!!!!!, MAYBE ITS NEGATIVE VERTGRIDPOS INPUTS
+	
+	//phillips spectrum
+	let V = WU.windSpeed; 			//wind speed, i made this up
+	let L = (V * V) / g;	//largest possible waves from a continuous wind
+	let A = 0.01;			//"a numeric constant" ???
+	let wHat = normalize(WU.windDirection);	//wind direction
+	let kHat = normalize(k);
+	let kw = dot(kHat, wHat);
+	let k4 = dot(k,k) * dot(k,k);
+	
+	var PhK = 0.0;
+	if(k4 != 0.0) {
+		//dont divide by 0
+		PhK = A * (exp(-1.0 / dot(k * L, k * L))/  k4) * (kw * kw);
+	}
+	
+	return PhK;
+}
+
+fn h0(vertGridPosX: f32, vertGridPosZ: f32) -> vec4f {
+	
+	
+	let PhK = phillipsSpectrum(vertGridPosX, vertGridPosZ, 1);
+	let PhNegK = phillipsSpectrum(vertGridPosX, vertGridPosZ, -1);
+	
+	//THIS IS FOR DEBUG FOR NOW
+	//	the "* 1e6" portion was done to give better visuals in debug mode, its suggested to do so. However I don't believe it should be done for the waves themselves.
+	textureStore(phillipsSpectrumOutTexture, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4<f32>(PhK * 1e6,0.0,0.0,1.0));
+	
+	//temporary, this is an alternative to the papers (ξr + iξi)
+	let rand = rand2(vec2f(vertGridPosX, vertGridPosZ));               // [0, 1)		CHECK IF NEED TO DIVIDE BY RESOLUTION
+    let gauss = box_muller(rand.x, rand.y); // ~N(0,1)
+	
+	let scale = (1.0 / sqrt(2.0));
+	let h0 =  vec4f(scale * gauss.x * sqrt(PhK), 		//real
+						scale * gauss.y * sqrt(PhK),	//imaginary
+						scale * gauss.x * sqrt(PhNegK),		//neg k, real		
+						scale * gauss.y * sqrt(PhNegK));	//neg k, imaginary
+	
+	return h0;
+}
+
+@compute @workgroup_size(${WATER_WORKGROUP_SIZE[0]}, ${WATER_WORKGROUP_SIZE[1]}, ${WATER_WORKGROUP_SIZE[2]})	
+    fn computeMain(
+		@builtin(global_invocation_id) GlobalIvocationID: vec3<u32>
+	) {
+		
+		var gIndex = GlobalIvocationID.x;
+		
+		//------------------------------FORM GRID-------------------------------
+		let gridWidth = u32(WU.resolution);
+		let vertGridPosX = f32(gIndex) % f32(gridWidth);
+		let vertGridPosZ = f32(gIndex) / f32(gridWidth);
+		
+		//-----------------------------------
+		textureStore(initialHeightField, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), h0k(vertGridPosX, vertGridPosZ));
 	}
 `;
 

@@ -266,7 +266,7 @@ const editModes = ["translate","rotate","scale","camera","lighting","grass"];
 const camSubEditModes = ["default"];
 const lightSubEditModes = ["Sun Intensity","Shadow Map Kernel Size", "Shadow Map Acne Bias"];
 const grassSubEditModes = ["Grass Total Blade Count"];
-const debugDisplayModes = ["final", "shadow mapping visibility","water line topology","heightMap", "shadowMapDepth"];
+const debugDisplayModes = ["final", "shadow mapping visibility","water line topology","heightMap", "shadowMapDepth", "Oceanographic Spectrum"];
 let selectedEditMode = 0;
 const rotSpeed = 1.0;
 const transSpeed = 1.0;
@@ -512,6 +512,13 @@ window.addEventListener("keydown", function (event) {
 			}
 			else {
 				settings.displayShadowMapDepth = false;
+			}
+			
+			if(selectedDebugDisplayMode == 5) {
+				settings.displayOceanSpectrum = true;
+			}
+			else {
+				settings.displayOceanSpectrum = false;
 			}
 			
 			console.log("DEBUG DISPLAY MODE: ", debugDisplayModes[selectedDebugDisplayMode]);
@@ -773,11 +780,14 @@ export function updateRotatingCubePass() {
 	if(settings.displayHeightMap)
 	{
 		postEffectPassTextureDebug_DEPTH32FLOAT(encoder, context.getCurrentTexture(), scene.heightMapDepthTexture, scene.heightMapSampler);
-		//postEffectPassTextureDebug_RGBA8UNORM(encoder, context.getCurrentTexture(), context.getCurrentTexture());
 	}
 	
 	if(settings.displayShadowMapDepth) {
 		postEffectPassTextureDebug_DEPTH32FLOAT(encoder, context.getCurrentTexture(), shadowMapping.shadowMapDepthTexture, shadowMapping.shadowMapSampler);
+	}
+	
+	if(settings.displayOceanSpectrum) {
+		postEffectPassTextureDebug_RGBA8UNORM(encoder, context.getCurrentTexture(), water.phillipsSpectrumTexture);
 	}
 
 	device.queue.submit([encoder.finish()]);

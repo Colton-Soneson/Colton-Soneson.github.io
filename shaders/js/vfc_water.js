@@ -36,6 +36,7 @@ export const c_water =
 	@group(0) @binding(3) var<storage, read_write> waterIndexData: array<u32>;
 	
 	@group(0) @binding(4) var initialHeightField : texture_storage_2d<rgba8unorm, read>;
+	@group(0) @binding(5) var waveHeightRealization : texture_storage_2d<rgba8unorm, write>;
 
 fn gerstnerWave(position: vec3f, waveLength: f32, waveSteepness: f32, windDirection: vec2f, step: f32) -> vec3f {
 		let k = (2 * 3.14) / waveLength;     		// Wave number
@@ -82,6 +83,16 @@ fn gerstner(vertGridPosX: f32, vertGridPosZ: f32) -> vec3f {
 		return position;
 }
 
+fn complexMul(a: vec2f, b: vec2f) -> vec2f {
+    return vec2f(
+        a.x * b.x - a.y * b.y,
+        a.x * b.y + a.y * b.x
+    );
+}
+
+fn complexConj(z: vec2f) -> vec2f {
+    return vec2f(z.x, -z.y);
+}
 
 fn FFT(vertGridPosX: f32, vertGridPosZ: f32) -> vec3f {
 	
@@ -107,9 +118,6 @@ fn FFT(vertGridPosX: f32, vertGridPosZ: f32) -> vec3f {
 	//let D = f32(99999);			//water depth
 	//let LS = f32(1.0);			//magnitude of surface tension effect
 	//
-	//let w2 = g * k;				//frequency squared, infinite depth
-	//let w2_withDepth = g * k * tan(k * D);			//frequency squared, adjusted for depth
-	//let w2_rippleWaves = g * k * (1 + (k * k) * (LS * LS));		//frequency squared, but for small waves < 1cm
 	
 	//"waveheight is a random variable of horizontal position and time, h(x,t)"
 	// wave number = grid point number
@@ -128,14 +136,32 @@ fn FFT(vertGridPosX: f32, vertGridPosZ: f32) -> vec3f {
 	let wHat = normalize(WU.windDirection);	//wind direction
 	let kHat = normalize(k);
 	let kw = dot(kHat, wHat);
+	
+	let w2 = g * length(k);				//frequency squared, infinite depth
+	let w = sqrt(w2);
+	//let w2_withDepth = g * k * tan(k * D);			//frequency squared, adjusted for depth
+	//let w2_rippleWaves = g * k * (1 + (k * k) * (LS * LS));		//frequency squared, but for small waves < 1cm
+	
 
 	let h0k = textureLoad(initialHeightField, vec2u(u32(vertGridPosX), u32(vertGridPosZ))).xy;
 	let h0Negk = textureLoad(initialHeightField, vec2u(u32(vertGridPosX), u32(vertGridPosZ))).zw;
 	
-	//let hkt = ;
+	let t = WU.step * 0.01;
+	let cos_wt = cos(w * t);
+    let sin_wt = sin(w * t);
+
+    let exp_iwt = vec2f(cos_wt, sin_wt);      // e^{iωt}
+    let exp_neg_iwt = vec2f(cos_wt, -sin_wt); // e^{-iωt}
+	
+	let term1 = complexMul(h0k, exp_iwt);
+    let term2 = complexMul(complexConj(h0k), exp_neg_iwt);
+	
+	let hkt = term1 + term2;
+	
 	let finalWaveHeight = 0.0; //h(x,t) is our final wave height, where x is the (x,z) gridpos
-
-
+	
+	textureStore(waveHeightRealization, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4f(hkt.x,hkt.y,0.0,1.0));
+	
 	var position = vec3f(vertGridPosX,finalWaveHeight,vertGridPosZ);
 	
 	
@@ -218,21 +244,10 @@ export const c_h0k =
 	
 	@group(0) @binding(1) var phillipsSpectrumOutTexture : texture_storage_2d<rgba8unorm, write>;
 	@group(0) @binding(2) var initialHeightField : texture_storage_2d<rgba8unorm, write>;
+	
+	@group(0) @binding(3) var<storage, read_write> complexGaussArray: array<f32>;
 
-fn box_muller(u1: f32, u2: f32) -> vec2f {
-    let r = sqrt(-2.0 * log(max(u1, 1e-6)));
-    let theta = 2.0 * 3.1415926 * u2;
-    return vec2f(r * cos(theta), r * sin(theta)); // returns 2 normal(0,1) values
-}
-
-// Simple hash to make repeatable pseudo-random numbers from coords
-fn rand2(uv: vec2u) -> vec2f {
-    let a = f32(uv.x * 1664525u + uv.y * 1013904223u);
-    let b = f32((uv.x ^ uv.y) * 1103515245u + 12345u);
-    return fract(vec2f(a, b) * 0.000001); // gives [0,1)
-}
-
-fn phillipsSpectrum()(vertGridPosX: f32, vertGridPosZ: f32, inv : f32) -> f32 {
+fn phillipsSpectrum(vertGridPosX: f32, vertGridPosZ: f32, inv : f32) -> f32 {
 	let pi = f32(3.14159);		//PI
 	let g = f32(9.18);			//grav constant
 	
@@ -250,7 +265,7 @@ fn phillipsSpectrum()(vertGridPosX: f32, vertGridPosZ: f32, inv : f32) -> f32 {
 	//phillips spectrum
 	let V = WU.windSpeed; 			//wind speed, i made this up
 	let L = (V * V) / g;	//largest possible waves from a continuous wind
-	let A = 0.01;			//"a numeric constant" ???
+	let A = 0.001;			//"a numeric constant" ???
 	let wHat = normalize(WU.windDirection);	//wind direction
 	let kHat = normalize(k);
 	let kw = dot(kHat, wHat);
@@ -265,7 +280,7 @@ fn phillipsSpectrum()(vertGridPosX: f32, vertGridPosZ: f32, inv : f32) -> f32 {
 	return PhK;
 }
 
-fn h0(vertGridPosX: f32, vertGridPosZ: f32) -> vec4f {
+fn h0(vertGridPosX: f32, vertGridPosZ: f32, gIndex: u32) -> vec4f {
 	
 	
 	let PhK = phillipsSpectrum(vertGridPosX, vertGridPosZ, 1);
@@ -273,19 +288,20 @@ fn h0(vertGridPosX: f32, vertGridPosZ: f32) -> vec4f {
 	
 	//THIS IS FOR DEBUG FOR NOW
 	//	the "* 1e6" portion was done to give better visuals in debug mode, its suggested to do so. However I don't believe it should be done for the waves themselves.
-	textureStore(phillipsSpectrumOutTexture, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4<f32>(PhK * 1e6,0.0,0.0,1.0));
+	textureStore(phillipsSpectrumOutTexture, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4<f32>(PhK,0.0,0.0,1.0));
 	
 	//temporary, this is an alternative to the papers (ξr + iξi)
-	let rand = rand2(vec2f(vertGridPosX, vertGridPosZ));               // [0, 1)		CHECK IF NEED TO DIVIDE BY RESOLUTION
-    let gauss = box_muller(rand.x, rand.y); // ~N(0,1)
+	let fPerComplexData = 2u;
+	let oVertInd = gIndex * fPerComplexData;
+	let gauss = vec2f(complexGaussArray[oVertInd], complexGaussArray[oVertInd + 1u]);
 	
 	let scale = (1.0 / sqrt(2.0));
-	let h0 =  vec4f(scale * gauss.x * sqrt(PhK), 		//real
+	let h0initial =  vec4f(scale * gauss.x * sqrt(PhK), 		//real
 						scale * gauss.y * sqrt(PhK),	//imaginary
 						scale * gauss.x * sqrt(PhNegK),		//neg k, real		
 						scale * gauss.y * sqrt(PhNegK));	//neg k, imaginary
 	
-	return h0;
+	return h0initial;
 }
 
 @compute @workgroup_size(${WATER_WORKGROUP_SIZE[0]}, ${WATER_WORKGROUP_SIZE[1]}, ${WATER_WORKGROUP_SIZE[2]})	
@@ -301,7 +317,7 @@ fn h0(vertGridPosX: f32, vertGridPosZ: f32) -> vec4f {
 		let vertGridPosZ = f32(gIndex) / f32(gridWidth);
 		
 		//-----------------------------------
-		textureStore(initialHeightField, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), h0k(vertGridPosX, vertGridPosZ));
+		textureStore(initialHeightField, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), h0(vertGridPosX, vertGridPosZ, gIndex));
 	}
 `;
 

@@ -32,14 +32,14 @@ export const settings = {
 	grassTotalHARDLIMIT: 131072, //the buffers Can handle more than this, but doubling will go over the 128mb size of storage buffer
 	//--------------------WATER--------------------
 	enableWater: true,
-	windDirection: vec2.create(1.0,0.0),
+	windDirection: vec2.create(1.0,1.0),
 	waterWaveSteepness: 0.1,	//0 - 1
 	waterWaveLength: 10.0,
 	waterTileResolution: 512,
 	waterTileInstanceCount: 3,
 	waterWorldPosY: -16,
 	waterOceanPlanePhysicalSize: 1000.0,
-	waterWindSpeed = 31.0,
+	waterWindSpeed: 31.0,
 	//--------------------DEBUG--------------------
     showDebug: true,
 	showDebugIcons: false,
@@ -48,5 +48,7 @@ export const settings = {
 	displayHeightMapDebugRange: 0.5,
 	displayShadowMapDepth: false,
 	displayOceanSpectrum: false,
+	displayWaterInitialHeight: false,
+	displayWaveHeightRealization: false,
 	debugViewMode: 0
 };

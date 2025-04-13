@@ -8,6 +8,7 @@ import { mat4, vec3 } from 'https://wgpu-matrix.org/dist/3.x/wgpu-matrix.module.
 import { settings } from './settings.js';
 
 import { c_water } from '../shaders/js/vfc_water.js'
+import { c_h0k } from '../shaders/js/vfc_water.js'
 import { v_water } from '../shaders/js/vfc_water.js'
 import { f_water } from '../shaders/js/vfc_water.js'
 import { WATER_WORKGROUP_SIZE } from '../shaders/js/vfc_water.js'
@@ -24,6 +25,11 @@ const waterComputeShaderModule = device.createShaderModule({
   code: c_water	
 });
 
+const waterSpectrumComputeShaderModule = device.createShaderModule({
+  label: "c_h0k",
+  code: c_h0k	
+});
+
 const waterFragShaderModule = device.createShaderModule({
   label: "f_water",
   code: f_water	
@@ -36,6 +42,28 @@ const waterVertexShaderModule = device.createShaderModule({
 
 //anim
 let step = 0.0;
+
+//random for initial wave map
+function gaussianRandom(mean, standardDeviation) {
+	//BoxMuller transform
+	let a = Math.random();
+	let b = Math.random();
+	let z = Math.sqrt(-2.0 * Math.log(a)) * Math.cos(2.0 * Math.PI * b);
+	return z * standardDeviation + mean;
+}
+function complexGaussianRandom(mean, standardDeviation, arrayLength) {
+	const result = [];
+	for(let i = 0; i < arrayLength; ++i) {
+		const r = gaussianRandom(mean, standardDeviation);
+		const i = gaussianRandom(mean, standardDeviation);
+		
+		result.push(r);
+		result.push(i);
+	}
+	
+	return result;
+}
+const complexGaussArray = new Float32Array(complexGaussianRandom(0, 1, settings.waterTileResolution * settings.waterTileResolution));
 
 const centerWaterPlanePosition = [-(settings.waterTileResolution * 0.25), 0.0, -(settings.waterTileResolution * 0.25)];
 
@@ -60,6 +88,14 @@ const uniformBufferComputewater = device.createBuffer({
   size: uniformArrayComputewater,
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,	//this makes it another GPUBuffer Object but this time uniform
 });
+
+const uniformBufferComplexGaussian = device.createBuffer({
+  label: "water Spectrum Compute Complex Gaussian Array Buffer",
+  size: complexGaussArray.byteLength,
+  usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,	//this makes it another GPUBuffer Object but this time uniform
+});
+device.queue.writeBuffer(uniformBufferComplexGaussian, /*bufferOffset=*/0, complexGaussArray); //copy vertex data to buffer
+
 
 let totalwaterVertexBuffer;
 export function waterUpdateStorageVertexBuffer() {
@@ -92,6 +128,19 @@ waterUpdateStorageIndexBuffer(); // run the function
 
 //Phillips Spectrum
 export const phillipsSpectrumTexture = device.createTexture({
+  size: [settings.waterTileResolution, settings.waterTileResolution],
+  format: 'rgba8unorm',
+  usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
+});
+
+//inital Water Height map h0(k) and h0(-k)
+export const initialWaterHeightMap = device.createTexture({
+  size: [settings.waterTileResolution, settings.waterTileResolution],
+  format: 'rgba8unorm',
+  usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
+});
+
+export const waveHeightRealization = device.createTexture({
   size: [settings.waterTileResolution, settings.waterTileResolution],
   format: 'rgba8unorm',
   usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
@@ -230,7 +279,17 @@ const bindGroupCLayout = device.createBindGroupLayout({
 	}
   },
   {
-    binding: 4,								//outTexture for PS
+    binding: 4,								//inTexture for initial wave height map
+    visibility:  GPUShaderStage.COMPUTE,
+    storageTexture: {
+        format: canvasFormat,   // Format must match the swap chain texture
+		access: "read-only",
+		dimension: "2d",
+		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
+    }
+  },
+  {
+    binding: 5,								//outTexture for wave height realization
     visibility:  GPUShaderStage.COMPUTE,
     storageTexture: {
         format: canvasFormat,   // Format must match the swap chain texture
@@ -238,6 +297,45 @@ const bindGroupCLayout = device.createBindGroupLayout({
 		dimension: "2d",
 		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
     }
+  }
+  ]
+});
+
+const bindGroupSpectrumCLayout = device.createBindGroupLayout({
+  label: "water Bind Group C Layout",
+  entries: [
+  {
+    binding: 0,
+    visibility: GPUShaderStage.COMPUTE,	//settings
+    buffer: {} 
+  },
+  {
+    binding: 1,								//outTexture for PS
+    visibility:  GPUShaderStage.COMPUTE,
+    storageTexture: {
+        format: canvasFormat,   // Format must match the swap chain texture
+		access: "write-only",
+		dimension: "2d",
+		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
+    }
+  },
+  {
+    binding: 2,								//outTexture for PS
+    visibility:  GPUShaderStage.COMPUTE,
+    storageTexture: {
+        format: canvasFormat,   // Format must match the swap chain texture
+		access: "write-only",
+		dimension: "2d",
+		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
+    }
+  },
+  {
+	binding: 3,								
+    visibility:  GPUShaderStage.COMPUTE,
+    buffer: {
+		type: "storage",
+		access: "read-write",
+	}
   }
   ]
 });
@@ -281,7 +379,39 @@ function createCompBindGroupwater() {
 			},
 			{
 				binding: 4,
+				resource: initialWaterHeightMap.createView()
+			},
+			{
+				binding: 5,
+				resource: waveHeightRealization.createView()
+			}
+			]
+		});
+	return result;
+}
+
+function createCompBindGroupSpectrumWater() {
+	
+	const result = 
+		device.createBindGroup({
+			label: "water Comp bind group",
+			layout: bindGroupSpectrumCLayout,
+			entries: [
+			{
+				binding: 0,
+				resource: { buffer: uniformBufferComputewater }
+			},
+			{
+				binding: 1,
 				resource: phillipsSpectrumTexture.createView()
+			},
+			{
+				binding: 2,
+				resource: initialWaterHeightMap.createView()
+			},
+			{
+				binding: 3,
+				resource: { buffer: uniformBufferComplexGaussian }
 			}
 			]
 		});
@@ -296,6 +426,11 @@ const waterVFPipelineLayout = device.createPipelineLayout({
 const waterCompPipelineLayout = device.createPipelineLayout({
   label: "water comp Pipeline Layout",
   bindGroupLayouts: [ bindGroupCLayout ],
+});
+
+const waterSpectrumCompPipelineLayout = device.createPipelineLayout({
+  label: "water initial height map Pipeline Layout",
+  bindGroupLayouts: [ bindGroupSpectrumCLayout ],
 });
 
 // Pipelines
@@ -355,6 +490,15 @@ const waterComputePipeline = device.createComputePipeline({
 	},
 });
 
+const waterSpectrumComputePipeline = device.createComputePipeline({
+  label: "water C pipeline",
+  layout: waterSpectrumCompPipelineLayout,	//allows for use of same bind groups as the renderpipeline
+	compute: {
+		module: waterSpectrumComputeShaderModule,
+		entryPoint: "computeMain",
+	},
+});
+
 function redirectWindDirectionTemp() {
 	settings.windDirection[0] = Math.cos(step * 0.00075);
 	//settings.windDirection[1] = Math.sin(step * 0.00053);
@@ -373,8 +517,19 @@ export function waterPass(aEncoder, mainpassDepthTexture) {
 	
 	// Start a compute pass place and animate the instances
 	const bindCGroup = createCompBindGroupwater();
+	const bindSpectrumCGroup = createCompBindGroupSpectrumWater();
 	waterComputeBuffersUpdate();
 	
+	//initial Height Map h0(k)
+	const computeInitialHeightPass = aEncoder.beginComputePass();
+	
+	computeInitialHeightPass.setPipeline(waterSpectrumComputePipeline);
+	computeInitialHeightPass.setBindGroup(0, bindSpectrumCGroup);
+	
+	computeInitialHeightPass.dispatchWorkgroups(Math.ceil( (settings.waterTileResolution * settings.waterTileResolution) / WATER_WORKGROUP_SIZE[0]));			//you want to do it per vertex, not per cell
+	computeInitialHeightPass.end();
+	
+	//grid FFT compute pass
 	const computePass = aEncoder.beginComputePass();
 	
 	computePass.setPipeline(waterComputePipeline);

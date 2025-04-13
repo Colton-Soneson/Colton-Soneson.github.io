@@ -9,6 +9,8 @@ import { settings } from './settings.js';
 
 import { c_water } from '../shaders/js/vfc_water.js'
 import { c_h0k } from '../shaders/js/vfc_water.js'
+import { c_hkt } from '../shaders/js/vfc_water.js'
+import { c_IFFT_2D } from '../shaders/js/vfc_water.js'
 import { v_water } from '../shaders/js/vfc_water.js'
 import { f_water } from '../shaders/js/vfc_water.js'
 import { WATER_WORKGROUP_SIZE } from '../shaders/js/vfc_water.js'
@@ -28,6 +30,16 @@ const waterComputeShaderModule = device.createShaderModule({
 const waterSpectrumComputeShaderModule = device.createShaderModule({
   label: "c_h0k",
   code: c_h0k	
+});
+
+const waterButterflyPassComputeShaderModule = device.createShaderModule({
+  label: "c_IFFT_2D",
+  code: c_IFFT_2D	
+});
+
+const waterWaveHeightRealizationComputeShaderModule = device.createShaderModule({
+  label: "c_hkt",
+  code: c_hkt	
 });
 
 const waterFragShaderModule = device.createShaderModule({
@@ -141,6 +153,12 @@ export const initialWaterHeightMap = device.createTexture({
 });
 
 export const waveHeightRealization = device.createTexture({
+  size: [settings.waterTileResolution, settings.waterTileResolution],
+  format: 'rgba8unorm',
+  usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
+});
+
+export const pingPongIFFTTexture = device.createTexture({
   size: [settings.waterTileResolution, settings.waterTileResolution],
   format: 'rgba8unorm',
   usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
@@ -287,22 +305,12 @@ const bindGroupCLayout = device.createBindGroupLayout({
 		dimension: "2d",
 		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
     }
-  },
-  {
-    binding: 5,								//outTexture for wave height realization
-    visibility:  GPUShaderStage.COMPUTE,
-    storageTexture: {
-        format: canvasFormat,   // Format must match the swap chain texture
-		access: "write-only",
-		dimension: "2d",
-		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
-    }
   }
   ]
 });
 
 const bindGroupSpectrumCLayout = device.createBindGroupLayout({
-  label: "water Bind Group C Layout",
+  label: "water Bind Group Spectrum C Layout",
   entries: [
   {
     binding: 0,
@@ -336,6 +344,68 @@ const bindGroupSpectrumCLayout = device.createBindGroupLayout({
 		type: "storage",
 		access: "read-write",
 	}
+  }
+  ]
+});
+
+const bindGroupRealizationCLayout = device.createBindGroupLayout({
+  label: "water Bind Group Realization C Layout",
+  entries: [
+  {
+    binding: 0,
+    visibility: GPUShaderStage.COMPUTE,	//settings
+    buffer: {} 
+  },
+  {
+    binding: 1,								//inTexture for initial Height
+    visibility:  GPUShaderStage.COMPUTE,
+    storageTexture: {
+        format: canvasFormat,   // Format must match the swap chain texture
+		access: "read-only",
+		dimension: "2d",
+		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
+    }
+  },
+  {
+    binding: 2,								//outTexture for waveHeightRealization
+    visibility:  GPUShaderStage.COMPUTE,
+    storageTexture: {
+        format: canvasFormat,   // Format must match the swap chain texture
+		access: "write-only",
+		dimension: "2d",
+		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
+    }
+  }
+  ]
+});
+
+const bindGroupButterflyCLayout = device.createBindGroupLayout({
+  label: "water Bind Group Butterfly C Layout",
+  entries: [
+  {
+    binding: 0,
+    visibility: GPUShaderStage.COMPUTE,	//settings
+    buffer: {} 
+  },
+  {
+    binding: 1,								//inTexture for waveHeightRealization
+    visibility:  GPUShaderStage.COMPUTE,
+    storageTexture: {
+        format: canvasFormat,   // Format must match the swap chain texture
+		access: "read-only",
+		dimension: "2d",
+		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
+    }
+  },
+  {
+    binding: 2,								//outTexture for pingpong
+    visibility:  GPUShaderStage.COMPUTE,
+    storageTexture: {
+        format: canvasFormat,   // Format must match the swap chain texture
+		access: "write-only",
+		dimension: "2d",
+		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
+    }
   }
   ]
 });
@@ -379,11 +449,7 @@ function createCompBindGroupwater() {
 			},
 			{
 				binding: 4,
-				resource: initialWaterHeightMap.createView()
-			},
-			{
-				binding: 5,
-				resource: waveHeightRealization.createView()
+				resource: pingPongIFFTTexture.createView()
 			}
 			]
 		});
@@ -418,6 +484,54 @@ function createCompBindGroupSpectrumWater() {
 	return result;
 }
 
+function createCompBindGroupRealizationWater() {
+	
+	const result = 
+		device.createBindGroup({
+			label: "water Comp Realization bind group",
+			layout: bindGroupRealizationCLayout,
+			entries: [
+			{
+				binding: 0,
+				resource: { buffer: uniformBufferComputewater }
+			},
+			{
+				binding: 1,
+				resource: initialWaterHeightMap.createView()
+			},
+			{
+				binding: 2,
+				resource: waveHeightRealization.createView()
+			}
+			]
+		});
+	return result;
+}
+
+function createCompBindGroupButterflyWater() {
+	
+	const result = 
+		device.createBindGroup({
+			label: "water Comp Butterfly bind group",
+			layout: bindGroupButterflyCLayout,
+			entries: [
+			{
+				binding: 0,
+				resource: { buffer: uniformBufferComputewater }
+			},
+			{
+				binding: 1,
+				resource: waveHeightRealization.createView()
+			},
+			{
+				binding: 2,
+				resource: pingPongIFFTTexture.createView()
+			}
+			]
+		});
+	return result;
+}
+
 const waterVFPipelineLayout = device.createPipelineLayout({
   label: "water VF Pipeline Layout",
   bindGroupLayouts: [ bindGroupVFLayout ],
@@ -431,6 +545,16 @@ const waterCompPipelineLayout = device.createPipelineLayout({
 const waterSpectrumCompPipelineLayout = device.createPipelineLayout({
   label: "water initial height map Pipeline Layout",
   bindGroupLayouts: [ bindGroupSpectrumCLayout ],
+});
+
+const waterRealizationCompPipelineLayout = device.createPipelineLayout({
+  label: "water height Realization map Pipeline Layout",
+  bindGroupLayouts: [ bindGroupRealizationCLayout ],
+});
+
+const waterButterflyCompPipelineLayout = device.createPipelineLayout({
+  label: "water 2D IFFT Pipeline Layout",
+  bindGroupLayouts: [ bindGroupButterflyCLayout ],
 });
 
 // Pipelines
@@ -491,10 +615,28 @@ const waterComputePipeline = device.createComputePipeline({
 });
 
 const waterSpectrumComputePipeline = device.createComputePipeline({
-  label: "water C pipeline",
+  label: "water Spectrum C pipeline",
   layout: waterSpectrumCompPipelineLayout,	//allows for use of same bind groups as the renderpipeline
 	compute: {
 		module: waterSpectrumComputeShaderModule,
+		entryPoint: "computeMain",
+	},
+});
+
+const waterRealizationComputePipeline = device.createComputePipeline({
+  label: "water Realization C pipeline",
+  layout: waterRealizationCompPipelineLayout,	//allows for use of same bind groups as the renderpipeline
+	compute: {
+		module: waterWaveHeightRealizationComputeShaderModule,
+		entryPoint: "computeMain",
+	},
+});
+
+const waterButterflyComputePipeline = device.createComputePipeline({
+  label: "water Butterfly C pipeline",
+  layout: waterButterflyCompPipelineLayout,	//allows for use of same bind groups as the renderpipeline
+	compute: {
+		module: waterButterflyPassComputeShaderModule,
 		entryPoint: "computeMain",
 	},
 });
@@ -518,18 +660,42 @@ export function waterPass(aEncoder, mainpassDepthTexture) {
 	// Start a compute pass place and animate the instances
 	const bindCGroup = createCompBindGroupwater();
 	const bindSpectrumCGroup = createCompBindGroupSpectrumWater();
+	const bindRealizationCGroup = createCompBindGroupRealizationWater();
+	const bindButterflyCGroup = createCompBindGroupButterflyWater();
 	waterComputeBuffersUpdate();
 	
 	//initial Height Map h0(k)
-	const computeInitialHeightPass = aEncoder.beginComputePass();
+	if(step <= 1)
+	{
+		const computeInitialHeightPass = aEncoder.beginComputePass();
+		
+		computeInitialHeightPass.setPipeline(waterSpectrumComputePipeline);
+		computeInitialHeightPass.setBindGroup(0, bindSpectrumCGroup);
+		
+		computeInitialHeightPass.dispatchWorkgroups(Math.ceil( (settings.waterTileResolution * settings.waterTileResolution) / WATER_WORKGROUP_SIZE[0]));			//you want to do it per vertex, not per cell
+		computeInitialHeightPass.end();
+	}
 	
-	computeInitialHeightPass.setPipeline(waterSpectrumComputePipeline);
-	computeInitialHeightPass.setBindGroup(0, bindSpectrumCGroup);
+	//hkt
+	const computeHKTPass = aEncoder.beginComputePass();
+		
+	computeHKTPass.setPipeline(waterRealizationComputePipeline);
+	computeHKTPass.setBindGroup(0, bindRealizationCGroup);
 	
-	computeInitialHeightPass.dispatchWorkgroups(Math.ceil( (settings.waterTileResolution * settings.waterTileResolution) / WATER_WORKGROUP_SIZE[0]));			//you want to do it per vertex, not per cell
-	computeInitialHeightPass.end();
+	computeHKTPass.dispatchWorkgroups(Math.ceil( (settings.waterTileResolution * settings.waterTileResolution) / WATER_WORKGROUP_SIZE[0]));			//you want to do it per vertex, not per cell
+	computeHKTPass.end();
 	
-	//grid FFT compute pass
+	//FFT
+	// ping pong a texture between the shader thats capable of both horizontal or vertical passes
+	const computeFFTPass = aEncoder.beginComputePass();
+		
+	computeFFTPass.setPipeline(waterButterflyComputePipeline);
+	computeFFTPass.setBindGroup(0, bindButterflyCGroup);
+	
+	computeFFTPass.dispatchWorkgroups(Math.ceil( (settings.waterTileResolution * settings.waterTileResolution) / WATER_WORKGROUP_SIZE[0]));			//you want to do it per vertex, not per cell
+	computeFFTPass.end();
+	
+	//grid mesh compute pass
 	const computePass = aEncoder.beginComputePass();
 	
 	computePass.setPipeline(waterComputePipeline);

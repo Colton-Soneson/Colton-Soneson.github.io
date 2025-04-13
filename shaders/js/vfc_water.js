@@ -35,8 +35,7 @@ export const c_water =
 	@group(0) @binding(2) var<storage, read_write> waterVertexData: array<f32>;
 	@group(0) @binding(3) var<storage, read_write> waterIndexData: array<u32>;
 	
-	@group(0) @binding(4) var initialHeightField : texture_storage_2d<rgba8unorm, read>;
-	@group(0) @binding(5) var waveHeightRealization : texture_storage_2d<rgba8unorm, write>;
+	@group(0) @binding(4) var pingPongIFFTTexture : texture_storage_2d<rgba8unorm, read>;
 
 fn gerstnerWave(position: vec3f, waveLength: f32, waveSteepness: f32, windDirection: vec2f, step: f32) -> vec3f {
 		let k = (2 * 3.14) / waveLength;     		// Wave number
@@ -83,91 +82,6 @@ fn gerstner(vertGridPosX: f32, vertGridPosZ: f32) -> vec3f {
 		return position;
 }
 
-fn complexMul(a: vec2f, b: vec2f) -> vec2f {
-    return vec2f(
-        a.x * b.x - a.y * b.y,
-        a.x * b.y + a.y * b.x
-    );
-}
-
-fn complexConj(z: vec2f) -> vec2f {
-    return vec2f(z.x, -z.y);
-}
-
-fn FFT(vertGridPosX: f32, vertGridPosZ: f32) -> vec3f {
-	
-	//an FFTs are methods of rapid sum evaluation
-	
-	// vector fields with e^it
-	// https://www.youtube.com/watch?v=v0YEaeIClKY
-	// e : eulers number (2.7...)
-	// i : sqrt(-1), will take this 1D equation and create orthogonal vector of velocity, velocity WILL be 90deg of that position
-	// t : time
-	// e^it = cosx + isinx    this is how we remove the sin and cos that gerstners rely on
-	
-	//tessendorf paper
-	//	the test parameters are ones from section 3.5
-	//https://people.computing.clemson.edu/~jtessen/reports/papers_files/coursenotes2002.pdf
-	let e = f32(2.71828);		// eulers num, but the "exp(f32 x)" function does e^x 
-	let pi = f32(3.14159);		//PI
-	let g = f32(9.18);			//grav constant
-	
-	
-	//let lambda = f32(0.0);		//wavelength
-	//let k = (2 * pi) / lambda;	//wavevector
-	//let D = f32(99999);			//water depth
-	//let LS = f32(1.0);			//magnitude of surface tension effect
-	//
-	
-	//"waveheight is a random variable of horizontal position and time, h(x,t)"
-	// wave number = grid point number
-	// Lx and Lz are the actually lengths in meters of the patch
-	// discrete sample points is the WU.resolution
-	
-	let oceanSizeL = WU.oceanPlanePhysicalSize;	//the size of the tile, what to scale the grid by
-	let kx = ((2.0 * pi) / oceanSizeL) * (vertGridPosX - (WU.resolution / 2.0));
-	let ky = ((2.0 * pi) / oceanSizeL) * (vertGridPosZ - (WU.resolution / 2.0));
-	let k = vec2f(kx, ky);	//THE WAVE VECTOR FOR OCEAN PATCH
-	
-	//phillips spectrum
-	let V = WU.windSpeed; 			//wind speed, i made this up
-	let L = (V * V) / g;	//largest possible waves from a continuous wind
-	let A = 0.01;			//"a numeric constant" ???
-	let wHat = normalize(WU.windDirection);	//wind direction
-	let kHat = normalize(k);
-	let kw = dot(kHat, wHat);
-	
-	let w2 = g * length(k);				//frequency squared, infinite depth
-	let w = sqrt(w2);
-	//let w2_withDepth = g * k * tan(k * D);			//frequency squared, adjusted for depth
-	//let w2_rippleWaves = g * k * (1 + (k * k) * (LS * LS));		//frequency squared, but for small waves < 1cm
-	
-
-	let h0k = textureLoad(initialHeightField, vec2u(u32(vertGridPosX), u32(vertGridPosZ))).xy;
-	let h0Negk = textureLoad(initialHeightField, vec2u(u32(vertGridPosX), u32(vertGridPosZ))).zw;
-	
-	let t = WU.step * 0.01;
-	let cos_wt = cos(w * t);
-    let sin_wt = sin(w * t);
-
-    let exp_iwt = vec2f(cos_wt, sin_wt);      // e^{iωt}
-    let exp_neg_iwt = vec2f(cos_wt, -sin_wt); // e^{-iωt}
-	
-	let term1 = complexMul(h0k, exp_iwt);
-    let term2 = complexMul(complexConj(h0k), exp_neg_iwt);
-	
-	let hkt = term1 + term2;
-	
-	let finalWaveHeight = 0.0; //h(x,t) is our final wave height, where x is the (x,z) gridpos
-	
-	textureStore(waveHeightRealization, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4f(hkt.x,hkt.y,0.0,1.0));
-	
-	var position = vec3f(vertGridPosX,finalWaveHeight,vertGridPosZ);
-	
-	
-	
-	return position;
-}
 
 @compute @workgroup_size(${WATER_WORKGROUP_SIZE[0]}, ${WATER_WORKGROUP_SIZE[1]}, ${WATER_WORKGROUP_SIZE[2]})	
     fn computeMain(
@@ -191,7 +105,9 @@ fn FFT(vertGridPosX: f32, vertGridPosZ: f32) -> vec3f {
 		//var position = gerstner(vertGridPosX, vertGridPosZ);
 		
 		//------------------[REALISTIC] FFT Oceanographic Waves-----------------
-		var position = FFT(vertGridPosX, vertGridPosZ);
+		var position = vec3f(vertGridPosX,
+							 textureLoad(pingPongIFFTTexture, vec2u(u32(vertGridPosX), u32(vertGridPosZ))).x,
+							 vertGridPosZ);
 	
 		
 		waterVertexData[oVertInd + 0] = position.x;
@@ -224,6 +140,144 @@ fn FFT(vertGridPosX: f32, vertGridPosZ: f32) -> vec3f {
 			waterIndexData[gIndex * 6 + 5] = baseIndex + gridWidth + 1;
 		}
 		
+	}
+`;
+
+export const c_IFFT_2D =
+`
+	struct WaterUniforms {
+		@location(0) cameraPosition: vec4f,
+		@location(1) windDirection: vec2f,
+		@location(2) resolution: f32,			//the resolution of the plane is fixed, however, converge closer to camera position
+		@location(3) waveSteepness: f32,	
+		@location(4) step: f32,					//to be used in place of time, but locked to frame rate i suppose
+		@location(5) planeYPos: f32,
+		@location(6) waveLength: f32,
+		@location(7) oceanPlanePhysicalSize: f32,
+		@location(8) windSpeed: f32,
+	};
+	@group(0) @binding(0) var<uniform> WU: WaterUniforms;
+	
+	@group(0) @binding(1) var waveHeightRealization : texture_storage_2d<rgba8unorm, read>;
+	@group(0) @binding(2) var pingPongIFFTTexture : texture_storage_2d<rgba8unorm, write>;
+
+	fn complexMul(a: vec2f, b: vec2f) -> vec2f {
+		return vec2f(
+			a.x * b.x - a.y * b.y,
+			a.x * b.y + a.y * b.x
+		);
+	}
+	
+	fn complexConj(z: vec2f) -> vec2f {
+		return vec2f(z.x, -z.y);
+	}
+
+	@compute @workgroup_size(${WATER_WORKGROUP_SIZE[0]}, ${WATER_WORKGROUP_SIZE[1]}, ${WATER_WORKGROUP_SIZE[2]})	
+    fn computeMain(
+		@builtin(global_invocation_id) GlobalIvocationID: vec3<u32>
+	) {
+		
+		var gIndex = GlobalIvocationID.x;
+		
+		//------------------------------FORM GRID-------------------------------
+		//let gridWidth = u32(WU.resolution);
+		//let vertGridPosX = f32(gIndex) % f32(gridWidth);
+		//let vertGridPosZ = f32(gIndex) / f32(gridWidth);
+		//
+		//-----------------------------------
+		
+		
+	}
+`;
+
+export const c_hkt =
+`
+	struct WaterUniforms {
+		@location(0) cameraPosition: vec4f,
+		@location(1) windDirection: vec2f,
+		@location(2) resolution: f32,			//the resolution of the plane is fixed, however, converge closer to camera position
+		@location(3) waveSteepness: f32,	
+		@location(4) step: f32,					//to be used in place of time, but locked to frame rate i suppose
+		@location(5) planeYPos: f32,
+		@location(6) waveLength: f32,
+		@location(7) oceanPlanePhysicalSize: f32,
+		@location(8) windSpeed: f32,
+	};
+	@group(0) @binding(0) var<uniform> WU: WaterUniforms;
+	
+	@group(0) @binding(1) var initialHeightField : texture_storage_2d<rgba8unorm, read>;
+	@group(0) @binding(2) var waveHeightRealization : texture_storage_2d<rgba8unorm, write>;
+
+fn complexMul(a: vec2f, b: vec2f) -> vec2f {
+    return vec2f(
+        a.x * b.x - a.y * b.y,
+        a.x * b.y + a.y * b.x
+    );
+}
+
+fn complexConj(z: vec2f) -> vec2f {
+    return vec2f(z.x, -z.y);
+}
+
+
+@compute @workgroup_size(${WATER_WORKGROUP_SIZE[0]}, ${WATER_WORKGROUP_SIZE[1]}, ${WATER_WORKGROUP_SIZE[2]})	
+    fn computeMain(
+		@builtin(global_invocation_id) GlobalIvocationID: vec3<u32>
+	) {
+		
+		var gIndex = GlobalIvocationID.x;
+		let gridWidth = u32(WU.resolution);
+		let vertGridPosX = f32(gIndex) % f32(gridWidth);
+		let vertGridPosZ = f32(gIndex) / f32(gridWidth);
+			
+		// vector fields with e^it
+		// https://www.youtube.com/watch?v=v0YEaeIClKY
+		// e : eulers number (2.7...)
+		// i : sqrt(-1), will take this 1D equation and create orthogonal vector of velocity, velocity WILL be 90deg of that position
+		// t : time
+		// e^it = cosx + isinx    this is how we remove the sin and cos that gerstners rely on
+		
+		//tessendorf paper
+		//	the test parameters are ones from section 3.5
+		//https://people.computing.clemson.edu/~jtessen/reports/papers_files/coursenotes2002.pdf
+		let e = f32(2.71828);		// eulers num, but the "exp(f32 x)" function does e^x 
+		let pi = f32(3.14159);		//PI
+		let g = f32(9.18);			//grav constant
+		
+		//"waveheight is a random variable of horizontal position and time, h(x,t)"
+		// wave number = grid point number
+		// Lx and Lz are the actually lengths in meters of the patch
+		// discrete sample points is the WU.resolution
+		
+		let oceanSizeL = WU.oceanPlanePhysicalSize;	//the size of the tile, what to scale the grid by
+		let kx = ((2.0 * pi) / oceanSizeL) * (vertGridPosX - (WU.resolution / 2.0));
+		let ky = ((2.0 * pi) / oceanSizeL) * (vertGridPosZ - (WU.resolution / 2.0));
+		let k = vec2f(kx, ky);	//THE WAVE VECTOR FOR OCEAN PATCH
+		
+		let w2 = g * length(k);				//frequency squared, infinite depth
+		let w = sqrt(w2);
+		//let w2_withDepth = g * k * tan(k * D);			//frequency squared, adjusted for depth
+		//let w2_rippleWaves = g * k * (1 + (k * k) * (LS * LS));		//frequency squared, but for small waves < 1cm
+		
+		let h0k = textureLoad(initialHeightField, vec2u(u32(vertGridPosX), u32(vertGridPosZ))).xy;
+		//let h0Negk = textureLoad(initialHeightField, vec2u(u32(vertGridPosX), u32(vertGridPosZ))).zw;
+		
+		let t = WU.step * 0.01;
+		let cos_wt = cos(w * t);
+		let sin_wt = sin(w * t);
+	
+		let exp_iwt = vec2f(cos_wt, sin_wt);      // e^{iωt}
+		let exp_neg_iwt = vec2f(cos_wt, -sin_wt); // e^{-iωt}
+		
+		let term1 = complexMul(h0k, exp_iwt);
+		let term2 = complexMul(complexConj(h0k), exp_neg_iwt);
+		
+		let hkt = term1 + term2;
+		
+		let finalWaveHeight = 0.0; //h(x,t) is our final wave height, where x is the (x,z) gridpos
+		
+		textureStore(waveHeightRealization, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4f(hkt.x,hkt.y,0.0,1.0));
+	
 	}
 `;
 

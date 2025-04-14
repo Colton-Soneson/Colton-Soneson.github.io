@@ -1,6 +1,7 @@
 import { settings } from '../../code/settings.js';
 
-export const WATER_WORKGROUP_SIZE = [32, 1, 1];	//stick to 1 for now to get understanding
+export const WATER_WORKGROUP_SIZE = [32, 1, 1];
+export const FFT_WORKGROUP_SIZE = [8, 8, 1];
 
 export const c_water = 
 `
@@ -163,7 +164,7 @@ export const c_IFFT_2D =
 	
 	struct ButterflyUniforms {
 		@location(0) direction: f32,
-		@location(1) stages: f32,	
+		@location(1) stage: f32,	
 	};
 	@group(0) @binding(3) var<uniform> BU: ButterflyUniforms;
 
@@ -179,11 +180,19 @@ export const c_IFFT_2D =
 		return vec2f(z.x, -z.y);
 	}
 	
+	fn complexAdd(a: vec2f, b: vec2f) -> vec2f {
+		return vec2f(a.x + b.x, a.y + b.y);
+	}
+	
+	fn complexSub(a: vec2f, b: vec2f) -> vec2f {
+		return vec2f(a.x - b.x, a.y - b.y);
+	}
+	
 	fn complexExp(theta: f32) -> vec2f {
 		return vec2f(cos(theta), sin(theta));
 	}
 
-	@compute @workgroup_size(${WATER_WORKGROUP_SIZE[0]}, ${WATER_WORKGROUP_SIZE[1]}, ${WATER_WORKGROUP_SIZE[2]})	
+	@compute @workgroup_size(${FFT_WORKGROUP_SIZE[0]}, ${FFT_WORKGROUP_SIZE[1]}, ${FFT_WORKGROUP_SIZE[2]})	
     fn computeMain(
 		@builtin(global_invocation_id) GlobalIvocationID: vec3<u32>
 	) {
@@ -197,7 +206,50 @@ export const c_IFFT_2D =
 		//
 		//-----------------------------------
 		
-		
+		let N = u32(WU.resolution);
+		let stage = BU.stage;
+		let m = 1u << (u32(stage) + 1u); // butterfly size
+		let half_m = m >> 1;
+	
+		let i1 = GlobalIvocationID.x;
+		let i2 = GlobalIvocationID.y;
+	
+		var indexA: vec2u;
+		var indexB: vec2u;
+	
+		var base: u32;
+		var offset: u32;
+		var twiddleIndex: u32;
+	
+		if (BU.direction == 0.0) {
+			// Horizontal pass (along x axis)
+			base = (i1 / m) * m;
+			offset = i1 % half_m;
+	
+			indexA = vec2u(base + offset, i2);
+			indexB = vec2u(base + offset + half_m, i2);
+		} else {
+			// Vertical pass (along y axis)
+			base = (i2 / m) * m;
+			offset = i2 % half_m;
+	
+			indexA = vec2u(i1, base + offset);
+			indexB = vec2u(i1, base + offset + half_m);
+		}
+	
+		let a = textureLoad(inTexture, indexA).xy;
+		let b = textureLoad(inTexture, indexB).xy;
+	
+		let angle = 2.0 * 3.14159265 * f32(offset) / f32(m);
+		let twiddle = complexExp(angle);
+	
+		let t = complexMul(twiddle, b);
+		let u = complexAdd(a, t);
+		let v = complexSub(a, t);
+	
+		textureStore(outTexture, indexA, vec4f(u, 0.0, 1.0));
+		textureStore(outTexture, indexB, vec4f(v, 0.0, 1.0));
+			
 	}
 `;
 
@@ -261,17 +313,20 @@ fn complexConj(z: vec2f) -> vec2f {
 		// discrete sample points is the WU.resolution
 		
 		let oceanSizeL = WU.oceanPlanePhysicalSize;	//the size of the tile, what to scale the grid by
-		let kx = ((2.0 * pi) / oceanSizeL) * (vertGridPosX - (WU.resolution / 2.0));
-		let ky = ((2.0 * pi) / oceanSizeL) * (vertGridPosZ - (WU.resolution / 2.0));
-		let k = vec2f(kx, ky);	//THE WAVE VECTOR FOR OCEAN PATCH
+		let deltaK = ((2.0 * pi) / oceanSizeL);
+		let kx = vertGridPosX - (WU.resolution / 2.0);
+		let ky = vertGridPosZ - (WU.resolution / 2.0);
+		let k = (vec2f(kx, ky) * deltaK);	
+											
 		
 		let w2 = g * length(k);				//frequency squared, infinite depth
 		let w = sqrt(w2);
 		//let w2_withDepth = g * k * tan(k * D);			//frequency squared, adjusted for depth
 		//let w2_rippleWaves = g * k * (1 + (k * k) * (LS * LS));		//frequency squared, but for small waves < 1cm
 		
-		let h0k = textureLoad(initialHeightField, vec2u(u32(vertGridPosX), u32(vertGridPosZ))).xy;
-		//let h0Negk = textureLoad(initialHeightField, vec2u(u32(vertGridPosX), u32(vertGridPosZ))).zw;
+		let h0Data = textureLoad(initialHeightField, vec2u(u32(vertGridPosX), u32(vertGridPosZ)));
+		let h0k = h0Data.xy;
+		let h0Negk = h0Data.zw;
 		
 		let t = WU.step * 0.01;
 		let cos_wt = cos(w * t);
@@ -281,7 +336,7 @@ fn complexConj(z: vec2f) -> vec2f {
 		let exp_neg_iwt = vec2f(cos_wt, -sin_wt); // e^{-iωt}
 		
 		let term1 = complexMul(h0k, exp_iwt);
-		let term2 = complexMul(complexConj(h0k), exp_neg_iwt);
+		let term2 = complexMul(h0Negk, exp_neg_iwt);
 		
 		let hkt = term1 + term2;
 		
@@ -322,10 +377,17 @@ fn phillipsSpectrum(vertGridPosX: f32, vertGridPosZ: f32, inv : f32) -> f32 {
 	// discrete sample points is the WU.resolution
 	
 	let oceanSizeL = WU.oceanPlanePhysicalSize;	//the size of the tile, what to scale the grid by
-	let kx = ((2.0 * pi) / oceanSizeL) * (vertGridPosX - (WU.resolution / 2.0));
-	let ky = ((2.0 * pi) / oceanSizeL) * (vertGridPosZ - (WU.resolution / 2.0));
-	let k = vec2f(kx, ky) * inv;	//THE WAVE VECTOR FOR OCEAN PATCH, the inverse HAS TO BE 1 or -1!!!!
-									//								CHECK THIS!!!!!!!, MAYBE ITS NEGATIVE VERTGRIDPOS INPUTS
+	let deltaK = ((2.0 * pi) / oceanSizeL);
+	let kx = vertGridPosX - (WU.resolution / 2.0);
+	let ky = vertGridPosZ - (WU.resolution / 2.0);
+	let k = (vec2f(kx, ky) * deltaK) * inv;	//THE WAVE VECTOR FOR OCEAN PATCH, the inverse HAS TO BE 1 or -1!!!!
+											//								CHECK THIS!!!!!!!, MAYBE ITS NEGATIVE VERTGRIDPOS INPUTS
+	
+	//check for kx, kz, w
+	//let w2 = g * length(k);
+	//let w = sqrt(w2);
+	//textureStore(initialHeightField, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4f(kx,ky,w,1.0));
+	
 	
 	//phillips spectrum
 	let V = WU.windSpeed; 			//wind speed, i made this up
@@ -353,18 +415,22 @@ fn h0(vertGridPosX: f32, vertGridPosZ: f32, gIndex: u32) -> vec4f {
 	
 	//THIS IS FOR DEBUG FOR NOW
 	//	the "* 1e6" portion was done to give better visuals in debug mode, its suggested to do so. However I don't believe it should be done for the waves themselves.
-	textureStore(phillipsSpectrumOutTexture, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4<f32>(PhK,0.0,0.0,1.0));
+	textureStore(phillipsSpectrumOutTexture, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4<f32>(PhK,PhNegK,0.0,1.0));
 	
 	//temporary, this is an alternative to the papers (ξr + iξi)
-	let fPerComplexData = 2u;
+	let fPerComplexData = 4u;
 	let oVertInd = gIndex * fPerComplexData;
 	let gauss = vec2f(complexGaussArray[oVertInd], complexGaussArray[oVertInd + 1u]);
+	let gaussNegK = vec2f(complexGaussArray[oVertInd + 2u], complexGaussArray[oVertInd + 3u]);
 	
 	let scale = (1.0 / sqrt(2.0));
 	let h0initial =  vec4f(scale * gauss.x * sqrt(PhK), 		//real
 						scale * gauss.y * sqrt(PhK),	//imaginary
-						scale * gauss.x * sqrt(PhNegK),		//neg k, real		
-						scale * gauss.y * sqrt(PhNegK));	//neg k, imaginary
+						scale * gaussNegK.x * sqrt(PhNegK),		//neg k, real		
+						scale * gaussNegK.y * sqrt(PhNegK));	//neg k, imaginary
+	
+	//check for gaussian texture
+	//textureStore(initialHeightField, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4f(length(gauss),length(gaussNegK),0.0,1.0));
 	
 	return h0initial;
 }
@@ -383,6 +449,9 @@ fn h0(vertGridPosX: f32, vertGridPosZ: f32, gIndex: u32) -> vec4f {
 		
 		//-----------------------------------
 		textureStore(initialHeightField, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), h0(vertGridPosX, vertGridPosZ, gIndex));
+		
+		//DEBUG func just to test
+		//h0(vertGridPosX, vertGridPosZ, gIndex);
 	}
 `;
 

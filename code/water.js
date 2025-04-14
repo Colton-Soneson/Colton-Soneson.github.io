@@ -14,6 +14,7 @@ import { c_IFFT_2D } from '../shaders/js/vfc_water.js'
 import { v_water } from '../shaders/js/vfc_water.js'
 import { f_water } from '../shaders/js/vfc_water.js'
 import { WATER_WORKGROUP_SIZE } from '../shaders/js/vfc_water.js'
+import { FFT_WORKGROUP_SIZE } from '../shaders/js/vfc_water.js'
 
 import * as transformations from './transformations.js'
 import * as scene from './scene.js'
@@ -75,7 +76,7 @@ function complexGaussianRandom(mean, standardDeviation, arrayLength) {
 	
 	return result;
 }
-const complexGaussArray = new Float32Array(complexGaussianRandom(0, 1, settings.waterTileResolution * settings.waterTileResolution));
+const complexGaussArray = new Float32Array(complexGaussianRandom(0, 1, 4 * settings.waterTileResolution * settings.waterTileResolution));	//4: kr, ki, -kr, -ki
 
 const centerWaterPlanePosition = [-(settings.waterTileResolution * 0.25), 0.0, -(settings.waterTileResolution * 0.25)];
 
@@ -267,12 +268,12 @@ function waterComputeBuffersUpdate() {
 									gcInfo.byteLength);
 }
 
-function waterComputeButterflyBufferUpdate(direction, stages) {
+function waterComputeButterflyBufferUpdate(direction, stage) {
 	
 	const bufferResult = [];
 	
 	bufferResult.push(direction);
-	bufferResult.push(stages);
+	bufferResult.push(stage);
 	
 	const result = new Float32Array(bufferResult);
 	
@@ -703,8 +704,8 @@ export function waterPass(aEncoder, mainpassDepthTexture) {
 	const bindRealizationCGroup = createCompBindGroupRealizationWater();
 	waterComputeBuffersUpdate();
 	
-	//initial Height Map h0(k)
-	if(step <= 1)
+	//initial Height Map h0(k)	CHECK TO SEE IF WE NEED THIS ONLY FIRST STEP OR EVERY WATER PASS!!!!!!!!!!!!
+	//if(step <= 1)
 	{
 		const computeInitialHeightPass = aEncoder.beginComputePass();
 		
@@ -726,30 +727,39 @@ export function waterPass(aEncoder, mainpassDepthTexture) {
 	
 	//-----------------------------FFT-------------------------------
 	// ping pong a texture between the shader thats capable of both horizontal or vertical passes
-
-	//FFT Horizontal
+	
+	//
+	let pingPongA = waveHeightRealization;
+	let pingPongB = pingPongIFFTTexture;
+	
+	//FFT start, the buttefly group starts with waveHeightRealization ONLY ONCE
 	const stages = Math.log2(settings.waterTileResolution);
-	const bindButterflyHorizontalCGroup = createCompBindGroupButterflyWater(waveHeightRealization, pingPongIFFTTexture);
 	
-	waterComputeButterflyBufferUpdate(0, stages);	//set the direction, and stage count
-	const computeHorizontalFFTPass = aEncoder.beginComputePass();
-		
-	computeHorizontalFFTPass.setPipeline(waterButterflyComputePipeline);
-	computeHorizontalFFTPass.setBindGroup(0.0, bindButterflyHorizontalCGroup);
+	for(let dir = 0; dir <= 1; dir++) {
+		for(let stage = 0; stage < stages; stage++) {
+			let bindButterflyCGroup = createCompBindGroupButterflyWater(pingPongA, pingPongB);
+			
+			waterComputeButterflyBufferUpdate(dir, stage);	//set the direction, and stage count
+			const computeFFTPass = aEncoder.beginComputePass();
+				
+			computeFFTPass.setPipeline(waterButterflyComputePipeline);
+			computeFFTPass.setBindGroup(0.0, bindButterflyCGroup);
+			
+			computeFFTPass.dispatchWorkgroups(Math.ceil( settings.waterTileResolution / FFT_WORKGROUP_SIZE[0]),
+												Math.ceil( settings.waterTileResolution / FFT_WORKGROUP_SIZE[1]));			//you want to do it per vertex, not per cell
+			computeFFTPass.end();
+			
+			let transition = pingPongA;
+			pingPongA = pingPongB;
+			pingPongB = transition;
+		}
+	}
 	
-	computeHorizontalFFTPass.dispatchWorkgroups(Math.ceil( (settings.waterTileResolution * settings.waterTileResolution) / WATER_WORKGROUP_SIZE[0]));			//you want to do it per vertex, not per cell
-	computeHorizontalFFTPass.end();
-	
-	//FFT Vertical
-	const bindButterflyVerticalCGroup = createCompBindGroupButterflyWater(pingPongIFFTTexture, finalWaveHeightTexture);
-	waterComputeButterflyBufferUpdate(1.0, stages);	//set the direction, and stage count
-	const computeVerticalFFTPass = aEncoder.beginComputePass();
-		
-	computeVerticalFFTPass.setPipeline(waterButterflyComputePipeline);
-	computeVerticalFFTPass.setBindGroup(0, bindButterflyVerticalCGroup);
-	
-	computeVerticalFFTPass.dispatchWorkgroups(Math.ceil( (settings.waterTileResolution * settings.waterTileResolution) / WATER_WORKGROUP_SIZE[0]));			//you want to do it per vertex, not per cell
-	computeVerticalFFTPass.end();
+	aEncoder.copyTextureToTexture(
+		{texture: pingPongIFFTTexture},
+		{texture: finalWaveHeightTexture},	
+		{width: settings.waterTileResolution, height: settings.waterTileResolution}
+	)
 	
 	//---------------------------MESH ASSEMBLY-------------------------
 	//grid mesh compute pass

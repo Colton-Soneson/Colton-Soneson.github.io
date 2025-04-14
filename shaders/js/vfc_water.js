@@ -35,7 +35,7 @@ export const c_water =
 	@group(0) @binding(2) var<storage, read_write> waterVertexData: array<f32>;
 	@group(0) @binding(3) var<storage, read_write> waterIndexData: array<u32>;
 	
-	@group(0) @binding(4) var pingPongIFFTTexture : texture_storage_2d<rgba8unorm, read>;
+	@group(0) @binding(4) var finalWaveHeightTexture : texture_storage_2d<rgba8unorm, read>;
 
 fn gerstnerWave(position: vec3f, waveLength: f32, waveSteepness: f32, windDirection: vec2f, step: f32) -> vec3f {
 		let k = (2 * 3.14) / waveLength;     		// Wave number
@@ -106,7 +106,7 @@ fn gerstner(vertGridPosX: f32, vertGridPosZ: f32) -> vec3f {
 		
 		//------------------[REALISTIC] FFT Oceanographic Waves-----------------
 		var position = vec3f(vertGridPosX,
-							 textureLoad(pingPongIFFTTexture, vec2u(u32(vertGridPosX), u32(vertGridPosZ))).x,
+							 textureLoad(finalWaveHeightTexture, vec2u(u32(vertGridPosX), u32(vertGridPosZ))).x,
 							 vertGridPosZ);
 	
 		
@@ -158,8 +158,15 @@ export const c_IFFT_2D =
 	};
 	@group(0) @binding(0) var<uniform> WU: WaterUniforms;
 	
-	@group(0) @binding(1) var waveHeightRealization : texture_storage_2d<rgba8unorm, read>;
-	@group(0) @binding(2) var pingPongIFFTTexture : texture_storage_2d<rgba8unorm, write>;
+	@group(0) @binding(1) var inTexture : texture_storage_2d<rgba8unorm, read>;		//first waveHeightRealization, switch direction, then its pingPongIFFTTexture
+	@group(0) @binding(2) var outTexture : texture_storage_2d<rgba8unorm, write>;	//first pingPongIFFTTexture, switch direction, then its final output
+	
+	struct ButterflyUniforms {
+		@location(0) direction: f32,
+		@location(1) stages: f32,	
+	};
+	@group(0) @binding(3) var<uniform> BU: ButterflyUniforms;
+
 
 	fn complexMul(a: vec2f, b: vec2f) -> vec2f {
 		return vec2f(
@@ -170,6 +177,10 @@ export const c_IFFT_2D =
 	
 	fn complexConj(z: vec2f) -> vec2f {
 		return vec2f(z.x, -z.y);
+	}
+	
+	fn complexExp(theta: f32) -> vec2f {
+		return vec2f(cos(theta), sin(theta));
 	}
 
 	@compute @workgroup_size(${WATER_WORKGROUP_SIZE[0]}, ${WATER_WORKGROUP_SIZE[1]}, ${WATER_WORKGROUP_SIZE[2]})	

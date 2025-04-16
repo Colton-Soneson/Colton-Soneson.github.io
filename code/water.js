@@ -64,11 +64,29 @@ function gaussianRandom(mean, standardDeviation) {
 	let z = Math.sqrt(-2.0 * Math.log(a)) * Math.cos(2.0 * Math.PI * b);
 	return z * standardDeviation + mean;
 }
+
+function gaussianClampedRandom(mean, standardDeviation) {
+	let a = Math.random();
+	let b = Math.random();
+	let z = Math.sqrt(-2.0 * Math.log(a)) * Math.cos(2.0 * Math.PI * b);
+	z = z * standardDeviation + mean;
+
+	// Normalize to [0, 1], the 3 is to get the majority of the generated numbers on the curve
+	const min = mean - 3 * standardDeviation;
+	const max = mean + 3 * standardDeviation;
+	return Math.min(1, Math.max(0, (z - min) / (max - min)));
+}
+
 function complexGaussianRandom(mean, standardDeviation, arrayLength) {
 	const result = [];
 	for(let i = 0; i < arrayLength; ++i) {
+		//TRUE GAUSSIAN, typically from ~-3 to 3 range
 		const r = gaussianRandom(mean, standardDeviation);
 		const i = gaussianRandom(mean, standardDeviation);
+		
+		////Gaussian clamped from 0 to 1, normalized distribution, for Phillips Spectrum dont use
+		//const r = gaussianClampedRandom(mean, standardDeviation);
+		//const i = gaussianClampedRandom(mean, standardDeviation);
 		
 		result.push(r);
 		result.push(i);
@@ -76,7 +94,8 @@ function complexGaussianRandom(mean, standardDeviation, arrayLength) {
 	
 	return result;
 }
-const complexGaussArray = new Float32Array(complexGaussianRandom(0, 1, 4 * settings.waterTileResolution * settings.waterTileResolution));	//4: kr, ki, -kr, -ki
+const complexGaussArray = new Float32Array(complexGaussianRandom(0.0, 1.0, 2 * settings.waterTileResolution * settings.waterTileResolution));	//4: kr, ki, -kr, -ki
+console.log("Complex Gaussian Num Array: ", complexGaussArray);
 
 const centerWaterPlanePosition = [-(settings.waterTileResolution * 0.25), 0.0, -(settings.waterTileResolution * 0.25)];
 
@@ -705,7 +724,7 @@ export function waterPass(aEncoder, mainpassDepthTexture) {
 	waterComputeBuffersUpdate();
 	
 	//initial Height Map h0(k)	CHECK TO SEE IF WE NEED THIS ONLY FIRST STEP OR EVERY WATER PASS!!!!!!!!!!!!
-	//if(step <= 1)
+	if(step == 1)
 	{
 		const computeInitialHeightPass = aEncoder.beginComputePass();
 		
@@ -735,31 +754,31 @@ export function waterPass(aEncoder, mainpassDepthTexture) {
 	//FFT start, the buttefly group starts with waveHeightRealization ONLY ONCE
 	const stages = Math.log2(settings.waterTileResolution);
 	
-	for(let dir = 0; dir <= 1; dir++) {
-		for(let stage = 0; stage < stages; stage++) {
-			let bindButterflyCGroup = createCompBindGroupButterflyWater(pingPongA, pingPongB);
-			
-			waterComputeButterflyBufferUpdate(dir, stage);	//set the direction, and stage count
-			const computeFFTPass = aEncoder.beginComputePass();
-				
-			computeFFTPass.setPipeline(waterButterflyComputePipeline);
-			computeFFTPass.setBindGroup(0.0, bindButterflyCGroup);
-			
-			computeFFTPass.dispatchWorkgroups(Math.ceil( settings.waterTileResolution / FFT_WORKGROUP_SIZE[0]),
-												Math.ceil( settings.waterTileResolution / FFT_WORKGROUP_SIZE[1]));			//you want to do it per vertex, not per cell
-			computeFFTPass.end();
-			
-			let transition = pingPongA;
-			pingPongA = pingPongB;
-			pingPongB = transition;
-		}
-	}
-	
-	aEncoder.copyTextureToTexture(
-		{texture: pingPongIFFTTexture},
-		{texture: finalWaveHeightTexture},	
-		{width: settings.waterTileResolution, height: settings.waterTileResolution}
-	)
+	//for(let dir = 0; dir <= 1; dir++) {
+	//	for(let stage = 0; stage < stages; stage++) {
+	//		let bindButterflyCGroup = createCompBindGroupButterflyWater(pingPongA, pingPongB);
+	//		
+	//		waterComputeButterflyBufferUpdate(dir, stage);	//set the direction, and stage count
+	//		const computeFFTPass = aEncoder.beginComputePass();
+	//			
+	//		computeFFTPass.setPipeline(waterButterflyComputePipeline);
+	//		computeFFTPass.setBindGroup(0.0, bindButterflyCGroup);
+	//		
+	//		computeFFTPass.dispatchWorkgroups(Math.ceil( settings.waterTileResolution / FFT_WORKGROUP_SIZE[0]),
+	//											Math.ceil( settings.waterTileResolution / FFT_WORKGROUP_SIZE[1]));			//you want to do it per vertex, not per cell
+	//		computeFFTPass.end();
+	//		
+	//		let transition = pingPongA;
+	//		pingPongA = pingPongB;
+	//		pingPongB = transition;
+	//	}
+	//}
+	//
+	//aEncoder.copyTextureToTexture(
+	//	{texture: pingPongIFFTTexture},
+	//	{texture: finalWaveHeightTexture},	
+	//	{width: settings.waterTileResolution, height: settings.waterTileResolution}
+	//)
 	
 	//---------------------------MESH ASSEMBLY-------------------------
 	//grid mesh compute pass

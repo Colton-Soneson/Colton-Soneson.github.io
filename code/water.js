@@ -754,31 +754,30 @@ export function waterPass(aEncoder, mainpassDepthTexture) {
 	//FFT start, the buttefly group starts with waveHeightRealization ONLY ONCE
 	const stages = Math.log2(settings.waterTileResolution);
 	
-	//for(let dir = 0; dir <= 1; dir++) {
-	//	for(let stage = 0; stage < stages; stage++) {
-	//		let bindButterflyCGroup = createCompBindGroupButterflyWater(pingPongA, pingPongB);
-	//		
-	//		waterComputeButterflyBufferUpdate(dir, stage);	//set the direction, and stage count
-	//		const computeFFTPass = aEncoder.beginComputePass();
-	//			
-	//		computeFFTPass.setPipeline(waterButterflyComputePipeline);
-	//		computeFFTPass.setBindGroup(0.0, bindButterflyCGroup);
-	//		
-	//		computeFFTPass.dispatchWorkgroups(Math.ceil( settings.waterTileResolution / FFT_WORKGROUP_SIZE[0]),
-	//											Math.ceil( settings.waterTileResolution / FFT_WORKGROUP_SIZE[1]));			//you want to do it per vertex, not per cell
-	//		computeFFTPass.end();
-	//		
-	//		let transition = pingPongA;
-	//		pingPongA = pingPongB;
-	//		pingPongB = transition;
-	//	}
-	//}
-	//
-	//aEncoder.copyTextureToTexture(
-	//	{texture: pingPongIFFTTexture},
-	//	{texture: finalWaveHeightTexture},	
-	//	{width: settings.waterTileResolution, height: settings.waterTileResolution}
-	//)
+	for(let dir = 0; dir <= 1; dir++) {
+		for(let stage = 0; stage < stages; stage++) {
+			let bindButterflyCGroup = createCompBindGroupButterflyWater(pingPongA, pingPongB);
+			
+			waterComputeButterflyBufferUpdate(dir, stage);	//set the direction, and stage count
+			const computeFFTPass = aEncoder.beginComputePass();
+				
+			computeFFTPass.setPipeline(waterButterflyComputePipeline);
+			computeFFTPass.setBindGroup(0.0, bindButterflyCGroup);
+			
+			computeFFTPass.dispatchWorkgroups(Math.ceil( (settings.waterTileResolution * settings.waterTileResolution) / WATER_WORKGROUP_SIZE[0]));			//you want to do it per vertex, not per cell
+			computeFFTPass.end();
+			
+			let transition = pingPongA;
+			pingPongA = pingPongB;
+			pingPongB = transition;
+		}
+	}
+	
+	aEncoder.copyTextureToTexture(
+		{texture: pingPongIFFTTexture},
+		{texture: finalWaveHeightTexture},	
+		{width: settings.waterTileResolution, height: settings.waterTileResolution}
+	)
 	
 	//---------------------------MESH ASSEMBLY-------------------------
 	//grid mesh compute pass

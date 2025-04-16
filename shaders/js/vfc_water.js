@@ -194,62 +194,59 @@ export const c_IFFT_2D =
 
 	@compute @workgroup_size(${FFT_WORKGROUP_SIZE[0]}, ${FFT_WORKGROUP_SIZE[1]}, ${FFT_WORKGROUP_SIZE[2]})	
     fn computeMain(
-		@builtin(global_invocation_id) GlobalIvocationID: vec3<u32>
+		@builtin(global_invocation_id) GlobalInvocationID: vec3<u32>
 	) {
 		
-		var gIndex = GlobalIvocationID.x;
-		
-		//------------------------------FORM GRID-------------------------------
-		//let gridWidth = u32(WU.resolution);
-		//let vertGridPosX = f32(gIndex) % f32(gridWidth);
-		//let vertGridPosZ = f32(gIndex) / f32(gridWidth);
-		//
-		//-----------------------------------
-		
-		let N = u32(WU.resolution);
-		let stage = BU.stage;
-		let m = 1u << (u32(stage) + 1u); // butterfly size
-		let half_m = m >> 1;
+		var gIndex = GlobalInvocationID.x;
+		let gridWidth = u32(WU.resolution);
+		let vertGridPosX = gIndex % gridWidth;
+		let vertGridPosZ = gIndex / gridWidth;
 	
-		let i1 = GlobalIvocationID.x;
-		let i2 = GlobalIvocationID.y;
+		// Determine which direction to process (horizontal or vertical)
+		let direction = BU.direction;
 	
-		var indexA: vec2u;
-		var indexB: vec2u;
-	
-		var base: u32;
-		var offset: u32;
-		var twiddleIndex: u32;
-	
-		if (BU.direction == 0.0) {
-			// Horizontal pass (along x axis)
-			base = (i1 / m) * m;
-			offset = i1 % half_m;
-	
-			indexA = vec2u(base + offset, i2);
-			indexB = vec2u(base + offset + half_m, i2);
-		} else {
-			// Vertical pass (along y axis)
-			base = (i2 / m) * m;
-			offset = i2 % half_m;
-	
-			indexA = vec2u(i1, base + offset);
-			indexB = vec2u(i1, base + offset + half_m);
-		}
-	
-		let a = textureLoad(inTexture, indexA).xy;
-		let b = textureLoad(inTexture, indexB).xy;
-	
-		let angle = 2.0 * 3.14159265 * f32(offset) / f32(m);
-		let twiddle = complexExp(angle);
-	
-		let t = complexMul(twiddle, b);
-		let u = complexAdd(a, t);
-		let v = complexSub(a, t);
-	
-		textureStore(outTexture, indexA, vec4f(u, 0.0, 1.0));
-		textureStore(outTexture, indexB, vec4f(v, 0.0, 1.0));
+		if (direction == 0.0) {
+			// Horizontal pass (FFT/IFFT along rows)
+			let indexA = vec2u(vertGridPosX, vertGridPosZ);  // Use the horizontal index for rows
+			let indexB = vec2u(vertGridPosX + 1u, vertGridPosZ);  // Adjacent horizontal index (next row)
 			
+			// Load data from input texture (real and imaginary parts of h0k)
+			let a = textureLoad(inTexture, indexA).xy;
+			let b = textureLoad(inTexture, indexB).xy;
+			
+			// Apply FFT/IFFT operations
+			let expFactor = complexExp(2.0 * 3.14159 * BU.stage / WU.resolution);  // e^(2πi * stage / resolution)
+			
+			// Perform FFT butterfly operation (we could swap this depending on the FFT stage)
+			let term1 = complexMul(a, expFactor);
+			let term2 = complexMul(b, complexConj(expFactor));
+			
+			let result = complexAdd(term1, term2);
+			
+			// Store the result back into the output texture
+			textureStore(outTexture, indexA, vec4f(result.x, result.y, 0.0, 1.0));
+			
+		} else {
+			// Vertical pass (FFT/IFFT along columns)
+			let indexA = vec2u(vertGridPosX, vertGridPosZ);  // Use the vertical index for columns
+			let indexB = vec2u(vertGridPosX, vertGridPosZ + 1u);  // Adjacent vertical index (next column)
+			
+			// Load data from input texture (real and imaginary parts of h0k)
+			let a = textureLoad(inTexture, indexA).xy;
+			let b = textureLoad(inTexture, indexB).xy;
+			
+			// Apply FFT/IFFT operations for vertical pass
+			let expFactor = complexExp(2.0 * 3.14159 * BU.stage / WU.resolution);  // e^(2πi * stage / resolution)
+			
+			// Perform FFT butterfly operation
+			let term1 = complexMul(a, expFactor);
+			let term2 = complexMul(b, complexConj(expFactor));
+			
+			let result = complexAdd(term1, term2);
+			
+			// Store the result back into the output texture
+			textureStore(outTexture, indexA, vec4f(result.x, result.y, 0.0, 1.0));
+		}
 	}
 `;
 
@@ -333,16 +330,24 @@ fn complexConj(z: vec2f) -> vec2f {
 		let sin_wt = sin(w * t);
 	
 		let exp_iwt = vec2f(cos_wt, sin_wt);      // e^{iωt}
-		let exp_neg_iwt = vec2f(cos_wt, -sin_wt); // e^{-iωt}
+		let exp_neg_iwt = complexConj(exp_iwt); // e^{-iωt}
 		
 		let term1 = complexMul(h0k, exp_iwt);
 		let term2 = complexMul(h0Negk, exp_neg_iwt);
 		
 		let hkt = term1 + term2;
 		
-		let finalWaveHeight = 0.0; //h(x,t) is our final wave height, where x is the (x,z) gridpos
+		//DEBUG, visualizing hKt directly will show an inward collapse, this is how hKt is supposed to workgroup_size
+		//			the waveHeightRealization should actually be hXt.  
 		
-		textureStore(waveHeightRealization, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4f(hkt.x,hkt.y,0.0,1.0));
+		
+		//SHIFT IT, this is a preshift for fft to move from 0,0 center to move it to the corner
+		//	FFT expects natural order (DC at top left), not centered frequency space
+		let checker = f32(((vertGridPosX + vertGridPosZ) % 2u) * 2u - 1u);
+		let hktShifted = hkt * checker;
+		
+		//textureStore(waveHeightRealization, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4f(hkt.x,hkt.y,0.0,1.0));
+		textureStore(waveHeightRealization, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4f(hktShifted.x,hktShifted.y,0.0,1.0));
 	
 	}
 `;

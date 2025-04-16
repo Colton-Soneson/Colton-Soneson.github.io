@@ -290,8 +290,8 @@ fn complexConj(z: vec2f) -> vec2f {
 		
 		var gIndex = GlobalIvocationID.x;
 		let gridWidth = u32(WU.resolution);
-		let vertGridPosX = f32(gIndex) % f32(gridWidth);
-		let vertGridPosZ = f32(gIndex) / f32(gridWidth);
+		let vertGridPosX = gIndex % gridWidth;
+		let vertGridPosZ = gIndex / gridWidth;
 			
 		// vector fields with e^it
 		// https://www.youtube.com/watch?v=v0YEaeIClKY
@@ -314,9 +314,9 @@ fn complexConj(z: vec2f) -> vec2f {
 		
 		let oceanSizeL = WU.oceanPlanePhysicalSize;	//the size of the tile, what to scale the grid by
 		let deltaK = ((2.0 * pi) / oceanSizeL);
-		let kx = vertGridPosX - (WU.resolution / 2.0);
-		let ky = vertGridPosZ - (WU.resolution / 2.0);
-		let k = (vec2f(kx, ky) * deltaK);	
+		let kx = deltaK * (f32(vertGridPosX) - (WU.resolution / 2.0));
+		let ky = deltaK * (f32(vertGridPosZ) - (WU.resolution / 2.0));
+		let k = vec2f(kx, ky);	
 											
 		
 		let w2 = g * length(k);				//frequency squared, infinite depth
@@ -342,7 +342,7 @@ fn complexConj(z: vec2f) -> vec2f {
 		
 		let finalWaveHeight = 0.0; //h(x,t) is our final wave height, where x is the (x,z) gridpos
 		
-		textureStore(waveHeightRealization, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4f(hkt.x,hkt.y,0.0,1.0));
+		textureStore(waveHeightRealization, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4f(hkt.x,0.0,0.0,1.0));
 	
 	}
 `;
@@ -367,7 +367,19 @@ export const c_h0k =
 	
 	@group(0) @binding(3) var<storage, read_write> complexGaussArray: array<f32>;
 
-fn phillipsSpectrum(vertGridPosX: f32, vertGridPosZ: f32, inv : f32) -> f32 {
+	fn complexAdd(a: vec2f, b: vec2f) -> vec2f {
+		return vec2f(a.x + b.x, a.y + b.y);
+	}
+	
+	fn complexMul(a: vec2f, b: vec2f) -> vec2f {
+		return vec2f(
+			a.x * b.x - a.y * b.y,
+			a.x * b.y + a.y * b.x
+		);
+	}
+	
+
+fn phillipsSpectrum(kx: f32, ky: f32) -> f32 {
 	let pi = f32(3.14159);		//PI
 	let g = f32(9.18);			//grav constant
 	
@@ -376,12 +388,11 @@ fn phillipsSpectrum(vertGridPosX: f32, vertGridPosZ: f32, inv : f32) -> f32 {
 	// Lx and Lz are the actually lengths in meters of the patch
 	// discrete sample points is the WU.resolution
 	
-	let oceanSizeL = WU.oceanPlanePhysicalSize;	//the size of the tile, what to scale the grid by
-	let deltaK = ((2.0 * pi) / oceanSizeL);
-	let kx = vertGridPosX - (WU.resolution / 2.0);
-	let ky = vertGridPosZ - (WU.resolution / 2.0);
-	let k = (vec2f(kx, ky) * deltaK) * inv;	//THE WAVE VECTOR FOR OCEAN PATCH, the inverse HAS TO BE 1 or -1!!!!
-											//								CHECK THIS!!!!!!!, MAYBE ITS NEGATIVE VERTGRIDPOS INPUTS
+	let K = vec2f(kx, ky);		//GRID OF WAVE VECTORS
+	
+	if(length(K) < 0.001) {	//avoid blowout
+		return 0.0;
+	}
 	
 	//check for kx, kz, w
 	//let w2 = g * length(k);
@@ -390,47 +401,85 @@ fn phillipsSpectrum(vertGridPosX: f32, vertGridPosZ: f32, inv : f32) -> f32 {
 	
 	
 	//phillips spectrum
-	let V = WU.windSpeed; 			//wind speed, i made this up
+	// These slides also help: https://www.cs.ubc.ca/~rbridson/courses/533d-winter-2005/cs533d-slides-mar9.pdf
+	
+	let V = 31.0; 			//wind speed, i made this up
 	let L = (V * V) / g;	//largest possible waves from a continuous wind
-	let A = 0.001;			//"a numeric constant" ???
-	let wHat = normalize(WU.windDirection);	//wind direction
-	let kHat = normalize(k);
-	let kw = dot(kHat, wHat);
-	let k4 = dot(k,k) * dot(k,k);
+	let Lmin = 0.1;			//minimum wavelength in meters
+	let A = 1.0;			//"a numeric constant" ???
+	
+	let kMag = length(K);			// italic k, magnitude
+	let kHat = vec2f(K.x / kMag, K.y / kMag);		// hat k, unit vector
+	let wHat = normalize(WU.windDirection);			// hat w, wind direction, normalized input just incase
+	let kHwH = dot(kHat, wHat);						// hat k dot hat w 
+	let kHwHX = kHwH * kHwH * kHwH * kHwH; 			//RAISING THIS X TIMES INCREASES WIND INFLUENCE MORE
+	let kMagLSqr = (kMag * L) * (kMag * L);			
+	let kMag4 = kMag * kMag * kMag * kMag;		
+		
 	
 	var PhK = 0.0;
-	if(k4 != 0.0) {
+	if(kMag != 0.0) {
 		//dont divide by 0
-		PhK = A * (exp(-1.0 / dot(k * L, k * L))/  k4) * (kw * kw);
+		//PhK = A * (exp(-1.0 / kL2) * supression /  k4) * kw6;
+		//PhK = A * (1.0 / k4) * exp((-1.0 / kL2) - kLmin2) * (kw * kw);
+		
+		PhK = A * (exp(-1.0 / kMagLSqr) / kMag4) * kHwHX;
 	}
 	
 	return PhK;
 }
 
-fn h0(vertGridPosX: f32, vertGridPosZ: f32, gIndex: u32) -> vec4f {
+fn h0(vertGridPosX: u32, vertGridPosZ: u32, gIndex: u32) -> vec4f {
 	
+	//BEST PAGE for all of this
+	//https://barthpaleologue.github.io/Blog/posts/ocean-simulation-webgpu/#:~:text=Okay%2C%20so%20we%20need%20a,w%5E=%E2%88%A3w%E2%88%A3w
 	
-	let PhK = phillipsSpectrum(vertGridPosX, vertGridPosZ, 1);
-	let PhNegK = phillipsSpectrum(vertGridPosX, vertGridPosZ, -1);
+	let pi = f32(3.14159);
+	
+	let oceanSizeL = WU.oceanPlanePhysicalSize;	//the size of the tile, what to scale the grid by
+	let deltaK = ((2.0 * pi) / oceanSizeL);
+	let kx = deltaK * (f32(vertGridPosX) - (WU.resolution / 2.0));
+	let ky = deltaK * (f32(vertGridPosZ) - (WU.resolution / 2.0));
+	
+	let PhK = phillipsSpectrum(kx, ky);
+	let PhNegK = phillipsSpectrum(-kx, -ky);
 	
 	//THIS IS FOR DEBUG FOR NOW
-	//	the "* 1e6" portion was done to give better visuals in debug mode, its suggested to do so. However I don't believe it should be done for the waves themselves.
-	textureStore(phillipsSpectrumOutTexture, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4<f32>(PhK,PhNegK,0.0,1.0));
+	//	the "* 1e3" portion was done to give better visuals in debug mode, its suggested to do so. However I don't believe it should be done for the waves themselves.
+	textureStore(phillipsSpectrumOutTexture, vec2u(vertGridPosX, vertGridPosZ), vec4<f32>(PhK,0.0,0.0,1.0));
 	
-	//temporary, this is an alternative to the papers (ξr + iξi)
-	let fPerComplexData = 4u;
+	//normalized gaussian distribution (ξr + iξi) between 0 and 1
+	let fPerComplexData = 2u;
 	let oVertInd = gIndex * fPerComplexData;
 	let gauss = vec2f(complexGaussArray[oVertInd], complexGaussArray[oVertInd + 1u]);
-	let gaussNegK = vec2f(complexGaussArray[oVertInd + 2u], complexGaussArray[oVertInd + 3u]);
+	//let gaussNegK = vec2f(complexGaussArray[oVertInd + 2u], complexGaussArray[oVertInd + 3u]);
+	
+	//DEBUG check for random gauss
+	//textureStore(initialHeightField, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4(length(gauss), length(gaussNegK), 0.0,1.0));
+	
+	var clampedPhK = max(sqrt(PhK), 0.0);
 	
 	let scale = (1.0 / sqrt(2.0));
-	let h0initial =  vec4f(scale * gauss.x * sqrt(PhK), 		//real
-						scale * gauss.y * sqrt(PhK),	//imaginary
-						scale * gaussNegK.x * sqrt(PhNegK),		//neg k, real		
-						scale * gaussNegK.y * sqrt(PhNegK));	//neg k, imaginary
+	let h0k = scale * gauss * clampedPhK;				//max is used incase PhK is 0, which sqrt(0) would be NaN
 	
-	//check for gaussian texture
-	//textureStore(initialHeightField, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4f(length(gauss),length(gaussNegK),0.0,1.0));
+	
+	//let h0Negk = scale * gaussNegK * max(sqrt(PhNegK), 0.0);		//NO, this does not enforce Hermitian Symmetry
+	let h0Negk = vec2f(h0k.x, -h0k.y);
+	
+	//let h0initial =  vec4f(h0k.x, 		//k, mag
+	//					h0k.y,			//k, mag
+	//					h0Negk.x,				
+	//					h0Negk.y);
+	
+	var blue = 0.0;
+	if (sqrt(PhK) > 1.0) {
+		blue = 1.0;
+	}
+	
+	//DEBUG phillips effect on gaussian
+	//let h0initial =  vec4f(gauss.x * PhK, gauss.y * PhK, 0.0, 1.0);
+	
+	let h0initial =  vec4f(gauss.x * PhK, gauss.y * PhK, 0.0, 1.0);
 	
 	return h0initial;
 }
@@ -444,14 +493,17 @@ fn h0(vertGridPosX: f32, vertGridPosZ: f32, gIndex: u32) -> vec4f {
 		
 		//------------------------------FORM GRID-------------------------------
 		let gridWidth = u32(WU.resolution);
-		let vertGridPosX = f32(gIndex) % f32(gridWidth);
-		let vertGridPosZ = f32(gIndex) / f32(gridWidth);
+		let vertGridPosX = gIndex % gridWidth;
+		let vertGridPosZ = gIndex / gridWidth;
 		
 		//-----------------------------------
-		textureStore(initialHeightField, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), h0(vertGridPosX, vertGridPosZ, gIndex));
+		let h0Data = h0(vertGridPosX, vertGridPosZ, gIndex);
 		
-		//DEBUG func just to test
-		//h0(vertGridPosX, vertGridPosZ, gIndex);
+		//DEBUG mag check
+		//textureStore(initialHeightField, vec2u(vertGridPosX, vertGridPosZ), vec4(length(h0Data.xy), length(h0Data.zw), 0.0,1.0));
+		
+		//final
+		textureStore(initialHeightField, vec2u(vertGridPosX, vertGridPosZ), h0Data);
 	}
 `;
 

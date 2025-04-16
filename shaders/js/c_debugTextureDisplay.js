@@ -36,7 +36,22 @@ struct DebugTextureUniforms {
 		var inputCanvasCol = textureLoad(inCanvasTexture, vec2<u32>(threadID.x, threadID.y));
 		
 		//this assumes right now to scale by the full screen size, so at maximum the texture can be the size of our canvas
-		var inputDebugCol = textureLoad(inDebugTexture, vec2<u32>(threadID.x * 2, threadID.y * 2));
+		var scaleMult = 1f;
+		
+		if(texWidth >= width || texHeight >= height) {
+			scaleMult = 4f;
+		}
+		else if (texWidth >= (width / 2u) || texHeight >= (height / 2u)) {
+			scaleMult = 2f;
+		}
+		else if (texWidth >= (width / 4u) || texHeight >= (height / 4u)) {
+			scaleMult = 1f;
+		}
+		else if (texWidth >= (width / 8u) || texHeight >= (height / 8u)) {
+			scaleMult = 0.5f;
+		}
+		
+		var inputDebugCol = textureLoad(inDebugTexture, vec2<u32>(u32(f32(threadID.x) * scaleMult), u32(f32(threadID.y) * scaleMult)));
 	
 		var outCol = inputDebugCol;
 		if(all(outCol == vec4f(0.0,0.0,0.0,0.0))) {

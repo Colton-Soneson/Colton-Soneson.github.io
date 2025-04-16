@@ -342,7 +342,7 @@ fn complexConj(z: vec2f) -> vec2f {
 		
 		let finalWaveHeight = 0.0; //h(x,t) is our final wave height, where x is the (x,z) gridpos
 		
-		textureStore(waveHeightRealization, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4f(hkt.x,0.0,0.0,1.0));
+		textureStore(waveHeightRealization, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4f(hkt.x,hkt.y,0.0,1.0));
 	
 	}
 `;
@@ -376,6 +376,10 @@ export const c_h0k =
 			a.x * b.x - a.y * b.y,
 			a.x * b.y + a.y * b.x
 		);
+	}
+	
+	fn complexConj(z: vec2f) -> vec2f {
+		return vec2f(z.x, -z.y);
 	}
 	
 
@@ -412,7 +416,7 @@ fn phillipsSpectrum(kx: f32, ky: f32) -> f32 {
 	let kHat = vec2f(K.x / kMag, K.y / kMag);		// hat k, unit vector
 	let wHat = normalize(WU.windDirection);			// hat w, wind direction, normalized input just incase
 	let kHwH = dot(kHat, wHat);						// hat k dot hat w 
-	let kHwHX = kHwH * kHwH * kHwH * kHwH; 			//RAISING THIS X TIMES INCREASES WIND INFLUENCE MORE
+	let kHwHX = kHwH * kHwH * kHwH * kHwH * kHwH * kHwH; 			//RAISING THIS X TIMES INCREASES WIND INFLUENCE MORE
 	let kMagLSqr = (kMag * L) * (kMag * L);			
 	let kMag4 = kMag * kMag * kMag * kMag;		
 		
@@ -449,37 +453,28 @@ fn h0(vertGridPosX: u32, vertGridPosZ: u32, gIndex: u32) -> vec4f {
 	textureStore(phillipsSpectrumOutTexture, vec2u(vertGridPosX, vertGridPosZ), vec4<f32>(PhK,0.0,0.0,1.0));
 	
 	//normalized gaussian distribution (ξr + iξi) between 0 and 1
-	let fPerComplexData = 2u;
+	let fPerComplexData = 4u;
 	let oVertInd = gIndex * fPerComplexData;
 	let gauss = vec2f(complexGaussArray[oVertInd], complexGaussArray[oVertInd + 1u]);
-	//let gaussNegK = vec2f(complexGaussArray[oVertInd + 2u], complexGaussArray[oVertInd + 3u]);
 	
 	//DEBUG check for random gauss
 	//textureStore(initialHeightField, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4(length(gauss), length(gaussNegK), 0.0,1.0));
 	
-	var clampedPhK = max(sqrt(PhK), 0.0);
-	
+	//var clampedPhK = max(sqrt(PhK), 0.0);	//CHECK THISS!!!!!!!!!! the clamp might mess up with the conjugate
+	var clampedPhK = sqrt(PhK);	//CHECK THISS!!!!!!!!!! the clamp might mess up with the conjugate
 	let scale = (1.0 / sqrt(2.0));
 	let h0k = scale * gauss * clampedPhK;				//max is used incase PhK is 0, which sqrt(0) would be NaN
 	
+	//calculate the conjugate, to do so, get the noise in reverse
+	let gaussArraySize = u32(4.0 * WU.resolution * WU.resolution);	// 2 (1 real, 1 imag) * 2 (coord num) * res * res
+	let gaussNegK = vec2f(complexGaussArray[gaussArraySize - (oVertInd)], 
+							complexGaussArray[gaussArraySize - (oVertInd + 1u)]);	//remember, its  + 1u because we want the pair to still be accurate
+	//let clampedPhNegK = max(sqrt(PhNegK), 0.0);
+	let clampedPhNegK = sqrt(PhNegK);
+	let h0Negk = scale * gaussNegK * clampedPhNegK;
+	let h0NegkConj = vec2f(h0Negk.x, -h0Negk.y); 									//this enforces Hermitian Symmetry
 	
-	//let h0Negk = scale * gaussNegK * max(sqrt(PhNegK), 0.0);		//NO, this does not enforce Hermitian Symmetry
-	let h0Negk = vec2f(h0k.x, -h0k.y);
-	
-	//let h0initial =  vec4f(h0k.x, 		//k, mag
-	//					h0k.y,			//k, mag
-	//					h0Negk.x,				
-	//					h0Negk.y);
-	
-	var blue = 0.0;
-	if (sqrt(PhK) > 1.0) {
-		blue = 1.0;
-	}
-	
-	//DEBUG phillips effect on gaussian
-	//let h0initial =  vec4f(gauss.x * PhK, gauss.y * PhK, 0.0, 1.0);
-	
-	let h0initial =  vec4f(gauss.x * PhK, gauss.y * PhK, 0.0, 1.0);
+	let h0initial =  vec4f(h0k.x, h0k.y, h0NegkConj.x, h0NegkConj.y);
 	
 	return h0initial;
 }

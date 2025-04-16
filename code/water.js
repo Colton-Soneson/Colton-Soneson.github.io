@@ -81,15 +81,15 @@ function complexGaussianRandom(mean, standardDeviation, arrayLength) {
 	const result = [];
 	for(let i = 0; i < arrayLength; ++i) {
 		//TRUE GAUSSIAN, typically from ~-3 to 3 range
-		const r = gaussianRandom(mean, standardDeviation);
-		const i = gaussianRandom(mean, standardDeviation);
+		const rk = gaussianRandom(mean, standardDeviation);
+		const ik = gaussianRandom(mean, standardDeviation);
 		
 		////Gaussian clamped from 0 to 1, normalized distribution, for Phillips Spectrum dont use
 		//const r = gaussianClampedRandom(mean, standardDeviation);
 		//const i = gaussianClampedRandom(mean, standardDeviation);
 		
-		result.push(r);
-		result.push(i);
+		result.push(rk);
+		result.push(ik);
 	}
 	
 	return result;

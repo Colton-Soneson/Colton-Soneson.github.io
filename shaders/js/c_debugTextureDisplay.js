@@ -58,7 +58,7 @@ struct DebugTextureUniforms {
 			outCol = inputCanvasCol;
 		}
 		
-		//write to output
+		//write to output, dont view the alpha
 		textureStore(outTexture, threadID, outCol);
 	}
 `;

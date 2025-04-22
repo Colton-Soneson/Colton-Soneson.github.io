@@ -2,6 +2,7 @@ import { settings } from '../../code/settings.js';
 
 export const WATER_WORKGROUP_SIZE = [32, 1, 1];
 export const FFT_WORKGROUP_SIZE = [8, 8, 1];
+export const PRECOMP_WORKGROUP_SIZE = [1, 8, 1];
 
 export const c_water = 
 `
@@ -168,6 +169,7 @@ export const c_IFFT_2D =
 	};
 	@group(0) @binding(3) var<uniform> BU: ButterflyUniforms;
 
+	@group(0) @binding(4) var preCompTexture : texture_storage_2d<rgba32float, read>;
 
 	fn complexMul(a: vec2f, b: vec2f) -> vec2f {
 		return vec2f(
@@ -198,65 +200,103 @@ export const c_IFFT_2D =
 	) {
 		
 		var gIndex = GlobalInvocationID;
-		let gridWidth = u32(WU.resolution);
+		
+		// Determine which direction to process (horizontal or vertical)
+		let direction = BU.direction;
+		
+		if (BU.direction == 0.0) {
+			// Horizontal pass (IFFT along rows)
+			
+			let preCompData = textureLoad(preCompTexture, vec2u(u32(BU.stage), gIndex.x));
+			
+			let indexA = vec2u(u32(preCompData.z), gIndex.y);  // Use the horizontal index for rows
+			let indexB = vec2u(u32(preCompData.w), gIndex.y);  // Adjacent horizontal index (next row)
+			
+			// Load data from input texture (real and imaginary parts of h0k)
+			let a = textureLoad(inTexture, indexA).xy;
+			let b = textureLoad(inTexture, indexB).xy;
+
+			// Perform FFT butterfly operation (we could swap this depending on the FFT stage)
+			let term1 = a;
+			let term2 = complexMul(vec2f(preCompData.x, -preCompData.y), b);		//see when twiddle has to be conjugate
+			
+			let result = complexAdd(term1, term2);
+			
+			// Store the result back into the output texture
+			textureStore(outTexture, gIndex.xy, vec4f(result.x, result.y, 0.0, 0.0));
+			
+		} else {
+			// Vertical pass (IFFT along columns)
+			
+			let preCompData = textureLoad(preCompTexture, vec2u(u32(BU.stage), gIndex.y));
+			
+			let indexA = vec2u(gIndex.x, u32(preCompData.z));  // Use the horizontal index for rows
+			let indexB = vec2u(gIndex.x, u32(preCompData.w));  // Adjacent horizontal index (next row)
+			
+			// Load data from input texture (real and imaginary parts of h0k)
+			let a = textureLoad(inTexture, indexA).xy;
+			let b = textureLoad(inTexture, indexB).xy;
+
+			// Perform FFT butterfly operation (we could swap this depending on the FFT stage)
+			let term1 = a;
+			let term2 = complexMul(vec2f(preCompData.x, -preCompData.y), b);		//see when twiddle has to be conjugate
+			
+			let result = complexAdd(term1, term2);
+			
+			// Store the result back into the output texture
+			textureStore(outTexture, gIndex.xy, vec4f(result.x, result.y, 0.0, 0.0));
+		}
+	}
+`;
+
+export const c_PreComp =
+`
+	struct WaterUniforms {
+		@location(0) cameraPosition: vec4f,
+		@location(1) windDirection: vec2f,
+		@location(2) resolution: f32,			//the resolution of the plane is fixed, however, converge closer to camera position
+		@location(3) waveSteepness: f32,	
+		@location(4) step: f32,					//to be used in place of time, but locked to frame rate i suppose
+		@location(5) planeYPos: f32,
+		@location(6) waveLength: f32,
+		@location(7) oceanPlanePhysicalSize: f32,
+		@location(8) windSpeed: f32,
+	};
+	@group(0) @binding(0) var<uniform> WU: WaterUniforms;
+
+	@group(0) @binding(1) var preCompTexture : texture_storage_2d<rgba32float, write>;
+	
+	struct ButterflyUniforms {
+		@location(0) direction: f32,
+		@location(1) stage: f32,	
+	};
+	@group(0) @binding(2) var<uniform> BU: ButterflyUniforms;
+
+	
+	fn complexExp(a: vec2f) -> vec2f {
+		return vec2f(cos(a.y), sin(a.y)) * exp(a.x);
+	}
+
+	@compute @workgroup_size(${FFT_WORKGROUP_SIZE[0]}, ${FFT_WORKGROUP_SIZE[1]}, ${FFT_WORKGROUP_SIZE[2]})	
+    fn computeMain(
+		@builtin(global_invocation_id) GlobalInvocationID: vec3<u32>
+	) {
+		
+		var gIndex = GlobalInvocationID;
 		
 		// Determine which direction to process (horizontal or vertical)
 		let direction = BU.direction;
 		
 		//Params
-		let blockSize = u32(WU.resolution) >> (u32(BU.stage) + 1u);						//butterfly span (a power of 2 division): total FFT size >> (FFT Stage Index + 1u)
+		let blockSize = u32(WU.resolution) >> (gIndex.x + 1u);						//butterfly span (a power of 2 division): total FFT size >> (FFT Stage Index + 1u)
 		let baseMultiplier = 2.0 * 3.14159 * vec2f(0.0, -1.0) / WU.resolution;	//constant used in the twiddle formula: (2 * pi * -i) / resolution
-		
-		//IMPORTANT: the input to the compute shader dispatch needs to be formatted:
-		//					pass.dispatchWorkgroups(WU.resolution / 2, WU.resolution)
-		//				Depending on horizontal or vertical direction, the halving isnt done here
-		var halfSizeIndex = 0u;
-		if(BU.direction == 0.0) {
-			halfSizeIndex = gIndex.x;
-		}
-		else {
-			halfSizeIndex = gIndex.y;
-		}
+		var halfSizeIndex = gIndex.y;
 		let inputIndex = (2 * blockSize * (halfSizeIndex / blockSize) + (halfSizeIndex % blockSize)) % u32(WU.resolution);	//even-indexed input for butterfly pair at this stage, odd pair would be i + blockSize
-		let twiddle = complexExp(baseMultiplier * vec2f(f32((halfSizeIndex / blockSize) * blockSize)));	//W^k,,N = e^−2πik/N
+		let k = f32((halfSizeIndex / blockSize) * blockSize);
+		let twiddle = complexExp(baseMultiplier * vec2f(k));	//W^k,,N = e^−2πik/N
 		
-		if (BU.direction == 0.0) {
-			// Horizontal pass (IFFT along rows)
-			
-			let indexA = vec2u(inputIndex, gIndex.y);  // Use the horizontal index for rows
-			let indexB = vec2u(inputIndex + blockSize, gIndex.y);  // Adjacent horizontal index (next row)
-			
-			// Load data from input texture (real and imaginary parts of h0k)
-			let a = textureLoad(inTexture, indexA).xy;
-			let b = textureLoad(inTexture, indexB).xy;
-
-			// Perform FFT butterfly operation (we could swap this depending on the FFT stage)
-			let term1 = a;
-			let term2 = complexMul(vec2f(twiddle.x, twiddle.y), b);		//see when twiddle has to be conjugate
-			
-			let result = complexAdd(term1, term2);
-			
-			// Store the result back into the output texture
-			textureStore(outTexture, gIndex.xy, vec4f(result.x, -result.y, 0.0, 1.0));
-			
-		} else {
-			// Vertical pass (IFFT along columns)
-			let indexA = vec2u(gIndex.x, inputIndex);  // Use the horizontal index for rows
-			let indexB = vec2u(gIndex.x, inputIndex + blockSize);  // Adjacent horizontal index (next row)
-			
-			// Load data from input texture (real and imaginary parts of h0k)
-			let a = textureLoad(inTexture, indexA).xy;
-			let b = textureLoad(inTexture, indexB).xy;
-
-			// Perform FFT butterfly operation (we could swap this depending on the FFT stage)
-			let term1 = a;
-			let term2 = complexMul(vec2f(twiddle.x, twiddle.y), b);		//see when twiddle has to be conjugate
-			
-			let result = complexAdd(term1, term2);
-			
-			// Store the result back into the output texture
-			textureStore(outTexture, gIndex.xy, vec4f(result.x, -result.y, 0.0, 1.0));
-		}
+		textureStore(preCompTexture, gIndex.xy, vec4f(twiddle.x, twiddle.y, f32(halfSizeIndex), f32(halfSizeIndex + blockSize)));
+		textureStore(preCompTexture, vec2u(gIndex.x, gIndex.y + u32(WU.resolution) / 2), vec4f(-twiddle.x, -twiddle.y, f32(halfSizeIndex), f32(halfSizeIndex + blockSize)));
 	}
 `;
 

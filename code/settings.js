@@ -50,6 +50,7 @@ export const settings = {
 	displayOceanSpectrum: false,
 	displayWaterInitialHeight: false,
 	displayWaveHeightRealization: false,
+	displayWaterPreComp: false,
 	displayWaterFFT: false,
 	debugViewMode: 0
 };

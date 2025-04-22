@@ -764,7 +764,17 @@ export function waterPass(aEncoder, mainpassDepthTexture) {
 			computeFFTPass.setPipeline(waterButterflyComputePipeline);
 			computeFFTPass.setBindGroup(0.0, bindButterflyCGroup);
 			
-			computeFFTPass.dispatchWorkgroups(Math.ceil( (settings.waterTileResolution * settings.waterTileResolution) / WATER_WORKGROUP_SIZE[0]));			//you want to do it per vertex, not per cell
+			computeFFTPass.dispatchWorkgroups(Math.ceil(settings.waterTileResolution / FFT_WORKGROUP_SIZE[0]), 
+													Math.ceil(settings.waterTileResolution / FFT_WORKGROUP_SIZE[1]));
+			//if(dir == 0) {
+			//	//half the index for the horizontal pass
+			//	computeFFTPass.dispatchWorkgroups(Math.ceil((settings.waterTileResolution / 2) / FFT_WORKGROUP_SIZE[0]), 
+			//											Math.ceil(settings.waterTileResolution / FFT_WORKGROUP_SIZE[1]));
+			//} else {
+			//	//half the index for the vertical pass
+			//	computeFFTPass.dispatchWorkgroups(Math.ceil(settings.waterTileResolution / FFT_WORKGROUP_SIZE[0]), 
+			//											Math.ceil((settings.waterTileResolution / 2) / FFT_WORKGROUP_SIZE[1]));
+			//}
 			computeFFTPass.end();
 			
 			let transition = pingPongA;

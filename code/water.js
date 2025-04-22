@@ -12,6 +12,7 @@ import { c_h0k } from '../shaders/js/vfc_water.js'
 import { c_hkt } from '../shaders/js/vfc_water.js'
 import { c_IFFT_2D } from '../shaders/js/vfc_water.js'
 import { c_PreComp } from '../shaders/js/vfc_water.js'
+import { c_Shift } from '../shaders/js/vfc_water.js'
 import { v_water } from '../shaders/js/vfc_water.js'
 import { f_water } from '../shaders/js/vfc_water.js'
 import { WATER_WORKGROUP_SIZE } from '../shaders/js/vfc_water.js'
@@ -38,6 +39,11 @@ const waterSpectrumComputeShaderModule = device.createShaderModule({
 const waterButterflyPassComputeShaderModule = device.createShaderModule({
   label: "c_IFFT_2D",
   code: c_IFFT_2D	
+});
+
+const waterShiftPassComputeShaderModule = device.createShaderModule({
+  label: "c_Shift",
+  code: c_Shift	
 });
 
 const waterButterflyPassPreCompComputeShaderModule = device.createShaderModule({
@@ -175,20 +181,26 @@ waterUpdateStorageIndexBuffer(); // run the function
 //Phillips Spectrum
 export const phillipsSpectrumTexture = device.createTexture({
   size: [settings.waterTileResolution, settings.waterTileResolution],
-  format: 'rgba8unorm',
+  format: 'rgba32float',
   usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
 });
 
 //inital Water Height map h0(k) and h0(-k)
 export const initialWaterHeightMap = device.createTexture({
   size: [settings.waterTileResolution, settings.waterTileResolution],
-  format: 'rgba8unorm',
+  format: 'rgba32float',
+  usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
+});
+
+export const hkt = device.createTexture({
+  size: [settings.waterTileResolution, settings.waterTileResolution],
+  format: 'rgba32float',
   usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
 });
 
 export const waveHeightRealization = device.createTexture({
   size: [settings.waterTileResolution, settings.waterTileResolution],
-  format: 'rgba8unorm',
+  format: 'rgba32float',
   usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
 });
 
@@ -201,14 +213,13 @@ export const preCompTexture = device.createTexture({
 //wont be available for debug view as its an inbetween
 export const pingPongIFFTTexture = device.createTexture({
   size: [settings.waterTileResolution, settings.waterTileResolution],
-  format: 'rgba8unorm',
+  format: 'rgba32float',
   usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
 });
 
-
 export const finalWaveHeightTexture = device.createTexture({
   size: [settings.waterTileResolution, settings.waterTileResolution],
-  format: 'rgba8unorm',
+  format: 'rgba32float',
   usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
 });
 
@@ -364,7 +375,7 @@ const bindGroupCLayout = device.createBindGroupLayout({
     binding: 4,								//inTexture for initial wave height map
     visibility:  GPUShaderStage.COMPUTE,
     storageTexture: {
-        format: canvasFormat,   // Format must match the swap chain texture
+        format: "rgba32float",   // Format must match the swap chain texture
 		access: "read-only",
 		dimension: "2d",
 		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
@@ -385,7 +396,7 @@ const bindGroupSpectrumCLayout = device.createBindGroupLayout({
     binding: 1,								//outTexture for PS
     visibility:  GPUShaderStage.COMPUTE,
     storageTexture: {
-        format: canvasFormat,   // Format must match the swap chain texture
+        format: "rgba32float",   // Format must match the swap chain texture
 		access: "write-only",
 		dimension: "2d",
 		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
@@ -395,7 +406,7 @@ const bindGroupSpectrumCLayout = device.createBindGroupLayout({
     binding: 2,								//outTexture for PS
     visibility:  GPUShaderStage.COMPUTE,
     storageTexture: {
-        format: canvasFormat,   // Format must match the swap chain texture
+        format: "rgba32float",   // Format must match the swap chain texture
 		access: "write-only",
 		dimension: "2d",
 		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
@@ -424,7 +435,7 @@ const bindGroupRealizationCLayout = device.createBindGroupLayout({
     binding: 1,								//inTexture for initial Height
     visibility:  GPUShaderStage.COMPUTE,
     storageTexture: {
-        format: canvasFormat,   // Format must match the swap chain texture
+        format: "rgba32float",   // Format must match the swap chain texture
 		access: "read-only",
 		dimension: "2d",
 		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
@@ -434,7 +445,7 @@ const bindGroupRealizationCLayout = device.createBindGroupLayout({
     binding: 2,								//outTexture for waveHeightRealization
     visibility:  GPUShaderStage.COMPUTE,
     storageTexture: {
-        format: canvasFormat,   // Format must match the swap chain texture
+        format: "rgba32float",   // Format must match the swap chain texture
 		access: "write-only",
 		dimension: "2d",
 		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
@@ -481,7 +492,7 @@ const bindGroupButterflyCLayout = device.createBindGroupLayout({
     binding: 1,								//inTexture for waveHeightRealization
     visibility:  GPUShaderStage.COMPUTE,
     storageTexture: {
-        format: canvasFormat,   // Format must match the swap chain texture
+        format: "rgba32float",   // Format must match the swap chain texture
 		access: "read-only",
 		dimension: "2d",
 		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
@@ -491,7 +502,7 @@ const bindGroupButterflyCLayout = device.createBindGroupLayout({
     binding: 2,								//outTexture for pingpong
     visibility:  GPUShaderStage.COMPUTE,
     storageTexture: {
-        format: canvasFormat,   // Format must match the swap chain texture
+        format: "rgba32float",   // Format must match the swap chain texture
 		access: "write-only",
 		dimension: "2d",
 		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
@@ -508,6 +519,37 @@ const bindGroupButterflyCLayout = device.createBindGroupLayout({
     storageTexture: {
         format: "rgba32float",   // Format must match the swap chain texture
 		access: "read-only",
+		dimension: "2d",
+		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
+    }
+  }
+  ]
+});
+
+const bindGroupShiftCLayout = device.createBindGroupLayout({
+  label: "water Bind Group Shift C Layout",
+  entries: [
+  {
+    binding: 0,
+    visibility: GPUShaderStage.COMPUTE,	//settings
+    buffer: {} 
+  },
+  {
+    binding: 1,								//inTexture for waveHeightRealization
+    visibility:  GPUShaderStage.COMPUTE,
+    storageTexture: {
+        format: "rgba32float",   // Format must match the swap chain texture
+		access: "read-only",
+		dimension: "2d",
+		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
+    }
+  },
+  {
+    binding: 2,								//outTexture for pingpong
+    visibility:  GPUShaderStage.COMPUTE,
+    storageTexture: {
+        format: "rgba32float",   // Format must match the swap chain texture
+		access: "write-only",
 		dimension: "2d",
 		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
     }
@@ -669,6 +711,30 @@ function createCompBindGroupButterflyWater(inTexture, outTexture) {
 	return result;
 }
 
+function createCompBindGroupShiftWater(inTexture, outTexture) {
+	
+	const result = 
+		device.createBindGroup({
+			label: "water Comp Shift bind group",
+			layout: bindGroupShiftCLayout,
+			entries: [
+			{
+				binding: 0,
+				resource: { buffer: uniformBufferComputewater }
+			},
+			{
+				binding: 1,
+				resource: inTexture.createView()
+			},
+			{
+				binding: 2,
+				resource: outTexture.createView()
+			}
+			]
+		});
+	return result;
+}
+
 const waterVFPipelineLayout = device.createPipelineLayout({
   label: "water VF Pipeline Layout",
   bindGroupLayouts: [ bindGroupVFLayout ],
@@ -698,6 +764,12 @@ const waterButterflyCompPipelineLayout = device.createPipelineLayout({
   label: "water 2D IFFT Pipeline Layout",
   bindGroupLayouts: [ bindGroupButterflyCLayout ],
 });
+
+const waterShiftCompPipelineLayout = device.createPipelineLayout({
+  label: "water Shift Pipeline Layout",
+  bindGroupLayouts: [ bindGroupShiftCLayout ],
+});
+
 
 // Pipelines
 //-------------------------------------------------
@@ -792,6 +864,15 @@ const waterButterflyComputePipeline = device.createComputePipeline({
 	},
 });
 
+const waterShiftComputePipeline = device.createComputePipeline({
+  label: "water Shift C pipeline",
+  layout: waterShiftCompPipelineLayout,	//allows for use of same bind groups as the renderpipeline
+	compute: {
+		module: waterShiftPassComputeShaderModule,
+		entryPoint: "computeMain",
+	},
+});
+
 
 
 function redirectWindDirectionTemp() {
@@ -837,6 +918,14 @@ export function waterPass(aEncoder, mainpassDepthTexture) {
 	computeHKTPass.dispatchWorkgroups(Math.ceil( (settings.waterTileResolution * settings.waterTileResolution) / WATER_WORKGROUP_SIZE[0]));			//you want to do it per vertex, not per cell
 	computeHKTPass.end();
 	
+	//copy just to debug view it
+	aEncoder.copyTextureToTexture(
+		{texture: waveHeightRealization},
+		{texture: hkt},	
+		{width: settings.waterTileResolution, height: settings.waterTileResolution}
+	)
+	
+	
 	//-----------------------------FFT-------------------------------
 	//FFT start, the buttefly group starts with waveHeightRealization ONLY ONCE
 	const stages = Math.log2(settings.waterTileResolution);
@@ -847,14 +936,12 @@ export function waterPass(aEncoder, mainpassDepthTexture) {
 	computePreCompPass.setPipeline(waterButterflyPreCompComputePipeline);
 	computePreCompPass.setBindGroup(0, bindButterflyPreCompCGroup);
 	computePreCompPass.dispatchWorkgroups(Math.ceil(stages / PRECOMP_WORKGROUP_SIZE[0]),
-											Math.ceil((settings.waterTileResolution / 2) / PRECOMP_WORKGROUP_SIZE[1]));
+											Math.ceil((settings.waterTileResolution) / PRECOMP_WORKGROUP_SIZE[1]));
 	computePreCompPass.end();
 	
 	// ping pong a texture between the shader thats capable of both horizontal or vertical passes
 	let pingPongA = waveHeightRealization;
 	let pingPongB = pingPongIFFTTexture;
-	
-
 	
 	for(let dir = 0; dir <= 1; dir++) {
 		for(let stage = 0; stage < stages; stage++) {
@@ -868,15 +955,7 @@ export function waterPass(aEncoder, mainpassDepthTexture) {
 			
 			computeFFTPass.dispatchWorkgroups(Math.ceil(settings.waterTileResolution / FFT_WORKGROUP_SIZE[0]), 
 													Math.ceil(settings.waterTileResolution / FFT_WORKGROUP_SIZE[1]));
-			//if(dir == 0) {
-			//	//half the index for the horizontal pass
-			//	computeFFTPass.dispatchWorkgroups(Math.ceil((settings.waterTileResolution / 2) / FFT_WORKGROUP_SIZE[0]), 
-			//											Math.ceil(settings.waterTileResolution / FFT_WORKGROUP_SIZE[1]));
-			//} else {
-			//	//half the index for the vertical pass
-			//	computeFFTPass.dispatchWorkgroups(Math.ceil(settings.waterTileResolution / FFT_WORKGROUP_SIZE[0]), 
-			//											Math.ceil((settings.waterTileResolution / 2) / FFT_WORKGROUP_SIZE[1]));
-			//}
+	
 			computeFFTPass.end();
 			
 			let transition = pingPongA;
@@ -885,11 +964,14 @@ export function waterPass(aEncoder, mainpassDepthTexture) {
 		}
 	}
 	
-	aEncoder.copyTextureToTexture(
-		{texture: pingPongIFFTTexture},
-		{texture: finalWaveHeightTexture},	
-		{width: settings.waterTileResolution, height: settings.waterTileResolution}
-	)
+	//Shift and Copy
+	let bindShiftCGroup = createCompBindGroupShiftWater(pingPongIFFTTexture, finalWaveHeightTexture);
+	const computeShiftPass = aEncoder.beginComputePass();
+	computeShiftPass.setPipeline(waterShiftComputePipeline);
+	computeShiftPass.setBindGroup(0, bindShiftCGroup);
+	computeShiftPass.dispatchWorkgroups(Math.ceil(settings.waterTileResolution / FFT_WORKGROUP_SIZE[0]), 
+													Math.ceil(settings.waterTileResolution / FFT_WORKGROUP_SIZE[1]));
+	computeShiftPass.end();
 	
 	//---------------------------MESH ASSEMBLY-------------------------
 	//grid mesh compute pass

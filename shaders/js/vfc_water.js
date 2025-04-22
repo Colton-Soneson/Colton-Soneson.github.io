@@ -37,7 +37,7 @@ export const c_water =
 	@group(0) @binding(2) var<storage, read_write> waterVertexData: array<f32>;
 	@group(0) @binding(3) var<storage, read_write> waterIndexData: array<u32>;
 	
-	@group(0) @binding(4) var finalWaveHeightTexture : texture_storage_2d<rgba8unorm, read>;
+	@group(0) @binding(4) var finalWaveHeightTexture : texture_storage_2d<rgba32float, read>;
 
 fn gerstnerWave(position: vec3f, waveLength: f32, waveSteepness: f32, windDirection: vec2f, step: f32) -> vec3f {
 		let k = (2 * 3.14) / waveLength;     		// Wave number
@@ -107,8 +107,13 @@ fn gerstner(vertGridPosX: f32, vertGridPosZ: f32) -> vec3f {
 		//var position = gerstner(vertGridPosX, vertGridPosZ);
 		
 		//------------------[REALISTIC] FFT Oceanographic Waves-----------------
+		
+		//just for now, only x as height
+		var waveHeight = textureLoad(finalWaveHeightTexture, vec2u(u32(vertGridPosX), u32(vertGridPosZ))).x;
+		var waveHeightAdj = waveHeight * 0.0001;
+		
 		var position = vec3f(vertGridPosX,
-							 textureLoad(finalWaveHeightTexture, vec2u(u32(vertGridPosX), u32(vertGridPosZ))).x,
+							 waveHeightAdj,
 							 vertGridPosZ);
 	
 		
@@ -145,6 +150,40 @@ fn gerstner(vertGridPosX: f32, vertGridPosZ: f32) -> vec3f {
 	}
 `;
 
+export const c_Shift =
+`
+	struct WaterUniforms {
+		@location(0) cameraPosition: vec4f,
+		@location(1) windDirection: vec2f,
+		@location(2) resolution: f32,			//the resolution of the plane is fixed, however, converge closer to camera position
+		@location(3) waveSteepness: f32,	
+		@location(4) step: f32,					//to be used in place of time, but locked to frame rate i suppose
+		@location(5) planeYPos: f32,
+		@location(6) waveLength: f32,
+		@location(7) oceanPlanePhysicalSize: f32,
+		@location(8) windSpeed: f32,
+	};
+	@group(0) @binding(0) var<uniform> WU: WaterUniforms;
+
+	@group(0) @binding(1) var inTexture : texture_storage_2d<rgba32float, read>;
+	@group(0) @binding(2) var outTexture : texture_storage_2d<rgba32float, write>;
+	
+
+	@compute @workgroup_size(${FFT_WORKGROUP_SIZE[0]}, ${FFT_WORKGROUP_SIZE[1]}, ${FFT_WORKGROUP_SIZE[2]})	
+    fn computeMain(
+		@builtin(global_invocation_id) GlobalInvocationID: vec3<u32>
+	) {
+		var gIndex = GlobalInvocationID;
+		let val = textureLoad(inTexture, gIndex.xy);
+		
+		//let halfSize = u32(WU.resolution) / 2u;
+		//let shiftedCoords = (gIndex.xy + vec2u(halfSize, halfSize)) % vec2u(u32(WU.resolution), u32(WU.resolution));
+		let shiftedCoords = val * (1.0 - 2.0 * f32((gIndex.x + gIndex.y) % 2));
+		
+		textureStore(outTexture, gIndex.xy, shiftedCoords);
+	}
+`;
+
 export const c_IFFT_2D =
 `
 	struct WaterUniforms {
@@ -160,8 +199,8 @@ export const c_IFFT_2D =
 	};
 	@group(0) @binding(0) var<uniform> WU: WaterUniforms;
 	
-	@group(0) @binding(1) var inTexture : texture_storage_2d<rgba8unorm, read>;		//first waveHeightRealization, switch direction, then its pingPongIFFTTexture
-	@group(0) @binding(2) var outTexture : texture_storage_2d<rgba8unorm, write>;	//first pingPongIFFTTexture, switch direction, then its final output
+	@group(0) @binding(1) var inTexture : texture_storage_2d<rgba32float, read>;		//first waveHeightRealization, switch direction, then its pingPongIFFTTexture
+	@group(0) @binding(2) var outTexture : texture_storage_2d<rgba32float, write>;	//first pingPongIFFTTexture, switch direction, then its final output
 	
 	struct ButterflyUniforms {
 		@location(0) direction: f32,
@@ -277,15 +316,12 @@ export const c_PreComp =
 		return vec2f(cos(a.y), sin(a.y)) * exp(a.x);
 	}
 
-	@compute @workgroup_size(${FFT_WORKGROUP_SIZE[0]}, ${FFT_WORKGROUP_SIZE[1]}, ${FFT_WORKGROUP_SIZE[2]})	
+	@compute @workgroup_size(${PRECOMP_WORKGROUP_SIZE[0]}, ${PRECOMP_WORKGROUP_SIZE[1]}, ${PRECOMP_WORKGROUP_SIZE[2]})	
     fn computeMain(
 		@builtin(global_invocation_id) GlobalInvocationID: vec3<u32>
 	) {
 		
 		var gIndex = GlobalInvocationID;
-		
-		// Determine which direction to process (horizontal or vertical)
-		let direction = BU.direction;
 		
 		//Params
 		let blockSize = u32(WU.resolution) >> (gIndex.x + 1u);						//butterfly span (a power of 2 division): total FFT size >> (FFT Stage Index + 1u)
@@ -296,7 +332,7 @@ export const c_PreComp =
 		let twiddle = complexExp(baseMultiplier * vec2f(k));	//W^k,,N = e^−2πik/N
 		
 		textureStore(preCompTexture, gIndex.xy, vec4f(twiddle.x, twiddle.y, f32(halfSizeIndex), f32(halfSizeIndex + blockSize)));
-		textureStore(preCompTexture, vec2u(gIndex.x, gIndex.y + u32(WU.resolution) / 2), vec4f(-twiddle.x, -twiddle.y, f32(halfSizeIndex), f32(halfSizeIndex + blockSize)));
+		//textureStore(preCompTexture, vec2u(gIndex.x, gIndex.y + u32(WU.resolution) / 2), vec4f(-twiddle.x, -twiddle.y, f32(halfSizeIndex), f32(halfSizeIndex + blockSize)));
 	}
 `;
 
@@ -315,8 +351,8 @@ export const c_hkt =
 	};
 	@group(0) @binding(0) var<uniform> WU: WaterUniforms;
 	
-	@group(0) @binding(1) var initialHeightField : texture_storage_2d<rgba8unorm, read>;
-	@group(0) @binding(2) var waveHeightRealization : texture_storage_2d<rgba8unorm, write>;
+	@group(0) @binding(1) var initialHeightField : texture_storage_2d<rgba32float, read>;
+	@group(0) @binding(2) var waveHeightRealization : texture_storage_2d<rgba32float, write>;
 
 fn complexMul(a: vec2f, b: vec2f) -> vec2f {
     return vec2f(
@@ -395,9 +431,8 @@ fn complexConj(z: vec2f) -> vec2f {
 		//	FFT expects natural order (DC at top left), not centered frequency space
 		let checker = 1.0 - 2.0 * f32((vertGridPosX + vertGridPosZ) % 2);
 		//let checker = f32(((vertGridPosX + vertGridPosZ) % 2u) * 2u - 1u);
-		let hktShifted = hkt * checker;
+		let hktShifted = hkt; //* checker;
 		
-		//textureStore(waveHeightRealization, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4f(hkt.x,hkt.y,0.0,1.0));
 		textureStore(waveHeightRealization, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4f(hktShifted.x,hktShifted.y,0.0,1.0));
 	
 	}
@@ -418,8 +453,8 @@ export const c_h0k =
 	};
 	@group(0) @binding(0) var<uniform> WU: WaterUniforms;
 	
-	@group(0) @binding(1) var phillipsSpectrumOutTexture : texture_storage_2d<rgba8unorm, write>;
-	@group(0) @binding(2) var initialHeightField : texture_storage_2d<rgba8unorm, write>;
+	@group(0) @binding(1) var phillipsSpectrumOutTexture : texture_storage_2d<rgba32float, write>;
+	@group(0) @binding(2) var initialHeightField : texture_storage_2d<rgba32float, write>;
 	
 	@group(0) @binding(3) var<storage, read_write> complexGaussArray: array<f32>;
 
@@ -450,10 +485,10 @@ fn phillipsSpectrum(kx: f32, ky: f32) -> f32 {
 	
 	let K = vec2f(kx, ky);		//GRID OF WAVE VECTORS
 	
-	if(length(K) < 0.001) {	//avoid blowout
+	if(length(K) < 0.00001) {	//avoid blowout
 		return 0.0;
 	}
-	
+
 	//check for kx, kz, w
 	//let w2 = g * length(k);
 	//let w = sqrt(w2);
@@ -463,9 +498,9 @@ fn phillipsSpectrum(kx: f32, ky: f32) -> f32 {
 	//phillips spectrum
 	// These slides also help: https://www.cs.ubc.ca/~rbridson/courses/533d-winter-2005/cs533d-slides-mar9.pdf
 	
-	let V = 31.0; 			//wind speed, i made this up
+	let V = WU.windSpeed; 			//wind speed, i made this up
 	let L = (V * V) / g;	//largest possible waves from a continuous wind
-	let Lmin = 0.1;			//minimum wavelength in meters
+	let Lmin = 0.01;			//minimum wavelength in meters
 	let A = 1.0;			//"a numeric constant" ???
 	
 	let kMag = length(K);			// italic k, magnitude
@@ -516,8 +551,10 @@ fn h0(vertGridPosX: u32, vertGridPosZ: u32, gIndex: u32) -> vec4f {
 	//DEBUG check for random gauss
 	//textureStore(initialHeightField, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4(length(gauss), length(gaussNegK), 0.0,1.0));
 	
-	//var clampedPhK = max(sqrt(PhK), 0.0);	//CHECK THISS!!!!!!!!!! the clamp might mess up with the conjugate
-	var clampedPhK = sqrt(PhK);	//CHECK THISS!!!!!!!!!! the clamp might mess up with the conjugate
+	let minClampVal = 0.01;	//if PhK returns 0, or is wayyy too low, find this (reduces the 0 line split effect)
+	
+	var clampedPhK = max(sqrt(PhK), minClampVal);	//CHECK THISS!!!!!!!!!! the clamp might mess up with the conjugate
+	//var clampedPhK = sqrt(PhK);	//CHECK THISS!!!!!!!!!! the clamp might mess up with the conjugate
 	let scale = (1.0 / sqrt(2.0));
 	let h0k = scale * gauss * clampedPhK;				//max is used incase PhK is 0, which sqrt(0) would be NaN
 	
@@ -525,10 +562,12 @@ fn h0(vertGridPosX: u32, vertGridPosZ: u32, gIndex: u32) -> vec4f {
 	let gaussArraySize = u32(4.0 * WU.resolution * WU.resolution);	// 2 (1 real, 1 imag) * 2 (coord num) * res * res
 	let gaussNegK = vec2f(complexGaussArray[gaussArraySize - (oVertInd)], 
 							complexGaussArray[gaussArraySize - (oVertInd + 1u)]);	//remember, its  + 1u because we want the pair to still be accurate
-	//let clampedPhNegK = max(sqrt(PhNegK), 0.0);
-	let clampedPhNegK = sqrt(PhNegK);
+	
+	
+	let clampedPhNegK = max(sqrt(PhNegK), minClampVal);
+	//let clampedPhNegK = sqrt(PhNegK);
 	let h0Negk = scale * gaussNegK * clampedPhNegK;
-	let h0NegkConj = vec2f(h0Negk.x, -h0Negk.y); 									//this enforces Hermitian Symmetry
+	var h0NegkConj = vec2f(h0Negk.x, -h0Negk.y); 									//this enforces Hermitian Symmetry
 	
 	let h0initial =  vec4f(h0k.x, h0k.y, h0NegkConj.x, h0NegkConj.y);
 	

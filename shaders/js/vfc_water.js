@@ -176,11 +176,19 @@ export const c_Shift =
 		var gIndex = GlobalInvocationID;
 		let val = textureLoad(inTexture, gIndex.xy);
 		
-		//let halfSize = u32(WU.resolution) / 2u;
-		//let shiftedCoords = (gIndex.xy + vec2u(halfSize, halfSize)) % vec2u(u32(WU.resolution), u32(WU.resolution));
-		let shiftedCoords = val * (1.0 - 2.0 * f32((gIndex.x + gIndex.y) % 2));
+		//let perms = vec2f(1.0,-1.0);
+		//let index = (gIndex.x + gIndex.y) % 2u;
+		//let perm = perms[index];
+		//let N2 = WU.resolution * WU.resolution;
+		//textureStore(outTexture, gIndex.xy, vec4f(perm * (val / N2).x, 0.0, 0.0, 1.0));
 		
-		textureStore(outTexture, gIndex.xy, shiftedCoords);
+		
+		let halfSize = u32(WU.resolution) / 2u;
+		let shiftedCoords = (gIndex.xy + vec2u(halfSize, halfSize)) % vec2u(u32(WU.resolution), u32(WU.resolution));
+		//let shiftedCoords = val * (1.0 - 2.0 * f32((gIndex.x + gIndex.y) % 2));
+		
+		//textureStore(outTexture, gIndex.xy, shiftedCoords);
+		textureStore(outTexture, shiftedCoords, val);
 	}
 `;
 
@@ -255,11 +263,11 @@ export const c_IFFT_2D =
 			let a = textureLoad(inTexture, indexA).xy;
 			let b = textureLoad(inTexture, indexB).xy;
 
-			// Perform FFT butterfly operation (we could swap this depending on the FFT stage)
-			let term1 = a;
-			let term2 = complexMul(vec2f(preCompData.x, -preCompData.y), b);		//see when twiddle has to be conjugate
-			
-			let result = complexAdd(term1, term2);
+			// Perform FFT butterfly operation (we could swap this depending on the FFT stage)		
+			let p = vec2f(a.x, a.y);
+			let q = vec2f(b.x, b.y);
+			let w = vec2f(preCompData.x, preCompData.y);
+			let result = complexAdd(p, complexMul(w,q));
 			
 			// Store the result back into the output texture
 			textureStore(outTexture, gIndex.xy, vec4f(result.x, result.y, 0.0, 0.0));
@@ -277,10 +285,11 @@ export const c_IFFT_2D =
 			let b = textureLoad(inTexture, indexB).xy;
 
 			// Perform FFT butterfly operation (we could swap this depending on the FFT stage)
-			let term1 = a;
-			let term2 = complexMul(vec2f(preCompData.x, -preCompData.y), b);		//see when twiddle has to be conjugate
+			let p = vec2f(a.x, a.y);
+			let q = vec2f(b.x, b.y);
+			let w = vec2f(preCompData.x, preCompData.y);
+			let result = complexAdd(p, complexMul(w,q));
 			
-			let result = complexAdd(term1, term2);
 			
 			// Store the result back into the output texture
 			textureStore(outTexture, gIndex.xy, vec4f(result.x, result.y, 0.0, 0.0));
@@ -315,6 +324,18 @@ export const c_PreComp =
 	fn complexExp(a: vec2f) -> vec2f {
 		return vec2f(cos(a.y), sin(a.y)) * exp(a.x);
 	}
+	
+	fn bitReverse(n: u32, bits: u32) -> u32 {
+		var reversed: u32 = 0u;
+		var i: u32 = 0u;
+		var r = n;
+		while (i < bits) {
+			reversed = (reversed << 1u) | (r & 1u);  // Shift reversed and OR with the lowest bit of n
+			r = r >> 1u;  // Shift n to the right
+			i = i + 1u;
+		}
+		return reversed;
+	}
 
 	@compute @workgroup_size(${PRECOMP_WORKGROUP_SIZE[0]}, ${PRECOMP_WORKGROUP_SIZE[1]}, ${PRECOMP_WORKGROUP_SIZE[2]})	
     fn computeMain(
@@ -322,17 +343,24 @@ export const c_PreComp =
 	) {
 		
 		var gIndex = GlobalInvocationID;	//x is by num stages, y is by full resolution
+		var yIndex = 0u;
+		//if(gIndex.x == 0) {
+		//	yIndex = bitReverse(gIndex.y, 32u);
+		//} else {
+		//	yIndex = gIndex.y;
+		//}
+		
+		yIndex = gIndex.y;
 		
 		//based on "Realtime GPGPU FFT  Ocean Water Simulation" by Fynn-Jorin Flügge
-		
 		let span = 1u << gIndex.x;
-		let twiddleK = (gIndex.y % span);
+		let twiddleK = (yIndex % span);
 		let theta = 2.0 * 3.14159 * f32(twiddleK) / f32(span * 2u);
 		let twiddle = vec2f(cos(theta), -sin(theta));
 		
 		let stageSize = span * 2u;
-		let group = gIndex.y / stageSize;
-		let offset = gIndex.y % span;
+		let group = yIndex / stageSize;
+		let offset = yIndex % span;
 		
 		let a = group * stageSize + offset;
 		let b = a + span;
@@ -491,8 +519,9 @@ fn phillipsSpectrum(kx: f32, ky: f32) -> f32 {
 	
 	let K = vec2f(kx, ky);		//GRID OF WAVE VECTORS
 	
-	if(length(K) < 0.00001) {	//avoid blowout
-		return 0.0;
+	var kMag = length(K);			// italic k, magnitude
+	if(kMag < 0.00001) {		//avoid blowout
+		kMag = 0.00001;
 	}
 
 	//check for kx, kz, w
@@ -509,7 +538,6 @@ fn phillipsSpectrum(kx: f32, ky: f32) -> f32 {
 	let Lmin = 0.01;			//minimum wavelength in meters
 	let A = 4.0;			//"a numeric constant" ???
 	
-	let kMag = length(K);			// italic k, magnitude
 	let kHat = vec2f(K.x / kMag, K.y / kMag);		// hat k, unit vector
 	let wHat = normalize(WU.windDirection);			// hat w, wind direction, normalized input just incase
 	let kHwH = dot(kHat, wHat);						// hat k dot hat w 

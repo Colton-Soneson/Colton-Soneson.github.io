@@ -965,7 +965,7 @@ export function waterPass(aEncoder, mainpassDepthTexture) {
 	}
 	
 	//Shift and Copy
-	let bindShiftCGroup = createCompBindGroupShiftWater(pingPongIFFTTexture, finalWaveHeightTexture);
+	let bindShiftCGroup = createCompBindGroupShiftWater(pingPongB, finalWaveHeightTexture);
 	const computeShiftPass = aEncoder.beginComputePass();
 	computeShiftPass.setPipeline(waterShiftComputePipeline);
 	computeShiftPass.setBindGroup(0, bindShiftCGroup);

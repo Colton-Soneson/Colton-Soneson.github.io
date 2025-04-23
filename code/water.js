@@ -205,7 +205,7 @@ export const waveHeightRealization = device.createTexture({
 });
 
 export const preCompTexture = device.createTexture({
-  size: [settings.waterTileResolution, settings.waterTileResolution],
+  size: [Math.log2(settings.waterTileResolution), settings.waterTileResolution],
   format: 'rgba32float',
   usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
 });

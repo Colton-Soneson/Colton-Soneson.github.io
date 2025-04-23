@@ -371,7 +371,6 @@ export function postEffectPassTextureDebug_RGBA8UNORM(aEncoder, aCanvasTexture, 
 
 export function postEffectPassTextureDebug_RGBA32FLOAT(aEncoder, aCanvasTexture, aTextureToDebug) {
 	const bindGroups = createBindGroupsDebugTexture_RGBA32FLOAT(aCanvasTexture, aTextureToDebug);
-	
 	debugTextureUniformUpdate(aTextureToDebug);
 	
 	// Start a compute pass 

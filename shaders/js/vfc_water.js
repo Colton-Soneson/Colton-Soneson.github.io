@@ -321,18 +321,24 @@ export const c_PreComp =
 		@builtin(global_invocation_id) GlobalInvocationID: vec3<u32>
 	) {
 		
-		var gIndex = GlobalInvocationID;
+		var gIndex = GlobalInvocationID;	//x is by num stages, y is by full resolution
 		
-		//Params
-		let blockSize = u32(WU.resolution) >> (gIndex.x + 1u);						//butterfly span (a power of 2 division): total FFT size >> (FFT Stage Index + 1u)
-		let baseMultiplier = 2.0 * 3.14159 * vec2f(0.0, -1.0) / WU.resolution;	//constant used in the twiddle formula: (2 * pi * -i) / resolution
-		var halfSizeIndex = gIndex.y;
-		let inputIndex = (2 * blockSize * (halfSizeIndex / blockSize) + (halfSizeIndex % blockSize)) % u32(WU.resolution);	//even-indexed input for butterfly pair at this stage, odd pair would be i + blockSize
-		let k = f32((halfSizeIndex / blockSize) * blockSize);
-		let twiddle = complexExp(baseMultiplier * vec2f(k));	//W^k,,N = e^−2πik/N
+		//based on "Realtime GPGPU FFT  Ocean Water Simulation" by Fynn-Jorin Flügge
 		
-		textureStore(preCompTexture, gIndex.xy, vec4f(twiddle.x, twiddle.y, f32(halfSizeIndex), f32(halfSizeIndex + blockSize)));
-		//textureStore(preCompTexture, vec2u(gIndex.x, gIndex.y + u32(WU.resolution) / 2), vec4f(-twiddle.x, -twiddle.y, f32(halfSizeIndex), f32(halfSizeIndex + blockSize)));
+		let span = 1u << gIndex.x;
+		let twiddleK = (gIndex.y % span);
+		let theta = 2.0 * 3.14159 * f32(twiddleK) / f32(span * 2u);
+		let twiddle = vec2f(cos(theta), -sin(theta));
+		
+		let stageSize = span * 2u;
+		let group = gIndex.y / stageSize;
+		let offset = gIndex.y % span;
+		
+		let a = group * stageSize + offset;
+		let b = a + span;
+		
+		textureStore(preCompTexture, vec2u(gIndex.x, a), vec4f(twiddle.x, twiddle.y, f32(a), f32(b)));
+		textureStore(preCompTexture, vec2u(gIndex.x, b), vec4f(-twiddle.x, -twiddle.y, f32(a), f32(b)));
 	}
 `;
 
@@ -429,9 +435,9 @@ fn complexConj(z: vec2f) -> vec2f {
 		
 		//SHIFT IT, this is a preshift for fft to move from 0,0 center to move it to the corner
 		//	FFT expects natural order (DC at top left), not centered frequency space
-		let checker = 1.0 - 2.0 * f32((vertGridPosX + vertGridPosZ) % 2);
-		//let checker = f32(((vertGridPosX + vertGridPosZ) % 2u) * 2u - 1u);
-		let hktShifted = hkt; //* checker;
+		//let checker = 1.0 - 2.0 * f32((vertGridPosX + vertGridPosZ) % 2);
+		let checker = f32(((vertGridPosX + vertGridPosZ) % 2u) * 2u - 1u);
+		let hktShifted = hkt; // * checker;
 		
 		textureStore(waveHeightRealization, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4f(hktShifted.x,hktShifted.y,0.0,1.0));
 	
@@ -501,13 +507,13 @@ fn phillipsSpectrum(kx: f32, ky: f32) -> f32 {
 	let V = WU.windSpeed; 			//wind speed, i made this up
 	let L = (V * V) / g;	//largest possible waves from a continuous wind
 	let Lmin = 0.01;			//minimum wavelength in meters
-	let A = 1.0;			//"a numeric constant" ???
+	let A = 4.0;			//"a numeric constant" ???
 	
 	let kMag = length(K);			// italic k, magnitude
 	let kHat = vec2f(K.x / kMag, K.y / kMag);		// hat k, unit vector
 	let wHat = normalize(WU.windDirection);			// hat w, wind direction, normalized input just incase
 	let kHwH = dot(kHat, wHat);						// hat k dot hat w 
-	let kHwHX = kHwH * kHwH * kHwH * kHwH * kHwH * kHwH; 			//RAISING THIS X TIMES INCREASES WIND INFLUENCE MORE
+	let kHwHX = kHwH * kHwH; 			//RAISING THIS X TIMES INCREASES WIND INFLUENCE MORE
 	let kMagLSqr = (kMag * L) * (kMag * L);			
 	let kMag4 = kMag * kMag * kMag * kMag;		
 		

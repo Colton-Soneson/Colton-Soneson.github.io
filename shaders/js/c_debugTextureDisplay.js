@@ -114,7 +114,12 @@ struct DebugTextureUniforms {
 			scaleMult = 0.5f;
 		}
 		
-		var inputDebugCol = textureLoad(inDebugTexture, vec2<u32>(u32(f32(threadID.x) * scaleMult), u32(f32(threadID.y) * scaleMult)));
+		var horizontalScalar = 1.0;
+		if(f32(texWidth) < (f32(texHeight) * 0.25)) {
+			horizontalScalar = 0.05;
+		}
+		
+		var inputDebugCol = textureLoad(inDebugTexture, vec2<u32>(u32(f32(threadID.x) * scaleMult * horizontalScalar), u32(f32(threadID.y) * scaleMult)));
 	
 		var outCol = inputDebugCol;
 		if(all(outCol == vec4f(0.0,0.0,0.0,0.0))) {

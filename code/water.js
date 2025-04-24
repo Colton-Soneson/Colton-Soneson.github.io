@@ -9,6 +9,7 @@ import { settings } from './settings.js';
 
 import { c_water } from '../shaders/js/vfc_water.js'
 import { c_h0k } from '../shaders/js/vfc_water.js'
+import { c_h0kConj } from '../shaders/js/vfc_water.js'
 import { c_hkt } from '../shaders/js/vfc_water.js'
 import { c_IFFT_2D } from '../shaders/js/vfc_water.js'
 import { c_PreComp } from '../shaders/js/vfc_water.js'
@@ -34,6 +35,11 @@ const waterComputeShaderModule = device.createShaderModule({
 const waterSpectrumComputeShaderModule = device.createShaderModule({
   label: "c_h0k",
   code: c_h0k	
+});
+
+const waterConjComputeShaderModule = device.createShaderModule({
+  label: "c_h0kConj",
+  code: c_h0kConj	
 });
 
 const waterButterflyPassComputeShaderModule = device.createShaderModule({
@@ -108,9 +114,9 @@ function complexGaussianRandom(mean, standardDeviation, arrayLength) {
 	return result;
 }
 const complexGaussArray = new Float32Array(complexGaussianRandom(0.0, 1.0, 2 * settings.waterTileResolution * settings.waterTileResolution));	//4: kr, ki, -kr, -ki
-console.log("Complex Gaussian Num Array: ", complexGaussArray);
+//console.log("Complex Gaussian Num Array: ", complexGaussArray);
 
-const centerWaterPlanePosition = [-(settings.waterTileResolution * 0.25), 0.0, -(settings.waterTileResolution * 0.25)];
+const centerWaterPlanePosition = [-(settings.waterTileResolution * 0.5), 0.0, -(settings.waterTileResolution * 0.5)];
 
 //if settings change live, this will have to be changed out from constants													!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 const waterPlaneNumberOfVerts = settings.waterTileResolution * settings.waterTileResolution;
@@ -134,7 +140,7 @@ const uniformBufferComputewater = device.createBuffer({
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,	//this makes it another GPUBuffer Object but this time uniform
 });
 
-const uniformArrayComputeButterfly= 128;	//default for now
+const uniformArrayComputeButterfly = 128;	//default for now
 const uniformBufferComputeButterfly = device.createBuffer({
   label: "water Compute Butterfly settings Uniform Buffer",
   size: uniformArrayComputeButterfly,
@@ -185,6 +191,13 @@ export const phillipsSpectrumTexture = device.createTexture({
   usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
 });
 
+//h0k without conj
+export const h0k = device.createTexture({
+  size: [settings.waterTileResolution, settings.waterTileResolution],
+  format: 'rgba32float',
+  usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
+});
+
 //inital Water Height map h0(k) and h0(-k)
 export const initialWaterHeightMap = device.createTexture({
   size: [settings.waterTileResolution, settings.waterTileResolution],
@@ -198,7 +211,8 @@ export const hkt = device.createTexture({
   usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
 });
 
-export const waveHeightRealization = device.createTexture({
+export let waveHeightRealization = device.createTexture({
+  label: "wave Height Realization Texture",
   size: [settings.waterTileResolution, settings.waterTileResolution],
   format: 'rgba32float',
   usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
@@ -211,11 +225,19 @@ export const preCompTexture = device.createTexture({
 });
 
 //wont be available for debug view as its an inbetween
-export const pingPongIFFTTexture = device.createTexture({
+export let pingPongIFFTTexture = device.createTexture({
+  label: "ping pong IFFT Texture",
   size: [settings.waterTileResolution, settings.waterTileResolution],
   format: 'rgba32float',
   usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
 });
+
+export let preShiftFinalWaveHeightTexture = device.createTexture({
+  size: [settings.waterTileResolution, settings.waterTileResolution],
+  format: 'rgba32float',
+  usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
+});
+
 
 export const finalWaveHeightTexture = device.createTexture({
   size: [settings.waterTileResolution, settings.waterTileResolution],
@@ -318,6 +340,10 @@ function waterComputeButterflyBufferUpdate(direction, stage) {
 	bufferResult.push(direction);
 	bufferResult.push(stage);
 	
+	//NECESSARY TO KEEP MIN ALIGNMENT
+	bufferResult.push(1.0);	//padding0
+	bufferResult.push(1.0); //padding1
+	
 	const result = new Float32Array(bufferResult);
 	
 	device.queue.writeBuffer(uniformBufferComputeButterfly, 
@@ -419,6 +445,37 @@ const bindGroupSpectrumCLayout = device.createBindGroupLayout({
 		type: "storage",
 		access: "read-write",
 	}
+  }
+  ]
+});
+
+const bindGroupConjCLayout = device.createBindGroupLayout({
+  label: "water Bind Group H0K Conjugate C Layout",
+  entries: [
+  {
+    binding: 0,
+    visibility: GPUShaderStage.COMPUTE,	//settings
+    buffer: {} 
+  },
+  {
+    binding: 1,								//in h0k
+    visibility:  GPUShaderStage.COMPUTE,
+    storageTexture: {
+        format: "rgba32float",   // Format must match the swap chain texture
+		access: "read-only",
+		dimension: "2d",
+		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
+    }
+  },
+  {
+    binding: 2,								//outTexture for initialHeight
+    visibility:  GPUShaderStage.COMPUTE,
+    storageTexture: {
+        format: "rgba32float",   // Format must match the swap chain texture
+		access: "write-only",
+		dimension: "2d",
+		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
+    }
   }
   ]
 });
@@ -607,7 +664,7 @@ function createCompBindGroupSpectrumWater() {
 	
 	const result = 
 		device.createBindGroup({
-			label: "water Comp bind group",
+			label: "water Comp spectrum bind group",
 			layout: bindGroupSpectrumCLayout,
 			entries: [
 			{
@@ -620,11 +677,35 @@ function createCompBindGroupSpectrumWater() {
 			},
 			{
 				binding: 2,
-				resource: initialWaterHeightMap.createView()
+				resource: h0k.createView()
 			},
 			{
 				binding: 3,
 				resource: { buffer: uniformBufferComplexGaussian }
+			}
+			]
+		});
+	return result;
+}
+
+function createCompBindGroupConjWater() {
+	
+	const result = 
+		device.createBindGroup({
+			label: "water Comp Conj bind group",
+			layout: bindGroupConjCLayout,
+			entries: [
+			{
+				binding: 0,
+				resource: { buffer: uniformBufferComputewater }
+			},
+			{
+				binding: 1,
+				resource: h0k.createView()
+			},
+			{
+				binding: 2,
+				resource: initialWaterHeightMap.createView()
 			}
 			]
 		});
@@ -750,6 +831,11 @@ const waterSpectrumCompPipelineLayout = device.createPipelineLayout({
   bindGroupLayouts: [ bindGroupSpectrumCLayout ],
 });
 
+const waterConjCompPipelineLayout = device.createPipelineLayout({
+  label: "water h0k Conj add Pipeline Layout",
+  bindGroupLayouts: [ bindGroupConjCLayout ],
+});
+
 const waterRealizationCompPipelineLayout = device.createPipelineLayout({
   label: "water height Realization map Pipeline Layout",
   bindGroupLayouts: [ bindGroupRealizationCLayout ],
@@ -837,6 +923,15 @@ const waterSpectrumComputePipeline = device.createComputePipeline({
 	},
 });
 
+const waterConjComputePipeline = device.createComputePipeline({
+  label: "water Conj C pipeline",
+  layout: waterConjCompPipelineLayout,	//allows for use of same bind groups as the renderpipeline
+	compute: {
+		module: waterConjComputeShaderModule,
+		entryPoint: "computeMain",
+	},
+});
+
 const waterRealizationComputePipeline = device.createComputePipeline({
   label: "water Realization C pipeline",
   layout: waterRealizationCompPipelineLayout,	//allows for use of same bind groups as the renderpipeline
@@ -894,12 +989,14 @@ export function waterPass(aEncoder, mainpassDepthTexture) {
 	// Start a compute pass place and animate the instances
 	const bindCGroup = createCompBindGroupwater();
 	const bindSpectrumCGroup = createCompBindGroupSpectrumWater();
+	const bindConjCGroup = createCompBindGroupConjWater();
 	const bindRealizationCGroup = createCompBindGroupRealizationWater();
 	waterComputeBuffersUpdate();
 	
-	//initial Height Map h0(k)	CHECK TO SEE IF WE NEED THIS ONLY FIRST STEP OR EVERY WATER PASS!!!!!!!!!!!!
+	//initial Height Map h0(k)
 	if(step == 1)
 	{
+		//h0k
 		const computeInitialHeightPass = aEncoder.beginComputePass();
 		
 		computeInitialHeightPass.setPipeline(waterSpectrumComputePipeline);
@@ -907,6 +1004,16 @@ export function waterPass(aEncoder, mainpassDepthTexture) {
 		
 		computeInitialHeightPass.dispatchWorkgroups(Math.ceil( (settings.waterTileResolution * settings.waterTileResolution) / WATER_WORKGROUP_SIZE[0]));			//you want to do it per vertex, not per cell
 		computeInitialHeightPass.end();
+		
+		//h0-k conj
+		const computeConjPass = aEncoder.beginComputePass();
+		
+		computeConjPass.setPipeline(waterConjComputePipeline);
+		computeConjPass.setBindGroup(0, bindConjCGroup);
+		
+		computeConjPass.dispatchWorkgroups(Math.ceil(settings.waterTileResolution / FFT_WORKGROUP_SIZE[0]),
+											Math.ceil(settings.waterTileResolution / FFT_WORKGROUP_SIZE[1]));
+		computeConjPass.end();
 	}
 	
 	//hkt
@@ -928,7 +1035,7 @@ export function waterPass(aEncoder, mainpassDepthTexture) {
 	
 	//-----------------------------FFT-------------------------------
 	//FFT start, the buttefly group starts with waveHeightRealization ONLY ONCE
-	const stages = Math.log2(settings.waterTileResolution);
+	const stages = 8;//Math.log2(settings.waterTileResolution);
 	
 	//pre compute twiddle values
 	let bindButterflyPreCompCGroup = createCompBindGroupButterflyPreCompWater();
@@ -942,30 +1049,70 @@ export function waterPass(aEncoder, mainpassDepthTexture) {
 	// ping pong a texture between the shader thats capable of both horizontal or vertical passes
 	let pingPongA = waveHeightRealization;
 	let pingPongB = pingPongIFFTTexture;
+		
+	//horizontal FFT
+	for(let stage = 0; stage < stages; stage++) {
+		let bindButterflyCGroup = createCompBindGroupButterflyWater(pingPongA, pingPongB);
+		
+		waterComputeButterflyBufferUpdate(0.0, stage);	//set the direction, and stage count
+		const computeFFTPass = aEncoder.beginComputePass();
+			
+		computeFFTPass.setPipeline(waterButterflyComputePipeline);
+		computeFFTPass.setBindGroup(0, bindButterflyCGroup);
+		
+		computeFFTPass.dispatchWorkgroups(Math.ceil(settings.waterTileResolution / FFT_WORKGROUP_SIZE[0]), 
+												Math.ceil(settings.waterTileResolution / FFT_WORKGROUP_SIZE[1]));
 	
-	for(let dir = 0; dir <= 1; dir++) {
-		for(let stage = 0; stage < stages; stage++) {
-			let bindButterflyCGroup = createCompBindGroupButterflyWater(pingPongA, pingPongB);
-			
-			waterComputeButterflyBufferUpdate(dir, stage);	//set the direction, and stage count
-			const computeFFTPass = aEncoder.beginComputePass();
-				
-			computeFFTPass.setPipeline(waterButterflyComputePipeline);
-			computeFFTPass.setBindGroup(0.0, bindButterflyCGroup);
-			
-			computeFFTPass.dispatchWorkgroups(Math.ceil(settings.waterTileResolution / FFT_WORKGROUP_SIZE[0]), 
-													Math.ceil(settings.waterTileResolution / FFT_WORKGROUP_SIZE[1]));
-	
-			computeFFTPass.end();
-			
-			let transition = pingPongA;
-			pingPongA = pingPongB;
-			pingPongB = transition;
-		}
+		computeFFTPass.end();
+		
+		[pingPongA, pingPongB] = [pingPongB, pingPongA];
 	}
 	
+	//check correct input to vertFFT
+	let finalInput = (stages % 2 == 0) ? pingPongA : pingPongB;
+	pingPongA = finalInput;
+	pingPongB = (finalInput === pingPongA) ? pingPongB : pingPongA;
+	
+	for(let stage = 0; stage < stages; stage++) {
+		let bindButterflyCGroup = createCompBindGroupButterflyWater(pingPongA, pingPongB);
+		
+		waterComputeButterflyBufferUpdate(1.0, stage);	//set the direction, and stage count
+		const computeFFTPass = aEncoder.beginComputePass();
+			
+		computeFFTPass.setPipeline(waterButterflyComputePipeline);
+		computeFFTPass.setBindGroup(0, bindButterflyCGroup);
+		
+		computeFFTPass.dispatchWorkgroups(Math.ceil(settings.waterTileResolution / FFT_WORKGROUP_SIZE[0]), 
+												Math.ceil(settings.waterTileResolution / FFT_WORKGROUP_SIZE[1]));
+	
+		computeFFTPass.end();
+		
+		[pingPongA, pingPongB] = [pingPongB, pingPongA];
+	}
+	
+	//aEncoder.copyTextureToTexture(
+	//	{texture: pingPongA},
+	//	{texture: preShiftFinalWaveHeightTexture},
+	//	{width: settings.waterTileResolution, height: settings.waterTileResolution}
+	//)
+	//aEncoder.copyTextureToTexture(
+	//	{texture: pingPongB},
+	//	{texture: finalWaveHeightTexture},
+	//	{width: settings.waterTileResolution, height: settings.waterTileResolution}
+	//)
+	
+	
+	//check correct final
+	const finalIFFTOutput = (stages % 2 == 0) ? pingPongA : pingPongB;
+	
+	aEncoder.copyTextureToTexture(
+		{texture: finalIFFTOutput},
+		{texture: preShiftFinalWaveHeightTexture},
+		{width: settings.waterTileResolution, height: settings.waterTileResolution}
+	)
+	
 	//Shift and Copy
-	let bindShiftCGroup = createCompBindGroupShiftWater(pingPongB, finalWaveHeightTexture);
+	let bindShiftCGroup = createCompBindGroupShiftWater(finalIFFTOutput, finalWaveHeightTexture);
 	const computeShiftPass = aEncoder.beginComputePass();
 	computeShiftPass.setPipeline(waterShiftComputePipeline);
 	computeShiftPass.setBindGroup(0, bindShiftCGroup);

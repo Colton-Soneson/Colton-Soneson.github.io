@@ -98,8 +98,8 @@ fn gerstner(vertGridPosX: f32, vertGridPosZ: f32) -> vec3f {
 	
 		let gridWidth = u32(WU.resolution);
 		
-		let vertGridPosX = f32(gIndex) % f32(gridWidth);
-		let vertGridPosZ = f32(gIndex) / f32(gridWidth);
+		let vertGridPosX = f32(gIndex) % f32(gridWidth) * (WU.oceanPlanePhysicalSize / WU.resolution);
+		let vertGridPosZ = f32(gIndex) / f32(gridWidth) * (WU.oceanPlanePhysicalSize / WU.resolution);
 		
 		let oVertInd = gIndex * fPerVertexData;
 		
@@ -109,8 +109,8 @@ fn gerstner(vertGridPosX: f32, vertGridPosZ: f32) -> vec3f {
 		//------------------[REALISTIC] FFT Oceanographic Waves-----------------
 		
 		//just for now, only x as height
-		var waveHeight = textureLoad(finalWaveHeightTexture, vec2u(u32(vertGridPosX), u32(vertGridPosZ))).x;
-		var waveHeightAdj = waveHeight * 0.0001;
+		var waveHeight = length(textureLoad(finalWaveHeightTexture, vec2u(u32(vertGridPosX), u32(vertGridPosZ))).xy);
+		var waveHeightAdj = waveHeight;
 		
 		var position = vec3f(vertGridPosX,
 							 waveHeightAdj,
@@ -175,20 +175,17 @@ export const c_Shift =
 	) {
 		var gIndex = GlobalInvocationID;
 		let val = textureLoad(inTexture, gIndex.xy);
+		let N2 = WU.resolution * WU.resolution;
 		
-		//let perms = vec2f(1.0,-1.0);
-		//let index = (gIndex.x + gIndex.y) % 2u;
-		//let perm = perms[index];
-		//let N2 = WU.resolution * WU.resolution;
-		//textureStore(outTexture, gIndex.xy, vec4f(perm * (val / N2).x, 0.0, 0.0, 1.0));
+		//let halfSize = u32(WU.resolution) / 2u;
+		//let shiftedCoords = (gIndex.xy + vec2u(halfSize, halfSize)) % vec2u(u32(WU.resolution), u32(WU.resolution));
+		//textureStore(outTexture, shiftedCoords, vec4f(val.x, val.y, 0.0, 1.0));
+		//textureStore(outTexture, shiftedCoords, vec4f(val.x / N2, val.y / N2, val.z / N2, 1.0));
 		
-		
-		let halfSize = u32(WU.resolution) / 2u;
-		let shiftedCoords = (gIndex.xy + vec2u(halfSize, halfSize)) % vec2u(u32(WU.resolution), u32(WU.resolution));
-		//let shiftedCoords = val * (1.0 - 2.0 * f32((gIndex.x + gIndex.y) % 2));
-		
-		//textureStore(outTexture, gIndex.xy, shiftedCoords);
-		textureStore(outTexture, shiftedCoords, val);
+		//permute and scale
+		let permute = val * (1.0 - 2.0 * f32((gIndex.x + gIndex.y)% 2));
+		//textureStore(outTexture, gIndex.xy, vec4f(permute.x / N2, permute.y / N2, 0.0, 1.0));
+		textureStore(outTexture, gIndex.xy, vec4f(permute.x / N2, 0.0, 0.0, 1.0));
 	}
 `;
 
@@ -207,12 +204,14 @@ export const c_IFFT_2D =
 	};
 	@group(0) @binding(0) var<uniform> WU: WaterUniforms;
 	
-	@group(0) @binding(1) var inTexture : texture_storage_2d<rgba32float, read>;		//first waveHeightRealization, switch direction, then its pingPongIFFTTexture
-	@group(0) @binding(2) var outTexture : texture_storage_2d<rgba32float, write>;	//first pingPongIFFTTexture, switch direction, then its final output
+	@group(0) @binding(1) var inTexture : texture_storage_2d<rgba32float, read>;
+	@group(0) @binding(2) var outTexture : texture_storage_2d<rgba32float, write>;
 	
 	struct ButterflyUniforms {
 		@location(0) direction: f32,
-		@location(1) stage: f32,	
+		@location(1) stage: f32,
+		@location(2) padding0: f32,
+		@location(3) padding1: f32,
 	};
 	@group(0) @binding(3) var<uniform> BU: ButterflyUniforms;
 
@@ -255,44 +254,47 @@ export const c_IFFT_2D =
 			// Horizontal pass (IFFT along rows)
 			
 			let preCompData = textureLoad(preCompTexture, vec2u(u32(BU.stage), gIndex.x));
-			
-			let indexA = vec2u(u32(preCompData.z), gIndex.y);  // Use the horizontal index for rows
-			let indexB = vec2u(u32(preCompData.w), gIndex.y);  // Adjacent horizontal index (next row)
+			let inputIndices = vec2u(u32(preCompData.z), u32(preCompData.w));
 			
 			// Load data from input texture (real and imaginary parts of h0k)
-			let a = textureLoad(inTexture, indexA).xy;
-			let b = textureLoad(inTexture, indexB).xy;
+			let a = textureLoad(inTexture, vec2u(inputIndices.x, gIndex.y)).xy;
+			let b = textureLoad(inTexture, vec2u(inputIndices.y, gIndex.y)).xy;
+			let result = a + complexMul(vec2f(preCompData.x, -preCompData.y), b.xy);
 
-			// Perform FFT butterfly operation (we could swap this depending on the FFT stage)		
-			let p = vec2f(a.x, a.y);
-			let q = vec2f(b.x, b.y);
-			let w = vec2f(preCompData.x, preCompData.y);
-			let result = complexAdd(p, complexMul(w,q));
+			textureStore(outTexture, gIndex.xy, vec4f(result.x, result.y, 0.0, 1.0));
+
 			
-			// Store the result back into the output texture
-			textureStore(outTexture, gIndex.xy, vec4f(result.x, result.y, 0.0, 0.0));
+			//// Perform FFT butterfly operation (we could swap this depending on the FFT stage)		
+			//let p = vec2f(a.x, a.y);
+			//let q = vec2f(b.x, b.y);
+			//let w = vec2f(preCompData.x, preCompData.y);
+			//let result = complexAdd(p, complexMul(w,q));
+			//
+			//// Store the result back into the output texture
+			//textureStore(outTexture, gIndex.xy, vec4f(result.x, result.y, 0.0, 1.0));
 			
 		} else {
 			// Vertical pass (IFFT along columns)
 			
 			let preCompData = textureLoad(preCompTexture, vec2u(u32(BU.stage), gIndex.y));
-			
-			let indexA = vec2u(gIndex.x, u32(preCompData.z));  // Use the horizontal index for rows
-			let indexB = vec2u(gIndex.x, u32(preCompData.w));  // Adjacent horizontal index (next row)
+			let inputIndices = vec2u(u32(preCompData.z), u32(preCompData.w));
 			
 			// Load data from input texture (real and imaginary parts of h0k)
-			let a = textureLoad(inTexture, indexA).xy;
-			let b = textureLoad(inTexture, indexB).xy;
+			let a = textureLoad(inTexture, vec2u(gIndex.x, inputIndices.x)).xy;
+			let b = textureLoad(inTexture, vec2u(gIndex.x, inputIndices.y)).xy;
+			let result = a + complexMul(vec2f(preCompData.x, -preCompData.y), b.xy);
 
-			// Perform FFT butterfly operation (we could swap this depending on the FFT stage)
-			let p = vec2f(a.x, a.y);
-			let q = vec2f(b.x, b.y);
-			let w = vec2f(preCompData.x, preCompData.y);
-			let result = complexAdd(p, complexMul(w,q));
-			
-			
-			// Store the result back into the output texture
-			textureStore(outTexture, gIndex.xy, vec4f(result.x, result.y, 0.0, 0.0));
+			textureStore(outTexture, gIndex.xy, vec4f(result.x, result.y, 0.0, 1.0));
+
+
+			//// Perform FFT butterfly operation (we could swap this depending on the FFT stage)
+			//let p = vec2f(a.x, a.y);
+			//let q = vec2f(b.x, b.y);
+			//let w = vec2f(preCompData.x, preCompData.y);
+			//let result = complexAdd(p, complexMul(w,q));
+			//
+			//// Store the result back into the output texture
+			//textureStore(outTexture, gIndex.xy, vec4f(result.x, result.y, 0.0, 1.0));
 		}
 	}
 `;
@@ -344,14 +346,12 @@ export const c_PreComp =
 		
 		var gIndex = GlobalInvocationID;	//x is by num stages, y is by full resolution
 		var yIndex = 0u;
-		//if(gIndex.x == 0) {
-		//	yIndex = bitReverse(gIndex.y, 32u);
-		//} else {
-		//	yIndex = gIndex.y;
-		//}
-		
-		yIndex = gIndex.y;
-		
+		if(gIndex.x == 0) {
+			yIndex = bitReverse(gIndex.y, u32(log2(WU.resolution)));
+		} else {
+			yIndex = gIndex.y;
+		}
+				
 		//based on "Realtime GPGPU FFT  Ocean Water Simulation" by Fynn-Jorin Flügge
 		let span = 1u << gIndex.x;
 		let twiddleK = (yIndex % span);
@@ -463,14 +463,54 @@ fn complexConj(z: vec2f) -> vec2f {
 		
 		//SHIFT IT, this is a preshift for fft to move from 0,0 center to move it to the corner
 		//	FFT expects natural order (DC at top left), not centered frequency space
-		//let checker = 1.0 - 2.0 * f32((vertGridPosX + vertGridPosZ) % 2);
 		let checker = f32(((vertGridPosX + vertGridPosZ) % 2u) * 2u - 1u);
-		let hktShifted = hkt; // * checker;
+		let hktShifted = hkt  ;//* checker;
 		
 		textureStore(waveHeightRealization, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4f(hktShifted.x,hktShifted.y,0.0,1.0));
 	
 	}
 `;
+
+
+export const c_h0kConj =
+`
+	struct WaterUniforms {
+		@location(0) cameraPosition: vec4f,
+		@location(1) windDirection: vec2f,
+		@location(2) resolution: f32,			//the resolution of the plane is fixed, however, converge closer to camera position
+		@location(3) waveSteepness: f32,	
+		@location(4) step: f32,					//to be used in place of time, but locked to frame rate i suppose
+		@location(5) planeYPos: f32,
+		@location(6) waveLength: f32,
+		@location(7) oceanPlanePhysicalSize: f32,
+		@location(8) windSpeed: f32,
+	};
+	@group(0) @binding(0) var<uniform> WU: WaterUniforms;
+	
+	@group(0) @binding(1) var inH0KTexture : texture_storage_2d<rgba32float, read>;
+	@group(0) @binding(2) var initialHeightField : texture_storage_2d<rgba32float, write>;
+
+	fn complexConj(z: vec2f) -> vec2f {
+		return vec2f(z.x, -z.y);
+	}
+
+@compute @workgroup_size(${FFT_WORKGROUP_SIZE[0]}, ${FFT_WORKGROUP_SIZE[1]}, ${FFT_WORKGROUP_SIZE[2]})	
+    fn computeMain(
+		@builtin(global_invocation_id) GlobalIvocationID: vec3<u32>
+	) {
+		
+		var gIndex = GlobalIvocationID.xy;
+		let res = u32(WU.resolution);
+		
+		let h0k = textureLoad(inH0KTexture, gIndex).xy;
+		let h0Negk = textureLoad(inH0KTexture, vec2u((res - gIndex.x) % res, (res - gIndex.y) % res)).xy;
+		let h0NegkConj = complexConj(h0Negk);
+		
+		//final
+		textureStore(initialHeightField, gIndex, vec4f(h0k.x, h0k.y, h0NegkConj.x, h0NegkConj.y));
+	}
+`;
+
 
 export const c_h0k =
 `
@@ -488,7 +528,7 @@ export const c_h0k =
 	@group(0) @binding(0) var<uniform> WU: WaterUniforms;
 	
 	@group(0) @binding(1) var phillipsSpectrumOutTexture : texture_storage_2d<rgba32float, write>;
-	@group(0) @binding(2) var initialHeightField : texture_storage_2d<rgba32float, write>;
+	@group(0) @binding(2) var outH0KTexture : texture_storage_2d<rgba32float, write>;
 	
 	@group(0) @binding(3) var<storage, read_write> complexGaussArray: array<f32>;
 
@@ -527,7 +567,7 @@ fn phillipsSpectrum(kx: f32, ky: f32) -> f32 {
 	//check for kx, kz, w
 	//let w2 = g * length(k);
 	//let w = sqrt(w2);
-	//textureStore(initialHeightField, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4f(kx,ky,w,1.0));
+	//textureStore(outH0KTexture, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4f(kx,ky,w,1.0));
 	
 	
 	//phillips spectrum
@@ -582,13 +622,9 @@ fn h0(vertGridPosX: u32, vertGridPosZ: u32, gIndex: u32) -> vec4f {
 	let oVertInd = gIndex * fPerComplexData;
 	let gauss = vec2f(complexGaussArray[oVertInd], complexGaussArray[oVertInd + 1u]);
 	
-	//DEBUG check for random gauss
-	//textureStore(initialHeightField, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4(length(gauss), length(gaussNegK), 0.0,1.0));
-	
 	let minClampVal = 0.01;	//if PhK returns 0, or is wayyy too low, find this (reduces the 0 line split effect)
 	
-	var clampedPhK = max(sqrt(PhK), minClampVal);	//CHECK THISS!!!!!!!!!! the clamp might mess up with the conjugate
-	//var clampedPhK = sqrt(PhK);	//CHECK THISS!!!!!!!!!! the clamp might mess up with the conjugate
+	var clampedPhK = max(sqrt(PhK), minClampVal);
 	let scale = (1.0 / sqrt(2.0));
 	let h0k = scale * gauss * clampedPhK;				//max is used incase PhK is 0, which sqrt(0) would be NaN
 	
@@ -598,12 +634,15 @@ fn h0(vertGridPosX: u32, vertGridPosZ: u32, gIndex: u32) -> vec4f {
 							complexGaussArray[gaussArraySize - (oVertInd + 1u)]);	//remember, its  + 1u because we want the pair to still be accurate
 	
 	
-	let clampedPhNegK = max(sqrt(PhNegK), minClampVal);
-	//let clampedPhNegK = sqrt(PhNegK);
-	let h0Negk = scale * gaussNegK * clampedPhNegK;
-	var h0NegkConj = vec2f(h0Negk.x, -h0Negk.y); 									//this enforces Hermitian Symmetry
+	//let clampedPhNegK = max(sqrt(PhNegK), minClampVal);
+	//let h0Negk = scale * gaussNegK * clampedPhNegK;
+	//var h0NegkConj = vec2f(h0Negk.x, -h0Negk.y); 									//this enforces Hermitian Symmetry
 	
-	let h0initial =  vec4f(h0k.x, h0k.y, h0NegkConj.x, h0NegkConj.y);
+	//DEBUG check for random gauss
+	//textureStore(outH0KTexture, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4(length(gauss), length(gaussNegK), 0.0,1.0));
+	
+	//let h0initial = vec4f(h0k.x, h0k.y, h0NegkConj.x, h0NegkConj.y);	//do the neg after this shader is fully dispatched
+	let h0initial = vec4f(h0k.x, h0k.y, 0.0, 0.0);
 	
 	return h0initial;
 }
@@ -624,10 +663,10 @@ fn h0(vertGridPosX: u32, vertGridPosZ: u32, gIndex: u32) -> vec4f {
 		let h0Data = h0(vertGridPosX, vertGridPosZ, gIndex);
 		
 		//DEBUG mag check
-		//textureStore(initialHeightField, vec2u(vertGridPosX, vertGridPosZ), vec4(length(h0Data.xy), length(h0Data.zw), 0.0,1.0));
+		//textureStore(outH0KTexture, vec2u(vertGridPosX, vertGridPosZ), vec4(length(h0Data.xy), length(h0Data.zw), 0.0,1.0));
 		
 		//final
-		textureStore(initialHeightField, vec2u(vertGridPosX, vertGridPosZ), h0Data);
+		textureStore(outH0KTexture, vec2u(vertGridPosX, vertGridPosZ), h0Data);
 	}
 `;
 

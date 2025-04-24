@@ -39,7 +39,7 @@ export const settings = {
 	waterTileInstanceCount: 3,
 	waterWorldPosY: -16,
 	waterOceanPlanePhysicalSize: 1000.0,
-	waterWindSpeed: 30.0,
+	waterWindSpeed: 20.0,
 	//--------------------DEBUG--------------------
     showDebug: true,
 	showDebugIcons: false,
@@ -52,5 +52,6 @@ export const settings = {
 	displayWaveHeightRealization: false,
 	displayWaterPreComp: false,
 	displayWaterFFT: false,
+	displayWaterShifted: false,
 	debugViewMode: 0
 };

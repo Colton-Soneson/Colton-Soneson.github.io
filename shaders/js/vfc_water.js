@@ -580,6 +580,7 @@ fn phillipsSpectrum(kx: f32, ky: f32) -> f32 {
 	let V = WU.windSpeed; 			//wind speed, i made this up
 	let L = (V * V) / g;	//largest possible waves from a continuous wind
 	let Lmin = 0.01;			//minimum wavelength in meters
+	let kLmin2 = (kMag * Lmin) * (kMag * Lmin);
 	let A = 4.0;			//"a numeric constant" ???
 	
 	let kHat = vec2f(K.x / kMag, K.y / kMag);		// hat k, unit vector
@@ -597,6 +598,7 @@ fn phillipsSpectrum(kx: f32, ky: f32) -> f32 {
 		//PhK = A * (1.0 / k4) * exp((-1.0 / kL2) - kLmin2) * (kw * kw);
 		
 		PhK = A * (exp(-1.0 / kMagLSqr) / kMag4) * kHwHX;
+		PhK *= exp(-kLmin2);	//high freq supression (avoiding spikes)
 	}
 	
 	return PhK;
@@ -615,18 +617,17 @@ fn h0(vertGridPosX: u32, vertGridPosZ: u32) -> vec4f {
 	let ky = deltaK * (f32(vertGridPosZ) - (WU.resolution / 2.0));
 	
 	let PhK = phillipsSpectrum(kx, ky);
-	let PhNegK = phillipsSpectrum(-kx, -ky);
+	//let PhNegK = phillipsSpectrum(-kx, -ky);
 	
 	//THIS IS FOR DEBUG FOR NOW
 	//	the "* 1e3" portion was done to give better visuals in debug mode, its suggested to do so. However I don't believe it should be done for the waves themselves.
 	textureStore(phillipsSpectrumOutTexture, vec2u(vertGridPosX, vertGridPosZ), vec4<f32>(PhK,0.0,0.0,1.0));
 	
-	let index = vertGridPosZ + u32(WU.resolution) * vertGridPosX;
+	let index = vertGridPosX + u32(WU.resolution) * vertGridPosZ;
 	let offset = index * 2u;
 	let gauss = vec2f(complexGaussArray[offset], complexGaussArray[offset + 1u]);		// CHECK BACK HERE!!!!!!!!!
-	
+
 	let minClampVal = 0.01;	//if PhK returns 0, or is wayyy too low, find this (reduces the 0 line split effect)
-	
 	var clampedPhK = max(sqrt(PhK), minClampVal);
 	let scale = (1.0 / sqrt(2.0));
 	let h0k = scale * gauss * clampedPhK;				//max is used incase PhK is 0, which sqrt(0) would be NaN

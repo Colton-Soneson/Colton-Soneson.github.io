@@ -98,8 +98,8 @@ fn gerstner(vertGridPosX: f32, vertGridPosZ: f32) -> vec3f {
 	
 		let gridWidth = u32(WU.resolution);
 		
-		let vertGridPosX = f32(gIndex) % f32(gridWidth) * (WU.oceanPlanePhysicalSize / WU.resolution);
-		let vertGridPosZ = f32(gIndex) / f32(gridWidth) * (WU.oceanPlanePhysicalSize / WU.resolution);
+		let vertGridPosX = f32(gIndex) % f32(gridWidth);
+		let vertGridPosZ = f32(gIndex) / f32(gridWidth);
 		
 		let oVertInd = gIndex * fPerVertexData;
 		
@@ -110,7 +110,7 @@ fn gerstner(vertGridPosX: f32, vertGridPosZ: f32) -> vec3f {
 		
 		//just for now, only x as height
 		var waveHeight = length(textureLoad(finalWaveHeightTexture, vec2u(u32(vertGridPosX), u32(vertGridPosZ))).xy);
-		var waveHeightAdj = waveHeight;
+		var waveHeightAdj = waveHeight * 1.5;
 		
 		var position = vec3f(vertGridPosX,
 							 waveHeightAdj,
@@ -186,16 +186,16 @@ export const c_Shift =
 		//let checker = f32(((gIndex.x + gIndex.y) % 2u) * 2u - 1u);
 		//let permute = val * checker;
 
-		//let permute = val * (1.0 - 2.0 * f32((gIndex.x + gIndex.y)% 2));
+		let permute = val * (1.0 - 2.0 * f32((gIndex.x + gIndex.y)% 2));
 		
-		var permute = vec4f(0.,0.,0.,0.);
-		if ((gIndex.x + gIndex.y) % 2u == 0) {
-			permute = val;
-		} else {
-			permute = -val;
-		}
+		//var permute = vec4f(0.,0.,0.,0.);
+		//if ((gIndex.x + gIndex.y) % 2u == 0) {
+		//	permute = val;
+		//} else {
+		//	permute = -val;
+		//}
 		
-		//textureStore(outTexture, gIndex.xy, vec4f(permute.x / N2, permute.y / N2, 0.0, 1.0));
+		//textureStore(outTexture, gIndex.xy, vec4f(permute.x, permute.y, 0.0, 1.0));
 		textureStore(outTexture, gIndex.xy, vec4f(permute.x / N2, 0.0, 0.0, 1.0));
 	}
 `;
@@ -270,7 +270,7 @@ export const c_IFFT_2D =
 			// Load data from input texture (real and imaginary parts of h0k)
 			let a = textureLoad(inTexture, vec2u(inputIndices.x, gIndex.y)).xy;
 			let b = textureLoad(inTexture, vec2u(inputIndices.y, gIndex.y)).xy;
-			let result = a + complexMul(vec2f(preCompData.x, -preCompData.y), b.xy);
+			let result = a + complexMul(vec2f(preCompData.x, preCompData.y), b.xy);
 
 			textureStore(outTexture, gIndex.xy, vec4f(result.x, result.y, 0.0, 1.0));
 
@@ -293,7 +293,7 @@ export const c_IFFT_2D =
 			// Load data from input texture (real and imaginary parts of h0k)
 			let a = textureLoad(inTexture, vec2u(gIndex.x, inputIndices.x)).xy;
 			let b = textureLoad(inTexture, vec2u(gIndex.x, inputIndices.y)).xy;
-			let result = a + complexMul(vec2f(preCompData.x, -preCompData.y), b.xy);
+			let result = a + complexMul(vec2f(preCompData.x, preCompData.y), b.xy);
 
 			textureStore(outTexture, gIndex.xy, vec4f(result.x, result.y, 0.0, 1.0));
 
@@ -367,7 +367,7 @@ export const c_PreComp =
 		let span = 1u << gIndex.x;
 		let twiddleK = (yIndex % span);
 		let theta = 2.0 * 3.14159 * f32(twiddleK) / f32(span * 2u);
-		let twiddle = vec2f(cos(theta), sin(theta));		//positive sin for fft, and if doing ifft, just change the sign in IFFT pass
+		let twiddle = vec2f(cos(theta), -sin(theta));		//positive sin for fft, neg for ifft
 		
 		let stageSize = span * 2u;
 		let group = yIndex / stageSize;
@@ -463,15 +463,19 @@ fn complexConj(z: vec2f) -> vec2f {
 		let exponent = vec2f(cos_wt, sin_wt);      // e^{iωt}
 		
 		let term1 = complexMul(h0k, exponent);
-		let term2 = complexMul(h0Negk, vec2f(exponent.x, -exponent.y));
+		let term2 = complexMul(h0Negk, exponent);
 		
 		let hkt = term1 + term2;
+		
+		var blue = 0.0;
+		//if(hkt.y == 0.0){
+		//	blue = 1.0;
+		//}
 		
 		//DEBUG, visualizing hKt directly will show an inward collapse, this is how hKt is supposed to workgroup_size
 		//			the waveHeightRealization should actually be hXt.  
 		
-		textureStore(waveHeightRealization, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4f(hkt.x,hkt.y,0.0,1.0));
-	
+		textureStore(waveHeightRealization, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4f(hkt.x, hkt.y,blue,1.0));
 	}
 `;
 
@@ -505,13 +509,26 @@ export const c_h0kConj =
 		
 		var gIndex = GlobalIvocationID.xy;
 		let res = u32(WU.resolution);
+		let negIndices = vec2u((u32(WU.resolution) - gIndex.x) % u32(WU.resolution), 
+								(u32(WU.resolution) - gIndex.y) % u32(WU.resolution));
+		
 		
 		let h0k = textureLoad(inH0KTexture, gIndex).xy;
-		let h0Negk = textureLoad(inH0KTexture, vec2u((res - gIndex.x) % res, (res - gIndex.y) % res)).xy;
-		let h0NegkConj = complexConj(h0Negk);
+		let h0NegkConj = complexConj(textureLoad(inH0KTexture, negIndices).xy);
 		
 		//final
 		textureStore(initialHeightField, gIndex, vec4f(h0k.x, h0k.y, h0NegkConj.x, h0NegkConj.y));
+		
+		
+		////debug CONJ SYM test, if we see blue, we fail
+		//let h0k = textureLoad(inH0KTexture, gIndex).xy;
+		//let h0Negk = textureLoad(inH0KTexture, vec2u((res - gIndex.x) % res, (res - gIndex.y) % res)).xy;
+		//let h0kConj = complexConj(h0k);
+		//
+		//let epsilon = 0.0001;
+		//let isEqual = abs(h0Negk.x - h0kConj.x) < epsilon && abs(h0Negk.y - h0kConj.y) < epsilon;
+		//let blue = select(1.0, 0.0, isEqual); // 1.0 = fail, 0.0 = pass
+		//textureStore(initialHeightField, gIndex, vec4f(0, 0, blue, 1));
 	}
 `;
 
@@ -581,15 +598,15 @@ fn phillipsSpectrum(kx: f32, ky: f32) -> f32 {
 	let L = (V * V) / g;	//largest possible waves from a continuous wind
 	let Lmin = 0.01;			//minimum wavelength in meters
 	let kLmin2 = (kMag * Lmin) * (kMag * Lmin);
-	let A = 4.0;			//"a numeric constant" ???
+	let A = 10.0;			//"a numeric constant" ???
 	
 	let kHat = vec2f(K.x / kMag, K.y / kMag);		// hat k, unit vector
 	let wHat = normalize(WU.windDirection);			// hat w, wind direction, normalized input just incase
 	let kHwH = dot(kHat, wHat);						// hat k dot hat w 
-	let kHwHX = kHwH * kHwH; 			//RAISING THIS X TIMES INCREASES WIND INFLUENCE MORE
+	let kHwHX = kHwH * kHwH * kHwH * kHwH; 			//RAISING THIS X TIMES INCREASES WIND INFLUENCE MORE
 	let kMagLSqr = (kMag * L) * (kMag * L);			
-	let kMag4 = kMag * kMag * kMag * kMag;		
-		
+	var kMag4 = kMag * kMag * kMag * kMag;		
+	//kMag4 = max(kMag4, 0.1);
 	
 	var PhK = 0.0;
 	if(kMag != 0.0) {
@@ -604,7 +621,7 @@ fn phillipsSpectrum(kx: f32, ky: f32) -> f32 {
 	return PhK;
 }
 
-fn h0(vertGridPosX: u32, vertGridPosZ: u32) -> vec4f {
+fn h0(vertGridPosX: u32, vertGridPosZ: u32) {
 	
 	//BEST PAGE for all of this
 	//https://barthpaleologue.github.io/Blog/posts/ocean-simulation-webgpu/#:~:text=Okay%2C%20so%20we%20need%20a,w%5E=%E2%88%A3w%E2%88%A3w
@@ -616,7 +633,7 @@ fn h0(vertGridPosX: u32, vertGridPosZ: u32) -> vec4f {
 	let kx = deltaK * (f32(vertGridPosX) - (WU.resolution / 2.0));
 	let ky = deltaK * (f32(vertGridPosZ) - (WU.resolution / 2.0));
 	
-	let PhK = phillipsSpectrum(kx, ky);
+	var PhK = phillipsSpectrum(kx, ky);
 	//let PhNegK = phillipsSpectrum(-kx, -ky);
 	
 	//THIS IS FOR DEBUG FOR NOW
@@ -627,27 +644,31 @@ fn h0(vertGridPosX: u32, vertGridPosZ: u32) -> vec4f {
 	let offset = index * 2u;
 	let gauss = vec2f(complexGaussArray[offset], complexGaussArray[offset + 1u]);		// CHECK BACK HERE!!!!!!!!!
 
+	
 	let minClampVal = 0.01;	//if PhK returns 0, or is wayyy too low, find this (reduces the 0 line split effect)
 	var clampedPhK = max(sqrt(PhK), minClampVal);
 	let scale = (1.0 / sqrt(2.0));
 	let h0k = scale * gauss * clampedPhK;				//max is used incase PhK is 0, which sqrt(0) would be NaN
-	
-	//calculate the conjugate, to do so, get the noise in reverse
-	//let gaussArraySize = u32(4.0 * WU.resolution * WU.resolution);	// 2 (1 real, 1 imag) * 2 (coord num) * res * res
-	//let gaussNegK = vec2f(complexGaussArray[gaussArraySize - (oVertInd)], 
-	//						complexGaussArray[gaussArraySize - (oVertInd + 1u)]);	//remember, its  + 1u because we want the pair to still be accurate
-	//
-	//let clampedPhNegK = max(sqrt(PhNegK), minClampVal);
-	//let h0Negk = scale * gaussNegK * clampedPhNegK;
-	//var h0NegkConj = vec2f(h0Negk.x, -h0Negk.y); 									//this enforces Hermitian Symmetry
+	let h0Negk = complexConj(h0k);
+
+	//textureStore(outH0KTexture, vec2u(vertGridPosX, vertGridPosZ), vec4f(h0k.x, h0k.y,0.0,0.0));		// storing h0k
 	
 	//DEBUG check for random gauss
 	//textureStore(outH0KTexture, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4(length(gauss), length(gaussNegK), 0.0,1.0));
 	
-	//let h0initial = vec4f(h0k.x, h0k.y, h0NegkConj.x, h0NegkConj.y);	//do the neg after this shader is fully dispatched
-	let h0initial = vec4f(h0k.x, h0k.y, 0.0, 0.0);
+	let negIndices = vec2u((u32(WU.resolution) - vertGridPosX) % u32(WU.resolution), 
+							(u32(WU.resolution) - vertGridPosZ) % u32(WU.resolution));
 	
-	return h0initial;
+	if(vertGridPosX > u32(WU.resolution) / 2u || 
+		(vertGridPosX == u32(WU.resolution) / 2u && vertGridPosZ > u32(WU.resolution) / 2u)) {
+		return;
+	}
+	
+	textureStore(outH0KTexture, vec2u(vertGridPosX, vertGridPosZ), vec4f(h0k.x, h0k.y,0.0,0.0));
+	textureStore(outH0KTexture, negIndices, vec4f(h0Negk.x, h0Negk.y,0.0,0.0));
+	
+	//textureStore(outH0KTexture, vec2u(vertGridPosX, vertGridPosZ), vec4f(h0k.x, h0k.y, h0Negk.x, h0Negk.y));		// storing h0k
+	//textureStore(outH0KTexture, negIndices, vec4f(h0Negk.x, h0Negk.y, h0k.x, h0k.y));		// storing h0-k from the other side
 }
 
 @compute @workgroup_size(${FFT_WORKGROUP_SIZE[0]}, ${FFT_WORKGROUP_SIZE[1]}, ${FFT_WORKGROUP_SIZE[2]})	
@@ -663,13 +684,9 @@ fn h0(vertGridPosX: u32, vertGridPosZ: u32) -> vec4f {
 		let vertGridPosZ = gIndex.y;
 		
 		//-----------------------------------
-		let h0Data = h0(vertGridPosX, vertGridPosZ);
+		h0(vertGridPosX, vertGridPosZ);
 		
-		//DEBUG mag check
-		//textureStore(outH0KTexture, vec2u(vertGridPosX, vertGridPosZ), vec4(length(h0Data.xy), length(h0Data.zw), 0.0,1.0));
 		
-		//final
-		textureStore(outH0KTexture, vec2u(vertGridPosX, vertGridPosZ), h0Data);
 	}
 `;
 

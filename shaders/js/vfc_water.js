@@ -183,7 +183,18 @@ export const c_Shift =
 		//textureStore(outTexture, shiftedCoords, vec4f(val.x / N2, val.y / N2, val.z / N2, 1.0));
 		
 		//permute and scale
-		let permute = val * (1.0 - 2.0 * f32((gIndex.x + gIndex.y)% 2));
+		//let checker = f32(((gIndex.x + gIndex.y) % 2u) * 2u - 1u);
+		//let permute = val * checker;
+
+		//let permute = val * (1.0 - 2.0 * f32((gIndex.x + gIndex.y)% 2));
+		
+		var permute = vec4f(0.,0.,0.,0.);
+		if ((gIndex.x + gIndex.y) % 2u == 0) {
+			permute = val;
+		} else {
+			permute = -val;
+		}
+		
 		//textureStore(outTexture, gIndex.xy, vec4f(permute.x / N2, permute.y / N2, 0.0, 1.0));
 		textureStore(outTexture, gIndex.xy, vec4f(permute.x / N2, 0.0, 0.0, 1.0));
 	}
@@ -356,7 +367,7 @@ export const c_PreComp =
 		let span = 1u << gIndex.x;
 		let twiddleK = (yIndex % span);
 		let theta = 2.0 * 3.14159 * f32(twiddleK) / f32(span * 2u);
-		let twiddle = vec2f(cos(theta), -sin(theta));
+		let twiddle = vec2f(cos(theta), sin(theta));		//positive sin for fft, and if doing ifft, just change the sign in IFFT pass
 		
 		let stageSize = span * 2u;
 		let group = yIndex / stageSize;
@@ -400,15 +411,15 @@ fn complexConj(z: vec2f) -> vec2f {
 }
 
 
-@compute @workgroup_size(${WATER_WORKGROUP_SIZE[0]}, ${WATER_WORKGROUP_SIZE[1]}, ${WATER_WORKGROUP_SIZE[2]})	
+@compute @workgroup_size(${FFT_WORKGROUP_SIZE[0]}, ${FFT_WORKGROUP_SIZE[1]}, ${FFT_WORKGROUP_SIZE[2]})	
     fn computeMain(
 		@builtin(global_invocation_id) GlobalIvocationID: vec3<u32>
 	) {
 		
-		var gIndex = GlobalIvocationID.x;
+		var gIndex = GlobalIvocationID.xy;
 		let gridWidth = u32(WU.resolution);
-		let vertGridPosX = gIndex % gridWidth;
-		let vertGridPosZ = gIndex / gridWidth;
+		let vertGridPosX = gIndex.x;
+		let vertGridPosZ = gIndex.y;
 			
 		// vector fields with e^it
 		// https://www.youtube.com/watch?v=v0YEaeIClKY
@@ -449,24 +460,17 @@ fn complexConj(z: vec2f) -> vec2f {
 		let cos_wt = cos(w * t);
 		let sin_wt = sin(w * t);
 	
-		let exp_iwt = vec2f(cos_wt, sin_wt);      // e^{iωt}
-		let exp_neg_iwt = complexConj(exp_iwt); // e^{-iωt}
+		let exponent = vec2f(cos_wt, sin_wt);      // e^{iωt}
 		
-		let term1 = complexMul(h0k, exp_iwt);
-		let term2 = complexMul(h0Negk, exp_neg_iwt);
+		let term1 = complexMul(h0k, exponent);
+		let term2 = complexMul(h0Negk, vec2f(exponent.x, -exponent.y));
 		
 		let hkt = term1 + term2;
 		
 		//DEBUG, visualizing hKt directly will show an inward collapse, this is how hKt is supposed to workgroup_size
 		//			the waveHeightRealization should actually be hXt.  
 		
-		
-		//SHIFT IT, this is a preshift for fft to move from 0,0 center to move it to the corner
-		//	FFT expects natural order (DC at top left), not centered frequency space
-		let checker = f32(((vertGridPosX + vertGridPosZ) % 2u) * 2u - 1u);
-		let hktShifted = hkt  ;//* checker;
-		
-		textureStore(waveHeightRealization, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4f(hktShifted.x,hktShifted.y,0.0,1.0));
+		textureStore(waveHeightRealization, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4f(hkt.x,hkt.y,0.0,1.0));
 	
 	}
 `;
@@ -598,7 +602,7 @@ fn phillipsSpectrum(kx: f32, ky: f32) -> f32 {
 	return PhK;
 }
 
-fn h0(vertGridPosX: u32, vertGridPosZ: u32, gIndex: u32) -> vec4f {
+fn h0(vertGridPosX: u32, vertGridPosZ: u32) -> vec4f {
 	
 	//BEST PAGE for all of this
 	//https://barthpaleologue.github.io/Blog/posts/ocean-simulation-webgpu/#:~:text=Okay%2C%20so%20we%20need%20a,w%5E=%E2%88%A3w%E2%88%A3w
@@ -617,10 +621,9 @@ fn h0(vertGridPosX: u32, vertGridPosZ: u32, gIndex: u32) -> vec4f {
 	//	the "* 1e3" portion was done to give better visuals in debug mode, its suggested to do so. However I don't believe it should be done for the waves themselves.
 	textureStore(phillipsSpectrumOutTexture, vec2u(vertGridPosX, vertGridPosZ), vec4<f32>(PhK,0.0,0.0,1.0));
 	
-	//normalized gaussian distribution (ξr + iξi) between 0 and 1
-	let fPerComplexData = 4u;
-	let oVertInd = gIndex * fPerComplexData;
-	let gauss = vec2f(complexGaussArray[oVertInd], complexGaussArray[oVertInd + 1u]);
+	let index = vertGridPosZ + u32(WU.resolution) * vertGridPosX;
+	let offset = index * 2u;
+	let gauss = vec2f(complexGaussArray[offset], complexGaussArray[offset + 1u]);		// CHECK BACK HERE!!!!!!!!!
 	
 	let minClampVal = 0.01;	//if PhK returns 0, or is wayyy too low, find this (reduces the 0 line split effect)
 	
@@ -629,11 +632,10 @@ fn h0(vertGridPosX: u32, vertGridPosZ: u32, gIndex: u32) -> vec4f {
 	let h0k = scale * gauss * clampedPhK;				//max is used incase PhK is 0, which sqrt(0) would be NaN
 	
 	//calculate the conjugate, to do so, get the noise in reverse
-	let gaussArraySize = u32(4.0 * WU.resolution * WU.resolution);	// 2 (1 real, 1 imag) * 2 (coord num) * res * res
-	let gaussNegK = vec2f(complexGaussArray[gaussArraySize - (oVertInd)], 
-							complexGaussArray[gaussArraySize - (oVertInd + 1u)]);	//remember, its  + 1u because we want the pair to still be accurate
-	
-	
+	//let gaussArraySize = u32(4.0 * WU.resolution * WU.resolution);	// 2 (1 real, 1 imag) * 2 (coord num) * res * res
+	//let gaussNegK = vec2f(complexGaussArray[gaussArraySize - (oVertInd)], 
+	//						complexGaussArray[gaussArraySize - (oVertInd + 1u)]);	//remember, its  + 1u because we want the pair to still be accurate
+	//
 	//let clampedPhNegK = max(sqrt(PhNegK), minClampVal);
 	//let h0Negk = scale * gaussNegK * clampedPhNegK;
 	//var h0NegkConj = vec2f(h0Negk.x, -h0Negk.y); 									//this enforces Hermitian Symmetry
@@ -647,20 +649,20 @@ fn h0(vertGridPosX: u32, vertGridPosZ: u32, gIndex: u32) -> vec4f {
 	return h0initial;
 }
 
-@compute @workgroup_size(${WATER_WORKGROUP_SIZE[0]}, ${WATER_WORKGROUP_SIZE[1]}, ${WATER_WORKGROUP_SIZE[2]})	
+@compute @workgroup_size(${FFT_WORKGROUP_SIZE[0]}, ${FFT_WORKGROUP_SIZE[1]}, ${FFT_WORKGROUP_SIZE[2]})	
     fn computeMain(
 		@builtin(global_invocation_id) GlobalIvocationID: vec3<u32>
 	) {
 		
-		var gIndex = GlobalIvocationID.x;
+		var gIndex = GlobalIvocationID;
 		
 		//------------------------------FORM GRID-------------------------------
 		let gridWidth = u32(WU.resolution);
-		let vertGridPosX = gIndex % gridWidth;
-		let vertGridPosZ = gIndex / gridWidth;
+		let vertGridPosX = gIndex.x;
+		let vertGridPosZ = gIndex.y;
 		
 		//-----------------------------------
-		let h0Data = h0(vertGridPosX, vertGridPosZ, gIndex);
+		let h0Data = h0(vertGridPosX, vertGridPosZ);
 		
 		//DEBUG mag check
 		//textureStore(outH0KTexture, vec2u(vertGridPosX, vertGridPosZ), vec4(length(h0Data.xy), length(h0Data.zw), 0.0,1.0));

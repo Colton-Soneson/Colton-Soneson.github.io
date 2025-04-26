@@ -110,10 +110,50 @@ function complexGaussianRandom(mean, standardDeviation, arrayLength) {
 		result.push(rk);
 		result.push(ik);
 	}
-	
+	console.log("Water tile res sqrd: ", arrayLength);
 	return result;
 }
-const complexGaussArray = new Float32Array(complexGaussianRandom(0.0, 1.0, 2 * settings.waterTileResolution * settings.waterTileResolution));	//4: kr, ki, -kr, -ki
+
+function generateHermitianSymmetricComplexGaussian(resolution) {
+	const size = resolution * resolution;
+	const data = new Float32Array(size * 2); // real + imag for each texel
+
+	const N = resolution;
+
+	for (let y = 0; y < N; y++) {
+		for (let x = 0; x < N; x++) {
+			const i = y * N + x;
+			const jx = (N - x) % N;
+			const jy = (N - y) % N;
+			const j = jy * N + jx;
+
+			if (i < j) {
+				const real = gaussianRandom(0, 1);
+				const imag = gaussianRandom(0, 1);
+
+				data[i * 2 + 0] = real;
+				data[i * 2 + 1] = imag;
+
+				data[j * 2 + 0] = real;
+				data[j * 2 + 1] = -imag;
+			}
+			else if (i === j) {
+				// Pure real (self-conjugate)
+				const real = gaussianRandom(0, 1);
+				data[i * 2 + 0] = real;
+				data[i * 2 + 1] = 0.0;
+			}
+			// else: already assigned in a previous iteration
+		}
+	}
+
+	return data;
+}
+
+const complexGaussArray = new Float32Array(complexGaussianRandom(0.0, 1.0, settings.waterTileResolution * settings.waterTileResolution));	//4: kr, ki, -kr, -ki
+console.log("gauss array length: ", complexGaussArray.byteLength / 4);
+
+//const complexGaussArray = generateHermitianSymmetricComplexGaussian(settings.waterTileResolution);
 //console.log("Complex Gaussian Num Array: ", complexGaussArray);
 
 const centerWaterPlanePosition = [-(settings.waterTileResolution * 0.5), 0.0, -(settings.waterTileResolution * 0.5)];
@@ -998,19 +1038,16 @@ export function waterPass(aEncoder, mainpassDepthTexture) {
 	{
 		//h0k
 		const computeInitialHeightPass = aEncoder.beginComputePass();
-		
 		computeInitialHeightPass.setPipeline(waterSpectrumComputePipeline);
 		computeInitialHeightPass.setBindGroup(0, bindSpectrumCGroup);
-		
-		computeInitialHeightPass.dispatchWorkgroups(Math.ceil( (settings.waterTileResolution * settings.waterTileResolution) / WATER_WORKGROUP_SIZE[0]));			//you want to do it per vertex, not per cell
+		computeInitialHeightPass.dispatchWorkgroups(Math.ceil(settings.waterTileResolution / FFT_WORKGROUP_SIZE[0]),
+											Math.ceil(settings.waterTileResolution / FFT_WORKGROUP_SIZE[1]));
 		computeInitialHeightPass.end();
 		
 		//h0-k conj
 		const computeConjPass = aEncoder.beginComputePass();
-		
 		computeConjPass.setPipeline(waterConjComputePipeline);
 		computeConjPass.setBindGroup(0, bindConjCGroup);
-		
 		computeConjPass.dispatchWorkgroups(Math.ceil(settings.waterTileResolution / FFT_WORKGROUP_SIZE[0]),
 											Math.ceil(settings.waterTileResolution / FFT_WORKGROUP_SIZE[1]));
 		computeConjPass.end();
@@ -1018,11 +1055,10 @@ export function waterPass(aEncoder, mainpassDepthTexture) {
 	
 	//hkt
 	const computeHKTPass = aEncoder.beginComputePass();
-		
 	computeHKTPass.setPipeline(waterRealizationComputePipeline);
 	computeHKTPass.setBindGroup(0, bindRealizationCGroup);
-	
-	computeHKTPass.dispatchWorkgroups(Math.ceil( (settings.waterTileResolution * settings.waterTileResolution) / WATER_WORKGROUP_SIZE[0]));			//you want to do it per vertex, not per cell
+	computeHKTPass.dispatchWorkgroups(Math.ceil(settings.waterTileResolution / FFT_WORKGROUP_SIZE[0]),
+											Math.ceil(settings.waterTileResolution / FFT_WORKGROUP_SIZE[1]));
 	computeHKTPass.end();
 	
 	//copy just to debug view it
@@ -1035,7 +1071,7 @@ export function waterPass(aEncoder, mainpassDepthTexture) {
 	
 	//-----------------------------FFT-------------------------------
 	//FFT start, the buttefly group starts with waveHeightRealization ONLY ONCE
-	const stages = 8;//Math.log2(settings.waterTileResolution);
+	const stages = Math.log2(settings.waterTileResolution);
 	
 	//pre compute twiddle values
 	let bindButterflyPreCompCGroup = createCompBindGroupButterflyPreCompWater();

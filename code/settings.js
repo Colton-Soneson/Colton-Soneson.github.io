@@ -38,7 +38,7 @@ export const settings = {
 	waterTileResolution: 256,
 	waterTileInstanceCount: 3,
 	waterWorldPosY: -16,
-	waterOceanPlanePhysicalSize: 1000.0,
+	waterOceanPlanePhysicalSize: 100.0,
 	waterWindSpeed: 20.0,
 	//--------------------DEBUG--------------------
     showDebug: true,

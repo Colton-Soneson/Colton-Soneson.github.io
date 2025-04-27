@@ -184,9 +184,9 @@ export const c_Shift =
 		
 		//permute and scale
 		//let checker = f32(((gIndex.x + gIndex.y) % 2u) * 2u - 1u);
-		//let permute = val * checker;
+		//var permute = val * checker;
 
-		let permute = val * (1.0 - 2.0 * f32((gIndex.x + gIndex.y)% 2));
+		var permute = val * (1.0 - 2.0 * f32((gIndex.x + gIndex.y)% 2));
 		
 		//var permute = vec4f(0.,0.,0.,0.);
 		//if ((gIndex.x + gIndex.y) % 2u == 0) {
@@ -195,8 +195,11 @@ export const c_Shift =
 		//	permute = -val;
 		//}
 		
-		//textureStore(outTexture, gIndex.xy, vec4f(permute.x, permute.y, 0.0, 1.0));
-		textureStore(outTexture, gIndex.xy, vec4f(permute.x / N2, 0.0, 0.0, 1.0));
+		//let outVal = length(permute);
+		//textureStore(outTexture, gIndex.xy, vec4f(outVal, outVal, outVal, 1.0));
+		
+		//textureStore(outTexture, gIndex.xy, vec4f(permute.x, 0.0, 0.0, 1.0));
+		textureStore(outTexture, gIndex.xy, vec4f(permute.x / N2, permute.x / N2, permute.x / N2, 1.0));
 	}
 `;
 
@@ -270,9 +273,12 @@ export const c_IFFT_2D =
 			// Load data from input texture (real and imaginary parts of h0k)
 			let a = textureLoad(inTexture, vec2u(inputIndices.x, gIndex.y)).xy;
 			let b = textureLoad(inTexture, vec2u(inputIndices.y, gIndex.y)).xy;
-			let result = a + complexMul(vec2f(preCompData.x, preCompData.y), b.xy);
-
-			textureStore(outTexture, gIndex.xy, vec4f(result.x, result.y, 0.0, 1.0));
+			var result = a + complexMul(vec2f(preCompData.x, preCompData.y), b.xy);
+			if(result.x < 0.0 || result.y < 0.0) {
+				textureStore(outTexture, gIndex.xy, vec4f(0.0, 0.0, 1.0, 1.0)); //proof that youre not in correct space
+			} else {
+				textureStore(outTexture, gIndex.xy, vec4f(result.x, result.y, 0.0, 1.0));
+			}
 
 			
 			//// Perform FFT butterfly operation (we could swap this depending on the FFT stage)		
@@ -293,10 +299,13 @@ export const c_IFFT_2D =
 			// Load data from input texture (real and imaginary parts of h0k)
 			let a = textureLoad(inTexture, vec2u(gIndex.x, inputIndices.x)).xy;
 			let b = textureLoad(inTexture, vec2u(gIndex.x, inputIndices.y)).xy;
-			let result = a + complexMul(vec2f(preCompData.x, preCompData.y), b.xy);
-
-			textureStore(outTexture, gIndex.xy, vec4f(result.x, result.y, 0.0, 1.0));
-
+			var result = a + complexMul(vec2f(preCompData.x, preCompData.y), b.xy);
+	
+			if(result.x < 0.0 || result.y < 0.0) {
+				textureStore(outTexture, gIndex.xy, vec4f(0.0, 0.0, 1.0, 1.0));	//proof that youre not in correct space
+			} else {
+				textureStore(outTexture, gIndex.xy, vec4f(result.x, result.y, 0.0, 1.0));
+			}
 
 			//// Perform FFT butterfly operation (we could swap this depending on the FFT stage)
 			//let p = vec2f(a.x, a.y);
@@ -349,6 +358,11 @@ export const c_PreComp =
 		}
 		return reversed;
 	}
+	
+	fn uncenterIndex(index: u32, resolution: u32) -> u32 {
+		let half = resolution / 2u;
+		return (index + half) % resolution;
+	}
 
 	@compute @workgroup_size(${PRECOMP_WORKGROUP_SIZE[0]}, ${PRECOMP_WORKGROUP_SIZE[1]}, ${PRECOMP_WORKGROUP_SIZE[2]})	
     fn computeMain(
@@ -357,10 +371,12 @@ export const c_PreComp =
 		
 		var gIndex = GlobalInvocationID;	//x is by num stages, y is by full resolution
 		var yIndex = 0u;
+		let res = u32(WU.resolution);
+		let shiftedIndex = uncenterIndex(gIndex.y, res);
 		if(gIndex.x == 0) {
-			yIndex = bitReverse(gIndex.y, u32(log2(WU.resolution)));
+			yIndex = bitReverse(shiftedIndex, u32(log2(f32(res))));
 		} else {
-			yIndex = gIndex.y;
+			yIndex = shiftedIndex;
 		}
 				
 		//based on "Realtime GPGPU FFT  Ocean Water Simulation" by Fynn-Jorin Flügge
@@ -581,9 +597,11 @@ fn phillipsSpectrum(kx: f32, ky: f32) -> f32 {
 	let K = vec2f(kx, ky);		//GRID OF WAVE VECTORS
 	
 	var kMag = length(K);			// italic k, magnitude
-	if(kMag < 0.00001) {		//avoid blowout
-		kMag = 0.00001;
+	if(kMag < 0.0001) {		//avoid blowout
+		kMag = 0.0001;		//allowing the kMag at a minimum means the top row of the texture and left column will contain noise
 	}
+	
+	
 
 	//check for kx, kz, w
 	//let w2 = g * length(k);
@@ -596,16 +614,16 @@ fn phillipsSpectrum(kx: f32, ky: f32) -> f32 {
 	
 	let V = WU.windSpeed; 			//wind speed, i made this up
 	let L = (V * V) / g;	//largest possible waves from a continuous wind
-	let Lmin = 0.01;			//minimum wavelength in meters
+	let Lmin = 0.05;			//minimum wavelength in meters
 	let kLmin2 = (kMag * Lmin) * (kMag * Lmin);
-	let A = 10.0;			//"a numeric constant" ???
+	let A = 4.0;			//"a numeric constant" ???
 	
 	let kHat = vec2f(K.x / kMag, K.y / kMag);		// hat k, unit vector
 	let wHat = normalize(WU.windDirection);			// hat w, wind direction, normalized input just incase
 	let kHwH = dot(kHat, wHat);						// hat k dot hat w 
-	let kHwHX = kHwH * kHwH * kHwH * kHwH; 			//RAISING THIS X TIMES INCREASES WIND INFLUENCE MORE
+	let kHwHX = kHwH * kHwH; 						//RAISING THIS X TIMES INCREASES WIND INFLUENCE MORE
 	let kMagLSqr = (kMag * L) * (kMag * L);			
-	var kMag4 = kMag * kMag * kMag * kMag;		
+	var kMagDenomX = kMag * kMag;		//4 is standard ill use 2
 	//kMag4 = max(kMag4, 0.1);
 	
 	var PhK = 0.0;
@@ -614,7 +632,7 @@ fn phillipsSpectrum(kx: f32, ky: f32) -> f32 {
 		//PhK = A * (exp(-1.0 / kL2) * supression /  k4) * kw6;
 		//PhK = A * (1.0 / k4) * exp((-1.0 / kL2) - kLmin2) * (kw * kw);
 		
-		PhK = A * (exp(-1.0 / kMagLSqr) / kMag4) * kHwHX;
+		PhK = A * (exp(-1.0 / kMagLSqr) / kMagDenomX) * kHwHX;
 		PhK *= exp(-kLmin2);	//high freq supression (avoiding spikes)
 	}
 	
@@ -633,8 +651,11 @@ fn h0(vertGridPosX: u32, vertGridPosZ: u32) {
 	let kx = deltaK * (f32(vertGridPosX) - (WU.resolution / 2.0));
 	let ky = deltaK * (f32(vertGridPosZ) - (WU.resolution / 2.0));
 	
-	var PhK = phillipsSpectrum(kx, ky);
-	//let PhNegK = phillipsSpectrum(-kx, -ky);
+	var PhK = phillipsSpectrum(kx, ky);	
+	
+	//DEBUG
+	// PhK = (cos(kx * 2.0) * cos(kx * 2.0) - sin(ky * 2.0) * sin(ky * 2.0));
+	
 	
 	//THIS IS FOR DEBUG FOR NOW
 	//	the "* 1e3" portion was done to give better visuals in debug mode, its suggested to do so. However I don't believe it should be done for the waves themselves.
@@ -643,9 +664,11 @@ fn h0(vertGridPosX: u32, vertGridPosZ: u32) {
 	let index = vertGridPosX + u32(WU.resolution) * vertGridPosZ;
 	let offset = index * 2u;
 	let gauss = vec2f(complexGaussArray[offset], complexGaussArray[offset + 1u]);		// CHECK BACK HERE!!!!!!!!!
-
 	
-	let minClampVal = 0.01;	//if PhK returns 0, or is wayyy too low, find this (reduces the 0 line split effect)
+	//DEBUG
+	//let gauss = vec2f(1.0,1.0);
+	
+	let minClampVal = 0.0;			//if PhK returns 0, or is wayyy too low, find this (reduces the 0 line split effect)
 	var clampedPhK = max(sqrt(PhK), minClampVal);
 	let scale = (1.0 / sqrt(2.0));
 	let h0k = scale * gauss * clampedPhK;				//max is used incase PhK is 0, which sqrt(0) would be NaN
@@ -656,19 +679,19 @@ fn h0(vertGridPosX: u32, vertGridPosZ: u32) {
 	//DEBUG check for random gauss
 	//textureStore(outH0KTexture, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4(length(gauss), length(gaussNegK), 0.0,1.0));
 	
-	let negIndices = vec2u((u32(WU.resolution) - vertGridPosX) % u32(WU.resolution), 
-							(u32(WU.resolution) - vertGridPosZ) % u32(WU.resolution));
-	
-	if(vertGridPosX > u32(WU.resolution) / 2u || 
-		(vertGridPosX == u32(WU.resolution) / 2u && vertGridPosZ > u32(WU.resolution) / 2u)) {
-		return;
-	}
+	//let negIndices = vec2u((u32(WU.resolution) - vertGridPosX ) % u32(WU.resolution), 
+	//						(u32(WU.resolution) - vertGridPosZ ) % u32(WU.resolution));
+	//
+	//if(vertGridPosX > u32(WU.resolution) / 2u || 
+	//	(vertGridPosX == u32(WU.resolution) / 2u && vertGridPosZ > u32(WU.resolution) / 2u)) {
+	//	return;
+	//}
+	//
+	//textureStore(outH0KTexture, negIndices, vec4f(h0Negk.x, h0Negk.y,0.0,0.0));
 	
 	textureStore(outH0KTexture, vec2u(vertGridPosX, vertGridPosZ), vec4f(h0k.x, h0k.y,0.0,0.0));
-	textureStore(outH0KTexture, negIndices, vec4f(h0Negk.x, h0Negk.y,0.0,0.0));
+
 	
-	//textureStore(outH0KTexture, vec2u(vertGridPosX, vertGridPosZ), vec4f(h0k.x, h0k.y, h0Negk.x, h0Negk.y));		// storing h0k
-	//textureStore(outH0KTexture, negIndices, vec4f(h0Negk.x, h0Negk.y, h0k.x, h0k.y));		// storing h0-k from the other side
 }
 
 @compute @workgroup_size(${FFT_WORKGROUP_SIZE[0]}, ${FFT_WORKGROUP_SIZE[1]}, ${FFT_WORKGROUP_SIZE[2]})	

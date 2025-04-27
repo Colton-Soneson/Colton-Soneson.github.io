@@ -1015,9 +1015,8 @@ const waterShiftComputePipeline = device.createComputePipeline({
 });
 
 
-
 function redirectWindDirectionTemp() {
-	settings.windDirection[0] = Math.cos(step * 0.00075);
+	settings.windDirection[0] = Math.cos(step * 0.75);
 	//settings.windDirection[1] = Math.sin(step * 0.00053);
 }
 
@@ -1075,7 +1074,7 @@ export function waterPass(aEncoder, mainpassDepthTexture) {
 	)
 	
 	
-	//-----------------------------FFT-------------------------------
+	//-----------------------------IFFT-------------------------------
 	//FFT start, the buttefly group starts with waveHeightRealization ONLY ONCE
 	const stages = Math.log2(settings.waterTileResolution);
 	

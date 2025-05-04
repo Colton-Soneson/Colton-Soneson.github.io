@@ -174,7 +174,7 @@ export const c_Shift =
 		@builtin(global_invocation_id) GlobalInvocationID: vec3<u32>
 	) {
 		var gIndex = GlobalInvocationID;
-		let val = textureLoad(inTexture, gIndex.xy);
+		var val = textureLoad(inTexture, gIndex.xy);
 		let N2 = WU.resolution * WU.resolution;
 		
 		let halfSize = u32(WU.resolution) / 2u;
@@ -485,7 +485,7 @@ export const c_PreComp =
 		var gIndex = vec2i(i32(GlobalInvocationID.x), i32(GlobalInvocationID.y));	//x is by num stages, y is by full resolution
 		var k = (f32(gIndex.y) * (WU.resolution / pow(2.0, f32(gIndex.x) + 1.0))) % WU.resolution;
 		var twiddle = vec2f(cos((2.0 * 3.14159 * k) / WU.resolution), 
-							sin((2.0 * 3.14159 * k) / WU.resolution));
+							-sin((2.0 * 3.14159 * k) / WU.resolution));	//maybe this isnt negative
 		var butterflySpan = pow(2.0, f32(gIndex.x));
 		var butterflyWing = 0u;
 		

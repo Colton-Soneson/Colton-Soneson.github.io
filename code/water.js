@@ -98,7 +98,6 @@ function gaussianRandom(mean, standardDeviation) {
 	return z * standardDeviation + mean;
 }
 
-
 function gaussianClampedRandom(mean, standardDeviation) {
 	let a = Math.random();
 	let b = Math.random();
@@ -227,7 +226,7 @@ const waterEntityModelsStride = waterPlaneNumberOfVerts * waterPlaneVertexStride
 
 //model list specific
 const uboOffset = 256;	//this is a defaulted max for UBO, nothing I wrote equals up to 256, its a limiter
-const totalwaterUniformArraySize = 64; //(4 * 4 * 4) 4x4 matrix for MVP, forget the rest for in shader
+const totalwaterUniformArraySize = 256; //(4 * 4 * 4) 4x4 matrix for MVP, forget the rest for in shader
 const waterUniformBuffer = device.createBuffer({
   label: "water space Uniform",
   size: totalwaterUniformArraySize,
@@ -235,14 +234,14 @@ const waterUniformBuffer = device.createBuffer({
 });
 
 //compute water anim data
-const uniformArrayComputewater= 128;	//default for now
+const uniformArrayComputewater= 256;	//default for now
 const uniformBufferComputewater = device.createBuffer({
   label: "water Compute settings Uniform Buffer",
   size: uniformArrayComputewater,
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,	//this makes it another GPUBuffer Object but this time uniform
 });
 
-const uniformArrayComputeButterfly = 128;	//default for now
+const uniformArrayComputeButterfly = 256;	//default for now
 const uniformBufferComputeButterfly = device.createBuffer({
   label: "water Compute Butterfly settings Uniform Buffer",
   size: uniformArrayComputeButterfly,
@@ -268,13 +267,12 @@ const lengthOfTwoElementWaterTileArray = settings.waterTileResolution * settings
 const uniformBufferRtoA = device.createBuffer({
   label: "water Realization to Array  Array Buffer",
   size: lengthOfTwoElementWaterTileArray,
-  usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+  usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
 });
-//device.queue.writeBuffer(uniformBufferRtoA, /*bufferOffset=*/0, ); 	//I dont think it needs to be written to to start
 const uniformBufferPingPong = device.createBuffer({
   label: "water Ping Pong Array Buffer",
   size: lengthOfTwoElementWaterTileArray,
-  usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+  usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
 });
 
 
@@ -1378,11 +1376,13 @@ export function waterPass(aEncoder, mainpassDepthTexture) {
 		let pingPongSwitch = 0.0;
 		
 		//horizontal FFT
-		for(let stage = 0; stage < stages; stage++) {
+		for(let stageH = 0; stageH < stages; stageH++) {
+			
+			waterComputeButterflyBufferUpdate(0.0, stageH, pingPongSwitch);	//set the direction, and stage count
+			
+			let bindButterflyCGroup = createCompBindGroupButterflyWater(/*uniformBufferRtoA, uniformBufferPingPong*/);	
 			
 			const computeIFFTPassH = aEncoder.beginComputePass();	
-			let bindButterflyCGroup = createCompBindGroupButterflyWater(/*uniformBufferRtoA, uniformBufferPingPong*/);			
-			waterComputeButterflyBufferUpdate(0.0, stage, pingPongSwitch);	//set the direction, and stage count
 			computeIFFTPassH.setPipeline(waterButterflyComputePipeline);
 			computeIFFTPassH.setBindGroup(0, bindButterflyCGroup);
 			
@@ -1392,25 +1392,18 @@ export function waterPass(aEncoder, mainpassDepthTexture) {
 			//SWAP
 			//[pingPongA, pingPongB] = [pingPongB, pingPongA];
 			
-			pingPongSwitch = pingPong ? 1.0 : 0.0;
-			pingPong = !pingPong;
-		
-			
 			computeIFFTPassH.end();
 			
-			
+			pingPongSwitch = pingPong ? 1.0 : 0.0;
+			pingPong = !pingPong;
 		}
 		
-		//check correct input to vertFFT
-		//let finalInput = (stages % 2 == 0) ? pingPongA : pingPongB;
-		//pingPongA = finalInput;
-		//pingPongB = (finalInput === pingPongA) ? pingPongB : pingPongA;
-		
-		for(let stage = 0; stage < stages; stage++) {
+		for(let stageV = 0; stageV < stages; stageV++) {
+			
+			waterComputeButterflyBufferUpdate(1.0, stageV, pingPongSwitch);	//set the direction, and stage count
+			let bindButterflyCGroup = createCompBindGroupButterflyWater(/*uniformBufferRtoA, uniformBufferPingPong*/);	
 			
 			const computeIFFTPassV = aEncoder.beginComputePass();
-			let bindButterflyCGroup = createCompBindGroupButterflyWater(/*uniformBufferRtoA, uniformBufferPingPong*/);		
-			waterComputeButterflyBufferUpdate(1.0, stage, pingPongSwitch);	//set the direction, and stage count
 			computeIFFTPassV.setPipeline(waterButterflyComputePipeline);
 			computeIFFTPassV.setBindGroup(0, bindButterflyCGroup);
 			
@@ -1420,17 +1413,17 @@ export function waterPass(aEncoder, mainpassDepthTexture) {
 			//SWAP
 			//[pingPongA, pingPongB] = [pingPongB, pingPongA];
 			
+			computeIFFTPassV.end();
+			
 			pingPongSwitch = pingPong ? 1.0 : 0.0;
 			pingPong = !pingPong;
-			
-			computeIFFTPassV.end();
 		}
 		
 		//check correct final
 		const IFFTBuffer = (stages % 2 == 0) ? uniformBufferRtoA : uniformBufferPingPong;
 		
 		//convert F32ARRAY to RGBA32Float for speed and RW access
-		let bindAtoTCGroup = createCompBindGroupAtoTWater(IFFTBuffer);
+		let bindAtoTCGroup = createCompBindGroupAtoTWater(uniformBufferPingPong);
 		const computeAtoTPass = aEncoder.beginComputePass();
 		computeAtoTPass.setPipeline(waterAtoTComputePipeline);
 		computeAtoTPass.setBindGroup(0, bindAtoTCGroup);

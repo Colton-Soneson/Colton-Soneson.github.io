@@ -808,43 +808,48 @@ export function updateRotatingCubePass() {
 		grassPass(encoder, depthTexture);
 	}
 	
+	device.queue.submit([encoder.finish()]);
+	
 	if(settings.enableWater)
 	{
-		waterPass(encoder, depthTexture);
+		waterPass(depthTexture);
 	}
+	
+	const encoderDebug = device.createCommandEncoder();
 	
 	if(settings.displayHeightMap)
 	{
-		postEffectPassTextureDebug_DEPTH32FLOAT(encoder, context.getCurrentTexture(), scene.heightMapDepthTexture, scene.heightMapSampler);
+		postEffectPassTextureDebug_DEPTH32FLOAT(encoderDebug, context.getCurrentTexture(), scene.heightMapDepthTexture, scene.heightMapSampler);
 	}
 	
 	if(settings.displayShadowMapDepth) {
-		postEffectPassTextureDebug_DEPTH32FLOAT(encoder, context.getCurrentTexture(), shadowMapping.shadowMapDepthTexture, shadowMapping.shadowMapSampler);
+		postEffectPassTextureDebug_DEPTH32FLOAT(encoderDebug, context.getCurrentTexture(), shadowMapping.shadowMapDepthTexture, shadowMapping.shadowMapSampler);
 	}
 	
 	if(settings.displayOceanSpectrum) {
-		postEffectPassTextureDebug_RGBA32FLOAT(encoder, context.getCurrentTexture(), water.phillipsSpectrumTexture);
+		postEffectPassTextureDebug_RGBA32FLOAT(encoderDebug, context.getCurrentTexture(), water.phillipsSpectrumTexture);
 	}
 	
 	if(settings.displayWaterInitialHeight) {
-		postEffectPassTextureDebug_RGBA32FLOAT(encoder, context.getCurrentTexture(), water.initialWaterHeightMap);
+		postEffectPassTextureDebug_RGBA32FLOAT(encoderDebug, context.getCurrentTexture(), water.initialWaterHeightMap);
 	}
 	
 	if(settings.displayWaveHeightRealization) {
-		postEffectPassTextureDebug_RGBA32FLOAT(encoder, context.getCurrentTexture(), water.hkt);
+		postEffectPassTextureDebug_RGBA32FLOAT(encoderDebug, context.getCurrentTexture(), water.hkt);
 	}
 	
 	if(settings.displayWaterPreComp) {
-		postEffectPassTextureDebug_RGBA32FLOAT(encoder, context.getCurrentTexture(), water.preCompTexture);
+		postEffectPassTextureDebug_RGBA32FLOAT(encoderDebug, context.getCurrentTexture(), water.preCompTexture);
 	}
 	
 	if(settings.displayWaterFFT) {
-		postEffectPassTextureDebug_RGBA32FLOAT(encoder, context.getCurrentTexture(), water.preShiftFinalWaveHeightTexture);
+		postEffectPassTextureDebug_RGBA32FLOAT(encoderDebug, context.getCurrentTexture(), water.preShiftFinalWaveHeightTexture);
 	}
 	
 	if(settings.displayWaterShifted ) {
-		postEffectPassTextureDebug_RGBA32FLOAT(encoder, context.getCurrentTexture(), water.finalWaveHeightTexture);
+		postEffectPassTextureDebug_RGBA32FLOAT(encoderDebug, context.getCurrentTexture(), water.finalWaveHeightTexture);
 	}
-
-	device.queue.submit([encoder.finish()]);
+	
+	device.queue.submit([encoderDebug.finish()]);
+	
 }

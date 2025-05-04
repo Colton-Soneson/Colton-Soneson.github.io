@@ -110,7 +110,7 @@ fn gerstner(vertGridPosX: f32, vertGridPosZ: f32) -> vec3f {
 		
 		//just for now, only x as height
 		var waveHeight = length(textureLoad(finalWaveHeightTexture, vec2u(u32(vertGridPosX), u32(vertGridPosZ))).xy);
-		var waveHeightAdj = waveHeight * 2.5;
+		var waveHeightAdj = (waveHeight * 22.5) + WU.planeYPos;
 		
 		var position = vec3f(vertGridPosX,
 							 waveHeightAdj,
@@ -175,20 +175,13 @@ export const c_Shift =
 	) {
 		var gIndex = GlobalInvocationID;
 		var val = textureLoad(inTexture, gIndex.xy);
-		let N2 = WU.resolution * WU.resolution;
+		let N2 = WU.resolution;																		// THIS HAS TO BE POWER OF TWO REPLACE ONCE DONE TESTING!!!!!!!!
 		
-		let halfSize = u32(WU.resolution) / 2u;
-		let shiftedCoords = (gIndex.xy + vec2u(halfSize, halfSize)) % vec2u(u32(WU.resolution), u32(WU.resolution));
-		
-		//textureStore(outTexture, shiftedCoords, vec4f(val.x, val.y, 0.0, 1.0));
-		//textureStore(outTexture, shiftedCoords, vec4f(val.x / N2, val.y / N2, val.z / N2, 1.0));
 		
 		//permute and scale
-		//let checker = f32(((gIndex.x + gIndex.y) % 2u) * 2u - 1u);
-		//var permute = val * checker;
-
 		var permute = val * (1.0 - 2.0 * f32((gIndex.x + gIndex.y) % 2u));
 		
+		//checkerboard style
 		//var permute = vec4f(0.,0.,0.,0.);
 		//if ((gIndex.x + gIndex.y) % 2u == 1) {
 		//	permute = val;
@@ -196,13 +189,7 @@ export const c_Shift =
 		//	permute = -val;
 		//}
 		
-		//var permute = val;
-		
-		//let outVal = length(permute);
-		//textureStore(outTexture, gIndex.xy, vec4f(outVal, outVal, outVal, 1.0));
-		//textureStore(outTexture, shiftedCoords, vec4f(permute.x / N2, permute.x / N2, permute.x / N2, 1.0));
-		//textureStore(outTexture, gIndex.xy, vec4f(permute.x, 0.0, 0.0, 1.0));
-		
+			
 		textureStore(outTexture, gIndex.xy, vec4f(permute.x / N2, permute.x / N2, permute.x / N2, 1.0));
 	}
 `;
@@ -485,7 +472,7 @@ export const c_PreComp =
 		var gIndex = vec2i(i32(GlobalInvocationID.x), i32(GlobalInvocationID.y));	//x is by num stages, y is by full resolution
 		var k = (f32(gIndex.y) * (WU.resolution / pow(2.0, f32(gIndex.x) + 1.0))) % WU.resolution;
 		var twiddle = vec2f(cos((2.0 * 3.14159 * k) / WU.resolution), 
-							-sin((2.0 * 3.14159 * k) / WU.resolution));	//maybe this isnt negative
+							sin((2.0 * 3.14159 * k) / WU.resolution));	//maybe this isnt negative
 		var butterflySpan = pow(2.0, f32(gIndex.x));
 		var butterflyWing = 0u;
 		
@@ -759,7 +746,7 @@ fn phillipsSpectrum(kx: f32, ky: f32) -> f32 {
 	let L = (V * V) / g;	//largest possible waves from a continuous wind
 	let Lmin = 0.5;			//minimum wavelength in meters
 	let kLmin2 = (kMag * Lmin) * (kMag * Lmin);
-	let A = 4.0;			//"a numeric constant" ???
+	let A = 10.0;			//"a numeric constant" ???
 	
 	let kHat = vec2f(K.x / kMag, K.y / kMag);		// hat k, unit vector
 	let wHat = normalize(WU.windDirection);			// hat w, wind direction, normalized input just incase

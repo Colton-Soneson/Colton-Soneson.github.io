@@ -177,19 +177,17 @@ export const c_Shift =
 		var val = textureLoad(inTexture, gIndex.xy);
 		let N2 = WU.resolution;																		// THIS HAS TO BE POWER OF TWO REPLACE ONCE DONE TESTING!!!!!!!!
 		
-		
 		//permute and scale
 		var permute = val * (1.0 - 2.0 * f32((gIndex.x + gIndex.y) % 2u));
 		
 		//checkerboard style
 		//var permute = vec4f(0.,0.,0.,0.);
-		//if ((gIndex.x + gIndex.y) % 2u == 1) {
+		//if ((gIndex.x + gIndex.y) % 2u == 0) {
 		//	permute = val;
 		//} else {
 		//	permute = -val;
 		//}
 		
-			
 		textureStore(outTexture, gIndex.xy, vec4f(permute.x / N2, permute.x / N2, permute.x / N2, 1.0));
 	}
 `;
@@ -255,7 +253,7 @@ export const c_IFFT_2D =
 		@builtin(global_invocation_id) GlobalInvocationID: vec3<u32>
 	) {
 		
-		var gIndex = GlobalInvocationID;
+		var gIndex = GlobalInvocationID.xy;
 		
 		// Determine which direction to process (horizontal or vertical)
 		let direction = BU.direction;
@@ -309,7 +307,7 @@ export const c_IFFT_2D =
 			
 		} else {
 			// Vertical pass (IFFT along columns)
-			
+				
 			let preCompData = textureLoad(preCompTexture, vec2u(u32(BU.stage), gIndex.y));
 			let inputIndices = vec2u(u32(preCompData.z), u32(preCompData.w));
 			
@@ -744,16 +742,16 @@ fn phillipsSpectrum(kx: f32, ky: f32) -> f32 {
 	
 	let V = WU.windSpeed; 			//wind speed, i made this up
 	let L = (V * V) / g;	//largest possible waves from a continuous wind
-	let Lmin = 0.5;			//minimum wavelength in meters
+	let Lmin = 0.01;			//minimum wavelength in meters
 	let kLmin2 = (kMag * Lmin) * (kMag * Lmin);
 	let A = 10.0;			//"a numeric constant" ???
 	
-	let kHat = vec2f(K.x / kMag, K.y / kMag);		// hat k, unit vector
+	let kHat = normalize(K); //vec2f(K.x / kMag, K.y / kMag);		// hat k, unit vector
 	let wHat = normalize(WU.windDirection);			// hat w, wind direction, normalized input just incase
 	let kHwH = dot(kHat, wHat);						// hat k dot hat w 
 	let kHwHX = kHwH * kHwH; 						//RAISING THIS X TIMES INCREASES WIND INFLUENCE MORE
 	let kMagLSqr = (kMag * L) * (kMag * L);			
-	var kMagDenomX = kMag * kMag;		//4 is standard ill use 2
+	var kMagDenomX = kMag * kMag * kMag * kMag;		//4 is standard ill use 2
 	//kMag4 = max(kMag4, 0.1);
 	
 	var PhK = 0.0;
@@ -794,8 +792,8 @@ fn h0(vertGridPosX: u32, vertGridPosZ: u32) {
 	
 	let index = vertGridPosX + u32(WU.resolution) * vertGridPosZ;
 	let offset = index * 4u;
-	let gauss = vec2f(complexGaussArray[offset], 
-						complexGaussArray[offset + 1u]);
+	let gauss = vec2f(complexGaussArray[offset], complexGaussArray[offset + 1u]);
+	//let gauss = vec2f(1.0,1.0);
 	
 	//DEBUG NOISE
 	//let gauss = vec2f(1.0,1.0);
@@ -832,6 +830,7 @@ fn h0(vertGridPosX: u32, vertGridPosZ: u32) {
 	
 	//with Phillips -k
 	let gaussNeg = vec2f(complexGaussArray[offset + 2u], complexGaussArray[offset + 3u]);
+	//let gaussNeg = vec2f(1.0,1.0);
 	var PhNegK = phillipsSpectrum(-kx, -ky);	
 	var clampedPhNegK = sqrt(min(max(PhNegK, minClampVal), maxClampVal));
 	let h0Negk = scale * (gaussNeg * clampedPhNegK);				//max is used incase PhK is 0, which sqrt(0) would be NaN

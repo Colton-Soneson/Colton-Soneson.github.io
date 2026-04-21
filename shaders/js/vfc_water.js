@@ -110,7 +110,7 @@ fn gerstner(vertGridPosX: f32, vertGridPosZ: f32) -> vec3f {
 		
 		//just for now, only x as height
 		var waveHeight = length(textureLoad(finalWaveHeightTexture, vec2u(u32(vertGridPosX), u32(vertGridPosZ))).xy);
-		var waveHeightAdj = (waveHeight * 22.5) + WU.planeYPos;
+		var waveHeightAdj = (waveHeight * 1.5) + WU.planeYPos;
 		
 		var position = vec3f(vertGridPosX,
 							 waveHeightAdj,

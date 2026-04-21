@@ -120,6 +120,11 @@ struct DebugTextureUniforms {
 		}
 		
 		var inputDebugCol = textureLoad(inDebugTexture, vec2<u32>(u32(f32(threadID.x) * scaleMult * horizontalScalar), u32(f32(threadID.y) * scaleMult)));
+		
+		//THIS HAS A CRT MONITOR EFFECT :)))
+		//if(u32(f32(threadID.x) * scaleMult * horizontalScalar) % 2 == 1) {
+		//	inputDebugCol = vec4f(0.0,0.0,0.0,1.0);
+		//}
 	
 		var outCol = inputDebugCol;
 		if(all(outCol == vec4f(0.0,0.0,0.0,0.0))) {

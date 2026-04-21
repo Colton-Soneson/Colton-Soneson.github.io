@@ -1,0 +1,34 @@
+screen shadows for ground depth
+
+done in screen space, captures very small scale detail instead of large shadows
+start with depth texture
+
+project WS to Screen Space via standard transformation
+	to cast shadow, linearly interpolate from arbitrary points in space towards light source (shadow ray)
+		interpolating towards light source in PROJECTED 2D COORDS (screen space) will ALSO be a straight line
+	using w (which determines distance to camera)
+		values written to depth buff use this same w val as 2d screen coords
+			this means depth buff also interpolate linearly along a screen space ray like 2d coords do
+		when light source goes to camera plane, 2d coords are very large meaning screen space rays become parallel
+		when a light source is BEHIND camera plane, it shows up on the reverse side of the screen
+			think hourglass not triangle, how a pinhole camera works, flipped imaging
+				this means rays would be flipped, going AWAY from the light source
+
+THE METHOD
+take pixel point on model, find light coord, interpolate from point to LC in both 2d SS and depth
+	if light w value is negative (behind camera plane), then interpolate AWAY from model point
+		take a few samples along this ray (points on it) and read the depth value at those locations
+			compare between this interpolated depth and the sampled depth
+		SAMPLING ALONG THE LINE
+			sampling every pixel means we get bad aliasing, use bilinear filter with edge detection
+				instead, consider the direct neighbor of the pixel. The two are interpolating to the exact same point, their rays are super similar.
+					shift the neighbor's (one neighbor from the 8, determined by direction of ray of model pixel)  starting point (ray origin) from center of pixel to along the ray of the main pixel
+						this allows you to force match the neighbors ray to the original pixels ray, so neighbors can now share their sample via LDS (local data storage)/groupshared memory
+							then extrapolate new shifted origins of next neighbors along the ray
+								FOR THE COMPUTE SHADER, use a 64x1x1 instead of 8x8x1, then map it to segment of ray (all threads correspond to the same ray)
+									each thread does a single bilinear edge detect and blend (as shown above) then store in groupshared memory
+										then each thread reads and stores at least one extended sample based on desired shadow sample count (60 was used in the demo)
+											division transform of stored data can force all rays to become parallel, simplifying sampling
+THE USE CASES
+anything with depth buffer, so for terrain we need a high frequency depth buffer for the ground material, but everything else is auto applied
+	I assume this is done similar to how bump map is done,

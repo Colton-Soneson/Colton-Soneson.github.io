@@ -1,0 +1,75 @@
+INFO: 
+https://www.youtube.com/watch?v=Ibe1JBF5i5Y&t=238s
+
+
+tile grid system, use 512 by 512 tiles (or less), with textures attached to it
+	+ terrain height
+	+ grass type
+	+ grass height
+	
+two compute shaders
+	each render tile gets one compute shader
+		each lane id on comp shader gets turned into position on tile in the grid, plus random offset to pick blade position
+			distance cull and frustum cull
+			sample grass type and height from textures at this position
+				drop lanes that dont have grass
+			so we probably have a blade, occlusion cull
+			
+		Blade data (16 floats)
+			position (3)
+			facing dir (2)  which way the grass is pointed
+			wind strength at pos (1)
+			per blade position based hash (1)
+			grass type (1)
+			
+			clump facing direction (2)
+			clump color (1)   must be hex val
+			
+			height (1)
+			width (1)
+			tilt (1)
+			bend (1)
+			side curve (1)
+		
+		need to clump
+			use vernoi to clump, clump characteristics influence and weight other established blade data
+			
+			
+	compute 1 --> "blade count" --> compute 2 --> "indirect draw args"
+		|										   |
+		\											\
+		  "instance data" ------------------------->  vertex shader --> pixel shader
+
+one vertex shader
+	instanced index draw call, no vertex streams
+		output data generated from index and instance ID
+		each tile is one draw call, either high (higher vert count blade) or low lod (lower vert count blade)
+			each vert has 0-1 value on where it is on length of blade, and another for left or right side
+			
+			high lod blends to low lod as it nears it, so it retains its vert count, but starts to form the shape of the low lod grass
+			
+		IMPORTANT instead of spending all verts on a single blade, if the grass is short enough then "fold" the verts (imagine a V shape) to form two blades
+	
+	grass curve
+		bezier curve, 0 to 1 
+		tilt the normals of verts to round the blade out a bit
+	
+	grass wind
+		2d perlin noise scrolled in direction wind is blowing
+		
+		grass bobbing done by sin wave with phase offset effected by per blade hash id
+		
+	increasing density
+		shift blades verts in view space when blade normal is orthoginal to view vector
+			this means that very thin side views get faced more flat to camera, giving denser look
+	
+	distant noise avoidance 
+		as camera distance increases, lerp output normal to common normal, also reduce gloss
+	
+one pixel shader
+	output mat to g buffer
+		gloss is 1d texture that goes across blade and repeats lengthwise 
+		diffuse is 1d texture for vein, then 2d texture for color info
+		translucency and ao is lower vals towards bottom of blade and higher value on top
+		
+		

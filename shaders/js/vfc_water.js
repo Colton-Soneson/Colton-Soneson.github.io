@@ -109,7 +109,7 @@ fn gerstner(vertGridPosX: f32, vertGridPosZ: f32) -> vec3f {
 		//------------------[REALISTIC] FFT Oceanographic Waves-----------------
 		
 		//just for now, only x as height
-		var waveHeight = length(textureLoad(finalWaveHeightTexture, vec2u(u32(vertGridPosX), u32(vertGridPosZ))).xy);
+		var waveHeight = textureLoad(finalWaveHeightTexture, vec2u(u32(vertGridPosX), u32(vertGridPosZ))).x;
 		var waveHeightAdj = (waveHeight * 1.5) + WU.planeYPos;
 		
 		var position = vec3f(vertGridPosX,
@@ -470,7 +470,7 @@ export const c_PreComp =
 		var gIndex = vec2i(i32(GlobalInvocationID.x), i32(GlobalInvocationID.y));	//x is by num stages, y is by full resolution
 		var k = (f32(gIndex.y) * (WU.resolution / pow(2.0, f32(gIndex.x) + 1.0))) % WU.resolution;
 		var twiddle = vec2f(cos((2.0 * 3.14159 * k) / WU.resolution), 
-							sin((2.0 * 3.14159 * k) / WU.resolution));	//maybe this isnt negative
+							-sin((2.0 * 3.14159 * k) / WU.resolution));	//maybe this isnt negative
 		var butterflySpan = pow(2.0, f32(gIndex.x));
 		var butterflyWing = 0u;
 		

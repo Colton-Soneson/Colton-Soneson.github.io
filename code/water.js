@@ -1333,6 +1333,7 @@ export function waterPass(mainpassDepthTexture) {
 	}
 	
 	const stages = Math.log2(settings.waterTileResolution);
+	let IFFTBuffer;
 	
 	if(currentFrameTime - lastFrameTime > 1.0 / 30.0){
 		
@@ -1390,6 +1391,8 @@ export function waterPass(mainpassDepthTexture) {
 		//horizontal FFT
 		for(let stageH = 0; stageH < stages; stageH++) {
 			
+			pingPongSwitch = pingPong ? 1.0 : 0.0;
+
 			waterComputeButterflyBufferUpdate(0.0, stageH, pingPongSwitch);	//set the direction, and stage count
 			
 			let encoder = device.createCommandEncoder();  // NEW encoder per stage
@@ -1409,11 +1412,11 @@ export function waterPass(mainpassDepthTexture) {
 			// Optional: await GPU idle to ensure write-read order
 			//await device.queue.onSubmittedWorkDone();
 			
-			pingPongSwitch = pingPong ? 1.0 : 0.0;
 			pingPong = !pingPong;
 		}
 		
 		for(let stageV = 0; stageV < stages; stageV++) {
+			pingPongSwitch = pingPong ? 1.0 : 0.0;
 			
 			waterComputeButterflyBufferUpdate(1.0, stageV, pingPongSwitch);	//set the direction, and stage count
 			
@@ -1434,15 +1437,14 @@ export function waterPass(mainpassDepthTexture) {
 			// Optional: await GPU idle to ensure write-read order
 			//await device.queue.onSubmittedWorkDone();
 			
-			pingPongSwitch = pingPong ? 1.0 : 0.0;
 			pingPong = !pingPong;
 		}
+		
+		//check correct final
+		IFFTBuffer = pingPong ? uniformBufferPingPong : uniformBufferRtoA;
 	}
 	
 	let aEncoder = device.createCommandEncoder();
-		
-	//check correct final
-	const IFFTBuffer = (stages % 2 == 1) ? uniformBufferRtoA : uniformBufferPingPong;
 	
 	//convert F32ARRAY to RGBA32Float for speed and RW access
 	let bindAtoTCGroup = createCompBindGroupAtoTWater(IFFTBuffer);

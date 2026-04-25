@@ -56,35 +56,6 @@ fn gerstnerWave(position: vec3f, waveLength: f32, waveSteepness: f32, windDirect
 		return vec3f(new_x, new_y, new_z);
 }
 
-fn gerstner(vertGridPosX: f32, vertGridPosZ: f32) -> vec3f {
-	
-		//---------------------WAVE EQUATION ON GRID POINTS----------------------
-		//https://www.youtube.com/watch?v=kGEqaX4Y4bQ
-		//https://catlikecoding.com/unity/tutorials/flow/waves/
-	
-		var position = vec3f(vertGridPosX, WU.planeYPos, vertGridPosZ);
-		
-		//LARGE ROLLING WAVES
-		//wave A
-		position = gerstnerWave(position, WU.waveLength, WU.waveSteepness, WU.windDirection, WU.step);
-
-		//wave B
-		position = gerstnerWave(position, 10.0, 0.2, vec2f(0.2,-0.3), WU.step * 1.2);
-		
-		//MEDIUM STEEP WAVE
-		position = gerstnerWave(position, 5.0, 0.2, vec2f(0.0, 0.6), WU.step * 1.75);
-		
-		//SMALL STEEP WAVES
-		//wave D
-		position = gerstnerWave(position, 0.5, 0.8 / (position.y * 0.5), vec2f(-0.1,-0.4), WU.step * 2.0);
-		
-		//wave E
-		position = gerstnerWave(position, 0.2, 0.6 / (position.y * 0.25), vec2f(0.5,0.1), WU.step * 3.0);
-		
-		return position;
-}
-
-
 @compute @workgroup_size(${WATER_WORKGROUP_SIZE[0]}, ${WATER_WORKGROUP_SIZE[1]}, ${WATER_WORKGROUP_SIZE[2]})	
     fn computeMain(
 		@builtin(global_invocation_id) GlobalIvocationID: vec3<u32>
@@ -103,20 +74,31 @@ fn gerstner(vertGridPosX: f32, vertGridPosZ: f32) -> vec3f {
 		
 		let oVertInd = gIndex * fPerVertexData;
 		
-		//-----------------------[BASIC] Gerstner Waves-------------------------
-		//var position = gerstner(vertGridPosX, vertGridPosZ);
-		
 		//------------------[REALISTIC] FFT Oceanographic Waves-----------------
 		
 		//just for now, only x as height
 		var waveHeight = textureLoad(finalWaveHeightTexture, vec2u(u32(vertGridPosX), u32(vertGridPosZ))).x;
-		var waveHeightAdj = (waveHeight * 1.5) + WU.planeYPos;
+		
+		//Taking Depth into account
+		let attenuation = 1.0; //0.0 to 1.0 from shallow to full depth
+		let rippleScale = 0.2;  // depends on wave magnitude. Ripples will be "spikey", this decides shallow water ripple height
+								//		typically its a percent of wave at full height. so 0.1 to 0.3 is good for approachin shallows
+								//		while >1.0 is bigger than regular waves
+								//		perhaps just tie this with attenutation for depth
+		let shallowFactor = 1.0 - attenuation;
+		let deepDisplacement = waveHeight * attenuation;
+		
+		// boost high freq detail by exaggerating deviation from local mean
+		// squaring preserves sign and amplifies peaks/troughs
+		let rippleDetail = sign(waveHeight) * (waveHeight * waveHeight) * shallowFactor * rippleScale;
+		var waveHeightAdj = (deepDisplacement + rippleDetail) + WU.planeYPos;
+		
+		//var waveHeightAdj = (waveHeight * 1.5) + WU.planeYPos;	//old general multiplier for height
 		
 		var position = vec3f(vertGridPosX,
 							 waveHeightAdj,
 							 vertGridPosZ);
 	
-		
 		waterVertexData[oVertInd + 0] = position.x;
 		waterVertexData[oVertInd + 1] = position.y;
 		waterVertexData[oVertInd + 2] = position.z;
@@ -590,11 +572,15 @@ fn complexConj(z: vec2f) -> vec2f {
 		let ky = deltaK * (f32(vertGridPosZ) - (WU.resolution / 2.0));
 		let k = vec2f(kx, ky);	
 											
+		let D = 1.0;
 		
 		let w2 = g * length(k);				//frequency squared, infinite depth
+		
+		//THE BELOW IS FOR WAVE SPEED (FREQUENCY) NOT HEIGHT
+		//let w2 = g * length(k) * tan(length(k) * D);			//frequency squared, adjusted for depth
+		//let w2 = g * k * (1 + (k * k) * (LS * LS));		//frequency squared, but for small waves < 1cm
+		
 		let w = sqrt(w2);
-		//let w2_withDepth = g * k * tan(k * D);			//frequency squared, adjusted for depth
-		//let w2_rippleWaves = g * k * (1 + (k * k) * (LS * LS));		//frequency squared, but for small waves < 1cm
 		
 		let h0Data = textureLoad(initialHeightField, vec2u(u32(vertGridPosX), u32(vertGridPosZ)));
 		let h0k = h0Data.xy;

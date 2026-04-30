@@ -429,9 +429,27 @@ function waterVFUniformBufferUpdates(numInstances, pos) {
 		const modelViewMat = mat4.mul(transformations.getViewMatrix(), modelMatrix);
 		const modelViewProjectionMatrix = mat4.mul(transformations.projectionMatrix, modelViewMat);
 		
+		const topDownVP = transformations.getTopDownViewProjectionMat();
+		const topDownInverseVP = mat4.invert(topDownVP);
+				
 		for(let i = 0; i < 16; i++) {
 			bufferResult.push(modelViewProjectionMatrix[i]);
 		}
+		
+		for(let i = 0; i < 16; i++) {
+			bufferResult.push(topDownVP[i]);
+		}
+		
+		for(let i = 0; i < 16; i++) {
+			bufferResult.push(topDownInverseVP[i]);
+		}
+		
+		bufferResult.push(settings.heightMapResolution);
+		bufferResult.push(settings.heightMapResolution);
+		
+		//padding
+		bufferResult.push(0);
+		bufferResult.push(0);
 		
 		const result = new Float32Array(bufferResult);
 		
@@ -548,6 +566,13 @@ const bindGroupCLayout = device.createBindGroupLayout({
 		dimension: "2d",
 		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
     }
+  },
+  {
+    binding: 5,
+    visibility: GPUShaderStage.COMPUTE,
+    texture: {
+		sampleType: 'depth',
+	},
   }
   ]
 });
@@ -877,6 +902,10 @@ function createCompBindGroupwater() {
 			{
 				binding: 4,
 				resource: finalWaveHeightTexture.createView()
+			},
+			{
+				binding: 5,
+				resource: scene.heightMapView
 			}
 			]
 		});

@@ -9,6 +9,10 @@ export const c_water =
 	struct WaterSpaces
 	{
 		modelViewProjectionMatrix : mat4x4f,
+		topDownViewProj : mat4x4f,
+		topDownInvViewProj : mat4x4f,
+		topDownTextureSize : vec2f,
+		_padding0 : vec2f,
 	}
 	@group(0) @binding(0) var<uniform> Spaces: WaterSpaces;
 	
@@ -38,6 +42,7 @@ export const c_water =
 	@group(0) @binding(3) var<storage, read_write> waterIndexData: array<u32>;
 	
 	@group(0) @binding(4) var finalWaveHeightTexture : texture_storage_2d<rgba32float, read>;
+	@group(0) @binding(5) var topDownHeightmapTexture : texture_depth_2d;
 
 fn gerstnerWave(position: vec3f, waveLength: f32, waveSteepness: f32, windDirection: vec2f, step: f32) -> vec3f {
 		let k = (2 * 3.14) / waveLength;     		// Wave number
@@ -54,6 +59,20 @@ fn gerstnerWave(position: vec3f, waveLength: f32, waveSteepness: f32, windDirect
 		let new_y = position.y + (A * sin(f));
 		
 		return vec3f(new_x, new_y, new_z);
+}
+
+fn getHeightmapWorldPos(globalInvoc : vec2u) -> vec3f {
+	let tdUV  = vec2f(f32(globalInvoc.x) / Spaces.topDownTextureSize.x,
+                  f32(globalInvoc.y) / Spaces.topDownTextureSize.y);
+	let ndcXY = tdUV * 2.0 - vec2f(1.0, 1.0);
+	
+	var heightMap = textureLoad(topDownHeightmapTexture, vec2<u32>(globalInvoc.x, globalInvoc.y), 0);
+	
+	let clipPos  = vec4f(ndcXY.x, ndcXY.y, heightMap, 1.0);
+	var worldPos = Spaces.topDownInvViewProj * clipPos;
+	worldPos /= worldPos.w;
+	
+	return worldPos.xyz;
 }
 
 @compute @workgroup_size(${WATER_WORKGROUP_SIZE[0]}, ${WATER_WORKGROUP_SIZE[1]}, ${WATER_WORKGROUP_SIZE[2]})	
@@ -79,8 +98,32 @@ fn gerstnerWave(position: vec3f, waveLength: f32, waveSteepness: f32, windDirect
 		//just for now, only x as height
 		var waveHeight = textureLoad(finalWaveHeightTexture, vec2u(u32(vertGridPosX), u32(vertGridPosZ))).x;
 		
+		// World position of this water vertex
+        let worldX = (vertGridPosX - f32(gridWidth) * 0.5); // + WU.cameraPosition.x; //!!!!Camera positions may need to be put in for MULTIPLE WATER TILES!!!!!!!!!!
+		let worldZ = (vertGridPosZ - f32(gridWidth) * 0.5); // + WU.cameraPosition.z;
+
+        // Project into top-down camera clip space
+        let worldPos4 = vec4f(worldX, 0.0, worldZ, 1.0);
+        let clipPos   = Spaces.topDownViewProj * worldPos4;
+        let ndcXY     = clipPos.xy / clipPos.w;
+        let texUV     = vec2f(ndcXY.x * 0.5 + 0.5, 1.0 - (ndcXY.y * 0.5 + 0.5));
+
+        let texCoord = vec2u(
+            u32(clamp(texUV.x * Spaces.topDownTextureSize.x, 0.0, Spaces.topDownTextureSize.x - 1.0)),
+            u32(clamp(texUV.y * Spaces.topDownTextureSize.y, 0.0, Spaces.topDownTextureSize.y - 1.0))
+        );
+
+        // Unproject depth to get terrain world Y
+        let depth           = textureLoad(topDownHeightmapTexture, texCoord, 0);
+        let terrainClip     = vec4f(ndcXY.x, ndcXY.y, depth, 1.0);
+        var terrainWorldPos = Spaces.topDownInvViewProj * terrainClip;
+        terrainWorldPos    /= terrainWorldPos.w;
+
+        let waterDepth = WU.planeYPos - terrainWorldPos.y;
+		let fullDepthThreshold = 20.0; // make this a settings value, where anything beyond this is full depth for full waves
+		
 		//Taking Depth into account
-		let attenuation = 1.0; //0.0 to 1.0 from shallow to full depth
+		let attenuation = clamp(waterDepth / fullDepthThreshold, 0.0, 1.0); //0.0 to 1.0 from shallow to full depth
 		let rippleScale = 0.2;  // depends on wave magnitude. Ripples will be "spikey", this decides shallow water ripple height
 								//		typically its a percent of wave at full height. so 0.1 to 0.3 is good for approachin shallows
 								//		while >1.0 is bigger than regular waves
@@ -92,8 +135,6 @@ fn gerstnerWave(position: vec3f, waveLength: f32, waveSteepness: f32, windDirect
 		// squaring preserves sign and amplifies peaks/troughs
 		let rippleDetail = sign(waveHeight) * (waveHeight * waveHeight) * shallowFactor * rippleScale;
 		var waveHeightAdj = (deepDisplacement + rippleDetail) + WU.planeYPos;
-		
-		//var waveHeightAdj = (waveHeight * 1.5) + WU.planeYPos;	//old general multiplier for height
 		
 		var position = vec3f(vertGridPosX,
 							 waveHeightAdj,

@@ -26,6 +26,9 @@ export const c_water =
 		@location(6) waveLength: f32,
 		@location(7) oceanPlanePhysicalSize: f32,
 		@location(8) windSpeed: f32,
+		@location(9) tileOffsetX: f32,
+		@location(10) tileOffsetZ: f32,
+		@location(11) _padding0: vec2f,
 	};
 	@group(0) @binding(1) var<uniform> WU: WaterUniforms;
 	
@@ -88,19 +91,24 @@ fn getHeightmapWorldPos(globalInvoc : vec2u) -> vec3f {
 	
 		let gridWidth = u32(WU.resolution);
 		
-		let vertGridPosX = f32(gIndex) % f32(gridWidth);
-		let vertGridPosZ = f32(gIndex) / f32(gridWidth);
+		let gridIndexX = f32(gIndex) % f32(gridWidth);
+		let gridIndexZ = f32(gIndex) / f32(gridWidth);
+		
+		// Scale grid indices to physical size
+		let cellSize = WU.oceanPlanePhysicalSize / f32(gridWidth - 1u);
+		let vertGridPosX = gridIndexX * cellSize;
+		let vertGridPosZ = gridIndexZ * cellSize;
 		
 		let oVertInd = gIndex * fPerVertexData;
 		
 		//------------------[REALISTIC] FFT Oceanographic Waves-----------------
 		
 		//just for now, only x as height
-		var waveHeight = textureLoad(finalWaveHeightTexture, vec2u(u32(vertGridPosX), u32(vertGridPosZ))).x;
+		var waveHeight = textureLoad(finalWaveHeightTexture, vec2u(u32(gridIndexX), u32(gridIndexZ))).x;
 		
-		// World position of this water vertex
-        let worldX = (vertGridPosX - f32(gridWidth) * 0.5); // + WU.cameraPosition.x; //!!!!Camera positions may need to be put in for MULTIPLE WATER TILES!!!!!!!!!!
-		let worldZ = (vertGridPosZ - f32(gridWidth) * 0.5); // + WU.cameraPosition.z;
+		// World position of this water vertex	!!! CHECK IF TILE OFFSET IS DONE CORRECTLY
+        let worldX = (vertGridPosX - WU.oceanPlanePhysicalSize * 0.5) + WU.tileOffsetX; // + WU.cameraPosition.x; //!!!!Camera positions may need to be put in for MULTIPLE WATER TILES!!!!!!!!!!
+		let worldZ = (vertGridPosZ - WU.oceanPlanePhysicalSize * 0.5) + WU.tileOffsetZ; // + WU.cameraPosition.z;
 
         // Project into top-down camera clip space
         let worldPos4 = vec4f(worldX, 0.0, worldZ, 1.0);
@@ -124,10 +132,11 @@ fn getHeightmapWorldPos(globalInvoc : vec2u) -> vec3f {
 		
 		//Taking Depth into account
 		let attenuation = clamp(waterDepth / fullDepthThreshold, 0.0, 1.0); //0.0 to 1.0 from shallow to full depth
-		let rippleScale = 0.2;  // depends on wave magnitude. Ripples will be "spikey", this decides shallow water ripple height
+		let rippleScale = 0.02;  // depends on wave magnitude. Ripples will be "spikey", this decides shallow water ripple height
 								//		typically its a percent of wave at full height. so 0.1 to 0.3 is good for approachin shallows
 								//		while >1.0 is bigger than regular waves
 								//		perhaps just tie this with attenutation for depth
+								//		ALSO MAKE AS A PASS IN OR CALC HERE DIFFERENT
 		let shallowFactor = 1.0 - attenuation;
 		let deepDisplacement = waveHeight * attenuation;
 		
@@ -136,9 +145,9 @@ fn getHeightmapWorldPos(globalInvoc : vec2u) -> vec3f {
 		let rippleDetail = sign(waveHeight) * (waveHeight * waveHeight) * shallowFactor * rippleScale;
 		var waveHeightAdj = (deepDisplacement + rippleDetail) + WU.planeYPos;
 		
-		var position = vec3f(vertGridPosX,
+		var position = vec3f((vertGridPosX - WU.oceanPlanePhysicalSize * 0.5) + WU.tileOffsetX,
 							 waveHeightAdj,
-							 vertGridPosZ);
+							 (vertGridPosZ - WU.oceanPlanePhysicalSize * 0.5) + WU.tileOffsetZ);
 	
 		waterVertexData[oVertInd + 0] = position.x;
 		waterVertexData[oVertInd + 1] = position.y;
@@ -152,22 +161,23 @@ fn getHeightmapWorldPos(globalInvoc : vec2u) -> vec3f {
 		
 		//--------------------FORM TRIANGLES IN INDEX BUFFER---------------------
 		// Generate triangles: use the grid to form triangles between four points
-		let gridIndexX = f32(gIndex) % f32(gridWidth);
-		let gridIndexZ = f32(gIndex) / f32(gridWidth);
+		//let gridIndexX = f32(gIndex) % f32(gridWidth);
+		//let gridIndexZ = f32(gIndex) / f32(gridWidth);
 	
-		// For each square, define two triangles
-		if (gridIndexX < f32(gridWidth - 1) && gridIndexZ < f32(gridWidth - 1)) {
-			let baseIndex = gIndex;
-	
-			// First triangle (bottom-left, top-left, bottom-right)
-			waterIndexData[gIndex * 6 + 0] = baseIndex;
-			waterIndexData[gIndex * 6 + 1] = baseIndex + 1;
-			waterIndexData[gIndex * 6 + 2] = baseIndex + gridWidth;
-	
-			// Second triangle (bottom-right, top-left, top-right)
-			waterIndexData[gIndex * 6 + 3] = baseIndex + gridWidth;
-			waterIndexData[gIndex * 6 + 4] = baseIndex + 1;
-			waterIndexData[gIndex * 6 + 5] = baseIndex + gridWidth + 1;
+		let ix = u32(gridIndexX);
+		let iz = u32(gridIndexZ);
+		
+		if (ix < gridWidth - 1u && iz < gridWidth - 1u) {
+			let baseIndex = iz * gridWidth + ix;  // explicit 2D → 1D, not gIndex
+			let cellIndex = iz * (gridWidth - 1u) + ix;  // cell index, not vertex index
+		
+			waterIndexData[cellIndex * 6u + 0u] = baseIndex;
+			waterIndexData[cellIndex * 6u + 1u] = baseIndex + 1u;
+			waterIndexData[cellIndex * 6u + 2u] = baseIndex + gridWidth;
+		
+			waterIndexData[cellIndex * 6u + 3u] = baseIndex + gridWidth;
+			waterIndexData[cellIndex * 6u + 4u] = baseIndex + 1u;
+			waterIndexData[cellIndex * 6u + 5u] = baseIndex + gridWidth + 1u;
 		}
 		
 	}
@@ -185,6 +195,8 @@ export const c_Shift =
 		@location(6) waveLength: f32,
 		@location(7) oceanPlanePhysicalSize: f32,
 		@location(8) windSpeed: f32,
+		@location(9) tileOffsetX: f32,
+		@location(10) tileOffsetZ: f32,
 	};
 	@group(0) @binding(0) var<uniform> WU: WaterUniforms;
 
@@ -228,6 +240,8 @@ export const c_IFFT_2D =
 		@location(6) waveLength: f32,
 		@location(7) oceanPlanePhysicalSize: f32,
 		@location(8) windSpeed: f32,
+		@location(9) tileOffsetX: f32,
+		@location(10) tileOffsetZ: f32,
 	};
 	@group(0) @binding(0) var<uniform> WU: WaterUniforms;
 	
@@ -388,6 +402,8 @@ export const c_ArrayToTexture =
 		@location(6) waveLength: f32,
 		@location(7) oceanPlanePhysicalSize: f32,
 		@location(8) windSpeed: f32,
+		@location(9) tileOffsetX: f32,
+		@location(10) tileOffsetZ: f32,
 	};
 	@group(0) @binding(0) var<uniform> WU: WaterUniforms;
 	
@@ -451,6 +467,8 @@ export const c_PreComp =
 		@location(6) waveLength: f32,
 		@location(7) oceanPlanePhysicalSize: f32,
 		@location(8) windSpeed: f32,
+		@location(9) tileOffsetX: f32,
+		@location(10) tileOffsetZ: f32,
 	};
 	@group(0) @binding(0) var<uniform> WU: WaterUniforms;
 
@@ -560,6 +578,8 @@ export const c_hkt =
 		@location(6) waveLength: f32,
 		@location(7) oceanPlanePhysicalSize: f32,
 		@location(8) windSpeed: f32,
+		@location(9) tileOffsetX: f32,
+		@location(10) tileOffsetZ: f32,
 	};
 	@group(0) @binding(0) var<uniform> WU: WaterUniforms;
 	
@@ -659,6 +679,8 @@ export const c_h0kConj =
 		@location(6) waveLength: f32,
 		@location(7) oceanPlanePhysicalSize: f32,
 		@location(8) windSpeed: f32,
+		@location(9) tileOffsetX: f32,
+		@location(10) tileOffsetZ: f32,
 	};
 	@group(0) @binding(0) var<uniform> WU: WaterUniforms;
 	
@@ -716,6 +738,8 @@ export const c_h0k =
 		@location(6) waveLength: f32,
 		@location(7) oceanPlanePhysicalSize: f32,
 		@location(8) windSpeed: f32,
+		@location(9) tileOffsetX: f32,
+		@location(10) tileOffsetZ: f32,
 	};
 	@group(0) @binding(0) var<uniform> WU: WaterUniforms;
 	
@@ -896,6 +920,10 @@ export const v_water =
 	struct WaterUniforms 
 	{
 		modelViewProjectionMatrix : mat4x4f,
+		topDownViewProj : mat4x4f,
+		topDownInvViewProj : mat4x4f,
+		topDownTextureSize : vec2f,
+		_padding0 : vec2f,
 	}
 	@group(0) @binding(0) var<uniform> UBO: WaterUniforms;
 		

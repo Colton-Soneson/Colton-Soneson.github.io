@@ -217,12 +217,12 @@ function bitReversedIndicies(arrayLength) {
 const bitReversedIndicesArray = new Float32Array(bitReversedIndicies(settings.waterTileResolution));
 console.log("Bit Reversed Indices Array: ", bitReversedIndicesArray);
 
-const centerWaterPlanePosition = [-(settings.waterTileResolution * 0.5), 0.0, -(settings.waterTileResolution * 0.5)];
-
 //if settings change live, this will have to be changed out from constants													!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 const waterPlaneNumberOfVerts = settings.waterTileResolution * settings.waterTileResolution;
 const waterPlaneVertexStride = (3 + 2 + 3);
 const waterEntityModelsStride = waterPlaneNumberOfVerts * waterPlaneVertexStride;	//number of floats
+const totalTileCount = settings.waterTileInstanceCount * settings.waterTileInstanceCount;
+const totalPlaneTriangles = ((settings.waterTileResolution - 1) * (settings.waterTileResolution - 1));	//grid cells / tris per cell (2)
 
 //model list specific
 const uboOffset = 256;	//this is a defaulted max for UBO, nothing I wrote equals up to 256, its a limiter
@@ -235,11 +235,20 @@ const waterUniformBuffer = device.createBuffer({
 
 //compute water anim data
 const uniformArrayComputewater= 256;	//default for now
-const uniformBufferComputewater = device.createBuffer({
-  label: "water Compute settings Uniform Buffer",
+const uniformBufferComputeWaterPreMesh = device.createBuffer({
+  label: "water Compute settings Uniform Buffer for Pre Mesh and Cascades",
   size: uniformArrayComputewater,
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,	//this makes it another GPUBuffer Object but this time uniform
 });
+
+const waterComputeUniformBuffers = [];
+for (let i = 0; i < totalTileCount; i++) {
+    waterComputeUniformBuffers.push(device.createBuffer({
+        label: `water compute uniform tile ${i}`,
+        size: uniformArrayComputewater,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    }));
+}
 
 const uniformArrayComputeButterfly = 256;	//default for now
 const uniformBufferComputeButterfly = device.createBuffer({
@@ -276,32 +285,48 @@ const uniformBufferPingPong = device.createBuffer({
 });
 
 
-let totalwaterVertexBuffer;
-export function waterUpdateStorageVertexBuffer() {
-	const totalwaterVertexArray = waterEntityModelsStride * Float32Array.BYTES_PER_ELEMENT;		// i dont think this is correct
-	const GVB = device.createBuffer({
-		label: "total water vertices",		//just helps to identify object, can be anything you type
-		size: totalwaterVertexArray,
-		usage: GPUBufferUsage.VERTEX | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,	//its use is for vertex data, and that you want to copy data into it, ALSO for use as storage buffer in compute
-	});
-	
-	totalwaterVertexBuffer = GVB;
-}
-waterUpdateStorageVertexBuffer(); // run the function
+const waterVertexBuffers = [];
+const waterIndexBuffers = [];
 
-let totalwaterIndexBuffer;
-const totalPlaneTriangles = ((settings.waterTileResolution - 1) * (settings.waterTileResolution - 1));	//grid cells / tris per cell (2)
-export function waterUpdateStorageIndexBuffer() {
-	const totalwaterIndexArray = totalPlaneTriangles * (3 + 2 + 3) * Float32Array.BYTES_PER_ELEMENT;
-	const GIB = device.createBuffer({
-		label: "total water indices",	
-		size: totalwaterIndexArray,
-		usage: GPUBufferUsage.INDEX | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,	//its use is for vertex data, and that you want to copy data into it, ALSO for use as storage buffer in compute
-	});
-	
-	totalwaterIndexBuffer = GIB;
+for (let i = 0; i < totalTileCount; i++) {
+    waterVertexBuffers.push(device.createBuffer({
+        label: `water vertex buffer tile ${i}`,
+        size: waterEntityModelsStride * Float32Array.BYTES_PER_ELEMENT,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    }));
+    waterIndexBuffers.push(device.createBuffer({
+        label: `water index buffer tile ${i}`,
+        size: totalPlaneTriangles * waterPlaneVertexStride * Float32Array.BYTES_PER_ELEMENT,
+        usage: GPUBufferUsage.INDEX | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    }));
 }
-waterUpdateStorageIndexBuffer(); // run the function
+
+//let totalwaterVertexBuffer;
+//function waterUpdateStorageVertexBuffer() {
+//	const totalwaterVertexArray = waterEntityModelsStride * Float32Array.BYTES_PER_ELEMENT;		// i dont think this is correct
+//	const GVB = device.createBuffer({
+//		label: "total water vertices",		//just helps to identify object, can be anything you type
+//		size: totalwaterVertexArray,
+//		usage: GPUBufferUsage.VERTEX | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,	//its use is for vertex data, and that you want to copy data into it, ALSO for use as storage buffer in compute
+//	});
+//	
+//	totalwaterVertexBuffer = GVB;
+//}
+//waterUpdateStorageVertexBuffer(); // run the function
+//
+//let totalwaterIndexBuffer;
+//const totalPlaneTriangles = ((settings.waterTileResolution - 1) * (settings.waterTileResolution - 1));	//grid cells / tris per cell (2)
+//function waterUpdateStorageIndexBuffer() {
+//	const totalwaterIndexArray = totalPlaneTriangles * (3 + 2 + 3) * Float32Array.BYTES_PER_ELEMENT;
+//	const GIB = device.createBuffer({
+//		label: "total water indices",	
+//		size: totalwaterIndexArray,
+//		usage: GPUBufferUsage.INDEX | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,	//its use is for vertex data, and that you want to copy data into it, ALSO for use as storage buffer in compute
+//	});
+//	
+//	totalwaterIndexBuffer = GIB;
+//}
+//waterUpdateStorageIndexBuffer(); // run the function
 
 
 
@@ -392,7 +417,33 @@ const linSampler = device.createSampler({
   minFilter: 'linear',
 });
 
-function getwaterComputeInfo() {
+// tile snapping. Infinite ocean needs tiles to spawn and lock according to camera position
+function getSnappedTileOrigin(camX, camZ, tileSize) {
+    return [
+        Math.floor(camX / tileSize) * tileSize,
+        Math.floor(camZ / tileSize) * tileSize
+    ];
+}
+
+function getTileOffsets(camX, camZ) {
+    const size = settings.waterOceanPlanePhysicalSize;
+    const [snapX, snapZ] = getSnappedTileOrigin(camX, camZ, size); 	// offsets based on camera snapped position
+    const half = Math.floor(settings.waterTileInstanceCount / 2);
+    
+    const offsets = [];
+    for (let row = -half; row <= half; row++) {
+        for (let col = -half; col <= half; col++) {
+            offsets.push([
+                snapX + col * size,
+                0,
+                snapZ + row * size
+            ]);
+        }
+    }
+    return offsets;
+}
+
+function getwaterComputeInfo(tileOffsetX = 0, tileOffsetZ = 0) {
 	const waterCompBuffer = [];
 	
 	waterCompBuffer.push(settings.camPosX);
@@ -410,20 +461,27 @@ function getwaterComputeInfo() {
 	waterCompBuffer.push(settings.waterWaveLength);
 	waterCompBuffer.push(settings.waterOceanPlanePhysicalSize);
 	waterCompBuffer.push(settings.waterWindSpeed);
-
+	
+	waterCompBuffer.push(tileOffsetX);
+	waterCompBuffer.push(tileOffsetZ);
+	
+	// padding
+	waterCompBuffer.push(0);
+	waterCompBuffer.push(0);
+	
 		
 	return new Float32Array(waterCompBuffer);
 }
 
-function waterVFUniformBufferUpdates(numInstances, pos) {
-	
+function waterMeshUniformBufferUpdates(numInstances, tileOffset) {
+		
 		const bufferResult = [];
-		const adjustedPos = [centerWaterPlanePosition[0] + pos[0], 
-							centerWaterPlanePosition[1] + pos[1], 
-							centerWaterPlanePosition[2] + pos[2]];
+		//const adjustedPos = [centerWaterPlanePosition[0] + pos[0], 
+		//					centerWaterPlanePosition[1] + pos[1], 
+		//					centerWaterPlanePosition[2] + pos[2]];
 		
 		//for now this will be model mat, but its should just be default everything to save time (but scale might be good to avoid model crap)
-		const modelMatrix = transformations.getModelMatrix(new Float32Array(adjustedPos), 
+		const modelMatrix = transformations.getModelMatrix(new Float32Array([0.0,0.0,0.0]), 
 															new Float32Array([0.0,0.0,0.0]),
 															new Float32Array([1.0,1.0,1.0]));
 		const modelViewMat = mat4.mul(transformations.getViewMatrix(), modelMatrix);
@@ -460,32 +518,10 @@ function waterVFUniformBufferUpdates(numInstances, pos) {
 								result.byteLength);
 }
 
-function waterComputeBuffersUpdate() {
-	
-	const bufferResult = [];
-	
-	//for now this will be model mat, but its should just be default everything to save time (but scale might be good to avoid model crap)
-	const modelMatrix = transformations.getModelMatrix(new Float32Array(centerWaterPlanePosition), 
-														new Float32Array([0.0,0.0,0.0]), 
-														new Float32Array([1.0,1.0,1.0]));
-	const modelViewMat = mat4.mul(transformations.getViewMatrix(), modelMatrix);
-	const modelViewProjectionMatrix = mat4.mul(transformations.projectionMatrix, modelViewMat);
-	
-	for(let i = 0; i < 16; i++) {
-		bufferResult.push(modelViewProjectionMatrix[i]);
-	}
-	
-	const result = new Float32Array(bufferResult);
-	
-	device.queue.writeBuffer(waterUniformBuffer, 
-							0,
-							result.buffer,
-							result.byteOffset,
-							result.byteLength);
-	
-	const gcInfo = getwaterComputeInfo();
+function waterComputeBuffersUpdate(targetWaterComputeBuffer, tileX = 0, tileZ = 0) {	
+	const gcInfo = getwaterComputeInfo(tileX, tileZ);
 
-	device.queue.writeBuffer(uniformBufferComputewater, 
+	device.queue.writeBuffer(targetWaterComputeBuffer, 
 									0,	//apparently uniform buffer size defaults to a need of 256 
 									gcInfo.buffer,
 									gcInfo.byteOffset,
@@ -876,7 +912,7 @@ function createVFBindGroupswater() {
 		});
 }
 
-function createCompBindGroupwater() {
+function createCompBindGroupwater(vertexBuffer, indexBuffer, computeUniformBuffer) {
 	
 	const result = 
 		device.createBindGroup({
@@ -889,15 +925,17 @@ function createCompBindGroupwater() {
 			},
 			{
 				binding: 1,
-				resource: { buffer: uniformBufferComputewater }
+				resource: { buffer: computeUniformBuffer }
 			},
 			{
 				binding: 2,
-				resource: { buffer: totalwaterVertexBuffer }
+				resource: { buffer: vertexBuffer }
+				//resource: { buffer: totalwaterVertexBuffer }
 			},
 			{
 				binding: 3,
-				resource: { buffer: totalwaterIndexBuffer }
+				resource: { buffer: indexBuffer }
+				//resource: { buffer: totalwaterIndexBuffer }
 			},
 			{
 				binding: 4,
@@ -921,7 +959,7 @@ function createCompBindGroupSpectrumWater() {
 			entries: [
 			{
 				binding: 0,
-				resource: { buffer: uniformBufferComputewater }
+				resource: { buffer: uniformBufferComputeWaterPreMesh }
 			},
 			{
 				binding: 1,
@@ -949,7 +987,7 @@ function createCompBindGroupConjWater() {
 			entries: [
 			{
 				binding: 0,
-				resource: { buffer: uniformBufferComputewater }
+				resource: { buffer: uniformBufferComputeWaterPreMesh }
 			},
 			{
 				binding: 1,
@@ -973,7 +1011,7 @@ function createCompBindGroupRealizationWater() {
 			entries: [
 			{
 				binding: 0,
-				resource: { buffer: uniformBufferComputewater }
+				resource: { buffer: uniformBufferComputeWaterPreMesh }
 			},
 			{
 				binding: 1,
@@ -997,7 +1035,7 @@ function createCompBindGroupRtoAWater() {
 			entries: [
 			{
 				binding: 0,
-				resource: { buffer: uniformBufferComputewater }
+				resource: { buffer: uniformBufferComputeWaterPreMesh }
 			},
 			{
 				binding: 1,
@@ -1021,7 +1059,7 @@ function createCompBindGroupAtoTWater(inPingPong) {
 			entries: [
 			{
 				binding: 0,
-				resource: { buffer: uniformBufferComputewater }
+				resource: { buffer: uniformBufferComputeWaterPreMesh }
 			},
 			{
 				binding: 1,
@@ -1045,7 +1083,7 @@ function createCompBindGroupButterflyPreCompWater() {
 			entries: [
 			{
 				binding: 0,
-				resource: { buffer: uniformBufferComputewater }
+				resource: { buffer: uniformBufferComputeWaterPreMesh }
 			},
 			{
 				binding: 1,
@@ -1073,7 +1111,7 @@ function createCompBindGroupButterflyWater(/*inTexture, outTexture*/) {
 			entries: [
 			{
 				binding: 0,
-				resource: { buffer: uniformBufferComputewater }
+				resource: { buffer: uniformBufferComputeWaterPreMesh }
 			},
 			/*
 			{
@@ -1115,7 +1153,7 @@ function createCompBindGroupShiftWater(inTexture, outTexture) {
 			entries: [
 			{
 				binding: 0,
-				resource: { buffer: uniformBufferComputewater }
+				resource: { buffer: uniformBufferComputeWaterPreMesh }
 			},
 			{
 				binding: 1,
@@ -1333,7 +1371,7 @@ export function waterPass(mainpassDepthTexture) {
 	}
 	
 	// Start a compute pass place and animate the instances
-	waterComputeBuffersUpdate();
+	waterComputeBuffersUpdate(uniformBufferComputeWaterPreMesh);	// !!!!!! for cascades pre mesh UBO will have to be updated on size
 	
 	//initial Height Map h0(k)
 	if(step == 0)
@@ -1503,65 +1541,58 @@ export function waterPass(mainpassDepthTexture) {
 	
 	
 	//---------------------------MESH ASSEMBLY-------------------------
-	//grid mesh compute pass
+	const tileOffsets = getTileOffsets(settings.camPosX, settings.camPosZ);
+	
+	// Compute pass — builds mesh for each tile
 	const computePass = aEncoder.beginComputePass();
-	const bindCGroup = createCompBindGroupwater();
 	computePass.setPipeline(waterComputePipeline);
-	computePass.setBindGroup(0, bindCGroup);
 	
-	computePass.dispatchWorkgroups(Math.ceil( (settings.waterTileResolution * settings.waterTileResolution) / WATER_WORKGROUP_SIZE[0]));			//you want to do it per vertex, not per cell
-	computePass.end();
+	for (let i = 0; i < tileOffsets.length; i++) {
 		
-	const bindVFGroups = createVFBindGroupswater();
-	waterVFUniformBufferUpdates(1, [0,0,0]);
+		waterMeshUniformBufferUpdates(1, tileOffsets[i]);	// spaces update
+		
+		// Write each tile's offset into its own buffer — safe because each is independent
+		waterComputeBuffersUpdate(waterComputeUniformBuffers[i], tileOffsets[i][0], tileOffsets[i][2]);
+		
+		const bindCGroup = createCompBindGroupwater(
+			waterVertexBuffers[i],
+			waterIndexBuffers[i],
+			waterComputeUniformBuffers[i]   // tile-specific buffer
+		);
+		computePass.setBindGroup(0, bindCGroup);
+		computePass.dispatchWorkgroups(
+			Math.ceil((settings.waterTileResolution * settings.waterTileResolution) / WATER_WORKGROUP_SIZE[0])
+		);
+	}
 	
-	// start a pass to render the water instances
+	computePass.end();
+	
+	// Render pass — draws each tile
 	const pass = aEncoder.beginRenderPass({
 		colorAttachments: [{
-		view: context.getCurrentTexture().createView(),
-		loadOp: "load",
-		clearValue: { r: 0.0, g: 0.0, b: 0.0, a: 0.0 },
-		storeOp: "store",
+			view: context.getCurrentTexture().createView(),
+			loadOp: "load",
+			clearValue: { r: 0.0, g: 0.0, b: 0.0, a: 0.0 },
+			storeOp: "store",
 		}],
 		depthStencilAttachment: {
 			view: mainpassDepthTexture.createView(),
-			
-			//depth testing
-			depthLoadOp: 'load',	
+			depthLoadOp: 'load',
 			depthStoreOp: 'store',
 		},
 	});
-
-	pass.setPipeline(waterPipeline);					// shaders used, layout of vertex data, other relevant state data
-	pass.setVertexBuffer(0, totalwaterVertexBuffer);	
-	pass.setIndexBuffer(totalwaterIndexBuffer, 'uint32');	
+	pass.setPipeline(waterPipeline);
 	
-	//3 instance view in viewport
-	//
-	//		  | \			  / |		instance 2
-	//		  |__\___________/__|
-	//  	     |\			/|			instance 1	
-	//		     |_\_______/_|
-	//		       |\	  /|
-	//		       | \	 / |			instance 0
-	//		       |__\ /__|
-	//		    	  CAM
-	
-	
-	//console.log("water vert buf: ", totalwaterVertexBuffer)
-	
-	let prevModCombo = 0;
-	//for(let i = 0; i < settings.waterTileInstanceCount; ++i)
-	{
-		let mod = waterEntityModelsStride / (primitives.totalStride / 4);	//ACTUAL
-		//console.log("mod: ", mod);
-		pass.setBindGroup(0, bindVFGroups);
-		//pass.draw(mod, 1/*i*/, prevModCombo);		// def for draw here is draw(vertexCount, instanceCount, firstVertex)
-		pass.drawIndexed(totalPlaneTriangles * (3 + 2 + 3), 1, 0, 0, 0); // Drawing the mesh
-		prevModCombo += mod;
-	}
-	prevModCombo = 0;
+	for (let i = 0; i < tileOffsets.length; i++) {
+		//waterMeshUniformBufferUpdates(1, tileOffsets[i]);	// spaces update
+		//waterComputeBuffersUpdate(tileOffsets[i][0], tileOffsets[i][2]);	// tile index update
 		
+		pass.setBindGroup(0, createVFBindGroupswater());
+		pass.setVertexBuffer(0, waterVertexBuffers[i]);
+		pass.setIndexBuffer(waterIndexBuffers[i], 'uint32');
+		pass.drawIndexed(totalPlaneTriangles * waterPlaneVertexStride, 1, 0, 0, 0);
+	}
+	
 	pass.end();
 	
 	const commandBuffer = aEncoder.finish();

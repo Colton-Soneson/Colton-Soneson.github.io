@@ -35,8 +35,8 @@ export const settings = {
 	windDirection: vec2.create(1.0,1.0),
 	waterWaveSteepness: 0.1,	//0 - 1
 	waterWaveLength: 10.0,
-	waterTileResolution: 256,
-	waterTileInstanceCount: 3,
+	waterTileResolution: 1024.0,
+	waterTileInstanceCount: 5,
 	waterWorldPosY: -16,
 	waterOceanPlanePhysicalSize: 256.0,
 	waterWindSpeed: 5.0,

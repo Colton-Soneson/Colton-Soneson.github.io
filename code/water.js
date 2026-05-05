@@ -296,7 +296,7 @@ for (let i = 0; i < totalTileCount; i++) {
     }));
     waterIndexBuffers.push(device.createBuffer({
         label: `water index buffer tile ${i}`,
-        size: totalPlaneTriangles * waterPlaneVertexStride * Float32Array.BYTES_PER_ELEMENT,
+        size: totalPlaneTriangles * 6 * Float32Array.BYTES_PER_ELEMENT,
         usage: GPUBufferUsage.INDEX | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     }));
 }
@@ -1590,7 +1590,7 @@ export function waterPass(mainpassDepthTexture) {
 		pass.setBindGroup(0, createVFBindGroupswater());
 		pass.setVertexBuffer(0, waterVertexBuffers[i]);
 		pass.setIndexBuffer(waterIndexBuffers[i], 'uint32');
-		pass.drawIndexed(totalPlaneTriangles * waterPlaneVertexStride, 1, 0, 0, 0);
+		pass.drawIndexed(totalPlaneTriangles * 6, 1, 0, 0, 0);
 	}
 	
 	pass.end();

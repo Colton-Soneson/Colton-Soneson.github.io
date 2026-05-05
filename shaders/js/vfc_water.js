@@ -91,8 +91,11 @@ fn getHeightmapWorldPos(globalInvoc : vec2u) -> vec3f {
 	
 		let gridWidth = u32(WU.resolution);
 		
-		let gridIndexX = f32(gIndex) % f32(gridWidth);
-		let gridIndexZ = f32(gIndex) / f32(gridWidth);
+		let ix = gIndex % gridWidth;
+		let iz = gIndex / gridWidth;
+		
+		let gridIndexX = f32(ix);
+		let gridIndexZ = f32(iz);
 		
 		// Scale grid indices to physical size
 		let cellSize = WU.oceanPlanePhysicalSize / f32(gridWidth - 1u);
@@ -104,7 +107,7 @@ fn getHeightmapWorldPos(globalInvoc : vec2u) -> vec3f {
 		//------------------[REALISTIC] FFT Oceanographic Waves-----------------
 		
 		//just for now, only x as height
-		var waveHeight = textureLoad(finalWaveHeightTexture, vec2u(u32(gridIndexX), u32(gridIndexZ))).x;
+		var waveHeight = textureLoad(finalWaveHeightTexture, vec2u(ix % (gridWidth - 1u), iz % (gridWidth - 1u))).x;
 		
 		// World position of this water vertex	!!! CHECK IF TILE OFFSET IS DONE CORRECTLY
         let worldX = (vertGridPosX - WU.oceanPlanePhysicalSize * 0.5) + WU.tileOffsetX; // + WU.cameraPosition.x; //!!!!Camera positions may need to be put in for MULTIPLE WATER TILES!!!!!!!!!!
@@ -144,7 +147,7 @@ fn getHeightmapWorldPos(globalInvoc : vec2u) -> vec3f {
 		// squaring preserves sign and amplifies peaks/troughs
 		let rippleDetail = sign(waveHeight) * (waveHeight * waveHeight) * shallowFactor * rippleScale;
 		var waveHeightAdj = (deepDisplacement + rippleDetail) + WU.planeYPos;
-		
+				
 		var position = vec3f((vertGridPosX - WU.oceanPlanePhysicalSize * 0.5) + WU.tileOffsetX,
 							 waveHeightAdj,
 							 (vertGridPosZ - WU.oceanPlanePhysicalSize * 0.5) + WU.tileOffsetZ);
@@ -163,10 +166,7 @@ fn getHeightmapWorldPos(globalInvoc : vec2u) -> vec3f {
 		// Generate triangles: use the grid to form triangles between four points
 		//let gridIndexX = f32(gIndex) % f32(gridWidth);
 		//let gridIndexZ = f32(gIndex) / f32(gridWidth);
-	
-		let ix = u32(gridIndexX);
-		let iz = u32(gridIndexZ);
-		
+			
 		if (ix < gridWidth - 1u && iz < gridWidth - 1u) {
 			let baseIndex = iz * gridWidth + ix;  // explicit 2D → 1D, not gIndex
 			let cellIndex = iz * (gridWidth - 1u) + ix;  // cell index, not vertex index

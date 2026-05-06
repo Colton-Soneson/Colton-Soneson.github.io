@@ -11,6 +11,7 @@ import {postEffectPassTextureDebug_RGBA8UNORM} from './debugTextureDisplay.js'
 import {postEffectPassTextureDebug_RGBA32FLOAT} from './debugTextureDisplay.js'
 import {grassPass} from './computeGrass.js'
 import {waterPass} from './water.js'
+import {atmospherePass} from './atmosphere.js'
 
 import * as primitives from '../models/primitives.js'
 import * as shadowMapping from './shadowMapping.js'
@@ -813,6 +814,11 @@ export function updateRotatingCubePass() {
 	if(settings.enableWater)
 	{
 		waterPass(depthTexture);
+	}
+	
+	if(settings.enableAtmosphere)
+	{
+		atmospherePass(depthTexture);
 	}
 	
 	const encoderDebug = device.createCommandEncoder();

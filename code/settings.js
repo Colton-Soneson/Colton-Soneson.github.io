@@ -7,7 +7,7 @@ export const settings = {
     camPosX: 0.0,
     camPosY: 35.0,
     camPosZ: 150.0,
-    camFarPlane: 800.0,
+    camFarPlane: 1500.0,
     camNearPlane: 1.0,
 	//-----------------SUN SETTINGS----------------
     sunPosX: -40.0,
@@ -35,11 +35,20 @@ export const settings = {
 	windDirection: vec2.create(1.0,1.0),
 	waterWaveSteepness: 0.1,	//0 - 1
 	waterWaveLength: 10.0,
-	waterTileResolution: 1024.0,
-	waterTileInstanceCount: 5,
+	waterTileResolution: 512.0,
+	waterTileInstanceCount: 9,
 	waterWorldPosY: -16,
-	waterOceanPlanePhysicalSize: 256.0,
+	waterOceanPlanePhysicalSize: 512.0,
 	waterWindSpeed: 5.0,
+	//------------ATMOSPHERIC SCATTERING-----------
+	enableAtmosphere: true,
+	atmosphereScaleToScene: 1.0,
+	additionalAltitude: -30.0,	// horizon line correction (this is because I dont have enough distance in far plane, KEEP THIS for optimization perposes
+	atmosphereNeedsTransmittanceRebuild: true,
+	atmosphereViewLUTTextureSizeX: 192,
+	atmosphereViewLUTTextureSizeY: 108,
+	atmosphereTransmittanceTextureSizeX: 256,
+	atmosphereTransmittanceTextureSizeY: 64,
 	//--------------------DEBUG--------------------
     showDebug: true,
 	showDebugIcons: false,

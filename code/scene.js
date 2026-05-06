@@ -6,6 +6,17 @@ import * as transformations from './transformations.js'
 
 import { v_heightMapDepth } from '../shaders/js/v_heightMap.js'
 
+export const fullScreenQuad = new Float32Array([
+//   x      y     u     v
+    -1.0,  -1.0,  0.0,  1.0,   // bottom-left
+     1.0,  -1.0,  1.0,  1.0,   // bottom-right
+    -1.0,   1.0,  0.0,  0.0,   // top-left
+
+    -1.0,   1.0,  0.0,  0.0,   // top-left
+     1.0,  -1.0,  1.0,  1.0,   // bottom-right
+     1.0,   1.0,  1.0,  0.0,   // top-right
+]);
+
 function loadModel(vertices, faces, normals, uvs) {
 	const positions = [];
 	for(let posCount = 0; posCount < (vertices.length / primitives.vertDim); posCount++)

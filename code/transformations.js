@@ -23,6 +23,14 @@ export function getViewMatrix() {
 					   [0,		 1,		  0]);
 }
 
+export function getViewProj() {
+	return mat4.mul(projectionMatrix, getViewMatrix());
+}
+
+export function getInvViewProj() {
+	return mat4.inverse(getViewProj());
+}
+
 export function getModelMatrix(t, r, s) { 
 	const modelMatrix = mat4.create();
 	mat4.identity(modelMatrix);

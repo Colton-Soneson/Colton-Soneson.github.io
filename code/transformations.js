@@ -31,6 +31,19 @@ export function getInvViewProj() {
 	return mat4.inverse(getViewProj());
 }
 
+export function getInvViewProjNoTranslation() {
+    const view = getViewMatrix();
+    
+    const viewNoTrans = mat4.clone(view);
+    // zero out translation (last column in column-major)
+    viewNoTrans[12] = 0;
+    viewNoTrans[13] = 0;
+    viewNoTrans[14] = 0;
+
+    const vp = mat4.mul(projectionMatrix, viewNoTrans);
+    return mat4.inverse(vp);
+}
+
 export function getModelMatrix(t, r, s) { 
 	const modelMatrix = mat4.create();
 	mat4.identity(modelMatrix);

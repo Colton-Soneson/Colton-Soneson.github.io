@@ -247,7 +247,7 @@ export const f_sky =
 							1.0, 
 							1.0);
 		let worldH = Sky.invViewProj * ndc;
-		let rd     = normalize(worldH.xyz / worldH.w - Sky.cameraPosition.xyz);
+		let rd     = normalize(worldH.xyz / worldH.w);// - Sky.cameraPosition.xyz);
 		
 		// TODO
 		// 	corrected rd (not sure if this whole thing should be flipped or if this space version is actually correct)

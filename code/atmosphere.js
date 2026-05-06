@@ -80,7 +80,7 @@ device.queue.writeBuffer(atmosphereQuadVertexBuffer, 0, scene.fullScreenQuad);
 function updateSkyUniforms() {
 	const bufferResult = [];
 	
-	const invVP = transformations.getInvViewProj();
+	const invVP = transformations.getInvViewProjNoTranslation();
 	
 	for(let i = 0; i < 16; i++) {
 		bufferResult.push(invVP[i]);
@@ -91,9 +91,9 @@ function updateSkyUniforms() {
 	bufferResult.push(settings.sunPosZ);
 	bufferResult.push(1);	//padding
 	
-	bufferResult.push(settings.camPosX * settings.atmosphereScaleToScene);
+	bufferResult.push(0);
 	bufferResult.push((settings.camPosY + settings.additionalAltitude) * settings.atmosphereScaleToScene);
-	bufferResult.push(settings.camPosZ * settings.atmosphereScaleToScene);
+	bufferResult.push(0);
 	bufferResult.push(1);	//padding
 	
 	const result = new Float32Array(bufferResult);

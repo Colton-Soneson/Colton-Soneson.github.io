@@ -43,7 +43,7 @@ export const settings = {
 	//------------ATMOSPHERIC SCATTERING-----------
 	enableAtmosphere: true,
 	atmosphereScaleToScene: 1.0,
-	additionalAltitude: -30.0,	// horizon line correction (this is because I dont have enough distance in far plane, KEEP THIS for optimization perposes
+	additionalAltitude: -0.0,	// horizon line correction (this is because I dont have enough distance in far plane, KEEP THIS for optimization perposes
 	atmosphereNeedsTransmittanceRebuild: true,
 	atmosphereViewLUTTextureSizeX: 192,
 	atmosphereViewLUTTextureSizeY: 108,

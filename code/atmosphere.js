@@ -262,13 +262,15 @@ export function sunCycle(cycleSpeed)
     if (settings.sunCycleAngle > Math.PI * 2) settings.sunCycleAngle -= Math.PI * 2;
 
     // ellipse — wide on X, tall on Y, flat on Z
-    settings.sunPosX = Math.cos(settings.sunCycleAngle);
-    settings.sunPosY = Math.sin(settings.sunCycleAngle);
-    settings.sunPosZ = 0.0;
+	// HARD CODED FOR NOW
+    settings.sunPosX = Math.cos(settings.sunCycleAngle) * 110.0;
+    settings.sunPosY = (Math.sin(settings.sunCycleAngle) * 50.0) + 25.0;
 }
 
 export function atmospherePass(mainpassDepthTexture)
 {	
+	sunCycle(0.01)
+
 	updateSkyUniforms();
 
     const encoder = device.createCommandEncoder();

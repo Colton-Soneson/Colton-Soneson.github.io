@@ -66,6 +66,10 @@ export const vf_p_generic3D =
     output.light = Lights.sunIntensity / (dist * dist);    
 	//-----------------------------------------------
 	
+	//-----------------DIRECTIONAL LIGHT-------------
+	//output.light = Lights.sunIntensity;
+	//-----------------------------------------------
+	
     // Normal transformation
     let vNormal = normalize(UBO.normalMatrix * vec4f(input.norm.x, input.norm.y, input.norm.z, 0.0));
     

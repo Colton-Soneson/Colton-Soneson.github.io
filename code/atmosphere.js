@@ -256,10 +256,19 @@ const skyVFBindGroup = device.createBindGroup({
 });
 
 
+export function sunCycle(cycleSpeed)
+{
+	settings.sunCycleAngle = (settings.sunCycleAngle || 0) + cycleSpeed;
+    if (settings.sunCycleAngle > Math.PI * 2) settings.sunCycleAngle -= Math.PI * 2;
 
+    // ellipse — wide on X, tall on Y, flat on Z
+    settings.sunPosX = Math.cos(settings.sunCycleAngle);
+    settings.sunPosY = Math.sin(settings.sunCycleAngle);
+    settings.sunPosZ = 0.0;
+}
 
 export function atmospherePass(mainpassDepthTexture)
-{
+{	
 	updateSkyUniforms();
 
     const encoder = device.createCommandEncoder();

@@ -389,7 +389,7 @@ window.addEventListener("keydown", function (event) {
 				settings.camPosY -= camSpeed;
 			}
 			else {
-				settings.sunPosY -= camSpeed;
+				settings.sunPosY -= camSpeed / 2.0;
 				if(settings.showDebug) {
 					console.log("SunPos: ", settings.sunPosX, settings.sunPosY, settings.sunPosZ);
 					if(settings.showDebugIcons) {
@@ -413,7 +413,7 @@ window.addEventListener("keydown", function (event) {
 				settings.camPosY += camSpeed;
 			}
 			else {
-				settings.sunPosY += camSpeed;
+				settings.sunPosY += camSpeed / 2.0;
 				if(settings.showDebug) {
 					console.log("SunPos: ", settings.sunPosX, settings.sunPosY, settings.sunPosZ);
 					if(settings.showDebugIcons) {

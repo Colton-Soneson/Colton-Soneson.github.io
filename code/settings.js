@@ -7,14 +7,15 @@ export const settings = {
     camPosX: 0.0,
     camPosY: 35.0,
     camPosZ: 150.0,
-    camFarPlane: 1500.0,
+    camFarPlane: 2500.0,
     camNearPlane: 1.0,
 	//-----------------SUN SETTINGS----------------
-    sunPosX: -40.0,
-    sunPosY: 140.0,
-    sunPosZ: -280.0,
+    sunPosX: 90.0,
+    sunPosY: 5.0,
+    sunPosZ: -210.0,
     sunColor: vec3.create(0.992, 0.37, 0.325),
     sunIntensity: 75000.0,
+	sunCycleAngle: 0.0,
     sunPadding: 1.0,
 	//--------------------SCENE--------------------
 	heightMapResolution: 2048,
@@ -43,7 +44,7 @@ export const settings = {
 	//------------ATMOSPHERIC SCATTERING-----------
 	enableAtmosphere: true,
 	atmosphereScaleToScene: 1.0,
-	additionalAltitude: -0.0,	// horizon line correction (this is because I dont have enough distance in far plane, KEEP THIS for optimization perposes
+	additionalAltitude: -40.0,	// horizon line correction (this is because I dont have enough distance in far plane, KEEP THIS for optimization perposes
 	atmosphereNeedsTransmittanceRebuild: true,
 	atmosphereViewLUTTextureSizeX: 192,
 	atmosphereViewLUTTextureSizeY: 108,

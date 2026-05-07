@@ -243,7 +243,7 @@ export const f_sky =
 	fn fragmentMain(input: FragInput) -> @location(0) vec4f {
 		// Reconstruct view ray from NDC position
 		let ndc    = vec4f(input.fragUV.x * 2.0 - 1.0,
-							input.fragUV.y * 2.0 - 1.0,
+							-(input.fragUV.y * 2.0 - 1.0),
 							1.0, 
 							1.0);
 		let worldH = Sky.invViewProj * ndc;
@@ -251,7 +251,7 @@ export const f_sky =
 		
 		// TODO
 		// 	corrected rd (not sure if this whole thing should be flipped or if this space version is actually correct)
-		let rd_corrected = -rd;
+		let rd_corrected = vec3f(-rd.x, rd.y, -rd.z);
 		
 		let uv    = rdToUV(rd_corrected);
 		let color = textureSample(skyLUT, skySampler, uv).rgb;

@@ -32,7 +32,7 @@ export const vf_p_generic3D =
 		shadowMapKernelSize : f32,
 		shadowMapTextureSize : f32,
 		shadowMapAcneBias : f32,
-		debugViewMode : f32,	//find a different space for this, its own UBO, also has to be float for some reason
+		displayLightingMode : f32,	//find a different space for this, its own UBO, also has to be float for some reason
 	}
 	
 	@group(0) @binding(0) var<uniform> UBO: SpacesUniforms;
@@ -124,7 +124,7 @@ export const vf_p_generic3D =
 		
 		var finalResult = vec4f(0.0,0.0,0.0,1.0);
 		
-		if(Lights.debugViewMode == 1.0)
+		if(Lights.displayLightingMode == 1.0)
 		{
 			finalResult = vec4f(visibility, 0.0,0.0,1.0);
 		}

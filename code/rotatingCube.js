@@ -20,9 +20,11 @@ import * as scene from './scene.js'
 import * as grass from './computeGrass.js'
 import * as water from './water.js'
 import { settings } from './settings.js';
+import * as userInterface from './imguiLoader.js';
 
 import { vf_p_generic3D } from '../shaders/js/vf_p_generic.js'
 
+//-----------------BASIC LIGHTING--------------------
 function getLightsInfo() {
 	const lightsBuffer = [];
 
@@ -50,7 +52,7 @@ function getLightsInfo() {
 	
 	lightsBuffer.push(settings.shadowMapAcneBias);
 	
-	lightsBuffer.push(settings.debugViewMode);
+	lightsBuffer.push(settings.displayLightingMode);
 	
 	return new Float32Array(lightsBuffer);
 }
@@ -259,425 +261,6 @@ function genericUniformBufferUpdates(models) {
 								lights.byteLength);
 }
 
-//input tracking section
-const pressedKeys = new Set();
-let selectedEntity = 0;
-let selectedSubEditMode = 0;
-let selectedDebugDisplayMode = 0;
-const editModes = ["translate","rotate","scale","camera","lighting","grass"];
-const camSubEditModes = ["default"];
-const lightSubEditModes = ["Sun Intensity","Shadow Map Kernel Size", "Shadow Map Acne Bias"];
-const grassSubEditModes = ["Grass Total Blade Count"];
-const debugDisplayModes = ["final", "shadow mapping visibility","water line topology","heightMap", "shadowMapDepth", "Oceanographic Spectrum", "h0(k)", "waveHeightRealization h(k,t)", "PreComp Twiddle Water", "finalWaveHeightFFT h(x,t) pre Shift", "finalWaveHeightFFT h(x,t) Shifted"];
-let selectedEditMode = 0;
-const rotSpeed = 1.0;
-const transSpeed = 1.0;
-const scaleSpeed = 0.1;
-const camSpeed = 10.0;
-const sunIntensitySpeed = 100.0;
-window.addEventListener("keydown", function (event) {
-	const keyPressed = event.key;
-	
-	switch(keyPressed){
-		case "w": {
-			if(selectedEditMode == 0) {
-				scene.entityModels[selectedEntity].worldTranslation[2] -= transSpeed;
-			}
-			else if(selectedEditMode == 1) {
-				scene.entityModels[selectedEntity].worldRotation[0] += rotSpeed;
-			}
-			else if(selectedEditMode == 2) {
-				scene.entityModels[selectedEntity].worldScale[2] += scaleSpeed;
-			}
-			else if(selectedEditMode == 3) {
-				settings.camPosZ -= camSpeed;
-			}
-			else {
-				settings.sunPosZ -= camSpeed;
-				if(settings.showDebug) {
-					console.log("SunPos: ", settings.sunPosX, settings.sunPosY, settings.sunPosZ);
-					if(settings.showDebugIcons) {
-						scene.entityModels[scene.searchListIndexForEntityByName(scene.entityModels, "Test")].worldTranslation[2] = settings.sunPosZ;
-					}
-				}
-			}
-		}
-		break;
-		case "a": {
-			if(selectedEditMode == 0) {
-				scene.entityModels[selectedEntity].worldTranslation[0] -= transSpeed;
-			}
-			else if(selectedEditMode == 1) {
-				scene.entityModels[selectedEntity].worldRotation[2] -= rotSpeed;
-			}
-			else if(selectedEditMode == 2) {
-				scene.entityModels[selectedEntity].worldScale[0] -= scaleSpeed;
-			}
-			else if(selectedEditMode == 3) {
-				settings.camPosX -= camSpeed;
-			}
-			else {
-				settings.sunPosX -= camSpeed;
-				if(settings.showDebug) {
-					console.log("SunPos: ", settings.sunPosX, settings.sunPosY, settings.sunPosZ);
-					if(settings.showDebugIcons) {
-						scene.entityModels[scene.searchListIndexForEntityByName(scene.entityModels, "Test")].worldTranslation[0] = settings.sunPosX;
-					}
-				}
-			}
-		}
-		break;
-		case "s": {
-			if(selectedEditMode == 0) {
-				scene.entityModels[selectedEntity].worldTranslation[2] += transSpeed;
-			}
-			else if(selectedEditMode == 1) {
-				scene.entityModels[selectedEntity].worldRotation[0] -= rotSpeed;
-			}
-			else if(selectedEditMode == 2) {
-				scene.entityModels[selectedEntity].worldScale[2] -= scaleSpeed;
-			}
-			else if(selectedEditMode == 3) {
-				settings.camPosZ += camSpeed;
-			}
-			else {
-				settings.sunPosZ += camSpeed;
-				if(settings.showDebug) {
-					console.log("SunPos: ", settings.sunPosX, settings.sunPosY, settings.sunPosZ);
-					if(settings.showDebugIcons) {
-						scene.entityModels[scene.searchListIndexForEntityByName(scene.entityModels, "Test")].worldTranslation[2] = settings.sunPosZ;
-					}
-				}
-			}
-		}
-		break;
-		case "d": {
-			if(selectedEditMode == 0) {
-				scene.entityModels[selectedEntity].worldTranslation[0] += transSpeed;
-			}
-			else if(selectedEditMode == 1) {
-				scene.entityModels[selectedEntity].worldRotation[2] += rotSpeed;
-			}
-			else if(selectedEditMode == 2) {
-				scene.entityModels[selectedEntity].worldScale[0] += scaleSpeed;
-			}
-			else if(selectedEditMode == 3) {
-				settings.camPosX += camSpeed;
-			}
-			else {
-				settings.sunPosX += camSpeed;
-				if(settings.showDebug) {
-					console.log("SunPos: ", settings.sunPosX, settings.sunPosY, settings.sunPosZ);
-					if(settings.showDebugIcons) {
-						scene.entityModels[scene.searchListIndexForEntityByName(scene.entityModels, "Test")].worldTranslation[0] = settings.sunPosX;
-					}
-				}
-			}
-		}
-		break;
-		case "q": {
-			if(selectedEditMode == 0) {
-				scene.entityModels[selectedEntity].worldTranslation[1] -= transSpeed;
-			}
-			else if(selectedEditMode == 1) {
-				scene.entityModels[selectedEntity].worldRotation[1] -= rotSpeed;
-			}
-			else if(selectedEditMode == 2) {
-				scene.entityModels[selectedEntity].worldScale[1] -= scaleSpeed;
-			}
-			else if(selectedEditMode == 3) {
-				settings.camPosY -= camSpeed;
-			}
-			else {
-				settings.sunPosY -= camSpeed / 2.0;
-				if(settings.showDebug) {
-					console.log("SunPos: ", settings.sunPosX, settings.sunPosY, settings.sunPosZ);
-					if(settings.showDebugIcons) {
-						scene.entityModels[scene.searchListIndexForEntityByName(scene.entityModels, "Test")].worldTranslation[1] = settings.sunPosY;
-					}
-				}
-			}
-		}
-		break;
-		case "e": {
-			if(selectedEditMode == 0) {
-				scene.entityModels[selectedEntity].worldTranslation[1] += transSpeed;
-			}
-			else if(selectedEditMode == 1) {
-				scene.entityModels[selectedEntity].worldRotation[1] += rotSpeed;
-			}
-			else if(selectedEditMode == 2) {
-				scene.entityModels[selectedEntity].worldScale[1] += scaleSpeed;
-			}
-			else if(selectedEditMode == 3) {
-				settings.camPosY += camSpeed;
-			}
-			else {
-				settings.sunPosY += camSpeed / 2.0;
-				if(settings.showDebug) {
-					console.log("SunPos: ", settings.sunPosX, settings.sunPosY, settings.sunPosZ);
-					if(settings.showDebugIcons) {
-						scene.entityModels[scene.searchListIndexForEntityByName(scene.entityModels, "Test")].worldTranslation[1] = settings.sunPosY;
-					}
-				}
-			}
-		}
-		break;
-		case "r": {
-			if(selectedEditMode == 4) {
-				if(selectedSubEditMode == 0)
-				{
-					settings.sunIntensity -= sunIntensitySpeed;
-					console.log("Sun Intensity: ", settings.sunIntensity)
-				}
-				else if(selectedSubEditMode == 1)
-				{
-					settings.shadowMapPCFKernelSize -= 1;
-					console.log("ShadowMap PCF Kernel Size: ", settings.shadowMapPCFKernelSize)
-				}
-				else
-				{
-					settings.shadowMapAcneBias -= 0.0005;
-					console.log("ShadowMap Acne Bias: ", settings.shadowMapAcneBias)
-				}
-			}
-			if(selectedEditMode == 5) {
-				if(selectedSubEditMode == 0)
-				{
-					if(1 <= settings.grassTotalBladeCount) {
-						settings.grassTotalBladeCount /= 2;
-						grass.grassUpdateStorageVertexBuffer();
-						console.log("Grass Total Blade Count: ", settings.grassTotalBladeCount)
-					}
-				}
-			}
-		}
-		break;
-		case "t": {
-			if(selectedEditMode == 4) {
-				if(selectedSubEditMode == 0)
-				{
-					settings.sunIntensity += sunIntensitySpeed;
-					console.log("Sun Intensity: ", settings.sunIntensity)
-				}
-				else if(selectedSubEditMode == 1)
-				{
-					settings.shadowMapPCFKernelSize += 1;
-					console.log("ShadowMap PCF Kernel Size: ", settings.shadowMapPCFKernelSize)
-				}
-				else
-				{
-					settings.shadowMapAcneBias += 0.0005;
-					console.log("ShadowMap Acne Bias: ", settings.shadowMapAcneBias)
-				}
-			}
-			if(selectedEditMode == 5) {
-				if(selectedSubEditMode == 0)
-				{
-					if(settings.grassTotalHARDLIMIT > settings.grassTotalBladeCount) {
-						settings.grassTotalBladeCount *= 2;
-						grass.grassUpdateStorageVertexBuffer();
-						console.log("Grass Total Blade Count: ", settings.grassTotalBladeCount);
-					}
-					else {
-						console.log("Restriction: Hit blade count hard limit: ", settings.grassTotalBladeCount, settings.grassTotalHARDLIMIT);
-					}
-				}
-			}
-		}
-		break;
-		case "c": {
-			if(selectedDebugDisplayMode < debugDisplayModes.length - 1) {
-				selectedDebugDisplayMode++;
-			}
-			else {
-				selectedDebugDisplayMode = 0;
-			}
-			settings.debugViewMode = selectedDebugDisplayMode;
-			
-			if(selectedDebugDisplayMode == 2) {	//water line topology
-				water.waterPipelineSignalUpdate('line-list');
-			}
-			else {
-				water.waterPipelineSignalUpdate('triangle-list');
-			}
-			
-			if(selectedDebugDisplayMode == 3) {
-				settings.displayHeightMap = true;
-			}
-			else {
-				settings.displayHeightMap = false;
-			}
-			
-			if(selectedDebugDisplayMode == 4) {
-				settings.displayShadowMapDepth = true;
-			}
-			else {
-				settings.displayShadowMapDepth = false;
-			}
-			
-			if(selectedDebugDisplayMode == 5) {
-				settings.displayOceanSpectrum = true;
-			}
-			else {
-				settings.displayOceanSpectrum = false;
-			}
-			
-			if(selectedDebugDisplayMode == 6) {
-				settings.displayWaterInitialHeight = true;
-			}
-			else {
-				settings.displayWaterInitialHeight = false;
-			}
-			
-			if(selectedDebugDisplayMode == 7) {
-				settings.displayWaveHeightRealization = true;
-			}
-			else {
-				settings.displayWaveHeightRealization = false;
-			}
-			
-			if(selectedDebugDisplayMode == 8) {
-				settings.displayWaterPreComp = true;
-			}
-			else {
-				settings.displayWaterPreComp = false;
-			}
-			
-			if(selectedDebugDisplayMode == 9) {
-				settings.displayWaterFFT = true;
-			}
-			else {
-				settings.displayWaterFFT = false;
-			}
-			
-			if(selectedDebugDisplayMode == 10) {
-				settings.displayWaterShifted = true;
-			}
-			else {
-				settings.displayWaterShifted = false;
-			}
-			
-			console.log("DEBUG DISPLAY MODE: ", debugDisplayModes[selectedDebugDisplayMode]);
-		}
-		break;
-		case "p": {
-			settings.enablePostEffects = !settings.enablePostEffects;
-			console.log("Post Effects Enabled: ", settings.enablePostEffects);
-		}
-		break;
-		case "ArrowLeft": {
-			if(selectedEditMode == 0 || selectedEditMode == 1 || selectedEditMode == 2)
-			{
-				if(selectedEntity >= 1) {
-					selectedEntity--;
-				}
-				else {
-					selectedEntity = scene.entityModels.length - 1;
-				}
-				console.log("Selected Entity: ", scene.entityModels[selectedEntity].name);
-			}
-			else if(selectedEditMode == 3)
-			{
-				if(selectedSubEditMode >= 1) {
-					selectedSubEditMode--;
-				}
-				else {
-					selectedSubEditMode = camSubEditModes.length - 1;
-				}
-				console.log("Selected Camera Sub Edit Mode: ", camSubEditModes[selectedSubEditMode]);
-			}
-			else if(selectedEditMode == 4)
-			{
-				if(selectedSubEditMode >= 1) {
-					selectedSubEditMode--;
-				}
-				else {
-					selectedSubEditMode = lightSubEditModes.length - 1;
-				}
-				console.log("Selected Lighting Sub Edit Mode: ", lightSubEditModes[selectedSubEditMode]);
-			}
-			else if(selectedEditMode == 5)
-			{
-				if(selectedSubEditMode >= 1) {
-					selectedSubEditMode--;
-				}
-				else {
-					selectedSubEditMode = grassSubEditModes.length - 1;
-				}
-				console.log("Selected Grass Sub Edit Mode: ", grassSubEditModes[selectedSubEditMode]);
-			}
-		}
-		break;
-		case "ArrowRight": {
-			if(selectedEditMode == 0 || selectedEditMode == 1 || selectedEditMode == 2)
-			{
-				if(selectedEntity < scene.entityModels.length - 1) {
-					selectedEntity++;
-				}
-				else {
-					selectedEntity = 0;
-				}
-				console.log("Selected Entity: ", scene.entityModels[selectedEntity].name);
-			}
-			else if(selectedEditMode == 3)
-			{
-				if(selectedSubEditMode < camSubEditModes.length - 1) {
-					selectedSubEditMode++;
-				}
-				else {
-					selectedSubEditMode = 0;
-				}
-				console.log("Selected Camera Sub Edit Mode: ", camSubEditModes[selectedSubEditMode]);
-			}
-			else if(selectedEditMode == 4)
-			{
-				if(selectedSubEditMode < lightSubEditModes.length - 1) {
-					selectedSubEditMode++;
-				}
-				else {
-					selectedSubEditMode = 0;
-				}
-				console.log("Selected Lighting Sub Edit Mode: ", lightSubEditModes[selectedSubEditMode]);
-			}
-			else if(selectedEditMode == 5)
-			{
-				if(selectedSubEditMode < grassSubEditModes.length - 1) {
-					selectedSubEditMode++;
-				}
-				else {
-					selectedSubEditMode = 0;
-				}
-				console.log("Selected Grass Sub Edit Mode: ", grassSubEditModes[selectedSubEditMode]);
-			}
-		}
-		break;
-		case "ArrowDown": {
-			selectedSubEditMode = 0;
-			if(selectedEditMode >= 1) {
-				selectedEditMode--;
-			}
-			else {
-				selectedEditMode = editModes.length - 1;
-			}
-			console.log("Selected Edit Mode: ", editModes[selectedEditMode]);
-		}
-		break;
-		case "ArrowUp": {
-			selectedSubEditMode = 0;
-			if(selectedEditMode < editModes.length - 1) {
-				selectedEditMode++;
-			}
-			else {
-				selectedEditMode = 0;
-			}
-			console.log("Selected Edit Mode: ", editModes[selectedEditMode]);
-		}
-		break;
-	}
-});
-
-
 //skybox
 function updateSkyboxPosition(skyboxEntity)
 {
@@ -691,7 +274,9 @@ export function updateRotatingCubePass() {
 	
 	const encoder = device.createCommandEncoder();
 	
-	//step++; // Increment the step count, done between compute and render so output buffer of compute pipeline is input buffer for render pipeline
+	// ImGUI setting updates
+	userInterface.refreshControlsUI();
+	userInterface.refreshEntityFolder();
 	
 	//update skybox to position onto camera
 	if(settings.activateSkybox) {
@@ -856,6 +441,10 @@ export function updateRotatingCubePass() {
 		postEffectPassTextureDebug_RGBA32FLOAT(encoderDebug, context.getCurrentTexture(), water.finalWaveHeightTexture);
 	}
 	
-	device.queue.submit([encoderDebug.finish()]);
+	// update the settings from changes made in render loop unless UI settings are changed directly
+	if(!userInterface.guiActive) {
+		userInterface.syncSettingsToParams();
+	}
 	
+	device.queue.submit([encoderDebug.finish()]);
 }

@@ -6,6 +6,7 @@ struct DebugTextureUniforms {
 	@location(0) canvasSize: vec2f,
 	@location(1) textureSize: vec2f,
 	@location(2) mapRange: f32,
+	@location(3) rescale: f32,
 };
 @group(0) @binding(0) var<uniform> DTU: DebugTextureUniforms;
 
@@ -25,41 +26,35 @@ struct DebugTextureUniforms {
         let texWidth = u32(DTU.textureSize.x);  // Texture width
         let texHeight = u32(DTU.textureSize.y); // Texture height
 		
-		// Calculate the position in the bottom right corner of the screen
-        let x = width - texWidth + (threadID.x % texWidth);
-        let y = height - texHeight + (threadID.y % texHeight);
+		// fixed display size in screen pixels (top-left region)
+        let displayWidth  = u32(DTU.rescale);
+        let displayHeight = u32(DTU.rescale);
+		let startX = width - displayWidth;
 
-        // Sample the texture at this position
-        let texCoord = vec2<f32>(f32(x % texWidth), f32(y % texHeight)) / vec2<f32>(f32(texWidth), f32(texHeight));
-		
-		//read input texture
-		var inputCanvasCol = textureLoad(inCanvasTexture, vec2<u32>(threadID.x, threadID.y));
-		
-		//this assumes right now to scale by the full screen size, so at maximum the texture can be the size of our canvas
-		var scaleMult = 1f;
-		
-		if(texWidth >= width || texHeight >= height) {
-			scaleMult = 4f;
-		}
-		else if (texWidth >= (width / 2u) || texHeight >= (height / 2u)) {
-			scaleMult = 2f;
-		}
-		else if (texWidth >= (width / 4u) || texHeight >= (height / 4u)) {
-			scaleMult = 1f;
-		}
-		else if (texWidth >= (width / 8u) || texHeight >= (height / 8u)) {
-			scaleMult = 0.5f;
-		}
-		
-		var inputDebugCol = textureLoad(inDebugTexture, vec2<u32>(u32(f32(threadID.x) * scaleMult), u32(f32(threadID.y) * scaleMult)));
-	
-		var outCol = inputDebugCol;
-		if(all(outCol == vec4f(0.0,0.0,0.0,0.0))) {
-			outCol = inputCanvasCol;
-		}
-		
-		//write to output, dont view the alpha
-		textureStore(outTexture, threadID, outCol);
+        // only process threads within the display region
+        if (threadID.x >= displayWidth || threadID.y >= displayHeight) {
+            // outside display region — write canvas pixel through unchanged
+            var passthrough = textureLoad(inCanvasTexture, threadID);
+            textureStore(outTexture, threadID, passthrough);
+            return;
+        }
+
+        // exact normalized UV within the display region
+        let u = f32(threadID.x - startX) / f32(displayWidth);
+        let v = f32(threadID.y) / f32(displayHeight);
+
+        // map UV to exact texel in source texture
+        let texX = u32(u * f32(texWidth));
+        let texY = u32(v * f32(texHeight));
+
+        var inputDebugCol = textureLoad(inDebugTexture, vec2<u32>(texX, texY));
+
+        var outCol = inputDebugCol;
+        if (all(outCol == vec4f(0.0, 0.0, 0.0, 0.0))) {
+            outCol = textureLoad(inCanvasTexture, threadID);
+        }
+
+        textureStore(outTexture, threadID, outCol);
 	}
 `;
 
@@ -69,6 +64,7 @@ struct DebugTextureUniforms {
 	@location(0) canvasSize: vec2f,
 	@location(1) textureSize: vec2f,
 	@location(2) mapRange: f32,
+	@location(3) rescale: f32,
 };
 @group(0) @binding(0) var<uniform> DTU: DebugTextureUniforms;
 
@@ -88,51 +84,31 @@ struct DebugTextureUniforms {
         let texWidth = u32(DTU.textureSize.x);  // Texture width
         let texHeight = u32(DTU.textureSize.y); // Texture height
 		
-		// Calculate the position in the bottom right corner of the screen
-        let x = width - texWidth + (threadID.x % texWidth);
-        let y = height - texHeight + (threadID.y % texHeight);
+		let displayWidth  = u32(DTU.rescale);
+        let displayHeight = u32(DTU.rescale);
 
-        // Sample the texture at this position
-        let texCoord = vec2<f32>(f32(x % texWidth), f32(y % texHeight)) / vec2<f32>(f32(texWidth), f32(texHeight));
-		
-		//read input texture
-		var inputCanvasCol = textureLoad(inCanvasTexture, vec2<u32>(threadID.x, threadID.y));
-		
-		//this assumes right now to scale by the full screen size, so at maximum the texture can be the size of our canvas
-		var scaleMult = 1f;
-		
-		if(texWidth >= width || texHeight >= height) {
-			scaleMult = 4f;
-		}
-		else if (texWidth >= (width / 2u) || texHeight >= (height / 2u)) {
-			scaleMult = 2f;
-		}
-		else if (texWidth >= (width / 4u) || texHeight >= (height / 4u)) {
-			scaleMult = 1f;
-		}
-		else if (texWidth >= (width / 8u) || texHeight >= (height / 8u)) {
-			scaleMult = 0.5f;
-		}
-		
-		var horizontalScalar = 1.0;
-		if(f32(texWidth) < (f32(texHeight) * 0.25)) {
-			horizontalScalar = 0.05;
-		}
-		
-		var inputDebugCol = textureLoad(inDebugTexture, vec2<u32>(u32(f32(threadID.x) * scaleMult * horizontalScalar), u32(f32(threadID.y) * scaleMult)));
-		
-		//THIS HAS A CRT MONITOR EFFECT :)))
-		//if(u32(f32(threadID.x) * scaleMult * horizontalScalar) % 2 == 1) {
-		//	inputDebugCol = vec4f(0.0,0.0,0.0,1.0);
-		//}
-	
-		var outCol = inputDebugCol;
-		if(all(outCol == vec4f(0.0,0.0,0.0,0.0))) {
-			outCol = inputCanvasCol;
-		}
-		
-		//write to output, dont view the alpha
-		textureStore(outTexture, threadID, outCol);
+        let startX = width - displayWidth;
+
+        if (threadID.x < startX || threadID.y >= displayHeight) {
+            var passthrough = textureLoad(inCanvasTexture, threadID);
+            textureStore(outTexture, threadID, passthrough);
+            return;
+        }
+
+        let u = f32(threadID.x - startX) / f32(displayWidth);
+        let v = f32(threadID.y)           / f32(displayHeight);
+
+        let texX = u32(u * f32(texWidth));
+        let texY = u32(v * f32(texHeight));
+
+        var inputDebugCol = textureLoad(inDebugTexture, vec2<u32>(texX, texY));
+
+        var outCol = inputDebugCol;
+        if (all(outCol == vec4f(0.0, 0.0, 0.0, 0.0))) {
+            outCol = textureLoad(inCanvasTexture, threadID);
+        }
+
+        textureStore(outTexture, threadID, outCol);
 	}
 `;
 
@@ -142,6 +118,7 @@ struct DebugTextureUniforms {
 	@location(0) canvasSize: vec2f,
 	@location(1) textureSize: vec2f,
 	@location(2) mapRange: f32,
+	@location(3) rescale: f32,
 };
 @group(0) @binding(0) var<uniform> DTU: DebugTextureUniforms;
 
@@ -162,26 +139,31 @@ struct DebugTextureUniforms {
         let texWidth = u32(DTU.textureSize.x);  // Texture width
         let texHeight = u32(DTU.textureSize.y); // Texture height
 		
-		// Calculate the position in the bottom right corner of the screen
-        let x = width - texWidth + (threadID.x % texWidth);
-        let y = height - texHeight + (threadID.y % texHeight);
+		let displayWidth  = u32(DTU.rescale);
+        let displayHeight = u32(DTU.rescale);
 
-        // Sample the texture at this position
-        let texCoord = vec2<f32>(f32(x % texWidth), f32(y % texHeight)) / vec2<f32>(f32(texWidth), f32(texHeight));
-		
-		//read input texture
-		var inputCanvasCol = textureLoad(inCanvasTexture, vec2<u32>(threadID.x, threadID.y));
-		
-		//this assumes right now to scale by the full screen size, so at maximum the texture can be the size of our canvas
-		var inputDebugCol = textureLoad(inDebugTextureDepth, vec2<u32>(threadID.x * 4, threadID.y * 4), 0);
-		
-		var outCol = vec4f(inputDebugCol * DTU.mapRange,0.0,0.0,1.0);
-		
-		if(all(outCol == vec4f(0.0,0.0,0.0,1.0))) {
-			outCol = inputCanvasCol;
-		}
-		
-		//write to output
-		textureStore(outTexture, threadID, outCol);
+        let startX = width - displayWidth;
+
+        if (threadID.x < startX || threadID.y >= displayHeight) {
+            var passthrough = textureLoad(inCanvasTexture, threadID);
+            textureStore(outTexture, threadID, passthrough);
+            return;
+        }
+
+        let u = f32(threadID.x - startX) / f32(displayWidth);
+        let v = f32(threadID.y)           / f32(displayHeight);
+
+        let texX = u32(u * f32(texWidth));
+        let texY = u32(v * f32(texHeight));
+
+        var inputDepth = textureLoad(inDebugTextureDepth, vec2<u32>(texX, texY), 0);
+
+        var outCol = vec4f(inputDepth * DTU.mapRange, 0.0, 0.0, 1.0);
+
+        if (all(outCol == vec4f(0.0, 0.0, 0.0, 1.0))) {
+            outCol = textureLoad(inCanvasTexture, threadID);
+        }
+
+        textureStore(outTexture, threadID, outCol);
 	}
 `;

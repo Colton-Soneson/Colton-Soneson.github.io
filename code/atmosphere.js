@@ -255,7 +255,6 @@ const skyVFBindGroup = device.createBindGroup({
     ],
 });
 
-
 export function sunCycle(cycleSpeed)
 {
 	settings.sunCycleAngle = (settings.sunCycleAngle || 0) + cycleSpeed;
@@ -269,7 +268,9 @@ export function sunCycle(cycleSpeed)
 
 export function atmospherePass(mainpassDepthTexture)
 {	
-	sunCycle(0.01)
+	if(settings.atmosphereSunRotationDemo) {
+		sunCycle(0.01)
+	}
 
 	updateSkyUniforms();
 

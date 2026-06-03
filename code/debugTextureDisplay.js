@@ -26,7 +26,7 @@ const debugTextureShaderModule_DEPTH32FLOAT = device.createShaderModule({
   code: c_DebugTexture_DEPTH32FLOAT		
  });
 
-const debugTextureUniformArraySize = 24; // (2 * 4) + (2 * 4) + 4	canvas size and debug texture size and tex type
+const debugTextureUniformArraySize = 24; // (2 * 4) + (2 * 4) + 4 + 4	canvas size and debug texture size, depth map range, and rescale size
 const debugTextureUniformBuffer = device.createBuffer({
   label: "Debug Texture Uniform",
   size: debugTextureUniformArraySize,
@@ -43,7 +43,8 @@ function debugTextureUniformUpdate(texSize) {
 	result.push(texSize.width);
 	result.push(texSize.height);
 	
-	result.push(settings.displayHeightMapDebugRange);
+	result.push(settings.displayDepthMapDebugRange);
+	result.push(settings.debugTextureRescaleSize);
 		
 	const finalBuff = new Float32Array(result);
 		

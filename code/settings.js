@@ -36,7 +36,7 @@ export const settings = {
 	windDirection: vec2.create(1.0,1.0),
 	waterWaveSteepness: 0.1,	//0 - 1
 	waterWaveLength: 10.0,
-	waterTileResolution: 512.0,
+	waterTileResolution: 128.0,
 	waterTileInstanceCount: 9,
 	waterWorldPosY: -16,
 	waterOceanPlanePhysicalSize: 512.0,
@@ -50,12 +50,13 @@ export const settings = {
 	atmosphereViewLUTTextureSizeY: 108,
 	atmosphereTransmittanceTextureSizeX: 256,
 	atmosphereTransmittanceTextureSizeY: 64,
+	atmosphereSunRotationDemo: true,
 	//--------------------DEBUG--------------------
     showDebug: true,
 	showDebugIcons: false,
     activateSkybox: false,
 	displayHeightMap: false,
-	displayHeightMapDebugRange: 0.5,
+	displayDepthMapDebugRange: 0.5,
 	displayShadowMapDepth: false,
 	displayOceanSpectrum: false,
 	displayWaterInitialHeight: false,
@@ -63,5 +64,6 @@ export const settings = {
 	displayWaterPreComp: false,
 	displayWaterFFT: false,
 	displayWaterShifted: false,
-	debugViewMode: 0
+	displayLightingMode: 0,
+	debugTextureRescaleSize: 512.0
 };

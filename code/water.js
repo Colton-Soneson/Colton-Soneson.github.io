@@ -218,11 +218,11 @@ const bitReversedIndicesArray = new Float32Array(bitReversedIndicies(settings.wa
 console.log("Bit Reversed Indices Array: ", bitReversedIndicesArray);
 
 //if settings change live, this will have to be changed out from constants													!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-const waterPlaneNumberOfVerts = settings.waterTileResolution * settings.waterTileResolution;
-const waterPlaneVertexStride = (3 + 2 + 3);
-const waterEntityModelsStride = waterPlaneNumberOfVerts * waterPlaneVertexStride;	//number of floats
-const totalTileCount = settings.waterTileInstanceCount * settings.waterTileInstanceCount;
-const totalPlaneTriangles = ((settings.waterTileResolution - 1) * (settings.waterTileResolution - 1));	//grid cells / tris per cell (2)
+let waterPlaneNumberOfVerts = settings.waterTileResolution * settings.waterTileResolution;
+let waterPlaneVertexStride = (3 + 2 + 3);
+let waterEntityModelsStride = waterPlaneNumberOfVerts * waterPlaneVertexStride;	//number of floats
+let totalTileCount = settings.waterTileInstanceCount * settings.waterTileInstanceCount;
+let totalPlaneTriangles = ((settings.waterTileResolution - 1) * (settings.waterTileResolution - 1));	//grid cells / tris per cell (2)
 
 //model list specific
 const uboOffset = 256;	//this is a defaulted max for UBO, nothing I wrote equals up to 256, its a limiter
@@ -257,14 +257,14 @@ const uniformBufferComputeButterfly = device.createBuffer({
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,	//this makes it another GPUBuffer Object but this time uniform
 });
 
-const uniformBufferComplexGaussian = device.createBuffer({
+let uniformBufferComplexGaussian = device.createBuffer({
   label: "water Spectrum Compute Complex Gaussian Array Buffer",
   size: complexGaussArray.byteLength,
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,	//this makes it another GPUBuffer Object but this time uniform
 });
 device.queue.writeBuffer(uniformBufferComplexGaussian, /*bufferOffset=*/0, complexGaussArray); //copy vertex data to buffer
 
-const uniformBufferBitReversedIndices = device.createBuffer({
+let uniformBufferBitReversedIndices = device.createBuffer({
   label: "water butterfly bit reversed indices Array Buffer",
   size: bitReversedIndicesArray.byteLength,
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,	//this makes it another GPUBuffer Object but this time uniform
@@ -273,12 +273,12 @@ device.queue.writeBuffer(uniformBufferBitReversedIndices, /*bufferOffset=*/0, bi
 
 //conversion for texture to f32 array, makes the passing faster and easier to manage with RW capabilities
 const lengthOfTwoElementWaterTileArray = settings.waterTileResolution * settings.waterTileResolution * 2 * 4; // real and imaginary per vertex by float size
-const uniformBufferRtoA = device.createBuffer({
+let uniformBufferRtoA = device.createBuffer({
   label: "water Realization to Array  Array Buffer",
   size: lengthOfTwoElementWaterTileArray,
   usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
 });
-const uniformBufferPingPong = device.createBuffer({
+let uniformBufferPingPong = device.createBuffer({
   label: "water Ping Pong Array Buffer",
   size: lengthOfTwoElementWaterTileArray,
   usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
@@ -301,63 +301,34 @@ for (let i = 0; i < totalTileCount; i++) {
     }));
 }
 
-//let totalwaterVertexBuffer;
-//function waterUpdateStorageVertexBuffer() {
-//	const totalwaterVertexArray = waterEntityModelsStride * Float32Array.BYTES_PER_ELEMENT;		// i dont think this is correct
-//	const GVB = device.createBuffer({
-//		label: "total water vertices",		//just helps to identify object, can be anything you type
-//		size: totalwaterVertexArray,
-//		usage: GPUBufferUsage.VERTEX | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,	//its use is for vertex data, and that you want to copy data into it, ALSO for use as storage buffer in compute
-//	});
-//	
-//	totalwaterVertexBuffer = GVB;
-//}
-//waterUpdateStorageVertexBuffer(); // run the function
-//
-//let totalwaterIndexBuffer;
-//const totalPlaneTriangles = ((settings.waterTileResolution - 1) * (settings.waterTileResolution - 1));	//grid cells / tris per cell (2)
-//function waterUpdateStorageIndexBuffer() {
-//	const totalwaterIndexArray = totalPlaneTriangles * (3 + 2 + 3) * Float32Array.BYTES_PER_ELEMENT;
-//	const GIB = device.createBuffer({
-//		label: "total water indices",	
-//		size: totalwaterIndexArray,
-//		usage: GPUBufferUsage.INDEX | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,	//its use is for vertex data, and that you want to copy data into it, ALSO for use as storage buffer in compute
-//	});
-//	
-//	totalwaterIndexBuffer = GIB;
-//}
-//waterUpdateStorageIndexBuffer(); // run the function
-
-
-
 //Phillips Spectrum
-export const phillipsSpectrumTexture = device.createTexture({
+export let phillipsSpectrumTexture = device.createTexture({
   size: [settings.waterTileResolution, settings.waterTileResolution],
   format: 'rgba32float',
   usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
 });
 
 //h0k without conj
-export const h0k = device.createTexture({
+export let h0k = device.createTexture({
   size: [settings.waterTileResolution, settings.waterTileResolution],
   format: 'rgba32float',
   usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
 });
 
-export const h0Minusk = device.createTexture({
+export let h0Minusk = device.createTexture({
   size: [settings.waterTileResolution, settings.waterTileResolution],
   format: 'rgba32float',
   usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
 });
 
 //inital Water Height map h0(k) and h0(-k)
-export const initialWaterHeightMap = device.createTexture({
+export let initialWaterHeightMap = device.createTexture({
   size: [settings.waterTileResolution, settings.waterTileResolution],
   format: 'rgba32float',
   usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
 });
 
-export const hkt = device.createTexture({
+export let hkt = device.createTexture({
   size: [settings.waterTileResolution, settings.waterTileResolution],
   format: 'rgba32float',
   usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
@@ -370,7 +341,7 @@ export let waveHeightRealization = device.createTexture({
   usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
 });
 
-export const preCompTexture = device.createTexture({
+export let preCompTexture = device.createTexture({
   size: [Math.log2(settings.waterTileResolution), settings.waterTileResolution],
   format: 'rgba32float',
   usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
@@ -405,7 +376,7 @@ export let preShiftFinalWaveHeightTexture = device.createTexture({
 });
 
 
-export const finalWaveHeightTexture = device.createTexture({
+export let finalWaveHeightTexture = device.createTexture({
   size: [settings.waterTileResolution, settings.waterTileResolution],
   format: 'rgba32float',
   usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
@@ -1354,9 +1325,107 @@ function redirectWindDirectionTemp() {
 	//settings.windDirection[1] = Math.sin(step * 0.00053);
 }
 
+let lastWaterTileResolution = settings.waterTileResolution;
+let resolutionRebuildPending = false;
+
+async function recreateResolutionDependentResources() {
+	// wait for GPU to finish all submitted work before destroying anything
+    await device.queue.onSubmittedWorkDone();
+	
+    // destroy old textures
+    phillipsSpectrumTexture.destroy();
+    h0k.destroy();
+    h0Minusk.destroy();
+    initialWaterHeightMap.destroy();
+    hkt.destroy();
+    waveHeightRealization.destroy();
+    preCompTexture.destroy();
+    pingPongIFFTTexture.destroy();
+    finalIFFTOutput.destroy();
+    prePingPongIFFTTexture.destroy();
+    preShiftFinalWaveHeightTexture.destroy();
+    finalWaveHeightTexture.destroy();
+
+    // destroy old buffers
+    uniformBufferRtoA.destroy();
+    uniformBufferPingPong.destroy();
+    uniformBufferBitReversedIndices.destroy();
+    uniformBufferComplexGaussian.destroy();
+	
+	// destroy old tile buffers
+    for (let i = 0; i < waterVertexBuffers.length; i++) {
+        waterVertexBuffers[i].destroy();
+        waterIndexBuffers[i].destroy();
+    }
+    waterVertexBuffers.length = 0;
+    waterIndexBuffers.length = 0;
+
+    // recreate with new resolution
+    const res = settings.waterTileResolution;
+    const len2 = res * res * 2 * 4;
+    const stages = Math.log2(res);
+	
+	waterPlaneNumberOfVerts = res * res;
+    waterEntityModelsStride = waterPlaneNumberOfVerts * waterPlaneVertexStride;
+    totalPlaneTriangles     = (res - 1) * (res - 1);
+
+    phillipsSpectrumTexture = device.createTexture({ size: [res, res], format: 'rgba32float', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING });
+    h0k                     = device.createTexture({ size: [res, res], format: 'rgba32float', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING });
+    h0Minusk                = device.createTexture({ size: [res, res], format: 'rgba32float', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING });
+    initialWaterHeightMap   = device.createTexture({ size: [res, res], format: 'rgba32float', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING });
+    hkt                     = device.createTexture({ size: [res, res], format: 'rgba32float', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING });
+    waveHeightRealization   = device.createTexture({ label: "wave Height Realization Texture", size: [res, res], format: 'rgba32float', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING });
+    preCompTexture          = device.createTexture({ size: [stages, res], format: 'rgba32float', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING });
+    pingPongIFFTTexture     = device.createTexture({ label: "ping pong IFFT Texture", size: [res, res], format: 'rgba32float', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING });
+    finalIFFTOutput         = device.createTexture({ label: "final IFFT Texture", size: [res, res], format: 'rgba32float', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING });
+    prePingPongIFFTTexture  = device.createTexture({ label: "pre ping pong IFFT Texture", size: [res, res], format: 'rgba32float', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING });
+    preShiftFinalWaveHeightTexture = device.createTexture({ size: [res, res], format: 'rgba32float', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING });
+    finalWaveHeightTexture  = device.createTexture({ size: [res, res], format: 'rgba32float', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING });
+
+    // recreate buffers
+    const newComplexGauss = new Float32Array(complexGaussianRandomForH0(res * res));
+    const newBitReversed  = new Float32Array(bitReversedIndicies(res));
+
+    uniformBufferComplexGaussian = device.createBuffer({ label: "water Spectrum Compute Complex Gaussian Array Buffer", size: newComplexGauss.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(uniformBufferComplexGaussian, 0, newComplexGauss);
+
+    uniformBufferBitReversedIndices = device.createBuffer({ label: "water butterfly bit reversed indices Array Buffer", size: newBitReversed.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(uniformBufferBitReversedIndices, 0, newBitReversed);
+
+    uniformBufferRtoA    = device.createBuffer({ label: "water Realization to Array Buffer", size: len2, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
+    uniformBufferPingPong = device.createBuffer({ label: "water Ping Pong Array Buffer", size: len2, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
+
+	// recreate tile vertex/index buffers
+    for (let i = 0; i < totalTileCount; i++) {
+        waterVertexBuffers.push(device.createBuffer({
+            label: `water vertex buffer tile ${i}`,
+            size: waterEntityModelsStride * Float32Array.BYTES_PER_ELEMENT,
+            usage: GPUBufferUsage.VERTEX | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        }));
+        waterIndexBuffers.push(device.createBuffer({
+            label: `water index buffer tile ${i}`,
+            size: totalPlaneTriangles * 6 * Float32Array.BYTES_PER_ELEMENT,
+            usage: GPUBufferUsage.INDEX | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        }));
+    }
+
+    // reset step so h0k gets regenerated next frame
+    step = 0;
+	resolutionRebuildPending = false;
+}
+
 export function waterPass(mainpassDepthTexture) {
 	
+	if (settings.waterTileResolution !== lastWaterTileResolution) {
+        lastWaterTileResolution = settings.waterTileResolution;
+        if (!resolutionRebuildPending) {
+            resolutionRebuildPending = true;
+            recreateResolutionDependentResources(); // fire async, don't await
+        }
+    }
 	
+	// skip the entire pass while rebuild is in flight
+    if (resolutionRebuildPending) return;
 	
 	currentFrameTime = performance.now();
 	//step = (currentFrameTime - lastFrameTime);

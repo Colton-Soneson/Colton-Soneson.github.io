@@ -2,6 +2,7 @@ import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.19/+esm';
 import { settings } from './settings.js';
 import * as scene from './scene.js';
 import * as water from './water.js';	//for water options
+import * as grass from './computeGrass.js'
 
 export const imguiParams = {
     // Time
@@ -35,6 +36,7 @@ export const imguiParams = {
     waterOceanPlanePhysicalSize: settings.waterOceanPlanePhysicalSize,
     waterTileInstanceCount: settings.waterTileInstanceCount,
     waterTileResolution: settings.waterTileResolution,
+	waterGridSize: settings.waterGridSize,
     // Atmosphere
     enableAtmosphere: settings.enableAtmosphere,
     additionalAltitude: settings.additionalAltitude,
@@ -52,6 +54,8 @@ export const imguiParams = {
     displayWaterPreComp: settings.displayWaterPreComp,
     displayWaterFFT: settings.displayWaterFFT,
     displayWaterShifted: settings.displayWaterShifted,
+	displaySkyViewLUTtexture: settings.displaySkyViewLUTtexture,
+	displayTransmittanceLUTtexture: settings.displayTransmittanceLUTtexture,
 	debugTextureRescaleSize: settings.debugTextureRescaleSize,
 };
 
@@ -72,7 +76,7 @@ sunFolder.add(imguiParams, 'sunPosX', -2000, 2000).name('Pos X');
 sunFolder.add(imguiParams, 'sunPosY', -2000, 2000).name('Pos Y');
 sunFolder.add(imguiParams, 'sunPosZ', -2000, 2000).name('Pos Z');
 sunFolder.add(imguiParams, 'sunIntensity', 0, 500000).name('Intensity');
-sunFolder.add(imguiParams, 'sunCycleAngle', 0, 360).name('Cycle Angle');
+sunFolder.add(imguiParams, 'sunCycleAngle', 0, 6.2832).name('Cycle Angle (2 pi)');
 
 const shadowFolder = gui.addFolder('Shadows');
 shadowFolder.add(imguiParams, 'shadowMapPCFKernelSize', 1, 16, 1).name('PCF Kernel Size');
@@ -80,16 +84,21 @@ shadowFolder.add(imguiParams, 'shadowMapAcneBias', 0, 0.05, 0.0001).name('Acne B
 
 const grassFolder = gui.addFolder('Grass');
 grassFolder.add(imguiParams, 'enableGrass').name('Enable');
-grassFolder.add(imguiParams, 'grassTotalBladeCount', 1, settings.grassTotalHARDLIMIT, 1).name('Blade Count');
+grassFolder.add(imguiParams, 'grassTotalBladeCount', 1, settings.grassTotalHARDLIMIT, 1).name('Blade Count')
+    .onChange((value) => {
+        settings.grassTotalBladeCount = value;
+        grass.grassUpdateStorageVertexBuffer();  // resize the storage buffer
+    });
 
 const waterFolder = gui.addFolder('Water');
 waterFolder.add(imguiParams, 'enableWater').name('Enable');
 waterFolder.add(imguiParams, 'waterWaveSteepness', 0, 1, 0.01).name('Wave Steepness');
 waterFolder.add(imguiParams, 'waterWaveLength', 1, 500).name('Wave Length');
-waterFolder.add(imguiParams, 'waterWindSpeed', 0, 50).name('Wind Speed');
+waterFolder.add(imguiParams, 'waterWindSpeed', 0, 20).name('Wind Speed');
 waterFolder.add(imguiParams, 'waterWorldPosY', -100, 100).name('World Pos Y');
 waterFolder.add(imguiParams, 'waterTileResolution', [32, 64, 128, 256, 512, 1024]).name('Water Tile Resolution');
-waterFolder.add(imguiParams, 'waterOceanPlanePhysicalSize', 1, 1000).name('Water Tile Physical Size');
+waterFolder.add(imguiParams, 'waterOceanPlanePhysicalSize', 1, 1024).name('WT Physical Size (H0K)');
+waterFolder.add(imguiParams, 'waterGridSize', 1, 5000).name('Water Tile Grid Size');
 waterFolder.add(imguiParams, 'waterTileInstanceCount', [1, 3, 5, 7, 9, 11]).name('Water Tile Instance Count');
 
 
@@ -97,7 +106,7 @@ const atmosphereFolder = gui.addFolder('Atmosphere');
 atmosphereFolder.add(imguiParams, 'enableAtmosphere').name('Enable');
 atmosphereFolder.add(imguiParams, 'atmosphereScaleToScene', 0.1, 10).name('Scale');
 atmosphereFolder.add(imguiParams, 'additionalAltitude', -200, 200).name('Altitude Offset');
-atmosphereFolder.add(imguiParams, 'atmosphereSunRotationDemo').name('Enable');
+atmosphereFolder.add(imguiParams, 'atmosphereSunRotationDemo').name('atmosphere sun demo enable');
 
 const debugDisplayModes = ["final", 
 							"shadow mapping visibility",
@@ -109,7 +118,9 @@ const debugDisplayModes = ["final",
 							"waveHeightRealization h(k,t)", 
 							"PreComp Twiddle Water", 
 							"finalWaveHeightFFT h(x,t) pre Shift", 
-							"finalWaveHeightFFT h(x,t) Shifted"];
+							"finalWaveHeightFFT h(x,t) Shifted",
+							"Skyview LUT Texture",
+							"Atmosphere Transmittance LUT Texture"];
 
 let selectedDebugDisplayMode;
 const debugFolder = gui.addFolder('Debug');
@@ -126,6 +137,8 @@ debugFolder.add(debugViewState, 'mode', debugDisplayModes).name('View Mode').onC
     settings.displayWaterPreComp          = selectedDebugDisplayMode === 8;
     settings.displayWaterFFT              = selectedDebugDisplayMode === 9;
     settings.displayWaterShifted          = selectedDebugDisplayMode === 10;
+    settings.displaySkyViewLUTtexture          = selectedDebugDisplayMode === 11;
+    settings.displayTransmittanceLUTtexture    = selectedDebugDisplayMode === 12;
 
     if (selectedDebugDisplayMode === 2) {
         water.waterPipelineSignalUpdate('line-list');
@@ -146,6 +159,8 @@ const dropdownManagedKeys = new Set([
     'displayWaterPreComp',
     'displayWaterFFT',
     'displayWaterShifted',
+	'displaySkyViewLUTtexture',
+	'displayTransmittanceLUTtexture',
 ]);
 
 export function refreshControlsUI() {

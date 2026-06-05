@@ -397,7 +397,7 @@ function getSnappedTileOrigin(camX, camZ, tileSize) {
 }
 
 function getTileOffsets(camX, camZ) {
-    const size = settings.waterOceanPlanePhysicalSize;
+    const size = settings.waterGridSize;	//WAS oceanPlanePhysicalSize until that was just used for Phillips calc
     const [snapX, snapZ] = getSnappedTileOrigin(camX, camZ, size); 	// offsets based on camera snapped position
     const half = Math.floor(settings.waterTileInstanceCount / 2);
     
@@ -436,9 +436,9 @@ function getwaterComputeInfo(tileOffsetX = 0, tileOffsetZ = 0) {
 	waterCompBuffer.push(tileOffsetX);
 	waterCompBuffer.push(tileOffsetZ);
 	
-	// padding
-	waterCompBuffer.push(0);
-	waterCompBuffer.push(0);
+	// square grid
+	waterCompBuffer.push(settings.waterGridSize);
+	waterCompBuffer.push(settings.waterGridSize);
 	
 		
 	return new Float32Array(waterCompBuffer);
@@ -1326,6 +1326,11 @@ function redirectWindDirectionTemp() {
 }
 
 let lastWaterTileResolution = settings.waterTileResolution;
+let lastWaterTileInstanceCount = settings.waterTileInstanceCount;
+let lastWaterOceanPlanePhysicalSize = settings.waterOceanPlanePhysicalSize;
+let lastWaterGridSize = settings.waterGridSize;
+let lastWaterWindSpeed = settings.waterWindSpeed;
+let lastWaterWaveLength = settings.waterWaveLength;
 let resolutionRebuildPending = false;
 
 async function recreateResolutionDependentResources() {
@@ -1359,6 +1364,11 @@ async function recreateResolutionDependentResources() {
     }
     waterVertexBuffers.length = 0;
     waterIndexBuffers.length = 0;
+	
+	for (let i = 0; i < waterComputeUniformBuffers.length; i++) {
+		waterComputeUniformBuffers[i].destroy();
+	}
+	waterComputeUniformBuffers.length = 0;
 
     // recreate with new resolution
     const res = settings.waterTileResolution;
@@ -1368,6 +1378,7 @@ async function recreateResolutionDependentResources() {
 	waterPlaneNumberOfVerts = res * res;
     waterEntityModelsStride = waterPlaneNumberOfVerts * waterPlaneVertexStride;
     totalPlaneTriangles     = (res - 1) * (res - 1);
+	totalTileCount = settings.waterTileInstanceCount * settings.waterTileInstanceCount;
 
     phillipsSpectrumTexture = device.createTexture({ size: [res, res], format: 'rgba32float', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING });
     h0k                     = device.createTexture({ size: [res, res], format: 'rgba32float', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING });
@@ -1397,6 +1408,11 @@ async function recreateResolutionDependentResources() {
 
 	// recreate tile vertex/index buffers
     for (let i = 0; i < totalTileCount; i++) {
+		waterComputeUniformBuffers.push(device.createBuffer({
+			label: `water compute uniform tile ${i}`,
+			size: uniformArrayComputewater,
+			usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+		}));
         waterVertexBuffers.push(device.createBuffer({
             label: `water vertex buffer tile ${i}`,
             size: waterEntityModelsStride * Float32Array.BYTES_PER_ELEMENT,
@@ -1416,21 +1432,35 @@ async function recreateResolutionDependentResources() {
 
 export function waterPass(mainpassDepthTexture) {
 	
-	if (settings.waterTileResolution !== lastWaterTileResolution) {
+	if (settings.waterTileResolution !== lastWaterTileResolution ||
+		settings.waterTileInstanceCount !== lastWaterTileInstanceCount ||
+		settings.waterGridSize !== lastWaterGridSize) {
+		
         lastWaterTileResolution = settings.waterTileResolution;
+		lastWaterTileInstanceCount = settings.waterTileInstanceCount;
+		lastWaterGridSize = settings.waterGridSize;
+
         if (!resolutionRebuildPending) {
             resolutionRebuildPending = true;
             recreateResolutionDependentResources(); // fire async, don't await
         }
     }
 	
+	// force recalculate H0K due to phillips spectrum input change
+	if (settings.waterOceanPlanePhysicalSize !== lastWaterOceanPlanePhysicalSize ||
+		settings.waterWindSpeed !== lastWaterWindSpeed ||
+		settings.waterWaveLength !== lastWaterWaveLength) {
+		
+		lastWaterOceanPlanePhysicalSize = settings.waterOceanPlanePhysicalSize;
+		lastWaterWindSpeed = settings.waterWindSpeed;
+		lastWaterWaveLength = settings.waterWaveLength;
+		step = 0;
+	}
+	
 	// skip the entire pass while rebuild is in flight
     if (resolutionRebuildPending) return;
 	
 	currentFrameTime = performance.now();
-	//step = (currentFrameTime - lastFrameTime);
-	
-	//step = performance.now() / 1000.0;	//64 bit JS number doesnt like the 32 bit float array
 	
 	//redirectWindDirectionTemp();	//just for testing wave redirection from CPU side
 	

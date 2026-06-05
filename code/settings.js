@@ -36,11 +36,12 @@ export const settings = {
 	windDirection: vec2.create(1.0,1.0),
 	waterWaveSteepness: 0.1,	//0 - 1
 	waterWaveLength: 10.0,
-	waterTileResolution: 128.0,
-	waterTileInstanceCount: 9,
+	waterTileResolution: 1024.0,
+	waterTileInstanceCount: 3,
 	waterWorldPosY: -16,
 	waterOceanPlanePhysicalSize: 512.0,
 	waterWindSpeed: 5.0,
+	waterGridSize: 1024.0,
 	//------------ATMOSPHERIC SCATTERING-----------
 	enableAtmosphere: true,
 	atmosphereScaleToScene: 1.0,
@@ -64,6 +65,8 @@ export const settings = {
 	displayWaterPreComp: false,
 	displayWaterFFT: false,
 	displayWaterShifted: false,
+	displaySkyViewLUTtexture: false,
+	displayTransmittanceLUTtexture: false,
 	displayLightingMode: 0,
 	debugTextureRescaleSize: 512.0
 };

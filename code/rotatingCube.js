@@ -9,6 +9,7 @@ import {postEffectPassSSS} from './SSS.js'
 import {postEffectPassTextureDebug_DEPTH32FLOAT} from './debugTextureDisplay.js'
 import {postEffectPassTextureDebug_RGBA8UNORM} from './debugTextureDisplay.js'
 import {postEffectPassTextureDebug_RGBA32FLOAT} from './debugTextureDisplay.js'
+import {postEffectPassTextureDebug_RGBA16FLOAT} from './debugTextureDisplay.js'
 import {grassPass} from './computeGrass.js'
 import {waterPass} from './water.js'
 import {atmospherePass} from './atmosphere.js'
@@ -19,6 +20,7 @@ import * as transformations from './transformations.js'
 import * as scene from './scene.js'
 import * as grass from './computeGrass.js'
 import * as water from './water.js'
+import * as atmosphere from './atmosphere.js'
 import { settings } from './settings.js';
 import * as userInterface from './imguiLoader.js';
 
@@ -441,10 +443,18 @@ export function updateRotatingCubePass() {
 		postEffectPassTextureDebug_RGBA32FLOAT(encoderDebug, context.getCurrentTexture(), water.finalWaveHeightTexture);
 	}
 	
+	if(settings.displaySkyViewLUTtexture) {
+		postEffectPassTextureDebug_RGBA16FLOAT(encoderDebug, context.getCurrentTexture(), atmosphere.transmittanceLUTtexture);
+	}
+	
+	if(settings.displayTransmittanceLUTtexture) {
+		postEffectPassTextureDebug_RGBA16FLOAT(encoderDebug, context.getCurrentTexture(), atmosphere.skyViewLUTtexture);
+	}
+	
 	// update the settings from changes made in render loop unless UI settings are changed directly
 	if(!userInterface.guiActive) {
 		userInterface.syncSettingsToParams();
 	}
-	
+
 	device.queue.submit([encoderDebug.finish()]);
 }

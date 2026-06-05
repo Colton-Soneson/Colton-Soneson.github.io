@@ -4,6 +4,14 @@ export const WATER_WORKGROUP_SIZE = [32, 1, 1];
 export const FFT_WORKGROUP_SIZE = [8, 8, 1];
 export const PRECOMP_WORKGROUP_SIZE = [1, 8, 1];
 
+
+/*
+	This pass builds the actual geometry
+	Each thread handles one vertex of the ocean grid: it reads wave height from the FFT output texture, projects the vertex's world position 
+	into the top-down depth camera to sample terrain depth underneath, then attenuates the wave height based on water depth (full waves in deep water, smaller ripples near shore)
+	
+	It also writes index buffer data to form triangles between adjacent grid vertices for the render pipeline
+*/
 export const c_water = 
 `
 	struct WaterSpaces
@@ -28,7 +36,7 @@ export const c_water =
 		@location(8) windSpeed: f32,
 		@location(9) tileOffsetX: f32,
 		@location(10) tileOffsetZ: f32,
-		@location(11) _padding0: vec2f,
+		@location(11) gridSize: vec2f,
 	};
 	@group(0) @binding(1) var<uniform> WU: WaterUniforms;
 	
@@ -97,8 +105,8 @@ fn getHeightmapWorldPos(globalInvoc : vec2u) -> vec3f {
 		let gridIndexX = f32(ix);
 		let gridIndexZ = f32(iz);
 		
-		// Scale grid indices to physical size
-		let cellSize = WU.oceanPlanePhysicalSize / f32(gridWidth - 1u);
+		// Scale grid indices to physical size					!!!ASSUMES GRID IS SQUARE
+		let cellSize = WU.gridSize.x / f32(gridWidth - 1u);
 		let vertGridPosX = gridIndexX * cellSize;
 		let vertGridPosZ = gridIndexZ * cellSize;
 		
@@ -110,8 +118,8 @@ fn getHeightmapWorldPos(globalInvoc : vec2u) -> vec3f {
 		var waveHeight = textureLoad(finalWaveHeightTexture, vec2u(ix % (gridWidth - 1u), iz % (gridWidth - 1u))).x;
 		
 		// World position of this water vertex	!!! CHECK IF TILE OFFSET IS DONE CORRECTLY
-        let worldX = (vertGridPosX - WU.oceanPlanePhysicalSize * 0.5) + WU.tileOffsetX; // + WU.cameraPosition.x; //!!!!Camera positions may need to be put in for MULTIPLE WATER TILES!!!!!!!!!!
-		let worldZ = (vertGridPosZ - WU.oceanPlanePhysicalSize * 0.5) + WU.tileOffsetZ; // + WU.cameraPosition.z;
+        let worldX = (vertGridPosX - WU.gridSize.x * 0.5) + WU.tileOffsetX; // + WU.cameraPosition.x; //!!!!Camera positions may need to be put in for MULTIPLE WATER TILES!!!!!!!!!!
+		let worldZ = (vertGridPosZ - WU.gridSize.y * 0.5) + WU.tileOffsetZ; // + WU.cameraPosition.z;
 
         // Project into top-down camera clip space
         let worldPos4 = vec4f(worldX, 0.0, worldZ, 1.0);
@@ -148,9 +156,9 @@ fn getHeightmapWorldPos(globalInvoc : vec2u) -> vec3f {
 		let rippleDetail = sign(waveHeight) * (waveHeight * waveHeight) * shallowFactor * rippleScale;
 		var waveHeightAdj = (deepDisplacement + rippleDetail) + WU.planeYPos;
 				
-		var position = vec3f((vertGridPosX - WU.oceanPlanePhysicalSize * 0.5) + WU.tileOffsetX,
+		var position = vec3f((vertGridPosX - WU.gridSize.x * 0.5) + WU.tileOffsetX,
 							 waveHeightAdj,
-							 (vertGridPosZ - WU.oceanPlanePhysicalSize * 0.5) + WU.tileOffsetZ);
+							 (vertGridPosZ - WU.gridSize.y * 0.5) + WU.tileOffsetZ);
 	
 		waterVertexData[oVertInd + 0] = position.x;
 		waterVertexData[oVertInd + 1] = position.y;
@@ -183,6 +191,12 @@ fn getHeightmapWorldPos(globalInvoc : vec2u) -> vec3f {
 	}
 `;
 
+/*
+	The raw IFFT output is centered around frequency zero in the corner, which gives a discontinuous-looking wave pattern
+	The shift pass applies a checkerboard sign flip which mathematically moves the zero-frequency component to the center making the wave pattern tile seamlessly.
+	(gIndex.x + gIndex.y) % 2u alternates between 0 and 1 in a checkerboard pattern across the grid
+*/
+
 export const c_Shift =
 `
 	struct WaterUniforms {
@@ -197,6 +211,7 @@ export const c_Shift =
 		@location(8) windSpeed: f32,
 		@location(9) tileOffsetX: f32,
 		@location(10) tileOffsetZ: f32,
+		@location(11) gridSize: vec2f,
 	};
 	@group(0) @binding(0) var<uniform> WU: WaterUniforms;
 
@@ -227,6 +242,14 @@ export const c_Shift =
 	}
 `;
 
+/*
+	This is converting from frequency domain back to spatial domain (wave heights in world space) 
+	It runs in two sweeps: first horizontally across all rows, then vertically across all columns. Each sweep runs log2(resolution) stages, 
+	and each stage does butterfly operations. combining pairs of complex numbers using the precomputed twiddle factors
+	
+	A ping-pong buffer alternates between two storage arrays each stage to avoid read/write conflicts 
+	At the end, the real part of each complex value is the actual wave height at that grid point
+*/
 
 export const c_IFFT_2D =
 `
@@ -242,6 +265,7 @@ export const c_IFFT_2D =
 		@location(8) windSpeed: f32,
 		@location(9) tileOffsetX: f32,
 		@location(10) tileOffsetZ: f32,
+		@location(11) gridSize: vec2f,
 	};
 	@group(0) @binding(0) var<uniform> WU: WaterUniforms;
 	
@@ -404,6 +428,7 @@ export const c_ArrayToTexture =
 		@location(8) windSpeed: f32,
 		@location(9) tileOffsetX: f32,
 		@location(10) tileOffsetZ: f32,
+		@location(11) gridSize: vec2f,
 	};
 	@group(0) @binding(0) var<uniform> WU: WaterUniforms;
 	
@@ -455,6 +480,12 @@ export const c_RealizationToArray =
 	}
 `;
 
+
+/*
+	A one-time setup for the FFT. The Cooley-Tukey FFT algorithm needs to know, for each stage and each element, which two elements to combine and what twiddle factor (complex rotation) to apply
+	This pass bakes all of that into a lookup texture so the main butterfly pass doesn't have to recompute it every stage
+	It also handles bit-reversal reordering, which is required to put the input data in the correct order for the FFT butterfly pattern
+*/
 export const c_PreComp =
 `
 	struct WaterUniforms {
@@ -566,6 +597,13 @@ export const c_PreComp =
 	}
 `;
 
+/*
+	runs every frame. 
+	It takes h0(k) and animates it forward in time using Euler's formula (e^iwt = cos(wt) + i·sin(wt)), where w (angular frequency) is derived from 
+	the dispersion relation w = sqrt(g * |k|) and gravity is determining how fast each wave frequency travels
+	The result h(k,t) is the animated frequency-domain ocean at the current time step, still as a complex texture
+*/
+
 export const c_hkt =
 `
 	struct WaterUniforms {
@@ -580,6 +618,7 @@ export const c_hkt =
 		@location(8) windSpeed: f32,
 		@location(9) tileOffsetX: f32,
 		@location(10) tileOffsetZ: f32,
+		@location(11) gridSize: vec2f,
 	};
 	@group(0) @binding(0) var<uniform> WU: WaterUniforms;
 	
@@ -666,7 +705,10 @@ fn complexConj(z: vec2f) -> vec2f {
 	}
 `;
 
-
+/*
+	The IFFT requires that the spectrum satisfies Hermitian symmetry
+		meaning h0(-k) = conjugate of h0(k)
+*/
 export const c_h0kConj =
 `
 	struct WaterUniforms {
@@ -681,6 +723,7 @@ export const c_h0kConj =
 		@location(8) windSpeed: f32,
 		@location(9) tileOffsetX: f32,
 		@location(10) tileOffsetZ: f32,
+		@location(11) gridSize: vec2f,
 	};
 	@group(0) @binding(0) var<uniform> WU: WaterUniforms;
 	
@@ -725,7 +768,12 @@ export const c_h0kConj =
 	}
 `;
 
-
+/*
+	For every point on a 2D frequency grid (the "wave number grid"), it computes how much energy a wave of that frequency and direction should have. 
+	The Phillips Spectrum formula weighs waves based on wind speed, wind direction alignment, and physical suppression of very small waves. It then multiplies 
+	that energy by a random Gaussian number; giving a statistically realistic but unique ocean each time. 
+	The output h0k is a texture where each texel is a complex number representing the initial amplitude of one wave component.
+*/
 export const c_h0k =
 `
 	struct WaterUniforms {
@@ -740,6 +788,7 @@ export const c_h0k =
 		@location(8) windSpeed: f32,
 		@location(9) tileOffsetX: f32,
 		@location(10) tileOffsetZ: f32,
+		@location(11) gridSize: vec2f,
 	};
 	@group(0) @binding(0) var<uniform> WU: WaterUniforms;
 	
@@ -763,7 +812,7 @@ export const c_h0k =
 		return vec2f(z.x, -z.y);
 	}
 	
-
+// Describes how wave energy is distributed across different wave frequencies and directions in a fully developed ocean
 fn phillipsSpectrum(kx: f32, ky: f32) -> f32 {
 	let pi = f32(3.14159);		//PI
 	let g = f32(9.18);			//grav constant

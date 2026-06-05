@@ -18,7 +18,15 @@ import * as transformations from './transformations.js'
 import * as scene from './scene.js'
 import * as primitives from '../models/primitives.js'
 
+
+// precomputed atmospheric scattering using two lookup tables (LUTs) to avoid doing expensive raymarching every frame per pixel.
+
 //-------------------- Pre Computed (Bruneton) Atmospheric Scattering --------------------
+
+//Both LUT shaders march along a ray through the atmosphere accumulating two types of scattering:
+//		Rayleigh scattering: from air molecules, wavelength-dependent (higher for blue, making the sky blue). Density falls off with scale height 8500m.
+//		Mie scattering: from aerosols/haze, wavelength-independent, gives the glow around the sun. Falls off faster at 1200m scale height.
+
 const transmittanceLUTShaderModule = device.createShaderModule({
   label: "c_transmittance_LUT",
   code: c_transmittance_LUT	
@@ -47,7 +55,7 @@ const lutSampler = device.createSampler({
     addressModeV: 'clamp-to-edge',
 });
 
-const transmittanceLUTtexture = device.createTexture({
+export const transmittanceLUTtexture = device.createTexture({
   label: "transmittance LUT texture",
   size: [settings.atmosphereTransmittanceTextureSizeX, settings.atmosphereTransmittanceTextureSizeY, 1],
   format: 'rgba16float',
@@ -55,7 +63,7 @@ const transmittanceLUTtexture = device.createTexture({
 });
 const transmittanceView = transmittanceLUTtexture.createView();
 
-const skyViewLUTtexture = device.createTexture({
+export const skyViewLUTtexture = device.createTexture({
   label: "sky view LUT texture",
   size: [settings.atmosphereViewLUTTextureSizeX, settings.atmosphereViewLUTTextureSizeY, 1],
   format: 'rgba16float',

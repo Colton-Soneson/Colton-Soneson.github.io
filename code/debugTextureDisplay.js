@@ -5,6 +5,7 @@ import {canvasFormat} from './deviceSelection.js'
 
 import { c_DebugTexture_RGBA8UNORM } from '../shaders/js/c_debugTextureDisplay.js'
 import { c_DebugTexture_RGBA32FLOAT } from '../shaders/js/c_debugTextureDisplay.js'
+import { c_DebugTexture_RGBA16FLOAT } from '../shaders/js/c_debugTextureDisplay.js'
 import { c_DebugTexture_DEPTH32FLOAT } from '../shaders/js/c_debugTextureDisplay.js'
 import { DEBUGTEXTURE_WORKGROUP_SIZE } from '../shaders/js/c_debugTextureDisplay.js'
 
@@ -20,6 +21,10 @@ const debugTextureShaderModule_RGBA8UNORM = device.createShaderModule({
  const debugTextureShaderModule_RGBA32FLOAT = device.createShaderModule({
   label: "DebugTexture_RGBA32FLOAT",
   code: c_DebugTexture_RGBA32FLOAT		
+ });
+  const debugTextureShaderModule_RGBA16FLOAT = device.createShaderModule({
+  label: "DebugTexture_RGBA16FLOAT",
+  code: c_DebugTexture_RGBA16FLOAT		
  });
 const debugTextureShaderModule_DEPTH32FLOAT = device.createShaderModule({
   label: "DebugTexture_DEPTH32FLOAT",
@@ -151,6 +156,46 @@ const bindGroupLayout_RGBA32FLOAT = device.createBindGroupLayout({
   ]
 });
 
+const bindGroupLayout_RGBA16FLOAT = device.createBindGroupLayout({
+  label: "debugTexture Compute Bind Group Layout RGBA16FLOAT",
+  entries: [{
+    binding: 0,
+    visibility: GPUShaderStage.COMPUTE,	//visibility is GPUShaderStage flags that indicate which shader stages can use resource
+    buffer: {} //buffer key, other options are things like "texture" or "sampler", default is uniform, leave empty for binding 0
+  },
+  {
+    binding: 1,								//outTexture
+    visibility:  GPUShaderStage.COMPUTE,
+    storageTexture: {
+        format: canvasFormat,   // Format must match the swap chain texture
+		access: "write-only",
+		dimension: "2d",
+		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
+    }
+  },
+  {
+	binding: 2,								//in canvas Texture
+	visibility:  GPUShaderStage.COMPUTE,
+	storageTexture: {
+		format: canvasFormat,
+		access: "read-only",
+		dimension: "2d",
+		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
+    }
+  },
+  {
+	binding: 3,								//in debug Texture
+	visibility:  GPUShaderStage.COMPUTE,
+	storageTexture: {
+		format: "rgba16float",
+		access: "read-only",
+		dimension: "2d",
+		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
+    }
+  }
+  ]
+});
+
 const bindGroupLayout_DEPTH32FLOAT = device.createBindGroupLayout({
   label: "debugTexture Compute Bind Group Layout DEPTH32FLOAT",
   entries: [{
@@ -252,6 +297,34 @@ function createBindGroupsDebugTexture_RGBA32FLOAT(aCanvasTexture, aTextureToDebu
 	return bindGroups;
 }
 
+function createBindGroupsDebugTexture_RGBA16FLOAT(aCanvasTexture, aTextureToDebug) {
+	const bindGroups = [
+  device.createBindGroup({
+    label: "debugTexture compute bind group RGBA16FLOAT",
+    layout: bindGroupLayout_RGBA16FLOAT,
+    entries: [{
+      binding: 0,
+      resource: { buffer: debugTextureUniformBuffer }	//buffer key, other options are things like "texture" or "sampler"
+    },
+	{
+      binding: 1,
+      resource: outTexture.createView()
+    },
+	{
+      binding: 2,
+      resource: aCanvasTexture.createView()	//we want the current swap chain texture in here
+    },
+	{
+      binding: 3,
+      resource: aTextureToDebug.createView()	
+    }
+	],
+  })
+];
+
+	return bindGroups;
+}
+
 function createBindGroupsDebugTexture_DEPTH32FLOAT(aCanvasTexture, aTextureToDebug, aSampler) {
 	const bindGroups = [
   device.createBindGroup({
@@ -295,6 +368,11 @@ const debugTexturePipelineLayout_RGBA32FLOAT = device.createPipelineLayout({
   bindGroupLayouts: [ bindGroupLayout_RGBA32FLOAT ],
 });
 
+const debugTexturePipelineLayout_RGBA16FLOAT = device.createPipelineLayout({
+  label: "debugTexture compute Pipeline Layout RGBA16FLOAT",
+  bindGroupLayouts: [ bindGroupLayout_RGBA16FLOAT ],
+});
+
 const debugTexturePipelineLayout_DEPTH32FLOAT = device.createPipelineLayout({
   label: "debugTexture compute Pipeline Layout DEPTH32FLOAT",
   bindGroupLayouts: [ bindGroupLayout_DEPTH32FLOAT ],
@@ -317,6 +395,15 @@ const debugTexturePipeline_RGBA32FLOAT = device.createComputePipeline({
   layout: debugTexturePipelineLayout_RGBA32FLOAT,	//allows for use of same bind groups as the renderpipeline
   compute: {
     module: debugTextureShaderModule_RGBA32FLOAT,
+    entryPoint: "computeMain",
+  }
+});
+
+const debugTexturePipeline_RGBA16FLOAT = device.createComputePipeline({
+  label: "debugTexture pipeline RGBA16FLOAT",
+  layout: debugTexturePipelineLayout_RGBA16FLOAT,	//allows for use of same bind groups as the renderpipeline
+  compute: {
+    module: debugTextureShaderModule_RGBA16FLOAT,
     entryPoint: "computeMain",
   }
 });
@@ -378,6 +465,28 @@ export function postEffectPassTextureDebug_RGBA32FLOAT(aEncoder, aCanvasTexture,
 	const computePass = aEncoder.beginComputePass();	//do before render pass so RP can take latest CP results
 	
 	computePass.setPipeline(debugTexturePipeline_RGBA32FLOAT);
+	computePass.setBindGroup(0, bindGroups[0]);	//same bind groups as rendering pass
+	computePass.dispatchWorkgroups(Math.ceil(canvas.width / DEBUGTEXTURE_WORKGROUP_SIZE[0]), 
+									Math.ceil(canvas.height / DEBUGTEXTURE_WORKGROUP_SIZE[1]));
+	
+	computePass.end();
+	
+	//this may seem ridiculous, but for now its to get around the swap chain image format problems with read-write storage
+	aEncoder.copyTextureToTexture(
+		{texture: outTexture},	//the compute pass result
+		{texture: aCanvasTexture},	//the swap chain image
+		{width: canvas.width, height: canvas.height}
+	)
+}
+
+export function postEffectPassTextureDebug_RGBA16FLOAT(aEncoder, aCanvasTexture, aTextureToDebug) {
+	const bindGroups = createBindGroupsDebugTexture_RGBA16FLOAT(aCanvasTexture, aTextureToDebug);
+	debugTextureUniformUpdate(aTextureToDebug);
+	
+	// Start a compute pass 
+	const computePass = aEncoder.beginComputePass();	//do before render pass so RP can take latest CP results
+	
+	computePass.setPipeline(debugTexturePipeline_RGBA16FLOAT);
 	computePass.setBindGroup(0, bindGroups[0]);	//same bind groups as rendering pass
 	computePass.dispatchWorkgroups(Math.ceil(canvas.width / DEBUGTEXTURE_WORKGROUP_SIZE[0]), 
 									Math.ceil(canvas.height / DEBUGTEXTURE_WORKGROUP_SIZE[1]));

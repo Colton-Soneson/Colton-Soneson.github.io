@@ -56,32 +56,32 @@ export const vf_p_generic3D =
 	@vertex
 	fn vertexMain(input: VertexInput) -> VertexOutput {	
 		
-	var output: VertexOutput;
-    output.pos = UBO.modelViewProjectionMatrix * vec4f(input.pos.x, input.pos.y, input.pos.z, 1.0);
-	let vertexInputPosWS = (UBO.modelMatrix * vec4f(input.pos.xyz, 1.0)).xyz;	
-    
-	//----------------POINT LIGHTS-------------------
-    // Calculate light intensity (inverse square law)
-	let dist = length(Lights.sunPos.xyz - vertexInputPosWS);  // Calculate distance in world space
-    output.light = Lights.sunIntensity / (dist * dist);    
-	//-----------------------------------------------
-	
-	//-----------------DIRECTIONAL LIGHT-------------
-	//output.light = Lights.sunIntensity;
-	//-----------------------------------------------
-	
-    // Normal transformation
-    let vNormal = normalize(UBO.normalMatrix * vec4f(input.norm.x, input.norm.y, input.norm.z, 0.0));
-    
-	let pointToLight = Lights.lightViewProjMat * UBO.modelMatrix * vec4(input.pos, 1.0);
-	let sp = pointToLight.xy * vec2f(0.5,-0.5) + vec2f(0.5,0.5);
-	output.shadowPos = vec4f(sp.x, sp.y, pointToLight.z, 1.0);
-	
-    output.fragPos = output.pos;
-	output.fragNormal = input.norm;
-    output.fragUV = input.uv;
-    
-    return output;
+		var output: VertexOutput;
+		output.pos = UBO.modelViewProjectionMatrix * vec4f(input.pos.x, input.pos.y, input.pos.z, 1.0);
+		let vertexInputPosWS = (UBO.modelMatrix * vec4f(input.pos.xyz, 1.0)).xyz;	
+		
+		//----------------POINT LIGHTS-------------------
+		// Calculate light intensity (inverse square law)
+		let dist = length(Lights.sunPos.xyz - vertexInputPosWS);  // Calculate distance in world space
+		output.light = Lights.sunIntensity / (dist * dist);    
+		//-----------------------------------------------
+		
+		//-----------------AMBIENT LIGHT-------------
+		//output.light = Lights.sunIntensity;
+		//-----------------------------------------------
+		
+		// Normal transformation
+		let vNormal = normalize(UBO.normalMatrix * vec4f(input.norm.x, input.norm.y, input.norm.z, 0.0));
+		
+		let pointToLight = Lights.lightViewProjMat * UBO.modelMatrix * vec4(input.pos, 1.0);
+		let sp = pointToLight.xy * vec2f(0.5,-0.5) + vec2f(0.5,0.5);
+		output.shadowPos = vec4f(sp.x, sp.y, pointToLight.z, 1.0);
+		
+		output.fragPos = output.pos;
+		output.fragNormal = input.norm;
+		output.fragUV = input.uv;
+		
+		return output;
 	}
 	
 	@group(0) @binding(2) var myTexture: texture_2d<f32>;

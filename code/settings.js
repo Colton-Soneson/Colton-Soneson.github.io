@@ -36,10 +36,10 @@ export const settings = {
 	windDirection: vec2.create(1.0,1.0),
 	waterWaveSteepness: 0.1,	//0 - 1
 	waterWaveLength: 10.0,
-	waterTileResolution: 1024.0,
+	waterTileResolution: 256.0,
 	waterTileInstanceCount: 3,
 	waterWorldPosY: -16,
-	waterOceanPlanePhysicalSize: 512.0,
+	waterOceanPlanePhysicalSize: 256.0,
 	waterWindSpeed: 5.0,
 	waterGridSize: 1024.0,
 	//------------ATMOSPHERIC SCATTERING-----------

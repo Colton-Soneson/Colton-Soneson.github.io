@@ -28,6 +28,7 @@ export const vf_p_generic3D =
 		lightViewProjMat : mat4x4f,
 		sunPos : vec4f,
 		sunCol : vec4f,
+		camPos : vec4f,
 		sunIntensity : f32,
 		shadowMapKernelSize : f32,
 		shadowMapTextureSize : f32,

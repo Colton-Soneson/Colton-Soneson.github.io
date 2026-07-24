@@ -26,6 +26,8 @@ import * as transformations from './transformations.js'
 import * as scene from './scene.js'
 import * as primitives from '../models/primitives.js'
 
+//GET THE LIGHT CREATION OUT OF THE MAIN
+import {uniformBufferLights} from './rotatingCube.js'
 
 // compute shaders and buffers
 //-------------------------------------------------
@@ -341,6 +343,13 @@ export let waveHeightRealization = device.createTexture({
   usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
 });
 
+export let slopeRealizationTexture = device.createTexture({
+  label: "water slope realization Texture for normals",
+  size: [settings.waterTileResolution, settings.waterTileResolution],
+  format: 'rgba32float',
+  usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+});
+
 export let preCompTexture = device.createTexture({
   size: [Math.log2(settings.waterTileResolution), settings.waterTileResolution],
   format: 'rgba32float',
@@ -532,6 +541,13 @@ const bindGroupVFLayout = device.createBindGroupLayout({
     buffer: {
 		type: 'uniform'
 	} 
+  },
+  {
+    binding: 1,
+    visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+    buffer: {
+		type: 'uniform'
+	} 
   }
   ]
 });
@@ -580,6 +596,16 @@ const bindGroupCLayout = device.createBindGroupLayout({
     texture: {
 		sampleType: 'depth',
 	},
+  },
+  {
+    binding: 6,								//inTexture for slope realization
+    visibility:  GPUShaderStage.COMPUTE,
+    storageTexture: {
+        format: "rgba32float",
+		access: "read-only",
+		dimension: "2d",
+		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
+    }
   }
   ]
 });
@@ -655,7 +681,7 @@ const bindGroupConjCLayout = device.createBindGroupLayout({
 });
 
 const bindGroupRealizationCLayout = device.createBindGroupLayout({
-  label: "water Bind Group Realization C Layout",
+  label: "water Bind Group HKT Realization C Layout",
   entries: [
   {
     binding: 0,
@@ -677,6 +703,16 @@ const bindGroupRealizationCLayout = device.createBindGroupLayout({
     visibility:  GPUShaderStage.COMPUTE,
     storageTexture: {
         format: "rgba32float",   // Format must match the swap chain texture
+		access: "write-only",
+		dimension: "2d",
+		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
+    }
+  },
+  {
+    binding: 3,								//outTexture for water slope realization
+    visibility:  GPUShaderStage.COMPUTE,
+    storageTexture: {
+        format: "rgba32float",
 		access: "write-only",
 		dimension: "2d",
 		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
@@ -878,6 +914,10 @@ function createVFBindGroupswater() {
 			{
 				binding: 0,
 				resource: { buffer: waterUniformBuffer }
+			},
+			{
+				binding: 1,
+				resource: { buffer: uniformBufferLights }
 			}
 			]
 		});
@@ -915,6 +955,10 @@ function createCompBindGroupwater(vertexBuffer, indexBuffer, computeUniformBuffe
 			{
 				binding: 5,
 				resource: scene.heightMapView
+			},
+			{
+				binding: 6,
+				resource: slopeRealizationTexture.createView()
 			}
 			]
 		});
@@ -991,6 +1035,10 @@ function createCompBindGroupRealizationWater() {
 			{
 				binding: 2,
 				resource: waveHeightRealization.createView()
+			},
+			{
+				binding: 3,
+				resource: slopeRealizationTexture.createView()
 			}
 			]
 		});
@@ -1344,6 +1392,7 @@ async function recreateResolutionDependentResources() {
     initialWaterHeightMap.destroy();
     hkt.destroy();
     waveHeightRealization.destroy();
+	slopeRealizationTexture.destroy();
     preCompTexture.destroy();
     pingPongIFFTTexture.destroy();
     finalIFFTOutput.destroy();
@@ -1386,6 +1435,7 @@ async function recreateResolutionDependentResources() {
     initialWaterHeightMap   = device.createTexture({ size: [res, res], format: 'rgba32float', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING });
     hkt                     = device.createTexture({ size: [res, res], format: 'rgba32float', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING });
     waveHeightRealization   = device.createTexture({ label: "wave Height Realization Texture", size: [res, res], format: 'rgba32float', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING });
+    slopeRealizationTexture   = device.createTexture({ label: "water slope realization texture for normals", size: [res, res], format: 'rgba32float', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING });
     preCompTexture          = device.createTexture({ size: [stages, res], format: 'rgba32float', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING });
     pingPongIFFTTexture     = device.createTexture({ label: "ping pong IFFT Texture", size: [res, res], format: 'rgba32float', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING });
     finalIFFTOutput         = device.createTexture({ label: "final IFFT Texture", size: [res, res], format: 'rgba32float', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING });

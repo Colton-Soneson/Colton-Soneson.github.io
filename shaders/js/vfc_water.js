@@ -54,6 +54,8 @@ export const c_water =
 	
 	@group(0) @binding(4) var finalWaveHeightTexture : texture_storage_2d<rgba32float, read>;
 	@group(0) @binding(5) var topDownHeightmapTexture : texture_depth_2d;
+	
+	@group(0) @binding(6) var slopeRealizationTexture : texture_storage_2d<rgba32float, read>;
 
 fn gerstnerWave(position: vec3f, waveLength: f32, waveSteepness: f32, windDirection: vec2f, step: f32) -> vec3f {
 		let k = (2 * 3.14) / waveLength;     		// Wave number
@@ -115,7 +117,8 @@ fn getHeightmapWorldPos(globalInvoc : vec2u) -> vec3f {
 		//------------------[REALISTIC] FFT Oceanographic Waves-----------------
 		
 		//just for now, only x as height
-		var waveHeight = textureLoad(finalWaveHeightTexture, vec2u(ix % (gridWidth - 1u), iz % (gridWidth - 1u))).x;
+		let texel = vec2u(ix % (gridWidth - 1u), iz % (gridWidth - 1u));
+		var waveHeight = textureLoad(finalWaveHeightTexture, texel).x;
 		
 		// World position of this water vertex	!!! CHECK IF TILE OFFSET IS DONE CORRECTLY
         let worldX = (vertGridPosX - WU.gridSize.x * 0.5) + WU.tileOffsetX; // + WU.cameraPosition.x; //!!!!Camera positions may need to be put in for MULTIPLE WATER TILES!!!!!!!!!!
@@ -160,14 +163,19 @@ fn getHeightmapWorldPos(globalInvoc : vec2u) -> vec3f {
 							 waveHeightAdj,
 							 (vertGridPosZ - WU.gridSize.y * 0.5) + WU.tileOffsetZ);
 	
+		let worldScale = WU.oceanPlanePhysicalSize / WU.gridSize.x;
+		let slope = textureLoad(slopeRealizationTexture, texel).xy * worldScale;
+		let chain = attenuation + 2.0 * abs(waveHeight) * shallowFactor * rippleScale;
+		let normal = normalize(vec3f(-slope.x * chain, 1.0, -slope.y * chain));
+	
 		waterVertexData[oVertInd + 0] = position.x;
 		waterVertexData[oVertInd + 1] = position.y;
 		waterVertexData[oVertInd + 2] = position.z;
 		waterVertexData[oVertInd + 3] = 0.5;
 		waterVertexData[oVertInd + 4] = 0.5;
-		waterVertexData[oVertInd + 5] = 0;
-		waterVertexData[oVertInd + 6] = 0;
-		waterVertexData[oVertInd + 7] = 1;
+		waterVertexData[oVertInd + 5] = normal.x;
+		waterVertexData[oVertInd + 6] = normal.y;
+		waterVertexData[oVertInd + 7] = normal.z;
 		
 		
 		//--------------------FORM TRIANGLES IN INDEX BUFFER---------------------
@@ -238,7 +246,7 @@ export const c_Shift =
 		//	permute = -val;
 		//}
 		
-		textureStore(outTexture, gIndex.xy, vec4f(permute.x / N2, permute.x / N2, permute.x / N2, 1.0));
+		textureStore(outTexture, gIndex.xy, vec4f(permute.x / N2, permute.y / N2, 0.0, 1.0));
 	}
 `;
 
@@ -624,6 +632,7 @@ export const c_hkt =
 	
 	@group(0) @binding(1) var initialHeightField : texture_storage_2d<rgba32float, read>;
 	@group(0) @binding(2) var waveHeightRealization : texture_storage_2d<rgba32float, write>;
+	@group(0) @binding(3) var slopeRealization : texture_storage_2d<rgba32float, write>;
 
 fn complexMul(a: vec2f, b: vec2f) -> vec2f {
     return vec2f(
@@ -699,7 +708,11 @@ fn complexConj(z: vec2f) -> vec2f {
 		let hkt = term1 + term2;
 		
 		//DEBUG, visualizing hKt directly will show an inward collapse, this is how hKt is supposed to workgroup_size
-		//			the waveHeightRealization should actually be hXt.  
+		//			the waveHeightRealization should actually be hXt.
+		
+		// dh/dx, dh/dz
+		let slopeSpectrum = complexMul(vec2f(-ky, kx),hkt);
+		textureStore(slopeRealization, gIndex, vec4f(slopeSpectrum.x, slopeSpectrum.y, 0.0, 1.0));	//gradient of raw FFT height
 		
 		textureStore(waveHeightRealization, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4f(hkt.x, hkt.y,0.0,1.0));
 	}
@@ -975,7 +988,23 @@ export const v_water =
 		_padding0 : vec2f,
 	}
 	@group(0) @binding(0) var<uniform> UBO: WaterUniforms;
-		
+	
+	struct LightsUniforms
+	{
+		lightViewProjMat : mat4x4f,
+		sunPos : vec4f,
+		sunCol : vec4f,
+		camPos : vec4f,
+		sunIntensity : f32,
+		shadowMapKernelSize : f32,
+		shadowMapTextureSize : f32,
+		shadowMapAcneBias : f32,
+		displayLightingMode : f32,
+	}
+	@group(0) @binding(1) var<uniform> Lights: LightsUniforms;
+	
+	
+	//so this is pushed in from the water compute shader
 	struct VertexInput {
 		@builtin(instance_index) instanceIdx : u32,
 		@location(0) pos: vec3f,
@@ -986,20 +1015,17 @@ export const v_water =
 	struct VertexOutput {				//into frag
 		@builtin(position) pos: vec4f,
 		@location(0) fragUV: vec2f,
-		@location(1) fragPos: vec4f,
-		@location(2) fragNormal: vec3f,
-		@location(3) pointInWave: f32,
+		@location(1) fragNormal: vec3f,
+		@location(2) worldPos: vec3f,
 	};
 	
 	@vertex
 	fn vertexMain(input: VertexInput) -> VertexOutput {	
 	
 	var output: VertexOutput;
-    output.pos = UBO.modelViewProjectionMatrix * vec4f(input.pos.x, input.pos.y, input.pos.z, 1.0);
-    
-	output.pointInWave = (input.pos.y + 16.0) * 0.045;	//hardcode, 16.0 is the -y pos of the plane
 	
-    output.fragPos = output.pos;
+    output.pos = UBO.modelViewProjectionMatrix * vec4f(input.pos.x, input.pos.y, input.pos.z, 1.0);
+    output.worldPos = input.pos;
 	output.fragNormal = input.norm;
     output.fragUV = input.uv;
     
@@ -1009,12 +1035,25 @@ export const v_water =
 
 export const f_water =
 `
+	struct LightsUniforms
+	{
+		lightViewProjMat : mat4x4f,
+		sunPos : vec4f,
+		sunCol : vec4f,
+		camPos : vec4f,
+		sunIntensity : f32,
+		shadowMapKernelSize : f32,
+		shadowMapTextureSize : f32,
+		shadowMapAcneBias : f32,
+		displayLightingMode : f32,
+	}
+	@group(0) @binding(1) var<uniform> Lights: LightsUniforms;
+
 	//same as vertexoutput without builtin bits
 	struct FragInput {
 		@location(0) fragUV: vec2f,
-		@location(1) fragPos: vec4f,
-		@location(2) fragNormal: vec3f,
-		@location(3) pointInWave: f32,
+		@location(1) fragNormal: vec3f,
+		@location(2) worldPos: vec3f,
 	};
 
 	fn lerp(a: vec4<f32>, b: vec4<f32>, t: f32) -> vec4<f32> {
@@ -1025,10 +1064,30 @@ export const f_water =
 	fn fragmentMain(input: FragInput) -> //could also use input: VertexOutput instead because its contained within the same file here
 		@location(0) vec4f {
 		
-		let baseBlue = vec4f(0.486,0.486,0.788,1.0);
-		let deepBlue = vec4f(0.125,0.125,0.451,1.0);
-		let peakCrest = vec4f(0.957, 0.957, 0.969, 1.0);
+		let N = normalize(input.fragNormal);                        // renormalize: interpolation shortens it
+		let V = normalize(Lights.camPos.xyz - input.worldPos); 		// surface to eye
+		let L = normalize(Lights.sunPos.xyz);                       // directional sun
+		let H = normalize(L + V);                                   // Blinn-Phong halfway vector
+	
+		//Fresnel (Schlick). Water's F0 is ~0.02: nearly transparent head-on,
+		//     mirror-like at grazing angles. This is what sells water more than anything else.
+		let F = 0.02 + 0.98 * pow(1.0 - saturate(dot(N, V)), 5.0);
 		
-		return vec4f(lerp(lerp(baseBlue, peakCrest, input.pointInWave), deepBlue, 1.0 - input.pointInWave).xyz, 1.0);
+		let NdotL = dot(N, L);
+		let deepBlue = vec3f(0.125, 0.125, 0.451);
+		let baseBlue = vec3f(0.486, 0.486, 0.788);
+		let body     = mix(deepBlue, baseBlue, saturate(NdotL));
+		
+		// TODO: Reflection: stand-in for a atmosphere sample
+		let skyColor = vec3f(0.45, 0.62, 0.85);
+		var color    = mix(body, skyColor, F);
+		
+		// Specular sun glint
+		let shininess = 300.0;
+		let spec = pow(saturate(dot(N, H)), shininess) * step(0.0, NdotL);
+		color += Lights.sunCol.rgb * spec * F * 3.0;
+		//color += Lights.sunCol.rgb * Lights.sunIntensity * spec * F * 4.0;
+	
+		return vec4f(color, 1.0);
 	}
 `;

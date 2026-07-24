@@ -46,6 +46,11 @@ function getLightsInfo() {
 	lightsBuffer.push(settings.sunColor[2]);
 	lightsBuffer.push(1.0);//uniform buffers HATE vec3f, keep it to scalars, 2, and 4 bytes. Otherwise shit will break.
 	
+	lightsBuffer.push(settings.camPosX);
+	lightsBuffer.push(settings.camPosY);
+	lightsBuffer.push(settings.camPosZ);
+	lightsBuffer.push(1.0);
+	
 	lightsBuffer.push(settings.sunIntensity);
 	
 	lightsBuffer.push(settings.shadowMapPCFKernelSize);
@@ -77,8 +82,8 @@ const uniformBufferSpaces = device.createBuffer({
 });
 
 //lights
-const uniformArrayLights = 128; //(4 * 4 * 4) + (4 * 4) + (4 * 4) + 4 + 4 + 4 + 4 + 4 + 12   mat4 + vec4 + vec4 + scalar + scalar + scalar + scalar + scalar + padding to 128
-const uniformBufferLights = device.createBuffer({
+const uniformArrayLights = 256;
+export const uniformBufferLights = device.createBuffer({
   label: "Lights Uniform Buffer",
   size: uniformArrayLights,
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,	//this makes it another GPUBuffer Object but this time uniform

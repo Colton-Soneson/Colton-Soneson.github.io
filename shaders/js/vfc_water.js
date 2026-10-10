@@ -3,6 +3,8 @@ import { settings } from '../../code/settings.js';
 export const WATER_WORKGROUP_SIZE = [32, 1, 1];
 export const FFT_WORKGROUP_SIZE = [8, 8, 1];
 export const PRECOMP_WORKGROUP_SIZE = [1, 8, 1];
+export const SHORE_FIELD_DOWNSCALE = 8;		// one shore distance field texel covers this many top down height map texels (per axis)
+export const SHORE_SEARCH_RADIUS = 64;		// in shore field texels. The furthest distance from land the field can hold, further than this is open ocean
 
 
 /*
@@ -37,10 +39,33 @@ export const c_water =
 		@location(9) tileOffsetX: f32,
 		@location(10) tileOffsetZ: f32,
 		@location(11) gridSize: vec2f,
+		@location(12) tileCells: f32,			//cells along one side of THIS tile's mesh. Tiles further from the camera get fewer (level of detail)
+		@location(13) waveFadeDistance: f32,	//distance from the camera where the open ocean waves have flattened out completely
+		@location(14) coarserEdge: vec4f,		//-x, +x, -z, +z edge of this tile: 1.0 if the tile over that edge has a coarser mesh than this one
+
+		//look settings, straight from settings.js / the Water folder of the controls
+		@location(15) choppiness: f32,			//lambda in the tessendorf paper. Around 1.0 is where crests start folding over themselves
+		@location(16) foamThreshold: f32,		//foam starts where the jacobian drops below this
+		@location(17) foamFade: f32,			//how far below the threshold until its fully white
+		@location(18) shoreZone: f32,			//world distance from land where the ocean waves hand over to the shore waves
+		@location(19) shoreWaveHeight: f32,		//crest height at the break line, world units
+		@location(20) shoreBreakDistance: f32,	//distance from land where the shore waves are tallest, they die off from there in to the land
+		@location(21) shoreSteepness: f32,		//how far the crests lean and sharpen as they come in. Too high folds the mesh
+		@location(22) shoreWaveLength1: f32,	//wavelengths of the two shore wave trains, world units. Keep them several mesh cells long
+		@location(23) shoreWaveLength2: f32,
+		@location(24) shoreWaveSpeed: f32,		//1.0 keeps pace with the dominant open ocean waves
+		@location(25) fullDepth: f32,			//water deeper than this gets the full open ocean waves
+		@location(26) shallowRippleScale: f32,	//height of the spikey ripples that replace the waves in shallow water
+		@location(27) deepSeaDepth: f32,		//water at least this deep is deep sea and gets the full swell
+		@location(28) swellHeight: f32,			//height of the biggest swell crests, world units. 0 turns the swell off
+		@location(29) swellLength: f32,			//wavelength of the main swell, world units
+		@location(30) swellSteepness: f32,		//0 = smooth sine rollers, 1 = full trochoid with peaked crests and flat troughs
+		@location(31) swellSpeed: f32,			//1.0 is the natural speed for the wavelength
+		@location(32) swellShoreDistance: f32,	//distance from land where the swell is back to full size
 	};
 	@group(0) @binding(1) var<uniform> WU: WaterUniforms;
-	
-	
+
+
 	//remember hidden padding, just use this struct for math and variables
 	//	kept as vec4f to do matrix mult easier
 	struct Vertex {
@@ -55,7 +80,8 @@ export const c_water =
 	@group(0) @binding(4) var finalWaveHeightTexture : texture_storage_2d<rgba32float, read>;
 	@group(0) @binding(5) var topDownHeightmapTexture : texture_depth_2d;
 	
-	@group(0) @binding(6) var slopeRealizationTexture : texture_storage_2d<rgba32float, read>;
+	@group(0) @binding(6) var finalDisplacementTexture : texture_storage_2d<rgba32float, read>;	//x: Dx, y: Dz
+	@group(0) @binding(7) var shoreDistanceTexture : texture_storage_2d<r32float, read>;		//x: world distance to the nearest land
 
 fn gerstnerWave(position: vec3f, waveLength: f32, waveSteepness: f32, windDirection: vec2f, step: f32) -> vec3f {
 		let k = (2 * 3.14) / waveLength;     		// Wave number
@@ -88,36 +114,36 @@ fn getHeightmapWorldPos(globalInvoc : vec2u) -> vec3f {
 	return worldPos.xyz;
 }
 
-@compute @workgroup_size(${WATER_WORKGROUP_SIZE[0]}, ${WATER_WORKGROUP_SIZE[1]}, ${WATER_WORKGROUP_SIZE[2]})	
-    fn computeMain(
-		@builtin(global_invocation_id) GlobalIvocationID: vec3<u32>
-	) {
-		
-		var gIndex = GlobalIvocationID.x;
-		
+struct WaterVertex {
+	position: vec3f,
+	normal: vec3f,
+	foam: f32,
+	depth: f32,
+};
+
+// Everything about one vertex of this tile's mesh, at grid index (ix, iz) of the tile
+fn waterVertex(ix: u32, iz: u32) -> WaterVertex {
+
 		//------------------------------FORM GRID-------------------------------
-		
-		let fPerVertexData = u32(3 + 2 + 3);
-	
-		let gridWidth = u32(WU.resolution);
-		
-		let ix = gIndex % gridWidth;
-		let iz = gIndex / gridWidth;
-		
+
+		// the wave textures tile exactly once across a tile, whatever its level of detail.
+		//		a tile's mesh has tileCells cells per side, so it reads every texelStride-th texel: 1 under the camera, 2 for the next ring out, 4, 8...
+		let textureWidth = u32(WU.resolution);
+		let tileCells = u32(WU.tileCells);
+		let texelStride = textureWidth / tileCells;
+
 		let gridIndexX = f32(ix);
 		let gridIndexZ = f32(iz);
-		
+
 		// Scale grid indices to physical size					!!!ASSUMES GRID IS SQUARE
-		let cellSize = WU.gridSize.x / f32(gridWidth - 1u);
+		let cellSize = WU.gridSize.x / f32(tileCells);
 		let vertGridPosX = gridIndexX * cellSize;
 		let vertGridPosZ = gridIndexZ * cellSize;
-		
-		let oVertInd = gIndex * fPerVertexData;
-		
+
 		//------------------[REALISTIC] FFT Oceanographic Waves-----------------
-		
+
 		//just for now, only x as height
-		let texel = vec2u(ix % (gridWidth - 1u), iz % (gridWidth - 1u));
+		let texel = vec2u((ix * texelStride) % textureWidth, (iz * texelStride) % textureWidth);
 		var waveHeight = textureLoad(finalWaveHeightTexture, texel).x;
 		
 		// World position of this water vertex	!!! CHECK IF TILE OFFSET IS DONE CORRECTLY
@@ -142,11 +168,44 @@ fn getHeightmapWorldPos(globalInvoc : vec2u) -> vec3f {
         terrainWorldPos    /= terrainWorldPos.w;
 
         let waterDepth = WU.planeYPos - terrainWorldPos.y;
-		let fullDepthThreshold = 20.0; // make this a settings value, where anything beyond this is full depth for full waves
+		let fullDepthThreshold = max(WU.fullDepth, 0.001); // where anything beyond this is full depth for full waves
 		
+		//------------------Distance To Shore-----------------
+		// world distance to the nearest land, bilinear filtered out of the shore distance field (c_ShoreScan + c_ShoreDistance)
+		//		the field lines up texel for texel with the top down height map, just at a lower resolution, so it uses the same UV
+		let shoreFieldSize = vec2f(textureDimensions(shoreDistanceTexture));
+		let shoreMaxTexel = vec2i(shoreFieldSize) - vec2i(1, 1);
+		let shoreCoord = texUV * shoreFieldSize - vec2f(0.5, 0.5);
+		let shoreBase = vec2i(floor(shoreCoord));
+		let shoreFrac = fract(shoreCoord);
+		let shoreTexel00 = clamp(shoreBase, vec2i(0, 0), shoreMaxTexel);
+		let shoreTexel11 = clamp(shoreBase + vec2i(1, 1), vec2i(0, 0), shoreMaxTexel);
+		let shore00 = textureLoad(shoreDistanceTexture, shoreTexel00).x;
+		let shore10 = textureLoad(shoreDistanceTexture, vec2i(shoreTexel11.x, shoreTexel00.y)).x;
+		let shore01 = textureLoad(shoreDistanceTexture, vec2i(shoreTexel00.x, shoreTexel11.y)).x;
+		let shore11 = textureLoad(shoreDistanceTexture, shoreTexel11).x;
+
+		// the field only covers the top down camera box, so shore effects fade out before its edge instead of popping at it
+		let shoreFieldTexelSize = length((Spaces.topDownInvViewProj * vec4f(2.0 / shoreFieldSize.x, 0.0, 0.0, 0.0)).xyz);
+		let shoreFieldRange = ${SHORE_SEARCH_RADIUS}.0 * shoreFieldTexelSize;	// what the field holds for open ocean
+		let boxEdge = min(min(texUV.x, 1.0 - texUV.x), min(texUV.y, 1.0 - texUV.y));	// negative outside the box
+		let boxFade = saturate(boxEdge / 0.08);
+		let shoreDistance = mix(shoreFieldRange, mix(mix(shore00, shore10, shoreFrac.x), mix(shore01, shore11, shoreFrac.x), shoreFrac.y), boxFade);
+
+		// direction straight away from the shore (gradient of the distance), turned from field texel axes into world x/z
+		let shoreGradTexel = vec2f(mix(shore10 - shore00, shore11 - shore01, shoreFrac.y), mix(shore01 - shore00, shore11 - shore10, shoreFrac.x));
+		let fieldAxisU = (Spaces.topDownInvViewProj * vec4f(1.0, 0.0, 0.0, 0.0)).xz;
+		let fieldAxisV = (Spaces.topDownInvViewProj * vec4f(0.0, -1.0, 0.0, 0.0)).xz;	// texture v runs opposite to ndc y
+		let shoreGradWorld = (shoreGradTexel.x * normalize(fieldAxisU) + shoreGradTexel.y * normalize(fieldAxisV)) * boxFade;
+
+		let shoreZone = clamp(WU.shoreZone, 0.001, shoreFieldRange);	// world distance from land where the ocean waves hand over to the shore waves. The field cant see further than its range
+
 		//Taking Depth into account
-		let attenuation = clamp(waterDepth / fullDepthThreshold, 0.0, 1.0); //0.0 to 1.0 from shallow to full depth
-		let rippleScale = 0.02;  // depends on wave magnitude. Ripples will be "spikey", this decides shallow water ripple height
+		//		the depth keeps the open ocean waves from digging into the sea bed, the shore distance fades them out as they come in to land
+		let depthAttenuation = clamp(waterDepth / fullDepthThreshold, 0.0, 1.0); //0.0 to 1.0 from shallow to full depth
+		let shoreAttenuation = pow(smoothstep(0.0, shoreZone, shoreDistance), 1.5);
+		let attenuation = min(depthAttenuation, shoreAttenuation);
+		let rippleScale = WU.shallowRippleScale;  // depends on wave magnitude. Ripples will be "spikey", this decides shallow water ripple height
 								//		typically its a percent of wave at full height. so 0.1 to 0.3 is good for approachin shallows
 								//		while >1.0 is bigger than regular waves
 								//		perhaps just tie this with attenutation for depth
@@ -157,25 +216,224 @@ fn getHeightmapWorldPos(globalInvoc : vec2u) -> vec3f {
 		// boost high freq detail by exaggerating deviation from local mean
 		// squaring preserves sign and amplifies peaks/troughs
 		let rippleDetail = sign(waveHeight) * (waveHeight * waveHeight) * shallowFactor * rippleScale;
-		var waveHeightAdj = (deepDisplacement + rippleDetail) + WU.planeYPos;
+		// the waves flatten out with distance from the camera, so the furthest tiles end dead flat and meet the horizon plane with no seam.
+		//		out there a wave is far smaller than a pixel anyway, and a real horizon is a straight line
+		let cameraDistance = length(vec2f(worldX, worldZ) - WU.cameraPosition.xz);
+		let distanceFade = 1.0 - smoothstep(WU.waveFadeDistance * 0.45, WU.waveFadeDistance, cameraDistance);
+
+		var waveHeightAdj = (deepDisplacement + rippleDetail) * distanceFade + WU.planeYPos;
 				
-		var position = vec3f((vertGridPosX - WU.gridSize.x * 0.5) + WU.tileOffsetX,
-							 waveHeightAdj,
-							 (vertGridPosZ - WU.gridSize.y * 0.5) + WU.tileOffsetZ);
-	
-		let worldScale = WU.oceanPlanePhysicalSize / WU.gridSize.x;
-		let slope = textureLoad(slopeRealizationTexture, texel).xy * worldScale;
-		let chain = attenuation + 2.0 * abs(waveHeight) * shallowFactor * rippleScale;
-		let normal = normalize(vec3f(-slope.x * chain, 1.0, -slope.y * chain));
-	
-		waterVertexData[oVertInd + 0] = position.x;
-		waterVertexData[oVertInd + 1] = position.y;
-		waterVertexData[oVertInd + 2] = position.z;
-		waterVertexData[oVertInd + 3] = 0.5;
-		waterVertexData[oVertInd + 4] = 0.5;
-		waterVertexData[oVertInd + 5] = normal.x;
-		waterVertexData[oVertInd + 6] = normal.y;
-		waterVertexData[oVertInd + 7] = normal.z;
+		//------------------[REALISTIC] Choppy Displacement-----------------
+		// the horizontal displacement D pulls each vertex towards the nearest crest, which pinches the crests into peaks and flattens the troughs
+		//		fades out with depth the same way the height does
+		let choppiness = WU.choppiness;	// lambda in the tessendorf paper. Around 1.0 is where crests start folding over themselves
+		let chop = choppiness * attenuation * distanceFade;
+		let displacement = textureLoad(finalDisplacementTexture, texel).xy * chop;
+
+		//------------------Shore Waves-----------------
+		// inside the shore zone the open ocean waves fade out and wave trains that run straight at the nearest land take over
+		//		their phase is the distance to shore, so the crests follow the coastline and travel inwards as time goes on
+		//		same trochoid (gerstner) shape as the choppy ocean waves: the surface gets pushed along the travel direction towards each crest
+		var shoreHeight = 0.0;				// added to the height
+		var shorePush = vec2f(0.0, 0.0);	// added to the horizontal position
+		var shoreSlope = 0.0;				// d(shoreHeight) / d(shoreDistance)
+		var shoreSqueeze = 0.0;				// how hard the push bunches the surface up along the travel direction, 1.0 would fold it
+		var awayFromShore = vec2f(0.0, 0.0);
+		let shoreGradLength = length(shoreGradWorld);
+
+		if (shoreDistance < shoreZone && shoreGradLength > 0.0001) {
+			awayFromShore = shoreGradWorld / shoreGradLength;
+			let worldXZ = vec2f(worldX, worldZ);
+			let time = WU.step;
+
+			let shoreWaveHeight = WU.shoreWaveHeight;		// crest height at the break line, world units
+			let shoreBreakDistance = min(WU.shoreBreakDistance, shoreZone * 0.9);	// distance from land where the shore waves are tallest, always inside the zone
+			let shoreSteepness = WU.shoreSteepness;		// how far the crests lean and sharpen as they come in. Too high folds the mesh
+
+			// two trains of slightly different wavelength drift in and out of step, so the waves arrive in sets instead of an even pulse
+			let k1 = 6.2832 / max(WU.shoreWaveLength1, 1.0);	// wave numbers from the wavelengths in world units. keep them several mesh cells long
+			let k2 = 6.2832 / max(WU.shoreWaveLength2, 1.0);
+			let w1 = 1.9 * WU.shoreWaveSpeed;	// angular speed. At a speed setting of 1.0 its close to the dominant open ocean waves so nothing changes pace at the hand over
+			let w2 = 2.3 * WU.shoreWaveSpeed;
+
+			// slow variation along the coast in phase and in size, otherwise every crest is a perfect copy of the shoreline
+			let warp = 1.4 * sin(dot(worldXZ, vec2f(0.023, 0.017)) + 0.21 * time);
+			let sets = 0.8 + 0.2 * sin(dot(worldXZ, vec2f(-0.011, 0.019)) - 0.13 * time);
+			let theta1 = k1 * shoreDistance + w1 * time + warp;
+			let theta2 = k2 * shoreDistance + w2 * time - 1.7 * warp;
+
+			// coasts facing into the wind get the full waves, the sheltered side gets less
+			let windward = mix(0.6, 1.0, saturate(0.5 - 0.5 * dot(normalize(WU.windDirection), awayFromShore)));
+
+			// grows from nothing at the edge of the zone up to the break line, then runs out as it reaches land. Never taller than the water is deep
+			let envelope = smoothstep(0.0, shoreBreakDistance, shoreDistance) * (1.0 - smoothstep(shoreBreakDistance, shoreZone, shoreDistance));
+			let amplitude = min(shoreWaveHeight * envelope * sets * windward, 0.6 * max(waterDepth, 0.0));
+			// capped so the push can never bunch the surface up past the point of folding (squeeze of 1.0), whatever the settings above are
+			let steepness = min(mix(shoreSteepness, 1.0, saturate(shoreDistance / shoreZone)), 0.9 / max(amplitude * k2, 0.0001));
+
+			// a mesh cant carry a wave much shorter than a few of its cells, so on the coarser (level of detail) tiles
+			//		each train bows out as its wavelength gets down towards the cell size, instead of turning into jagged noise
+			let weight1 = 0.62 * smoothstep(2.5, 5.0, (6.2832 / k1) / cellSize);
+			let weight2 = 0.38 * smoothstep(2.5, 5.0, (6.2832 / k2) / cellSize);
+
+			shoreHeight = amplitude * (weight1 * cos(theta1) + weight2 * cos(theta2));
+			shoreSlope = -amplitude * (weight1 * k1 * sin(theta1) + weight2 * k2 * sin(theta2));
+			shorePush = -awayFromShore * steepness * amplitude * (weight1 * sin(theta1) + weight2 * sin(theta2));
+			shoreSqueeze = steepness * amplitude * (weight1 * k1 * cos(theta1) + weight2 * k2 * cos(theta2));
+		}
+
+		//------------------Deep Sea Swell-----------------
+		// big slow rollers for the open sea, underneath the wind waves from the FFT: a handful of long trochoid (gerstner) waves heading roughly down wind.
+		//		they come straight from the world position rather than a texture, so they can be far longer than a tile and never repeat from tile to tile
+		var swellHeight = 0.0;					// added to the height
+		var swellPush = vec2f(0.0, 0.0);		// added to the horizontal position
+		var swellTangentX = vec3f(0.0, 0.0, 0.0);	// how (push.x, height, push.z) change per unit moved along world x
+		var swellTangentZ = vec3f(0.0, 0.0, 0.0);	// and along world z
+
+		// deep sea only. It grows with the depth of the water up to the deep sea depth, and with the distance from land,
+		//		which is what keeps it smooth off coasts that drop straight to nothing (and stops it washing over the land)
+		//		outside the top down camera's box neither is known, and that all counts as open deep sea
+		let swellShoreDistance = min(WU.swellShoreDistance, shoreFieldRange);
+		let swellDepthFactor = smoothstep(0.5 * WU.deepSeaDepth, max(WU.deepSeaDepth, 0.001), mix(1000.0, waterDepth, boxFade));
+		let swellShoreFactor = smoothstep(0.35 * swellShoreDistance, max(swellShoreDistance, 0.001), shoreDistance);
+		let swellSize = WU.swellHeight * min(swellDepthFactor, swellShoreFactor) * distanceFade;	// flattens with distance like everything else, to meet the horizon plane
+
+		if (swellSize > 0.001) {
+			// the trains: wavelength (x the swell length), share of the height, heading (radians off the wind), and a starting phase so they dont all line up
+			var trainLength = array<f32, 5>(1.0, 0.72, 1.38, 0.55, 1.83);
+			var trainShare = array<f32, 5>(0.44, 0.20, 0.18, 0.10, 0.08);
+			var trainTurn = array<f32, 5>(0.0, 0.38, -0.31, -0.62, 0.21);
+			var trainPhase = array<f32, 5>(0.0, 1.7, 4.1, 2.6, 5.3);
+
+			let baseLength = max(WU.swellLength, 1.0);
+			let windAngle = atan2(WU.windDirection.y, WU.windDirection.x);
+			// the FFT waves are simulated on a small patch stretched up to the tile size. The same stretch on gravity keeps the swell moving in step with them
+			let gravity = 9.81 * (WU.gridSize.x / WU.oceanPlanePhysicalSize);
+
+			// how hard the crests get pinched: capped so that all the trains piled up together still cant fold the surface over
+			var totalSlope = 0.0;
+			for (var i = 0; i < 5; i++) {
+				totalSlope += (6.2832 / (baseLength * trainLength[i])) * swellSize * trainShare[i];
+			}
+			let lean = min(WU.swellSteepness, 0.9 / max(totalSlope, 0.0001));
+
+			for (var i = 0; i < 5; i++) {
+				let k = 6.2832 / (baseLength * trainLength[i]);		// wave number
+				let amplitude = swellSize * trainShare[i];
+				let heading = windAngle + trainTurn[i];
+				let direction = vec2f(cos(heading), sin(heading));
+				let speed = sqrt(gravity * k) * WU.swellSpeed;		// deep water waves: the longer the wave the faster it runs
+				let phase = k * dot(direction, vec2f(worldX, worldZ)) - speed * WU.step + trainPhase[i];
+
+				swellHeight += amplitude * cos(phase);
+				swellPush -= direction * (lean * amplitude * sin(phase));	// pushed towards each crest, same as the choppy displacement
+
+				// change in (push.x, height, push.z) per unit moved along the direction of travel, shared out onto x and z
+				let along = vec3f(-direction.x * lean * amplitude * k * cos(phase), -amplitude * k * sin(phase), -direction.y * lean * amplitude * k * cos(phase));
+				swellTangentX += along * direction.x;
+				swellTangentZ += along * direction.y;
+			}
+		}
+
+		var position = vec3f((vertGridPosX - WU.gridSize.x * 0.5) + WU.tileOffsetX + displacement.x + shorePush.x + swellPush.x,
+							 waveHeightAdj + shoreHeight + swellHeight,
+							 (vertGridPosZ - WU.gridSize.y * 0.5) + WU.tileOffsetZ + displacement.y + shorePush.y + swellPush.y);
+
+		//------------------Normal and Crest Foam-----------------
+		// neighbouring texels one mesh cell either side (so further apart on the coarser tiles), wrapped around the texture
+		let texelXp = vec2u((texel.x + texelStride) % textureWidth, texel.y);
+		let texelXm = vec2u((texel.x + textureWidth - texelStride) % textureWidth, texel.y);
+		let texelZp = vec2u(texel.x, (texel.y + texelStride) % textureWidth);
+		let texelZm = vec2u(texel.x, (texel.y + textureWidth - texelStride) % textureWidth);
+
+		// central differences across two cells of the height and of the displacement
+		let chain = (attenuation + 2.0 * abs(waveHeight) * shallowFactor * rippleScale) * distanceFade;	// d(waveHeightAdj) / d(waveHeight)
+		let dHdx = (textureLoad(finalWaveHeightTexture, texelXp).x - textureLoad(finalWaveHeightTexture, texelXm).x) * chain;
+		let dHdz = (textureLoad(finalWaveHeightTexture, texelZp).x - textureLoad(finalWaveHeightTexture, texelZm).x) * chain;
+		let dDdx = (textureLoad(finalDisplacementTexture, texelXp).xy - textureLoad(finalDisplacementTexture, texelXm).xy) * chop;
+		let dDdz = (textureLoad(finalDisplacementTexture, texelZp).xy - textureLoad(finalDisplacementTexture, texelZm).xy) * chop;
+
+		// tangents of the displaced surface along the grid x and z, the normal is their cross product
+		let span = 2.0 * cellSize;
+		// the shore waves are analytic, so their share of each tangent comes from their derivatives along the away-from-shore direction
+		let shoreTangentX = vec3f(-awayFromShore.x * shoreSqueeze, shoreSlope, -awayFromShore.y * shoreSqueeze) * (awayFromShore.x * span);
+		let shoreTangentZ = vec3f(-awayFromShore.x * shoreSqueeze, shoreSlope, -awayFromShore.y * shoreSqueeze) * (awayFromShore.y * span);
+		let tangentX = vec3f(span + dDdx.x, dHdx, dDdx.y) + shoreTangentX + swellTangentX * span;
+		let tangentZ = vec3f(dDdz.x, dHdz, span + dDdz.y) + shoreTangentZ + swellTangentZ * span;
+		var normal = normalize(cross(tangentZ, tangentX));
+		if (normal.y < 0.0) {
+			normal = -normal;	// surface has folded over itself here, keep the normal facing up
+		}
+
+		// Jacobian of the horizontal displacement: how much a patch of surface has been squeezed
+		//		1.0 is undisturbed, < 1.0 is squeezed together (crests), > 1.0 is stretched (troughs), < 0.0 has folded over (a breaking wave)
+		let jacobian = (tangentX.x * tangentZ.z - tangentX.z * tangentZ.x) / (span * span);
+		let foamThreshold = WU.foamThreshold;		// foam starts where the jacobian drops below this
+		let foamFade = max(WU.foamFade, 0.001);		// how far below the threshold until its fully white
+		let foam = saturate((foamThreshold - jacobian) / foamFade);
+
+		var vertex: WaterVertex;
+		vertex.position = position;
+		vertex.normal = normal;
+		vertex.foam = foam;
+		// depth of the (still) water here, for the see-through shallows. Its only known inside the top down camera's box,
+		//		everywhere else counts as bottomless, which is what keeps the open sea and everything in the distance opaque
+		vertex.depth = mix(1000.0, waterDepth, boxFade);
+		return vertex;
+}
+
+@compute @workgroup_size(${WATER_WORKGROUP_SIZE[0]}, ${WATER_WORKGROUP_SIZE[1]}, ${WATER_WORKGROUP_SIZE[2]})
+    fn computeMain(
+		@builtin(global_invocation_id) GlobalIvocationID: vec3<u32>
+	) {
+
+		var gIndex = GlobalIvocationID.x;
+
+		let fPerVertexData = u32(3 + 2 + 3);
+
+		// this tile's mesh: tileCells cells per side, so one more vertex than that per side
+		let tileCells = u32(WU.tileCells);
+		let gridWidth = tileCells + 1u;
+		if (gIndex >= gridWidth * gridWidth) {
+			return;	// the dispatch is rounded up to whole workgroups, the spare threads have no vertex
+		}
+
+		let ix = gIndex % gridWidth;
+		let iz = gIndex / gridWidth;
+
+		let oVertInd = gIndex * fPerVertexData;
+
+		var vertex = waterVertex(ix, iz);
+
+		//------------------------------LEVEL OF DETAIL SEAMS-------------------------------
+		// where this tile meets a coarser one, the coarser tile only has every 2nd vertex along the shared edge and runs straight between them.
+		//		this tile's extra vertices in between would open gaps along that edge, so each one is put on the straight line
+		//		between its two neighbours, which is exactly where the coarser tile's edge is
+		var between = vec2u(0u, 0u);	// which way along the edge those two neighbours are, (0, 0) for every vertex that isnt one of the in between ones
+		if ((ix == 0u && WU.coarserEdge.x > 0.5) || (ix == tileCells && WU.coarserEdge.y > 0.5)) {
+			between.y = iz % 2u;
+		}
+		if ((iz == 0u && WU.coarserEdge.z > 0.5) || (iz == tileCells && WU.coarserEdge.w > 0.5)) {
+			between.x = ix % 2u;
+		}
+		if (between.x + between.y > 0u) {
+			let before = waterVertex(ix - between.x, iz - between.y);
+			let after = waterVertex(ix + between.x, iz + between.y);
+			vertex.position = (before.position + after.position) * 0.5;
+			vertex.normal = normalize(before.normal + after.normal);
+			vertex.foam = (before.foam + after.foam) * 0.5;
+			vertex.depth = (before.depth + after.depth) * 0.5;
+		}
+
+		// uv isnt used by the water yet, so the foam factor and the water depth ride in that slot
+		waterVertexData[oVertInd + 0] = vertex.position.x;
+		waterVertexData[oVertInd + 1] = vertex.position.y;
+		waterVertexData[oVertInd + 2] = vertex.position.z;
+		waterVertexData[oVertInd + 3] = vertex.foam;
+		waterVertexData[oVertInd + 4] = vertex.depth;
+		waterVertexData[oVertInd + 5] = vertex.normal.x;
+		waterVertexData[oVertInd + 6] = vertex.normal.y;
+		waterVertexData[oVertInd + 7] = vertex.normal.z;
 		
 		
 		//--------------------FORM TRIANGLES IN INDEX BUFFER---------------------
@@ -422,6 +680,127 @@ export const c_IFFT_2D =
 	}
 `;
 
+/*
+	Shore distance field, first of two passes. Runs every frame on a low resolution copy of the top down height map.
+	Together the two passes give every texel its distance to the nearest land, which the water mesh pass uses to fade the ocean waves
+	out and aim the shore waves in. It only looks SHORE_SEARCH_RADIUS texels out, the water doesnt care about a shoreline further away than that.
+
+	This pass looks up and down each column for the nearest land texel. The second pass (c_ShoreDistance) then combines the columns
+	sideways, which gives the true straight line distance for 2 small passes instead of searching a whole circle of texels around each one.
+*/
+export const c_ShoreScan =
+`
+	struct WaterSpaces
+	{
+		modelViewProjectionMatrix : mat4x4f,
+		topDownViewProj : mat4x4f,
+		topDownInvViewProj : mat4x4f,
+		topDownTextureSize : vec2f,
+		_padding0 : vec2f,
+	}
+	@group(0) @binding(0) var<uniform> Spaces: WaterSpaces;
+
+	struct WaterUniforms {
+		@location(0) cameraPosition: vec4f,
+		@location(1) windDirection: vec2f,
+		@location(2) resolution: f32,			//the resolution of the plane is fixed, however, converge closer to camera position
+		@location(3) waveSteepness: f32,
+		@location(4) step: f32,					//to be used in place of time, but locked to frame rate i suppose
+		@location(5) planeYPos: f32,
+		@location(6) waveLength: f32,
+		@location(7) oceanPlanePhysicalSize: f32,
+		@location(8) windSpeed: f32,
+		@location(9) tileOffsetX: f32,
+		@location(10) tileOffsetZ: f32,
+		@location(11) gridSize: vec2f,
+	};
+	@group(0) @binding(1) var<uniform> WU: WaterUniforms;
+
+	@group(0) @binding(2) var topDownHeightmapTexture : texture_depth_2d;
+	@group(0) @binding(3) var shoreScanTexture : texture_storage_2d<r32float, write>;	//x: texels up or down the column to the nearest land
+
+	// the top down camera is orthographic and looks straight down, so its depth only depends on world height:
+	//		anything nearer to that camera than the water plane is land sticking out of the water
+	fn isLand(fieldTexel: vec2i, waterPlaneDepth: f32) -> bool {
+		let heightMapTexel = fieldTexel * ${SHORE_FIELD_DOWNSCALE} + vec2i(${SHORE_FIELD_DOWNSCALE / 2}, ${SHORE_FIELD_DOWNSCALE / 2});	// middle of the block this field texel covers
+		return textureLoad(topDownHeightmapTexture, heightMapTexel, 0) < waterPlaneDepth;
+	}
+
+	@compute @workgroup_size(${FFT_WORKGROUP_SIZE[0]}, ${FFT_WORKGROUP_SIZE[1]}, ${FFT_WORKGROUP_SIZE[2]})
+    fn computeMain(
+		@builtin(global_invocation_id) GlobalInvocationID: vec3<u32>
+	) {
+		let fieldSize = vec2i(textureDimensions(shoreScanTexture));
+		let gIndex = vec2i(GlobalInvocationID.xy);
+		if (gIndex.x >= fieldSize.x || gIndex.y >= fieldSize.y) {
+			return;
+		}
+
+		let waterPlaneClip = Spaces.topDownViewProj * vec4f(WU.cameraPosition.x, WU.planeYPos, WU.cameraPosition.z, 1.0);
+		let waterPlaneDepth = waterPlaneClip.z / waterPlaneClip.w;
+
+		// walk outwards both ways along the column and stop at the first land. Texels off the edge of the map count as water
+		var nearest = 1.0e6;	// no land in reach
+		for (var offset = 0; offset <= ${SHORE_SEARCH_RADIUS}; offset++) {
+			let up = gIndex.y - offset;
+			let down = gIndex.y + offset;
+			if ((up >= 0 && isLand(vec2i(gIndex.x, up), waterPlaneDepth)) || (down < fieldSize.y && isLand(vec2i(gIndex.x, down), waterPlaneDepth))) {
+				nearest = f32(offset);
+				break;
+			}
+		}
+
+		textureStore(shoreScanTexture, gIndex, vec4f(nearest, 0.0, 0.0, 1.0));
+	}
+`;
+
+/*
+	Shore distance field, second pass. For every texel along the row, c_ShoreScan already knows how far up or down that column the nearest land is.
+	The nearest land overall is whichever column makes the shortest diagonal: sqrt(sideways^2 + upDown^2)
+	Stored in world units, 0 on land, capped at the search radius for open ocean.
+*/
+export const c_ShoreDistance =
+`
+	struct WaterSpaces
+	{
+		modelViewProjectionMatrix : mat4x4f,
+		topDownViewProj : mat4x4f,
+		topDownInvViewProj : mat4x4f,
+		topDownTextureSize : vec2f,
+		_padding0 : vec2f,
+	}
+	@group(0) @binding(0) var<uniform> Spaces: WaterSpaces;
+
+	@group(0) @binding(1) var shoreScanTexture : texture_storage_2d<r32float, read>;
+	@group(0) @binding(2) var shoreDistanceTexture : texture_storage_2d<r32float, write>;	//x: world distance to the nearest land
+
+	@compute @workgroup_size(${FFT_WORKGROUP_SIZE[0]}, ${FFT_WORKGROUP_SIZE[1]}, ${FFT_WORKGROUP_SIZE[2]})
+    fn computeMain(
+		@builtin(global_invocation_id) GlobalInvocationID: vec3<u32>
+	) {
+		let fieldSize = vec2i(textureDimensions(shoreDistanceTexture));
+		let gIndex = vec2i(GlobalInvocationID.xy);
+		if (gIndex.x >= fieldSize.x || gIndex.y >= fieldSize.y) {
+			return;
+		}
+
+		var nearestSquared = ${SHORE_SEARCH_RADIUS * SHORE_SEARCH_RADIUS}.0;
+		for (var offset = -${SHORE_SEARCH_RADIUS}; offset <= ${SHORE_SEARCH_RADIUS}; offset++) {
+			let column = gIndex.x + offset;
+			if (column < 0 || column >= fieldSize.x) {
+				continue;
+			}
+			let upDown = textureLoad(shoreScanTexture, vec2i(column, gIndex.y)).x;
+			nearestSquared = min(nearestSquared, f32(offset * offset) + upDown * upDown);
+		}
+
+		// texels to world units: the size of one field texel on the ground
+		let texelSize = length((Spaces.topDownInvViewProj * vec4f(2.0 / f32(fieldSize.x), 0.0, 0.0, 0.0)).xyz);
+
+		textureStore(shoreDistanceTexture, gIndex, vec4f(sqrt(nearestSquared) * texelSize, 0.0, 0.0, 1.0));
+	}
+`;
+
 export const c_ArrayToTexture =
 `
 	struct WaterUniforms {
@@ -632,7 +1011,7 @@ export const c_hkt =
 	
 	@group(0) @binding(1) var initialHeightField : texture_storage_2d<rgba32float, read>;
 	@group(0) @binding(2) var waveHeightRealization : texture_storage_2d<rgba32float, write>;
-	@group(0) @binding(3) var slopeRealization : texture_storage_2d<rgba32float, write>;
+	@group(0) @binding(3) var displacementRealization : texture_storage_2d<rgba32float, write>;
 
 fn complexMul(a: vec2f, b: vec2f) -> vec2f {
     return vec2f(
@@ -668,7 +1047,7 @@ fn complexConj(z: vec2f) -> vec2f {
 		//https://people.computing.clemson.edu/~jtessen/reports/papers_files/coursenotes2002.pdf
 		let e = f32(2.71828);		// eulers num, but the "exp(f32 x)" function does e^x 
 		let pi = f32(3.14159);		//PI
-		let g = f32(9.18);			//grav constant
+		let g = f32(9.81);			//grav constant
 		
 		//"waveheight is a random variable of horizontal position and time, h(x,t)"
 		// wave number = grid point number
@@ -710,10 +1089,17 @@ fn complexConj(z: vec2f) -> vec2f {
 		//DEBUG, visualizing hKt directly will show an inward collapse, this is how hKt is supposed to workgroup_size
 		//			the waveHeightRealization should actually be hXt.
 		
-		// dh/dx, dh/dz
-		let slopeSpectrum = complexMul(vec2f(-ky, kx),hkt);
-		textureStore(slopeRealization, gIndex, vec4f(slopeSpectrum.x, slopeSpectrum.y, 0.0, 1.0));	//gradient of raw FFT height
-		
+		// horizontal (choppy) displacement spectrum: D(k,t) = -i * (k / |k|) * h(k,t)
+		//		Dx and Dz are packed into one complex number as Dx + i*Dz, so a single IFFT gives Dx in the real part and Dz in the imaginary part
+		//		-i*(kx/|k|)*h + i * (-i*(ky/|k|)*h) = ((ky - i*kx) / |k|) * h
+		//		this only works because h(k,t) is hermitian (see c_h0kConj), which is what makes Dx and Dz both real
+		let kMag = length(k);
+		var displacementSpectrum = vec2f(0.0, 0.0);
+		if (kMag > 0.0001 && gIndex.x > 0u && gIndex.y > 0u) {	// k = 0 has no direction, and the first row/column (nyquist) has no -k partner
+			displacementSpectrum = complexMul(vec2f(ky, -kx) / kMag, hkt);
+		}
+		textureStore(displacementRealization, gIndex, vec4f(displacementSpectrum.x, displacementSpectrum.y, 0.0, 1.0));
+
 		textureStore(waveHeightRealization, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4f(hkt.x, hkt.y,0.0,1.0));
 	}
 `;
@@ -755,19 +1141,19 @@ export const c_h0kConj =
 		var gIndex = GlobalIvocationID.xy;
 		let res = u32(WU.resolution);
 		
-		let data = textureLoad(inH0KTexture, gIndex);
-		let h0NegkConj = complexConj(data.zw);
-		textureStore(initialHeightField, gIndex, vec4f(data.x, data.y, h0NegkConj.x, h0NegkConj.y));
-		
-		
-		//let negIndices = vec2u((u32(WU.resolution) - gIndex.x) % u32(WU.resolution), 
-		//						(u32(WU.resolution) - gIndex.y) % u32(WU.resolution));
-		//let h0k = textureLoad(inH0KTexture, gIndex).xy;
-		//let h0NegkConj = complexConj(textureLoad(inH0KTexture, negIndices).xy);
-		//
-		////final
-		//textureStore(initialHeightField, gIndex, vec4f(h0k.x, h0k.y, h0NegkConj.x, h0NegkConj.y));
-		
+		// h0(-k) has to be the SAME random value that the texel for -k holds, not a separate random draw
+		//		k is centered at res/2, so the texel holding -k is the mirror of this one through the center
+		//		with this, h(k,t) is hermitian and the IFFT output is purely real (imaginary channel of the final height should read 0)
+		let negIndices = vec2u((res - gIndex.x) % res, (res - gIndex.y) % res);
+		let h0k = textureLoad(inH0KTexture, gIndex).xy;
+		let h0NegkConj = complexConj(textureLoad(inH0KTexture, negIndices).xy);
+		textureStore(initialHeightField, gIndex, vec4f(h0k.x, h0k.y, h0NegkConj.x, h0NegkConj.y));
+
+		//independent random draw for h0(-k) kept in the .zw of the same texel. NOT hermitian, the IFFT output ends up with an imaginary part
+		//let data = textureLoad(inH0KTexture, gIndex);
+		//let h0NegkConj = complexConj(data.zw);
+		//textureStore(initialHeightField, gIndex, vec4f(data.x, data.y, h0NegkConj.x, h0NegkConj.y));
+
 		
 		//debug CONJ SYM test, if we see blue, we fail
 		//let h0k = textureLoad(inH0KTexture, gIndex).xy;
@@ -828,7 +1214,7 @@ export const c_h0k =
 // Describes how wave energy is distributed across different wave frequencies and directions in a fully developed ocean
 fn phillipsSpectrum(kx: f32, ky: f32) -> f32 {
 	let pi = f32(3.14159);		//PI
-	let g = f32(9.18);			//grav constant
+	let g = f32(9.81);			//grav constant
 	
 	//"waveheight is a random variable of horizontal position and time, h(x,t)"
 	// wave number = grid point number
@@ -1025,6 +1411,10 @@ export const v_water =
 	var output: VertexOutput;
 	
     output.pos = UBO.modelViewProjectionMatrix * vec4f(input.pos.x, input.pos.y, input.pos.z, 1.0);
+
+	// anything past the camera's far plane normally gets clipped away. Holding the depth just inside it instead
+	//		is what lets the horizon plane run on to the horizon, whatever the far plane is set to
+	output.pos.z = min(output.pos.z, output.pos.w * 0.999999);
     output.worldPos = input.pos;
 	output.fragNormal = input.norm;
     output.fragUV = input.uv;
@@ -1048,6 +1438,40 @@ export const f_water =
 		displayLightingMode : f32,
 	}
 	@group(0) @binding(1) var<uniform> Lights: LightsUniforms;
+
+	struct WaterUniforms
+	{
+		modelViewProjectionMatrix : mat4x4f,
+		topDownViewProj : mat4x4f,
+		topDownInvViewProj : mat4x4f,
+		topDownTextureSize : vec2f,
+		atmosphereEnabled : f32,	// 1.0 while the atmosphere pass is running and keeping the sky LUT up to date
+		horizonFogDistance : f32,	// distance from the camera where the water is about two thirds faded into the horizon
+		clarityDepth : f32,			// depth of water where the sea bed has faded to about a third. 0 turns the see-through off
+	}
+	@group(0) @binding(0) var<uniform> UBO: WaterUniforms;
+
+	@group(0) @binding(2) var skyLUT: texture_2d<f32>;
+	@group(0) @binding(3) var skySampler: sampler;
+
+	const PI: f32 = 3.14159265;
+
+	// the sky LUT has one row of texels just above the horizon and one just below it (the ground side, which is darker).
+	//		reading dead on the horizon blends the two, so "the horizon" is read about a degree up, in the middle of the first row of real sky
+	const HORIZON_LIFT: f32 = 0.016;
+
+	// The colour the sky pass puts on screen for a world direction.
+	//		same LUT lookup, exposure and gamma as f_sky in the atmosphere shaders, so the water can match the sky behind it exactly
+	fn skyColorAt(direction: vec3f) -> vec3f {
+		let rd = normalize(direction + vec3f(0.0, 0.00001, 0.0));	// never zero length
+		let azimuth   = atan2(-rd.z, -rd.x);
+		let elevation = asin(clamp(rd.y, -1.0, 1.0));
+		let uv = vec2f(azimuth / (2.0 * PI) + 0.5, elevation / PI + 0.5);
+		let color = textureSampleLevel(skyLUT, skySampler, uv, 0.0).rgb;
+
+		let exposed = 1.0 - exp(-color * 10.0);
+		return pow(exposed, vec3f(1.0 / 2.2));
+	}
 
 	//same as vertexoutput without builtin bits
 	struct FragInput {
@@ -1078,16 +1502,48 @@ export const f_water =
 		let baseBlue = vec3f(0.486, 0.486, 0.788);
 		let body     = mix(deepBlue, baseBlue, saturate(NdotL));
 		
-		// TODO: Reflection: stand-in for a atmosphere sample
-		let skyColor = vec3f(0.45, 0.62, 0.85);
+		// Reflection: whatever the sky pass draws in the mirrored direction. With the atmosphere off there is no sky to read, so a flat stand-in
+		var skyColor = vec3f(0.45, 0.62, 0.85);
+		if (UBO.atmosphereEnabled > 0.5) {
+			let R = reflect(-V, N);
+			skyColor = skyColorAt(vec3f(R.x, max(R.y, HORIZON_LIFT), R.z));	// the sea mirrors the sky, never what is under the horizon
+		}
 		var color    = mix(body, skyColor, F);
-		
-		// Specular sun glint
+
+		// Crest foam (whitecaps): jacobian based factor from the water compute pass, riding in uv.x
+		//     foam is rough so it gets plain diffuse light instead of the fresnel/reflection look
+		let foam = saturate(input.fragUV.x);
+		let foamColor = vec3f(0.95, 0.95, 0.95) * (0.55 + 0.45 * saturate(NdotL));
+		color = mix(color, foamColor, foam);
+
+		// Specular sun glint, hidden under the foam
 		let shininess = 300.0;
-		let spec = pow(saturate(dot(N, H)), shininess) * step(0.0, NdotL);
+		let spec = pow(saturate(dot(N, H)), shininess) * step(0.0, NdotL) * (1.0 - foam);
 		color += Lights.sunCol.rgb * spec * F * 3.0;
 		//color += Lights.sunCol.rgb * Lights.sunIntensity * spec * F * 4.0;
+
+		// Horizon fog: far water fades into the colour of the sky sitting right on the horizon behind it,
+		//     so the sea has no far edge to see and the horizon line dissolves into the sky instead of cutting across it
+		var fog = 0.0;
+		if (UBO.atmosphereEnabled > 0.5) {
+			let toWater = input.worldPos - Lights.camPos.xyz;
+			let horizonColor = skyColorAt(vec3f(toWater.x, HORIZON_LIFT * length(toWater.xz), toWater.z));
+			fog = 1.0 - exp(-pow(length(toWater) / UBO.horizonFogDistance, 2.0));
+			color = mix(color, horizonColor, fog);
+		}
 	
-		return vec4f(color, 1.0);
+		// See-through shallows: where the sea bed is close under the surface the water lets it show, tinted more the deeper it is.
+		//     the depth is the one from the top down height map (riding in uv.y), so this only ever happens over real terrain near the camera.
+		//     the open sea and everything in the distance has no bed to show and stays fully opaque, so nothing behind it (the sky, a set sun) can show through
+		var seeThrough = 0.0;
+		if (UBO.clarityDepth > 0.0) {
+			let depth = max(input.fragUV.y, 0.0);
+			// fades with depth, and is cut off completely by 2x the clarity depth so the edge of a sea bed mesh never shows as a line
+			seeThrough = exp(-depth / UBO.clarityDepth) * (1.0 - smoothstep(UBO.clarityDepth, 2.0 * UBO.clarityDepth, depth));
+			// the surface is a mirror at grazing angles, and foam and haze hide the bed as well
+			seeThrough *= (1.0 - F) * (1.0 - foam) * (1.0 - fog);
+		}
+
+		return vec4f(color, 1.0 - seeThrough);
 	}
 `;

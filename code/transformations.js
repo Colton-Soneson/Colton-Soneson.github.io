@@ -95,11 +95,19 @@ export function getLightViewProjectionMat() {
 
 export function getTopDownViewProjectionMat() {
 	
-	const topDownViewMatrix = mat4.lookAt([settings.camPosX, settings.topDownCameraHeight, settings.camPosZ], 
-								[settings.camPosX,0,settings.camPosZ], 	
+	const boxSize = 300;
+
+	// the top down camera follows the main camera in whole steps of 64 height map texels instead of sliding smoothly
+	//		that way the height map (and the shore distance field built from it) samples the terrain at the same world points every frame,
+	//		so the shoreline doesnt crawl while the camera moves. Has to stay a multiple of the shore field texel (8 height map texels)
+	const snap = ((2 * boxSize) / settings.heightMapResolution) * 64;
+	const topDownX = Math.round(settings.camPosX / snap) * snap;
+	const topDownZ = Math.round(settings.camPosZ / snap) * snap;
+
+	const topDownViewMatrix = mat4.lookAt([topDownX, settings.topDownCameraHeight, topDownZ],
+								[topDownX,0,topDownZ],
 								[0,0,-1]);	//changed the up-vector to prevent camera being parallel to up axis
-	
-	const boxSize = 300;	
+
 	const topDownProjectionMatrix = mat4.create();
 	{
 	const left = -boxSize;

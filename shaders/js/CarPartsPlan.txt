@@ -1,0 +1,28 @@
+THE DEFINITES
+	- 07K VW 2.5l inline 5 from VW Jetta
+
+THE CHASSIS OPTIONS
+	- 1991 FC RX7 GTO IMSA
+		- [ISSUE] in the rx7 the full engine sits behind front axle
+
+Electric Power Steering pump out of a dodge charger - 200$
+	Allows for adjustment of steering feel (loose or stiff)
+	Allows for removal of belt dependant power steering, should free up HP and spin
+
+RWD?
+	Mag lock rear diff
+
+AWD?
+	Subaru WRX STI drivetrain (2004-2021)
+		- They have an adjustable Center Differential (DCCD) that can switch percentage front to back
+		- You can get a mid 2000s full complete drivetrain for like 5 grand or you can get a busted junkyard STI and part out
+		- torque/HP limits at 500-600 HP from factory
+		- [ISSUE] so because the transmission has the CV Shaft inputs as part of it, meaning the engine has to sit fully
+			in front of the front wheels. With a inline 5 that would make the car a bit nose heavy if the goal is to get a coupe.
+			A possible solution would be to flip the ring gears and do rear mount, but then you have the same issue but with the
+			tail end of the car.
+			Other option means getting a longer nose vehicle
+		- The 07k engine weight with accessories is about 378 lbs, the STI EJ25 is around 350/400 lbs dressed. General weight isnt 
+			the issue height/length or distributed weight is.
+			- [ISSUE] with pulleys the EJ25 is 15-17 inches front to back, the 07k is about 20.5 inches front front of pulleys to the rear bellhousing mount
+		

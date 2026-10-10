@@ -10,6 +10,7 @@ import {postEffectPassTextureDebug_DEPTH32FLOAT} from './debugTextureDisplay.js'
 import {postEffectPassTextureDebug_RGBA8UNORM} from './debugTextureDisplay.js'
 import {postEffectPassTextureDebug_RGBA32FLOAT} from './debugTextureDisplay.js'
 import {postEffectPassTextureDebug_RGBA16FLOAT} from './debugTextureDisplay.js'
+import {postEffectPassTextureDebug_R32FLOAT} from './debugTextureDisplay.js'
 import {grassPass} from './computeGrass.js'
 import {waterPass} from './water.js'
 import {atmospherePass} from './atmosphere.js'
@@ -447,13 +448,25 @@ export function updateRotatingCubePass() {
 	if(settings.displayWaterShifted ) {
 		postEffectPassTextureDebug_RGBA32FLOAT(encoderDebug, context.getCurrentTexture(), water.finalWaveHeightTexture);
 	}
+
+	if(settings.displayWaterDisplacementSpectrum) {
+		postEffectPassTextureDebug_RGBA32FLOAT(encoderDebug, context.getCurrentTexture(), water.displacementRealizationTexture);
+	}
+
+	if(settings.displayWaterDisplacement) {
+		postEffectPassTextureDebug_RGBA32FLOAT(encoderDebug, context.getCurrentTexture(), water.finalDisplacementTexture);
+	}
+
+	if(settings.displayShoreDistance) {
+		postEffectPassTextureDebug_R32FLOAT(encoderDebug, context.getCurrentTexture(), water.shoreDistanceTexture, settings.displayShoreDistanceDebugRange);
+	}
 	
 	if(settings.displaySkyViewLUTtexture) {
-		postEffectPassTextureDebug_RGBA16FLOAT(encoderDebug, context.getCurrentTexture(), atmosphere.transmittanceLUTtexture);
+		postEffectPassTextureDebug_RGBA16FLOAT(encoderDebug, context.getCurrentTexture(), atmosphere.skyViewLUTtexture);
 	}
 	
 	if(settings.displayTransmittanceLUTtexture) {
-		postEffectPassTextureDebug_RGBA16FLOAT(encoderDebug, context.getCurrentTexture(), atmosphere.skyViewLUTtexture);
+		postEffectPassTextureDebug_RGBA16FLOAT(encoderDebug, context.getCurrentTexture(), atmosphere.transmittanceLUTtexture);
 	}
 	
 	// update the settings from changes made in render loop unless UI settings are changed directly

@@ -6,6 +6,7 @@ import {canvasFormat} from './deviceSelection.js'
 import { c_DebugTexture_RGBA8UNORM } from '../shaders/js/c_debugTextureDisplay.js'
 import { c_DebugTexture_RGBA32FLOAT } from '../shaders/js/c_debugTextureDisplay.js'
 import { c_DebugTexture_RGBA16FLOAT } from '../shaders/js/c_debugTextureDisplay.js'
+import { c_DebugTexture_R32FLOAT } from '../shaders/js/c_debugTextureDisplay.js'
 import { c_DebugTexture_DEPTH32FLOAT } from '../shaders/js/c_debugTextureDisplay.js'
 import { DEBUGTEXTURE_WORKGROUP_SIZE } from '../shaders/js/c_debugTextureDisplay.js'
 
@@ -26,6 +27,10 @@ const debugTextureShaderModule_RGBA8UNORM = device.createShaderModule({
   label: "DebugTexture_RGBA16FLOAT",
   code: c_DebugTexture_RGBA16FLOAT		
  });
+const debugTextureShaderModule_R32FLOAT = device.createShaderModule({
+  label: "DebugTexture_R32FLOAT",
+  code: c_DebugTexture_R32FLOAT
+ });
 const debugTextureShaderModule_DEPTH32FLOAT = device.createShaderModule({
   label: "DebugTexture_DEPTH32FLOAT",
   code: c_DebugTexture_DEPTH32FLOAT		
@@ -38,7 +43,7 @@ const debugTextureUniformBuffer = device.createBuffer({
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,	//this makes it another GPUBuffer Object but this time uniform
 });
 
-function debugTextureUniformUpdate(texSize) {
+function debugTextureUniformUpdate(texSize, mapRange = settings.displayDepthMapDebugRange) {
 	
 	const result = [];
 	
@@ -48,7 +53,7 @@ function debugTextureUniformUpdate(texSize) {
 	result.push(texSize.width);
 	result.push(texSize.height);
 	
-	result.push(settings.displayDepthMapDebugRange);
+	result.push(mapRange);
 	result.push(settings.debugTextureRescaleSize);
 		
 	const finalBuff = new Float32Array(result);
@@ -196,6 +201,46 @@ const bindGroupLayout_RGBA16FLOAT = device.createBindGroupLayout({
   ]
 });
 
+const bindGroupLayout_R32FLOAT = device.createBindGroupLayout({
+  label: "debugTexture Compute Bind Group Layout R32FLOAT",
+  entries: [{
+    binding: 0,
+    visibility: GPUShaderStage.COMPUTE,	//visibility is GPUShaderStage flags that indicate which shader stages can use resource
+    buffer: {} //buffer key, other options are things like "texture" or "sampler", default is uniform, leave empty for binding 0
+  },
+  {
+    binding: 1,								//outTexture
+    visibility:  GPUShaderStage.COMPUTE,
+    storageTexture: {
+        format: canvasFormat,   // Format must match the swap chain texture
+		access: "write-only",
+		dimension: "2d",
+		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
+    }
+  },
+  {
+	binding: 2,								//in canvas Texture
+	visibility:  GPUShaderStage.COMPUTE,
+	storageTexture: {
+		format: canvasFormat,
+		access: "read-only",
+		dimension: "2d",
+		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
+    }
+  },
+  {
+	binding: 3,								//in debug Texture
+	visibility:  GPUShaderStage.COMPUTE,
+	storageTexture: {
+		format: "r32float",
+		access: "read-only",
+		dimension: "2d",
+		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
+    }
+  }
+  ]
+});
+
 const bindGroupLayout_DEPTH32FLOAT = device.createBindGroupLayout({
   label: "debugTexture Compute Bind Group Layout DEPTH32FLOAT",
   entries: [{
@@ -325,6 +370,34 @@ function createBindGroupsDebugTexture_RGBA16FLOAT(aCanvasTexture, aTextureToDebu
 	return bindGroups;
 }
 
+function createBindGroupsDebugTexture_R32FLOAT(aCanvasTexture, aTextureToDebug) {
+	const bindGroups = [
+  device.createBindGroup({
+    label: "debugTexture compute bind group R32FLOAT",
+    layout: bindGroupLayout_R32FLOAT,
+    entries: [{
+      binding: 0,
+      resource: { buffer: debugTextureUniformBuffer }	//buffer key, other options are things like "texture" or "sampler"
+    },
+	{
+      binding: 1,
+      resource: outTexture.createView()
+    },
+	{
+      binding: 2,
+      resource: aCanvasTexture.createView()	//we want the current swap chain texture in here
+    },
+	{
+      binding: 3,
+      resource: aTextureToDebug.createView()
+    }
+	],
+  })
+];
+
+	return bindGroups;
+}
+
 function createBindGroupsDebugTexture_DEPTH32FLOAT(aCanvasTexture, aTextureToDebug, aSampler) {
 	const bindGroups = [
   device.createBindGroup({
@@ -373,6 +446,11 @@ const debugTexturePipelineLayout_RGBA16FLOAT = device.createPipelineLayout({
   bindGroupLayouts: [ bindGroupLayout_RGBA16FLOAT ],
 });
 
+const debugTexturePipelineLayout_R32FLOAT = device.createPipelineLayout({
+  label: "debugTexture compute Pipeline Layout R32FLOAT",
+  bindGroupLayouts: [ bindGroupLayout_R32FLOAT ],
+});
+
 const debugTexturePipelineLayout_DEPTH32FLOAT = device.createPipelineLayout({
   label: "debugTexture compute Pipeline Layout DEPTH32FLOAT",
   bindGroupLayouts: [ bindGroupLayout_DEPTH32FLOAT ],
@@ -404,6 +482,15 @@ const debugTexturePipeline_RGBA16FLOAT = device.createComputePipeline({
   layout: debugTexturePipelineLayout_RGBA16FLOAT,	//allows for use of same bind groups as the renderpipeline
   compute: {
     module: debugTextureShaderModule_RGBA16FLOAT,
+    entryPoint: "computeMain",
+  }
+});
+
+const debugTexturePipeline_R32FLOAT = device.createComputePipeline({
+  label: "debugTexture pipeline R32FLOAT",
+  layout: debugTexturePipelineLayout_R32FLOAT,	//allows for use of same bind groups as the renderpipeline
+  compute: {
+    module: debugTextureShaderModule_R32FLOAT,
     entryPoint: "computeMain",
   }
 });
@@ -493,6 +580,29 @@ export function postEffectPassTextureDebug_RGBA16FLOAT(aEncoder, aCanvasTexture,
 	
 	computePass.end();
 	
+	//this may seem ridiculous, but for now its to get around the swap chain image format problems with read-write storage
+	aEncoder.copyTextureToTexture(
+		{texture: outTexture},	//the compute pass result
+		{texture: aCanvasTexture},	//the swap chain image
+		{width: canvas.width, height: canvas.height}
+	)
+}
+
+// single channel textures hold raw values (a distance, a height), so aValueRange says what value should show as full white
+export function postEffectPassTextureDebug_R32FLOAT(aEncoder, aCanvasTexture, aTextureToDebug, aValueRange) {
+	const bindGroups = createBindGroupsDebugTexture_R32FLOAT(aCanvasTexture, aTextureToDebug);
+	debugTextureUniformUpdate(aTextureToDebug, 1.0 / aValueRange);
+
+	// Start a compute pass
+	const computePass = aEncoder.beginComputePass();	//do before render pass so RP can take latest CP results
+
+	computePass.setPipeline(debugTexturePipeline_R32FLOAT);
+	computePass.setBindGroup(0, bindGroups[0]);	//same bind groups as rendering pass
+	computePass.dispatchWorkgroups(Math.ceil(canvas.width / DEBUGTEXTURE_WORKGROUP_SIZE[0]),
+									Math.ceil(canvas.height / DEBUGTEXTURE_WORKGROUP_SIZE[1]));
+
+	computePass.end();
+
 	//this may seem ridiculous, but for now its to get around the swap chain image format problems with read-write storage
 	aEncoder.copyTextureToTexture(
 		{texture: outTexture},	//the compute pass result

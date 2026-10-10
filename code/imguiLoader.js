@@ -37,6 +37,26 @@ export const imguiParams = {
     waterTileInstanceCount: settings.waterTileInstanceCount,
     waterTileResolution: settings.waterTileResolution,
 	waterGridSize: settings.waterGridSize,
+	waterHorizonFogDistance: settings.waterHorizonFogDistance,
+	waterClarityDepth: settings.waterClarityDepth,
+	waterFullDepth: settings.waterFullDepth,
+	waterShallowRippleScale: settings.waterShallowRippleScale,
+	waterChoppiness: settings.waterChoppiness,
+	waterFoamThreshold: settings.waterFoamThreshold,
+	waterFoamFade: settings.waterFoamFade,
+	waterShoreZone: settings.waterShoreZone,
+	waterShoreWaveHeight: settings.waterShoreWaveHeight,
+	waterShoreBreakDistance: settings.waterShoreBreakDistance,
+	waterShoreSteepness: settings.waterShoreSteepness,
+	waterShoreWaveLength1: settings.waterShoreWaveLength1,
+	waterShoreWaveLength2: settings.waterShoreWaveLength2,
+	waterShoreWaveSpeed: settings.waterShoreWaveSpeed,
+	waterDeepSeaDepth: settings.waterDeepSeaDepth,
+	waterSwellHeight: settings.waterSwellHeight,
+	waterSwellLength: settings.waterSwellLength,
+	waterSwellSteepness: settings.waterSwellSteepness,
+	waterSwellSpeed: settings.waterSwellSpeed,
+	waterSwellShoreDistance: settings.waterSwellShoreDistance,
     // Atmosphere
     enableAtmosphere: settings.enableAtmosphere,
     additionalAltitude: settings.additionalAltitude,
@@ -54,8 +74,12 @@ export const imguiParams = {
     displayWaterPreComp: settings.displayWaterPreComp,
     displayWaterFFT: settings.displayWaterFFT,
     displayWaterShifted: settings.displayWaterShifted,
+    displayWaterDisplacementSpectrum: settings.displayWaterDisplacementSpectrum,
+    displayWaterDisplacement: settings.displayWaterDisplacement,
+    displayShoreDistance: settings.displayShoreDistance,
 	displaySkyViewLUTtexture: settings.displaySkyViewLUTtexture,
 	displayTransmittanceLUTtexture: settings.displayTransmittanceLUTtexture,
+	displayShoreDistanceDebugRange: settings.displayShoreDistanceDebugRange,
 	debugTextureRescaleSize: settings.debugTextureRescaleSize,
 };
 
@@ -100,6 +124,32 @@ waterFolder.add(imguiParams, 'waterTileResolution', [32, 64, 128, 256, 512, 1024
 waterFolder.add(imguiParams, 'waterOceanPlanePhysicalSize', 1, 1024).name('WT Physical Size (H0K)');
 waterFolder.add(imguiParams, 'waterGridSize', 1, 5000).name('Water Tile Grid Size');
 waterFolder.add(imguiParams, 'waterTileInstanceCount', [1, 3, 5, 7, 9, 11]).name('Water Tile Instance Count');
+waterFolder.add(imguiParams, 'waterHorizonFogDistance', 200, 20000).name('Horizon Fog Distance');
+waterFolder.add(imguiParams, 'waterClarityDepth', 0, 10, 0.1).name('Water Clarity Depth');
+waterFolder.add(imguiParams, 'waterFullDepth', 1, 100).name('Full Wave Depth');
+waterFolder.add(imguiParams, 'waterShallowRippleScale', 0, 0.3, 0.005).name('Shallow Ripple Scale');
+
+const waterChopFolder = waterFolder.addFolder('Chop and Foam');
+waterChopFolder.add(imguiParams, 'waterChoppiness', 0, 3, 0.05).name('Choppiness');
+waterChopFolder.add(imguiParams, 'waterFoamThreshold', 0, 1, 0.01).name('Foam Threshold');
+waterChopFolder.add(imguiParams, 'waterFoamFade', 0.05, 1, 0.01).name('Foam Fade');
+
+const waterShoreFolder = waterFolder.addFolder('Shore Waves');
+waterShoreFolder.add(imguiParams, 'waterShoreZone', 10, 150, 1).name('Zone Distance');
+waterShoreFolder.add(imguiParams, 'waterShoreWaveHeight', 0, 6, 0.1).name('Wave Height');
+waterShoreFolder.add(imguiParams, 'waterShoreBreakDistance', 2, 40, 0.5).name('Break Distance');
+waterShoreFolder.add(imguiParams, 'waterShoreSteepness', 0, 4, 0.1).name('Steepness');
+waterShoreFolder.add(imguiParams, 'waterShoreWaveLength1', 12, 80, 0.5).name('Wave Length 1');
+waterShoreFolder.add(imguiParams, 'waterShoreWaveLength2', 12, 80, 0.5).name('Wave Length 2');
+waterShoreFolder.add(imguiParams, 'waterShoreWaveSpeed', 0, 3, 0.05).name('Wave Speed');
+
+const waterSwellFolder = waterFolder.addFolder('Deep Sea Swell');
+waterSwellFolder.add(imguiParams, 'waterDeepSeaDepth', 1, 200, 1).name('Deep Sea Depth');
+waterSwellFolder.add(imguiParams, 'waterSwellHeight', 0, 40, 0.5).name('Swell Height');
+waterSwellFolder.add(imguiParams, 'waterSwellLength', 100, 2000, 10).name('Swell Length');
+waterSwellFolder.add(imguiParams, 'waterSwellSteepness', 0, 1, 0.01).name('Steepness');
+waterSwellFolder.add(imguiParams, 'waterSwellSpeed', 0, 3, 0.05).name('Speed');
+waterSwellFolder.add(imguiParams, 'waterSwellShoreDistance', 20, 150, 1).name('Full Size Distance From Land');
 
 
 const atmosphereFolder = gui.addFolder('Atmosphere');
@@ -120,7 +170,10 @@ const debugDisplayModes = ["final",
 							"finalWaveHeightFFT h(x,t) pre Shift", 
 							"finalWaveHeightFFT h(x,t) Shifted",
 							"Skyview LUT Texture",
-							"Atmosphere Transmittance LUT Texture"];
+							"Atmosphere Transmittance LUT Texture",
+							"Choppy Displacement D(k,t)",
+							"Choppy Displacement D(x,t) Shifted",
+							"Shore Distance Field"];
 
 let selectedDebugDisplayMode;
 const debugFolder = gui.addFolder('Debug');
@@ -139,6 +192,9 @@ debugFolder.add(debugViewState, 'mode', debugDisplayModes).name('View Mode').onC
     settings.displayWaterShifted          = selectedDebugDisplayMode === 10;
     settings.displaySkyViewLUTtexture          = selectedDebugDisplayMode === 11;
     settings.displayTransmittanceLUTtexture    = selectedDebugDisplayMode === 12;
+    settings.displayWaterDisplacementSpectrum  = selectedDebugDisplayMode === 13;
+    settings.displayWaterDisplacement          = selectedDebugDisplayMode === 14;
+    settings.displayShoreDistance              = selectedDebugDisplayMode === 15;
 
     if (selectedDebugDisplayMode === 2) {
         water.waterPipelineSignalUpdate('line-list');
@@ -147,6 +203,7 @@ debugFolder.add(debugViewState, 'mode', debugDisplayModes).name('View Mode').onC
     }
 });
 debugFolder.add(imguiParams, 'debugTextureRescaleSize', [32, 64, 128, 256, 512, 1024]).name('Debug Texture Size');
+debugFolder.add(imguiParams, 'displayShoreDistanceDebugRange', 5, 300).name('Shore Distance View Range');
 
 
 const dropdownManagedKeys = new Set([
@@ -161,6 +218,9 @@ const dropdownManagedKeys = new Set([
     'displayWaterShifted',
 	'displaySkyViewLUTtexture',
 	'displayTransmittanceLUTtexture',
+	'displayWaterDisplacementSpectrum',
+	'displayWaterDisplacement',
+	'displayShoreDistance',
 ]);
 
 export function refreshControlsUI() {
@@ -177,8 +237,7 @@ export function syncSettingsToParams() {
             imguiParams[key] = settings[key];
         }
     });
-    gui.controllers.forEach(c => c.updateDisplay());
-    gui.folders.forEach(f => f.controllers.forEach(c => c.updateDisplay()));
+    gui.controllersRecursive().forEach(c => c.updateDisplay());	//every controller, however deep its folder is
 }
 
 //-----------------------ENTITY BASED SETTINGS----------------------------

@@ -62,6 +62,8 @@ export const c_water =
 		@location(30) swellSteepness: f32,		//0 = smooth sine rollers, 1 = full trochoid with peaked crests and flat troughs
 		@location(31) swellSpeed: f32,			//1.0 is the natural speed for the wavelength
 		@location(32) swellShoreDistance: f32,	//distance from land where the swell is back to full size
+		@location(33) terrainHalfSize: f32,		//half the width of the terrain, 0 when there is no terrain
+		@location(34) terrainCellSize: f32,		//size of one terrain grid cell
 	};
 	@group(0) @binding(1) var<uniform> WU: WaterUniforms;
 
@@ -82,6 +84,7 @@ export const c_water =
 	
 	@group(0) @binding(6) var finalDisplacementTexture : texture_storage_2d<rgba32float, read>;	//x: Dx, y: Dz
 	@group(0) @binding(7) var shoreDistanceTexture : texture_storage_2d<r32float, read>;		//x: world distance to the nearest land
+	@group(0) @binding(8) var terrainWaterTexture : texture_2d<f32>;	//the whole world's land, one texel per terrain grid point. x: height of the ground, y: distance to the nearest land, z: 1.0 where the water is a lake
 
 fn gerstnerWave(position: vec3f, waveLength: f32, waveSteepness: f32, windDirection: vec2f, step: f32) -> vec3f {
 		let k = (2 * 3.14) / waveLength;     		// Wave number
@@ -98,6 +101,30 @@ fn gerstnerWave(position: vec3f, waveLength: f32, waveSteepness: f32, windDirect
 		let new_y = position.y + (A * sin(f));
 		
 		return vec3f(new_x, new_y, new_z);
+}
+
+// The land under a world position, from the texture terrain.js keeps of the WHOLE world. x: height of the ground, y: distance to the nearest land,
+//		z: 1.0 where the water is a lake (land all the way round it), 0.0 where it is the sea.
+//		Its coarse (one texel per terrain grid point) but it reaches everywhere, where the top down height map only sees the area around the camera.
+//		Off the edge of the terrain, or with the terrain switched off, its open sea: no ground and no land anywhere near
+fn worldTerrainAt(xz: vec2f) -> vec3f {
+	if (WU.terrainHalfSize <= 0.0) {
+		return vec3f(-100000.0, 100000.0, 0.0);
+	}
+	// off the edge of the map the sea bed carries on down from where it was at the edge, a unit deeper for every unit further out.
+	//		(a sheer drop to nothing there would start the deep sea swell at full height along a dead straight line)
+	let outside = max(max(abs(xz.x), abs(xz.y)) - WU.terrainHalfSize, 0.0);
+	let maxPoint = vec2f(textureDimensions(terrainWaterTexture)) - vec2f(1.001, 1.001);
+	let grid = clamp((xz + vec2f(WU.terrainHalfSize, WU.terrainHalfSize)) / WU.terrainCellSize, vec2f(0.0, 0.0), maxPoint);
+	let base = vec2i(floor(grid));
+	let f = fract(grid);
+
+	let a = textureLoad(terrainWaterTexture, base, 0).xyz;
+	let b = textureLoad(terrainWaterTexture, base + vec2i(1, 0), 0).xyz;
+	let c = textureLoad(terrainWaterTexture, base + vec2i(0, 1), 0).xyz;
+	let d = textureLoad(terrainWaterTexture, base + vec2i(1, 1), 0).xyz;
+	let found = mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+	return vec3f(found.x - outside, found.y + outside, found.z);
 }
 
 fn getHeightmapWorldPos(globalInvoc : vec2u) -> vec3f {
@@ -167,7 +194,14 @@ fn waterVertex(ix: u32, iz: u32) -> WaterVertex {
         var terrainWorldPos = Spaces.topDownInvViewProj * terrainClip;
         terrainWorldPos    /= terrainWorldPos.w;
 
-        let waterDepth = WU.planeYPos - terrainWorldPos.y;
+        // Two sources for what is under the water, blended together:
+		//		near the camera, the top down height map. Fine detail, but it only covers a box around the camera
+		//		everywhere else, the terrain's own texture of the whole world. Coarse, but without it the waves have no idea
+		//		a far off coast is there, and roll straight over the land at full size
+		let boxEdge = min(min(texUV.x, 1.0 - texUV.x), min(texUV.y, 1.0 - texUV.y));	// negative outside the top down camera's box
+		let boxFade = saturate(boxEdge / 0.08);										// 1 well inside the box, 0 at its edge and beyond
+		let worldTerrain = worldTerrainAt(vec2f(worldX, worldZ));
+        let waterDepth = mix(WU.planeYPos - worldTerrain.x, WU.planeYPos - terrainWorldPos.y, boxFade);
 		let fullDepthThreshold = max(WU.fullDepth, 0.001); // where anything beyond this is full depth for full waves
 		
 		//------------------Distance To Shore-----------------
@@ -185,12 +219,10 @@ fn waterVertex(ix: u32, iz: u32) -> WaterVertex {
 		let shore01 = textureLoad(shoreDistanceTexture, vec2i(shoreTexel00.x, shoreTexel11.y)).x;
 		let shore11 = textureLoad(shoreDistanceTexture, shoreTexel11).x;
 
-		// the field only covers the top down camera box, so shore effects fade out before its edge instead of popping at it
+		// the field only covers the top down camera box. Towards its edge the distance goes over to the whole-world one from the terrain
 		let shoreFieldTexelSize = length((Spaces.topDownInvViewProj * vec4f(2.0 / shoreFieldSize.x, 0.0, 0.0, 0.0)).xyz);
 		let shoreFieldRange = ${SHORE_SEARCH_RADIUS}.0 * shoreFieldTexelSize;	// what the field holds for open ocean
-		let boxEdge = min(min(texUV.x, 1.0 - texUV.x), min(texUV.y, 1.0 - texUV.y));	// negative outside the box
-		let boxFade = saturate(boxEdge / 0.08);
-		let shoreDistance = mix(shoreFieldRange, mix(mix(shore00, shore10, shoreFrac.x), mix(shore01, shore11, shoreFrac.x), shoreFrac.y), boxFade);
+		let shoreDistance = mix(min(worldTerrain.y, shoreFieldRange), mix(mix(shore00, shore10, shoreFrac.x), mix(shore01, shore11, shoreFrac.x), shoreFrac.y), boxFade);
 
 		// direction straight away from the shore (gradient of the distance), turned from field texel axes into world x/z
 		let shoreGradTexel = vec2f(mix(shore10 - shore00, shore11 - shore01, shoreFrac.y), mix(shore01 - shore00, shore11 - shore10, shoreFrac.x));
@@ -205,6 +237,10 @@ fn waterVertex(ix: u32, iz: u32) -> WaterVertex {
 		let depthAttenuation = clamp(waterDepth / fullDepthThreshold, 0.0, 1.0); //0.0 to 1.0 from shallow to full depth
 		let shoreAttenuation = pow(smoothstep(0.0, shoreZone, shoreDistance), 1.5);
 		let attenuation = min(depthAttenuation, shoreAttenuation);
+		//------------------Lakes-----------------
+		// A lake's waves are the sea's: the same settings, the same spectrum, faded by the depth and the shore in the same way.
+		//		What it does not have is what needs the open sea to make it: a swell, and surf (and with them, foam)
+		let lake = saturate(worldTerrain.z);
 		let rippleScale = WU.shallowRippleScale;  // depends on wave magnitude. Ripples will be "spikey", this decides shallow water ripple height
 								//		typically its a percent of wave at full height. so 0.1 to 0.3 is good for approachin shallows
 								//		while >1.0 is bigger than regular waves
@@ -267,7 +303,7 @@ fn waterVertex(ix: u32, iz: u32) -> WaterVertex {
 
 			// grows from nothing at the edge of the zone up to the break line, then runs out as it reaches land. Never taller than the water is deep
 			let envelope = smoothstep(0.0, shoreBreakDistance, shoreDistance) * (1.0 - smoothstep(shoreBreakDistance, shoreZone, shoreDistance));
-			let amplitude = min(shoreWaveHeight * envelope * sets * windward, 0.6 * max(waterDepth, 0.0));
+			let amplitude = min(shoreWaveHeight * envelope * sets * windward, 0.6 * max(waterDepth, 0.0)) * (1.0 - lake);	// (no surf on a lake)
 			// capped so the push can never bunch the surface up past the point of folding (squeeze of 1.0), whatever the settings above are
 			let steepness = min(mix(shoreSteepness, 1.0, saturate(shoreDistance / shoreZone)), 0.9 / max(amplitude * k2, 0.0001));
 
@@ -292,11 +328,11 @@ fn waterVertex(ix: u32, iz: u32) -> WaterVertex {
 
 		// deep sea only. It grows with the depth of the water up to the deep sea depth, and with the distance from land,
 		//		which is what keeps it smooth off coasts that drop straight to nothing (and stops it washing over the land)
-		//		outside the top down camera's box neither is known, and that all counts as open deep sea
+		//		(both are known everywhere: from the top down height map near the camera, from the terrain's own texture beyond it)
 		let swellShoreDistance = min(WU.swellShoreDistance, shoreFieldRange);
-		let swellDepthFactor = smoothstep(0.5 * WU.deepSeaDepth, max(WU.deepSeaDepth, 0.001), mix(1000.0, waterDepth, boxFade));
+		let swellDepthFactor = smoothstep(0.5 * WU.deepSeaDepth, max(WU.deepSeaDepth, 0.001), waterDepth);
 		let swellShoreFactor = smoothstep(0.35 * swellShoreDistance, max(swellShoreDistance, 0.001), shoreDistance);
-		let swellSize = WU.swellHeight * min(swellDepthFactor, swellShoreFactor) * distanceFade;	// flattens with distance like everything else, to meet the horizon plane
+		let swellSize = WU.swellHeight * min(swellDepthFactor, swellShoreFactor) * distanceFade * (1.0 - lake);	// flattens with distance like everything else, to meet the horizon plane. And no swell on a lake
 
 		if (swellSize > 0.001) {
 			// the trains: wavelength (x the swell length), share of the height, heading (radians off the wind), and a starting phase so they dont all line up
@@ -374,11 +410,17 @@ fn waterVertex(ix: u32, iz: u32) -> WaterVertex {
 
 		var vertex: WaterVertex;
 		vertex.position = position;
+		// Where there is water standing over the bed a trough never empties it: the surface is held a little above the sand
+		//		(by the depth of the still water, up to a hand's width). On a wide flat shelf every trough would otherwise show as a patch of dry sand
+		if (waterDepth > 0.0) {
+			vertex.position.y = max(position.y, WU.planeYPos - waterDepth + min(waterDepth, 0.35));
+		}
 		vertex.normal = normal;
-		vertex.foam = foam;
-		// depth of the (still) water here, for the see-through shallows. Its only known inside the top down camera's box,
-		//		everywhere else counts as bottomless, which is what keeps the open sea and everything in the distance opaque
-		vertex.depth = mix(1000.0, waterDepth, boxFade);
+		// the fragment shader has to know a lake from the sea as well, and there is no slot left to tell it in. But a lake
+		//		has no foam, so on a lake the foam slot carries "this is a lake" instead, as a number below 0
+		vertex.foam = select(foam, -lake, lake > 0.02);
+		// depth of the (still) water here, for the see-through shallows. Open sea is far too deep to see through, so it stays opaque
+		vertex.depth = waterDepth;
 		return vertex;
 }
 
@@ -1423,6 +1465,11 @@ export const v_water =
 	}
 `;
 
+import { moonShapes } from './f_moon.js';
+import { cloudShadeShapes } from './vfc_clouds.js';
+
+const SSR_STEPS = 24;	// the most steps a reflection takes along its ray looking for something to show
+
 export const f_water =
 `
 	struct LightsUniforms
@@ -1436,8 +1483,11 @@ export const f_water =
 		shadowMapTextureSize : f32,
 		shadowMapAcneBias : f32,
 		displayLightingMode : f32,
+		moonPos : vec4f,			// xyz: towards the moon, w: how bright it is (see f_moon.js)
 	}
 	@group(0) @binding(1) var<uniform> Lights: LightsUniforms;
+
+	${moonShapes}
 
 	struct WaterUniforms
 	{
@@ -1448,11 +1498,19 @@ export const f_water =
 		atmosphereEnabled : f32,	// 1.0 while the atmosphere pass is running and keeping the sky LUT up to date
 		horizonFogDistance : f32,	// distance from the camera where the water is about two thirds faded into the horizon
 		clarityDepth : f32,			// depth of water where the sea bed has faded to about a third. 0 turns the see-through off
+		screen : vec4f,				// for the reflections found on the screen. xy: the two numbers that turn a depth into a distance, z: how strongly they show, w: how far out they are looked for
+		cloudMap : vec4f,			// where the cloud coverage map is: what cloudShadeAt takes (vfc_clouds.js)
 	}
 	@group(0) @binding(0) var<uniform> UBO: WaterUniforms;
 
 	@group(0) @binding(2) var skyLUT: texture_2d<f32>;
 	@group(0) @binding(3) var skySampler: sampler;
+	@group(0) @binding(6) var sceneColor: texture_2d<f32>;		// the frame as it stood before the water was drawn, see screenEffects.js
+	@group(0) @binding(7) var sceneDepth: texture_depth_2d;
+	@group(0) @binding(8) var cloudMap: texture_2d<f32>;		// the clouds from above, see clouds.js
+	@group(0) @binding(9) var cloudMapSampler: sampler;
+
+	${cloudShadeShapes}
 
 	const PI: f32 = 3.14159265;
 
@@ -1475,6 +1533,7 @@ export const f_water =
 
 	//same as vertexoutput without builtin bits
 	struct FragInput {
+		@builtin(position) fragCoord: vec4f,
 		@location(0) fragUV: vec2f,
 		@location(1) fragNormal: vec3f,
 		@location(2) worldPos: vec3f,
@@ -1484,11 +1543,80 @@ export const f_water =
 		return a + t * (b - a);
 	}	
 
+	// interleaved gradient noise (Jimenez): a different number for every pixel, spread evenly
+	fn pixelNoise(pixel: vec2f) -> f32 {
+		return fract(52.9829189 * fract(dot(pixel, vec2f(0.06711056, 0.00583715))));
+	}
+
+	// A place in the world, looked up on the screen. x: how far in front of the camera whatever was drawn there is (the far plane
+	//		where nothing was), y: how far in front of the camera the place itself is, z: 1.0, or 0.0 if the place is not on the screen
+	fn reflectionProbe(place: vec3f) -> vec3f {
+		let clip = UBO.modelViewProjectionMatrix * vec4f(place, 1.0);
+		if (clip.w <= 0.0) {
+			return vec3f(0.0, 0.0, 0.0);
+		}
+		let uv = clip.xy / clip.w * vec2f(0.5, -0.5) + vec2f(0.5, 0.5);
+		if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+			return vec3f(0.0, 0.0, 0.0);
+		}
+		let size = vec2f(textureDimensions(sceneDepth));
+		let depth = textureLoad(sceneDepth, vec2i(min(uv * size, size - vec2f(1.0, 1.0))), 0);
+		return vec3f(UBO.screen.y / (depth + UBO.screen.x), clip.w, 1.0);
+	}
+
+	/*
+		Screen space reflection: what stands over the water in the mirrored direction, found in the frame itself.
+
+		The frame as it stood before the water was drawn is kept, picture and depth (screenEffects.js). From the water, a ray is
+		walked out in the mirrored direction, and at every step the place it has reached is looked up on the screen: if the
+		ray is now behind whatever was drawn there, it went in to it somewhere since the last step. A few halvings find where,
+		and the color of the picture at that spot is the reflection.
+
+		The steps grow as they go (each 1.4 times the last), so 24 of them reach from a reed at the water's edge to a mountain
+		a mile off. Only what is on the screen can be found: a reflection of something out of view falls back to the sky.
+			rgb: the color found, a: how much to trust it (0.0 if nothing was found, fading out near the edges of the screen)
+	*/
+	fn screenReflection(start: vec3f, direction: vec3f, jitter: f32) -> vec4f {
+		var travelled = 1.5 + jitter;	// every pixel starts a little differently, which turns the steps into grain instead of bands
+		var before = 0.0;
+		for (var i = 0; i < ${SSR_STEPS}; i++) {
+			let probe = reflectionProbe(start + direction * travelled);
+			if (probe.z < 0.5) {
+				break;	// off the screen
+			}
+			// gone in behind something, and by no more than it could have since the last step (further behind than that, and it
+			//		is passing behind something that stands in front, a tree trunk say, not hitting it)
+			let behind = probe.y - probe.x;
+			if (behind > 0.0 && behind < 1.5 * (travelled - before) + 2.0) {
+				var nearer = before;
+				var further = travelled;
+				for (var j = 0; j < 5; j++) {
+					let middle = 0.5 * (nearer + further);
+					let halfway = reflectionProbe(start + direction * middle);
+					if (halfway.y > halfway.x) {
+						further = middle;
+					} else {
+						nearer = middle;
+					}
+				}
+				let clip = UBO.modelViewProjectionMatrix * vec4f(start + direction * further, 1.0);
+				let uv = clip.xy / clip.w * vec2f(0.5, -0.5) + vec2f(0.5, 0.5);
+				let inFromEdge = smoothstep(0.0, 0.06, uv.x) * (1.0 - smoothstep(0.94, 1.0, uv.x)) * smoothstep(0.0, 0.06, uv.y) * (1.0 - smoothstep(0.94, 1.0, uv.y));
+				return vec4f(textureSampleLevel(sceneColor, skySampler, uv, 0.0).rgb, inFromEdge);
+			}
+			before = travelled;
+			travelled *= 1.4;
+		}
+		return vec4f(0.0, 0.0, 0.0, 0.0);
+	}
+
 	@fragment
 	fn fragmentMain(input: FragInput) -> //could also use input: VertexOutput instead because its contained within the same file here
 		@location(0) vec4f {
 		
-		let N = normalize(input.fragNormal);                        // renormalize: interpolation shortens it
+		// a lake comes in as a foam factor below 0 (see the end of waterVertex in c_water): it has a color of its own, and no foam
+		let lake = saturate(-input.fragUV.x);
+		let N = normalize(input.fragNormal);							// renormalize: interpolation shortens it
 		let V = normalize(Lights.camPos.xyz - input.worldPos); 		// surface to eye
 		let L = normalize(Lights.sunPos.xyz);                       // directional sun
 		let H = normalize(L + V);                                   // Blinn-Phong halfway vector
@@ -1508,18 +1636,42 @@ export const f_water =
 			let R = reflect(-V, N);
 			skyColor = skyColorAt(vec3f(R.x, max(R.y, HORIZON_LIFT), R.z));	// the sea mirrors the sky, never what is under the horizon
 		}
-		var color    = mix(body, skyColor, F);
+		// and over the sky, whatever stands above the water in that direction: the land, the trees (see screenReflection).
+		//		Not looked for where it would not show: far off, or where the water is looked straight down into
+		let toSurface = distance(Lights.camPos.xyz, input.worldPos);
+		if (UBO.screen.z > 0.0 && toSurface < UBO.screen.w && F > 0.03) {
+			let mirrored = reflect(-V, N);
+			let found = screenReflection(input.worldPos, normalize(vec3f(mirrored.x, max(mirrored.y, 0.03), mirrored.z)), pixelNoise(input.fragCoord.xy));
+			// (a lake is sheltered enough to hold a picture. The sea is rough, and shows less of one)
+			skyColor = mix(skyColor, found.rgb, found.a * UBO.screen.z * mix(0.65, 1.0, lake) * (1.0 - smoothstep(0.7 * UBO.screen.w, UBO.screen.w, toSurface)));
+		}
+		// lake water is darker and greener than the sea: it is shallow, over mud, and full of what grows in it
+		let lakeBody = vec3f(0.07, 0.15, 0.17) * (0.55 + 0.45 * saturate(NdotL));
+		// The clouds over this stretch of water, from the picture of them taken from above. Under cloud the sea is not
+		//		mirroring blue sky any more but the grey underside of the cloud, and the sun is off it
+		let clouded = cloudShadeAt(input.worldPos, L, UBO.cloudMap);
+		let greySky = vec3f(1.0, 1.0, 1.0) * (0.08 + 0.8 * dot(skyColor, vec3f(0.3, 0.4, 0.3)));
+		skyColor = mix(skyColor, greySky, 0.85 * clouded.g);
+
+		// the water's own color is lit like anything else: it goes dark with the day, bar what the moon gives it
+		//		(what it mirrors needs no such thing, the sky it mirrors has gone dark by itself)
+		let waterLight = (vec3f(1.0, 1.0, 1.0) * (0.14 + 0.86 * smoothstep(-0.08, 0.25, L.y)) + 0.5 * moonGlow()) * (0.5 + 0.5 * clouded.r);
+		var color    = mix(mix(body, lakeBody, 0.6 * lake) * waterLight, skyColor, F);
 
 		// Crest foam (whitecaps): jacobian based factor from the water compute pass, riding in uv.x
 		//     foam is rough so it gets plain diffuse light instead of the fresnel/reflection look
 		let foam = saturate(input.fragUV.x);
-		let foamColor = vec3f(0.95, 0.95, 0.95) * (0.55 + 0.45 * saturate(NdotL));
+		let foamColor = vec3f(0.95, 0.95, 0.95) * (0.55 + 0.45 * saturate(NdotL)) * waterLight;
 		color = mix(color, foamColor, foam);
 
 		// Specular sun glint, hidden under the foam
 		let shininess = 300.0;
 		let spec = pow(saturate(dot(N, H)), shininess) * step(0.0, NdotL) * (1.0 - foam);
-		color += Lights.sunCol.rgb * spec * F * 3.0;
+		color += Lights.sunCol.rgb * spec * F * 3.0 * clouded.r;
+		// and the moon's: wider and softer, the long broken path of light across the water towards it
+		let toMoon = normalize(Lights.moonPos.xyz);
+		let moonSpec = pow(saturate(dot(N, normalize(toMoon + V))), 120.0) * step(0.0, dot(N, toMoon)) * (1.0 - foam);
+		color += moonGlow() * moonSpec * F * 3.0 * clouded.r;
 		//color += Lights.sunCol.rgb * Lights.sunIntensity * spec * F * 4.0;
 
 		// Horizon fog: far water fades into the colour of the sky sitting right on the horizon behind it,

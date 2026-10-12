@@ -2,6 +2,7 @@ import * as primitives from '../models/primitives.js'
 import { settings } from './settings.js';
 import {device} from './deviceSelection.js'
 import {canvas} from './deviceSelection.js'
+import * as textureFiltering from './textureFiltering.js'
 import * as transformations from './transformations.js'
 
 import { v_heightMapDepth } from '../shaders/js/v_heightMap.js'
@@ -91,6 +92,7 @@ export function loadModelTextures (models, mtl) {
 	{
 		const resultTexture = device.createTexture({
 			size: [models[i].textureBitmap.width, models[i].textureBitmap.height, 1],
+			mipLevelCount: textureFiltering.mipLevelsFor(models[i].textureBitmap.width, models[i].textureBitmap.height),	//the smaller copies, for filtering (see textureFiltering.js)
 			format: 'rgba8unorm',
 			usage:
 			GPUTextureUsage.TEXTURE_BINDING |
@@ -103,7 +105,8 @@ export function loadModelTextures (models, mtl) {
 			{ texture: resultTexture },
 			[models[i].textureBitmap.width, models[i].textureBitmap.height]
 		);
-		
+		textureFiltering.generateMipmaps(resultTexture);
+				
 		mtl.push(resultTexture);
 	}
 }
@@ -124,7 +127,7 @@ export const entityModels = [];
 entityModels.push(primitives.pIslandHouse);
 entityModels.push(primitives.pLightHouse);
 entityModels.push(primitives.pBench);
-entityModels.push(primitives.pGround);
+//entityModels.push(primitives.pGround);	//the placeholder island, replaced by the procedural land in terrain.js
 //entityModels.push(primitives.pWavePlane);
 
 //test for lighting right now

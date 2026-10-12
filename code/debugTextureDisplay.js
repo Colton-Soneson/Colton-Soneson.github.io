@@ -36,14 +36,14 @@ const debugTextureShaderModule_DEPTH32FLOAT = device.createShaderModule({
   code: c_DebugTexture_DEPTH32FLOAT		
  });
 
-const debugTextureUniformArraySize = 24; // (2 * 4) + (2 * 4) + 4 + 4	canvas size and debug texture size, depth map range, and rescale size
+const debugTextureUniformArraySize = 48; // (2 * 4) + (2 * 4) + 4 + 4	canvas size and debug texture size, depth map range, and rescale size. Then (2 * 4) + 4 for the rgba8 view: how far to slide the texture, and whether to show only its red
 const debugTextureUniformBuffer = device.createBuffer({
   label: "Debug Texture Uniform",
   size: debugTextureUniformArraySize,
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,	//this makes it another GPUBuffer Object but this time uniform
 });
 
-function debugTextureUniformUpdate(texSize, mapRange = settings.displayDepthMapDebugRange) {
+function debugTextureUniformUpdate(texSize, mapRange = settings.displayDepthMapDebugRange, scroll = [0, 0], redOnly = false) {
 	
 	const result = [];
 	
@@ -55,7 +55,12 @@ function debugTextureUniformUpdate(texSize, mapRange = settings.displayDepthMapD
 	
 	result.push(mapRange);
 	result.push(settings.debugTextureRescaleSize);
-		
+
+	result.push(scroll[0]);
+	result.push(scroll[1]);
+	result.push(redOnly ? 1 : 0);
+	result.push(0);
+
 	const finalBuff = new Float32Array(result);
 		
 	device.queue.writeBuffer(debugTextureUniformBuffer, 
@@ -521,10 +526,11 @@ function textureTypeToIndex(aTextureType) {
 	}
 }
 
-export function postEffectPassTextureDebug_RGBA8UNORM(aEncoder, aCanvasTexture, aTextureToDebug) {
+// scroll: how far to slide the texture across the view, in its own texels (it wraps round). redOnly: show its red channel alone, as grey
+export function postEffectPassTextureDebug_RGBA8UNORM(aEncoder, aCanvasTexture, aTextureToDebug, scroll = [0, 0], redOnly = false) {
 	const bindGroups = createBindGroupsDebugTexture_RGBA8UNORM(aCanvasTexture, aTextureToDebug);
-	
-	debugTextureUniformUpdate(aTextureToDebug);
+
+	debugTextureUniformUpdate(aTextureToDebug, settings.displayDepthMapDebugRange, scroll, redOnly);
 	
 	// Start a compute pass 
 	const computePass = aEncoder.beginComputePass();	//do before render pass so RP can take latest CP results

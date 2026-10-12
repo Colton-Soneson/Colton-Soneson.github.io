@@ -1,98 +1,46 @@
 import {device} from './deviceSelection.js'
 import {context} from './deviceSelection.js'
-import {canvas} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
-
-import { mat4, vec3 } from 'https://wgpu-matrix.org/dist/3.x/wgpu-matrix.module.js';
 
 import { settings } from './settings.js';
 
-import { c_grass } from '../shaders/js/vfc_grass.js'
-import { v_grass } from '../shaders/js/vfc_grass.js'
-import { f_grass } from '../shaders/js/vfc_grass.js'
-import { GRASS_WORKGROUP_SIZE } from '../shaders/js/vfc_grass.js'
-import { GRASS_BUFFER_SIZE } from '../shaders/js/vfc_grass.js'
+import { vf_grass } from '../shaders/js/vfc_grass.js'
+import { GRASS_MAX_RINGS } from '../shaders/js/vfc_grass.js'
+import { GRASS_RING_SEGMENTS } from '../shaders/js/vfc_grass.js'
+import { GRASS_RING_SHIFT } from '../shaders/js/vfc_grass.js'
 
 import * as transformations from './transformations.js'
-import * as scene from './scene.js'
-import * as primitives from '../models/primitives.js'
+import * as terrain from './terrain.js'
+import { FOREST_THRESHOLD } from './terrainGenerator.js'
+import * as wind from './wind.js'
+
+//the grass fades into the horizon color, read from the sky view LUT (same as the water and the land)
+import {skyViewLUTtexture} from './atmosphere.js'
+
+//GET THE LIGHT CREATION OUT OF THE MAIN
+import {uniformBufferLights} from './rotatingCube.js'
+
+/*
+	Procedural grass on the grassland zones. See the top of vfc_grass.js for how it works.
+
+	There is nothing to keep on this side but one small uniform buffer: no blade model and no vertex buffer.
+	The field is one draw call for each level of detail ring, one instance per blade and a few vertices per instance,
+	and the vertex shader places and shapes every blade itself from the terrain texture that terrain.js keeps.
+*/
 
 //time
 let startTime = Date.now();
 
-//Model Handling
-//-------------------------------------------------
-//models are not among scene entites, but a list just for here
-
-const grassEntityModels = [];
-grassEntityModels.push(primitives.pGrassBlade);
-
-console.log(grassEntityModels);
-const grassEntityModelsStride = [];
-const grassShaderVertexBufferArray = scene.loadModelsToVBArray(grassEntityModels, grassEntityModels.length, "grass shader VBA", grassEntityModelsStride);
-
-const grassModelTexturesList = [];
-scene.loadModelTextures(grassEntityModels, grassModelTexturesList);
-console.log("Grass Textures: ", grassModelTexturesList);
-
-const grassVertexBuffer = device.createBuffer({
-	label: "grass model vertices",		//just helps to identify object, can be anything you type
-	size: grassShaderVertexBufferArray.byteLength,	//for 12 float vertices thats 48 bytes, cant be resized after creation
-	usage: GPUBufferUsage.VERTEX | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,	//its use is for vertex data, and that you want to copy data into it, ALSO for use as storage buffer in compute
-});
-device.queue.writeBuffer(grassVertexBuffer, /*bufferOffset=*/0, grassShaderVertexBufferArray); //copy vertex data to buffer
-//console.log("grass vertex buffer input: ", grassShaderVertexBufferArray);
-
-// compute shaders and buffers
-//-------------------------------------------------
-const grassComputeShaderModule = device.createShaderModule({
-  label: "c_grass",
-  code: c_grass	
+const grassShaderModule = device.createShaderModule({
+  label: "vf_grass",
+  code: vf_grass
 });
 
-const grassFragShaderModule = device.createShaderModule({
-  label: "f_grass",
-  code: f_grass	
-});
-
-const grassVertexShaderModule = device.createShaderModule({
-  label: "v_grass",
-  code: v_grass	
-});
-
-
-//model list specific
-const uboOffset = 256;	//this is a defaulted max for UBO, nothing I wrote equals up to 256, its a limiter
-const totalGrassUniformArraySize = 64; //(4 * 4 * 4) 4x4 matrix for MVP, forget the rest for in shader
 const grassUniformBuffer = device.createBuffer({
-  label: "grass space Uniform",
-  size: totalGrassUniformArraySize,
+  label: "grass Uniform",
+  size: 512,
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 });
-
-//compute grass anim data
-const uniformArrayComputeGrass= 128;	//default for now
-const uniformBufferComputeGrass = device.createBuffer({
-  label: "grass Compute settings Uniform Buffer",
-  size: uniformArrayComputeGrass,
-  usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,	//this makes it another GPUBuffer Object but this time uniform
-});
-
-//compute grass total blade vertex data output
-//	the size has to be set here, BUT the "writeBuffer" functionality is done within the compute shader
-//	!!!ONE ISSUE!!! so this cant be as big as a vertex buffer (max size 256mb), we have to limit it to the max size of a storage buffer (128mb)
-let totalGrassVertexBuffer;
-export function grassUpdateStorageVertexBuffer() {
-	const totalGrassVertexArray = settings.grassTotalBladeCount *  grassEntityModelsStride[0] * Float32Array.BYTES_PER_ELEMENT;
-	const GVB = device.createBuffer({
-		label: "total grass vertices",		//just helps to identify object, can be anything you type
-		size: totalGrassVertexArray,
-		usage: GPUBufferUsage.VERTEX | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,	//its use is for vertex data, and that you want to copy data into it, ALSO for use as storage buffer in compute
-	});
-	
-	totalGrassVertexBuffer = GVB;
-}
-grassUpdateStorageVertexBuffer(); // run the function
 
 //linear sampling
 const linSampler = device.createSampler({
@@ -100,166 +48,146 @@ const linSampler = device.createSampler({
   minFilter: 'linear',
 });
 
-function getGrassComputeInfo() {
-	const grassCompBuffer = [];
-	
-	grassCompBuffer.push(settings.grassTotalBladeCount);
-	grassCompBuffer.push(settings.grassDensityPerTile);
-	
-	const currentTime = (Date.now() - startTime)/ 1000.0; //time in ms
-	grassCompBuffer.push(currentTime);	
-		
-	return new Float32Array(grassCompBuffer);
+/*
+	The level of detail rings, from the settings. Returns one { side, cellSize, radius, segments } for each:
+		radius		how far out the ring reaches. The first reaches grassLodNearDistance, the last the draw distance, and the ones
+					between are spaced so each is the same number of times further out than the one before
+		side		blades along one side of its square grid. The blade count is shared out between the rings: every ring gets
+					grassLodFarBlades times the blades of the ring inside it
+		cellSize	so the grid just covers the ring
+		segments	pieces each of its blades is cut into
+*/
+function grassRings() {
+	const count = Math.min(Math.max(Math.round(settings.grassLodRings), 1), GRASS_MAX_RINGS);
+	const far = Math.max(settings.grassDrawDistance, 1);
+	const near = Math.min(Math.max(settings.grassLodNearDistance, 1), far);
+	const growth = count > 1 ? Math.pow(far / near, 1 / (count - 1)) : 1;
+	const share = Math.min(Math.max(settings.grassLodFarBlades, 0.05), 1);
+
+	let shares = 0;
+	for (let ring = 0; ring < count; ring++) {
+		shares += Math.pow(share, ring);
+	}
+
+	const rings = [];
+	for (let ring = 0; ring < count; ring++) {
+		const radius = count > 1 ? near * Math.pow(growth, ring) : far;
+		const blades = settings.grassTotalBladeCount * Math.pow(share, ring) / shares;
+		const side = Math.min(Math.max(Math.floor(Math.sqrt(blades)), 1), 4000);	// (4000 a side is 16 million blades, all the instance number has room for)
+		rings.push({ side: side, cellSize: 2 * radius / side, radius: radius, segments: GRASS_RING_SEGMENTS[ring] });
+	}
+	return rings;
 }
 
-function grassVFUniformBufferUpdates(grassBladeModels, numInstances) {	//future will have a grass model list with multiple types
-	
-	// !!!!!!!!!!! THIS WILL TAKE IN THE MATH AND POSITIONAL DATA DONE FROM THE COMPUTE SHADER !!!!!!!!!!!!!!!!!
-	
-	for(let i = 0; i < grassBladeModels.length; i++) {
-		//const spaceTrans = transformations.getMatrixTransformSpaces(grassBladeModels[i], numInstances);
-		
-		const bufferResult = [];
-		
-		//for now this will be model mat, but its should just be default everything to save time (but scale might be good to avoid model crap)
-		const modelMatrix = transformations.getModelMatrix(grassBladeModels[i].worldTranslation, 
-															grassBladeModels[i].worldRotation, 
-															grassBladeModels[i].worldScale);
-		const modelViewMat = mat4.mul(transformations.getViewMatrix(), modelMatrix);
-		const modelViewProjectionMatrix = mat4.mul(transformations.projectionMatrix, modelViewMat);
-		
-		for(let i = 0; i < 16; i++) {
-			bufferResult.push(modelViewProjectionMatrix[i]);
-		}
-		
-		const result = new Float32Array(bufferResult);
-		const offset = i * totalGrassUniformArraySize;
-		
-		device.queue.writeBuffer(grassUniformBuffer, 
-								offset,
-								result.buffer,
-								result.byteOffset,
-								result.byteLength);
+function grassUniformBufferUpdates() {
+	const bufferResult = [];
+
+	const viewProjectionMatrix = transformations.getViewProj();
+	for(let i = 0; i < 16; i++) {
+		bufferResult.push(viewProjectionMatrix[i]);
 	}
-	
-}
 
+	bufferResult.push(settings.camPosX);
+	bufferResult.push(settings.camPosY);
+	bufferResult.push(settings.camPosZ);
+	bufferResult.push((Date.now() - startTime) / 1000.0);	//time in seconds
 
-function grassComputeBuffersUpdate(grassBladeModels) {
-	
-	for(let i = 0; i < grassBladeModels.length; i++) {		
-		const bufferResult = [];
-		
-		//for now this will be model mat, but its should just be default everything to save time (but scale might be good to avoid model crap)
-		const modelMatrix = transformations.getModelMatrix(grassBladeModels[i].worldTranslation, 
-															grassBladeModels[i].worldRotation, 
-															grassBladeModels[i].worldScale);
-		const modelViewMat = mat4.mul(transformations.getViewMatrix(), modelMatrix);
-		const modelViewProjectionMatrix = mat4.mul(transformations.projectionMatrix, modelViewMat);
-		
-		for(let i = 0; i < 16; i++) {
-			bufferResult.push(modelViewProjectionMatrix[i]);
+	//terrain
+	bufferResult.push(settings.terrainWorldSize * 0.5);
+	bufferResult.push(terrain.land.cellSize);
+	bufferResult.push(settings.waterWorldPosY);
+	bufferResult.push(settings.terrainBeachHeight);
+
+	//blade
+	bufferResult.push(settings.grassBladeHeight);
+	bufferResult.push(settings.grassBladeWidth);
+	bufferResult.push(FOREST_THRESHOLD);
+	bufferResult.push(settings.grassWindStrength);
+
+	//grid
+	const rings = grassRings();
+	bufferResult.push(rings.length);
+	bufferResult.push(settings.grassDrawDistance);
+	bufferResult.push(settings.waterHorizonFogDistance);
+	bufferResult.push(settings.enableAtmosphere ? 1 : 0);
+
+	//wind
+	bufferResult.push(...wind.windUniformValues());	//the two rows windAt takes (vf_wind.js)
+	bufferResult.push(settings.windDirection[0]);
+	bufferResult.push(settings.windDirection[1]);
+	bufferResult.push(settings.terrainBankHeight);
+	bufferResult.push(0);
+
+	//clumps
+	bufferResult.push(settings.grassClumpSize);
+	bufferResult.push(settings.grassClumpPull);
+	bufferResult.push(settings.grassClumpHeight);
+	bufferResult.push(settings.grassClumpFacing);
+	bufferResult.push(settings.grassClumpColor);
+	bufferResult.push(0, 0, 0);
+
+	//the rings, and nothing for the ones there are not
+	for (let ring = 0; ring < GRASS_MAX_RINGS; ring++) {
+		if (ring < rings.length) {
+			bufferResult.push(rings[ring].side, rings[ring].cellSize, rings[ring].radius, rings[ring].segments);
+		} else {
+			bufferResult.push(1, 1, 0, 1);
 		}
-		
-		const result = new Float32Array(bufferResult);
-		const offset = i * totalGrassUniformArraySize;
-		
-		device.queue.writeBuffer(grassUniformBuffer, 
-								offset,
-								result.buffer,
-								result.byteOffset,
-								result.byteLength);
 	}
-	
-	
-	const gcInfo = getGrassComputeInfo();
 
-	device.queue.writeBuffer(uniformBufferComputeGrass, 
-									0,	//apparently uniform buffer size defaults to a need of 256 
-									gcInfo.buffer,
-									gcInfo.byteOffset,
-									gcInfo.byteLength);
-									
-	
-	//NEW PLAN
-	// 1) pass in just one single blade model's vertex data into compute shader in a uniform buffer, along with some extra data generic to all grass (average height, average width, blades per clump, etc)
-	//
+	const result = new Float32Array(bufferResult);
+	device.queue.writeBuffer(grassUniformBuffer, 0, result.buffer, result.byteOffset, result.byteLength);
 }
 
 // Layouts
 //-------------------------------------------------
-// Create the bind group layout and pipeline layout.
 const bindGroupVFLayout = device.createBindGroupLayout({
   label: "Grass Bind Group VF Layout",
   entries: [
   {
     binding: 0,
     visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
-    buffer: {
-		type: 'uniform'
-	} 
-  }
-  ]
-});
-
-const bindGroupCLayout = device.createBindGroupLayout({
-  label: "Grass Bind Group C Layout",
-  entries: [{
-    binding: 0,
-    visibility: GPUShaderStage.COMPUTE,	//spaces
-    buffer: {} 
+    buffer: {}
   },
   {
     binding: 1,
-    visibility: GPUShaderStage.COMPUTE,	//settings
-    buffer: {} 
+    visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,	//lights
+    buffer: {}
   },
   {
-	binding: 2,								
-    visibility:  GPUShaderStage.COMPUTE,	//input vertex data for single blade
-    buffer: {
-		type: "read-only-storage",
-		access: "read-only",
+    binding: 2,								//terrain fields, read texel by texel in the vertex shader
+    visibility: GPUShaderStage.VERTEX,
+    texture: {
+		sampleType: 'unfilterable-float',
 	}
   },
   {
-	binding: 3,								
-    visibility:  GPUShaderStage.COMPUTE,	//output vertex data for all blades
-    buffer: {
-		type: "storage",
-		access: "read-write",
-	}
+    binding: 3,								//sky view LUT
+    visibility: GPUShaderStage.FRAGMENT,
+    texture: {}
+  },
+  {
+    binding: 4,
+    visibility: GPUShaderStage.FRAGMENT,
+    sampler: {}
+  },
+  {
+    binding: 5,								//the wind texture, read in the vertex shader to bend the blades
+    visibility: GPUShaderStage.VERTEX,
+    texture: {}
+  },
+  {
+    binding: 6,
+    visibility: GPUShaderStage.VERTEX,
+    sampler: {}
   }
   ]
 });
 
-//multi bind group
-function createVFBindGroupsGrass(numModels) {
-	
-	const result = [];
-	for(let i = 0; i < numModels; ++i) {
-		result.push(
-		device.createBindGroup({
+function createVFBindGroupGrass() {
+	return device.createBindGroup({
 			label: "Grass VF bind group",
 			layout: bindGroupVFLayout,
-			entries: [
-			{
-				binding: 0,
-				resource: { buffer: grassUniformBuffer }
-			}
-			]
-		}));
-	}
-	return result;
-}
-
-console.log(grassShaderVertexBufferArray);
-function createCompBindGroupGrass() {
-	
-	const result = 
-		device.createBindGroup({
-			label: "Grass Comp bind group",
-			layout: bindGroupCLayout,
 			entries: [
 			{
 				binding: 0,
@@ -267,59 +195,58 @@ function createCompBindGroupGrass() {
 			},
 			{
 				binding: 1,
-				resource: { buffer: uniformBufferComputeGrass }
+				resource: { buffer: uniformBufferLights }
 			},
 			{
 				binding: 2,
-				resource: { buffer: grassVertexBuffer }
+				resource: terrain.terrainFieldsTexture.createView()
 			},
 			{
 				binding: 3,
-				resource: { buffer: totalGrassVertexBuffer }
+				resource: skyViewLUTtexture.createView()
+			},
+			{
+				binding: 4,
+				resource: linSampler
+			},
+			{
+				binding: 5,
+				resource: wind.windTextureView
+			},
+			{
+				binding: 6,
+				resource: wind.windSampler
 			}
 			]
 		});
-	return result;
 }
 
-const grassVFPipelineLayout = device.createPipelineLayout({
-  label: "grass VF Pipeline Layout",
-  bindGroupLayouts: [ bindGroupVFLayout ],
-});
-
-const grassCompPipelineLayout = device.createPipelineLayout({
-  label: "grass comp Pipeline Layout",
-  bindGroupLayouts: [ bindGroupCLayout ],
-});
-
-// Pipelines
+// Pipeline
 //-------------------------------------------------
-//WebGPU handles render and computer pipelines seperately, they cannot be combined as one
 const grassPipeline = device.createRenderPipeline({
   label: "grass VF pipeline",
-  layout: grassVFPipelineLayout,	//allows for use of same bind groups as the renderpipeline
-	vertex: {							// vertex stage details
-		module: grassVertexShaderModule,	
-		entryPoint: "vertexMain",		// our name of function, as you can have multiple vertex/fragment functions in one shader module
-		buffers: [scene.vertexBufferLayout]	// GPUVertexBufferLayout that describe data packed into vertex buffers used
+  layout: device.createPipelineLayout({
+	label: "grass VF Pipeline Layout",
+	bindGroupLayouts: [ bindGroupVFLayout ],
+  }),
+	vertex: {
+		module: grassShaderModule,
+		entryPoint: "vertexMain",
+		buffers: []					// none: the vertex shader makes every blade from its vertex and instance number
 	},
-	fragment: {							// fragment stage details
-		module: grassFragShaderModule,		
+	fragment: {
+		module: grassShaderModule,
 		entryPoint: "fragmentMain",
-		targets: [{						// array of dictionaries giving details (like the texture "format") of color attachments pipeline outputs to
-		format: canvasFormat			// we used textures from canvas context, and value saved from canvasFormat for format, so pass the same here
+		targets: [{
+		format: canvasFormat
 		}]
 	},
-	
+
 	primitive: {
-		topology: 'triangle-list',
-	
-		// Backface culling since the cube is solid piece of geometry.
-		// Faces pointing away from the camera will be occluded by faces
-		// pointing toward the camera.
-		cullMode: 'none',
+		topology: 'triangle-strip',	// one strip per blade, a new strip starts with every instance
+		cullMode: 'none',			// blades are seen from both sides
 	},
-	
+
 	depthStencil: {
 		depthWriteEnabled: true,
 		depthCompare: 'less',
@@ -327,42 +254,15 @@ const grassPipeline = device.createRenderPipeline({
 	},
 });
 
-// Compute Pipeline has to be seperate
-const grassComputePipeline = device.createComputePipeline({
-  label: "grass C pipeline",
-  layout: grassCompPipelineLayout,	//allows for use of same bind groups as the renderpipeline
-	compute: {
-		module: grassComputeShaderModule,
-		entryPoint: "computeMain",
-	},
-});
-
-
-	//console.log("Total Grass Vert array size : ", totalGrassVertexArray);
-	//console.log("single grass blade vertex num: ", grassEntityModels[0].vertices.length / 3);
-	//console.log("Total Grass Vert array size divide by (12 pos + 8 uv + 12 norm = 32) divide by verts per blade model (10) should be number of blades: ", (totalGrassVertexArray / 32 / (grassEntityModels[0].vertices.length / 3)));
-
 export function grassPass(aEncoder, mainpassDepthTexture) {
-		
-	// Start a compute pass place and animate the instances
-	const bindCGroup = createCompBindGroupGrass();
-	grassComputeBuffersUpdate(grassEntityModels);
-	
-	const computePass = aEncoder.beginComputePass();
-	
-	computePass.setPipeline(grassComputePipeline);
-	computePass.setBindGroup(0, bindCGroup);
-	
-	//In WebGPU, the number of times a compute shader will be invoked depends on the number of workgroups you dispatch and the workgroup size
-	//	we take the number of times to invoke, divide by workgroups size
-	computePass.dispatchWorkgroups(Math.ceil( settings.grassTotalBladeCount / GRASS_WORKGROUP_SIZE[0]));			//CHECK THIS SIZE!!!!!!!!!!!
-	computePass.end();
-		
-	const bindVFGroups = createVFBindGroupsGrass(grassEntityModels.length);
-	grassVFUniformBufferUpdates(grassEntityModels, settings.grassTotalBladeCount);
-	
-	
-	// start a pass to render the grass instances
+
+	// nothing to grow on without the land
+	if (!settings.enableTerrain || !terrain.terrainFieldsTexture) {
+		return;
+	}
+
+	grassUniformBufferUpdates();
+
 	const pass = aEncoder.beginRenderPass({
 		colorAttachments: [{
 		view: context.getCurrentTexture().createView(),
@@ -372,25 +272,19 @@ export function grassPass(aEncoder, mainpassDepthTexture) {
 		}],
 		depthStencilAttachment: {
 			view: mainpassDepthTexture.createView(),
-			
-			depthLoadOp: 'load',	//check if load instead
+			depthLoadOp: 'load',
 			depthStoreOp: 'store',
 		},
 	});
 
-	pass.setPipeline(grassPipeline);					// shaders used, layout of vertex data, other relevant state data
-	pass.setVertexBuffer(0, totalGrassVertexBuffer);	// swapped from single blade to new total grass blades
-	
-	let prevModCombo = 0;
-	for(let i = 0; i < grassEntityModels.length; ++i)
-	{
-		//with 24 verts to a 8 triangle grass model, thats 24 * ((3 + 2 + 3 for vertex layout) * 4 byte size) = 768.
-		let mod = (grassEntityModelsStride[i] * settings.grassTotalBladeCount) / (primitives.totalStride / 4);	//ACTUAL
-		pass.setBindGroup(0, bindVFGroups[i]);
-		pass.draw(mod, /*higher instance to increase density */ 1, prevModCombo);		// def for draw here is draw(vertexCount, instanceCount, firstVertex)
-		prevModCombo += mod;
-	}
-	prevModCombo = 0;
-		
+	pass.setPipeline(grassPipeline);
+	pass.setBindGroup(0, createVFBindGroupGrass());
+
+	// one draw call to a ring: 2 vertices for every piece of a blade and 1 for its tip, one instance for every cell of the ring's grid.
+	//		The instance numbers of a ring start at the ring's number shifted up, which is how the vertex shader knows the ring
+	grassRings().forEach((ring, number) => {
+		pass.draw(ring.segments * 2 + 1, ring.side * ring.side, 0, number * Math.pow(2, GRASS_RING_SHIFT));		// draw(vertexCount, instanceCount, firstVertex, firstInstance)
+	});
+
 	pass.end();
 }

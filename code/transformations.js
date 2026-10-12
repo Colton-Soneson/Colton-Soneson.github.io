@@ -9,8 +9,29 @@ import { settings } from './settings.js';
 const aspect = canvas.width / canvas.height;
 export const projectionMatrix = mat4.perspective((2 * Math.PI) / 5, aspect, settings.camNearPlane, settings.camFarPlane);
 
+// Fly camera direction. Yaw is the compass turn (0 looks down -z, a positive turn swings right, towards +x),
+//		pitch is the tilt above (+) or below (-) level. Both in radians
+export function getCameraForward() {
+	const level = Math.cos(settings.camPitch);
+	return [Math.sin(settings.camYaw) * level, Math.sin(settings.camPitch), -Math.cos(settings.camYaw) * level];
+}
+
+// straight out to the camera's right, always level
+export function getCameraRight() {
+	return [Math.cos(settings.camYaw), 0, Math.sin(settings.camYaw)];
+}
+
 export function getViewMatrix() {
-	
+
+	// fly camera: looks where its yaw and pitch point, see cameraControls.js
+	if (settings.cameraFlyMode) {
+		const forward = getCameraForward();
+		return mat4.lookAt([settings.camPosX, settings.camPosY, settings.camPosZ],
+					   [settings.camPosX + forward[0], settings.camPosY + forward[1], settings.camPosZ + forward[2]],
+					   [0,		 1,		  0]);
+	}
+
+	// otherwise the camera always looks at the origin
 	//this is to handle if we have our camera position parallel to the up vector, so change the up vector to right facing
 	if (settings.camPosY > 0 && Math.abs(settings.camPosX) < 1e-6 && Math.abs(settings.camPosZ) < 1e-6) {
 		return mat4.lookAt([settings.camPosX, settings.camPosY, settings.camPosZ],
@@ -25,6 +46,23 @@ export function getViewMatrix() {
 
 export function getViewProj() {
 	return mat4.mul(projectionMatrix, getViewMatrix());
+}
+
+// The 6 planes that box in what the camera sees, each as [x, y, z, d] with the normal pointing inwards. Read straight off the
+//		view projection matrix (Gribb and Hartmann): a point is inside when x * p.x + y * p.y + z * p.z + d is 0 or more for all 6
+export function getFrustumPlanes() {
+	const m = getViewProj();
+	const row = (i) => [m[i], m[4 + i], m[8 + i], m[12 + i]];
+	const r0 = row(0), r1 = row(1), r2 = row(2), r3 = row(3);
+	const planes = [
+		r3.map((v, i) => v + r0[i]), r3.map((v, i) => v - r0[i]),		// left, right
+		r3.map((v, i) => v + r1[i]), r3.map((v, i) => v - r1[i]),		// bottom, top
+		r2, r3.map((v, i) => v - r2[i]),								// near, far
+	];
+	return planes.map((plane) => {
+		const length = Math.hypot(plane[0], plane[1], plane[2]);
+		return plane.map((v) => v / length);
+	});
 }
 
 export function getInvViewProj() {

@@ -13,20 +13,97 @@ export const imguiParams = {
     camPosZ: settings.camPosZ,
     camFarPlane: settings.camFarPlane,
     camNearPlane: settings.camNearPlane,
+    cameraFlyMode: settings.cameraFlyMode,
+    cameraFlySpeed: settings.cameraFlySpeed,
     // Sun
     sunPosX: settings.sunPosX,
     sunPosY: settings.sunPosY,
     sunPosZ: settings.sunPosZ,
     sunIntensity: settings.sunIntensity,
     sunCycleAngle: settings.sunCycleAngle,
+    timeCycleMultiplier: settings.timeCycleMultiplier,
+    sunCycleCount: settings.sunCycleCount,
+    // Moon
+    enableMoon: settings.enableMoon,
+    moonPosX: settings.moonPosX,
+    moonPosY: settings.moonPosY,
+    moonPosZ: settings.moonPosZ,
+    moonBrightness: settings.moonBrightness,
+    moonSize: settings.moonSize,
     // Shadows
     shadowMapPCFKernelSize: settings.shadowMapPCFKernelSize,
     shadowMapAcneBias: settings.shadowMapAcneBias,
     // Post Effects
     enablePostEffects: settings.enablePostEffects,
+    enableScreenShadows: settings.enableScreenShadows,
+    screenShadowStrength: settings.screenShadowStrength,
+    screenShadowThickness: settings.screenShadowThickness,
+    screenShadowContrast: settings.screenShadowContrast,
+    enableSSAO: settings.enableSSAO,
+    ssaoRadius: settings.ssaoRadius,
+    ssaoStrength: settings.ssaoStrength,
+    enableSSR: settings.enableSSR,
+    ssrStrength: settings.ssrStrength,
+    ssrDistance: settings.ssrDistance,
+    displayScreenShading: settings.displayScreenShading,
+    // Display
+    enableFXAA: settings.enableFXAA,
+    fxaaSubpixel: settings.fxaaSubpixel,
+    anisotropicFiltering: settings.anisotropicFiltering,
     // Grass
+    // Terrain
+    enableTerrain: settings.enableTerrain,
+    terrainSeed: settings.terrainSeed,
+    terrainResolution: settings.terrainResolution,
+    terrainDetailDistance: settings.terrainDetailDistance,
+    terrainLandScale: settings.terrainLandScale,
+    terrainSeaFloorDepth: settings.terrainSeaFloorDepth,
+    terrainShelfWidth: settings.terrainShelfWidth,
+    terrainHillHeight: settings.terrainHillHeight,
+    terrainWoodland: settings.terrainWoodland,
+    terrainLakes: settings.terrainLakes,
+    terrainMountainHeight: settings.terrainMountainHeight,
+    terrainBeachHeight: settings.terrainBeachHeight,
+    terrainBankHeight: settings.terrainBankHeight,
+    terrainSnowLine: settings.terrainSnowLine,
+    terrainRockDetail: settings.terrainRockDetail,
+    terrainRockVeins: settings.terrainRockVeins,
+    terrainGroundDetail: settings.terrainGroundDetail,
+    terrainDepthBias: settings.terrainDepthBias,
     enableGrass: settings.enableGrass,
     grassTotalBladeCount: settings.grassTotalBladeCount,
+    grassDrawDistance: settings.grassDrawDistance,
+    grassLodRings: settings.grassLodRings,
+    grassLodNearDistance: settings.grassLodNearDistance,
+    grassLodFarBlades: settings.grassLodFarBlades,
+    grassClumpSize: settings.grassClumpSize,
+    grassClumpPull: settings.grassClumpPull,
+    grassClumpHeight: settings.grassClumpHeight,
+    grassClumpFacing: settings.grassClumpFacing,
+    grassClumpColor: settings.grassClumpColor,
+    grassBladeHeight: settings.grassBladeHeight,
+    grassBladeWidth: settings.grassBladeWidth,
+    grassWindStrength: settings.grassWindStrength,
+    // Boulders
+    enableBoulders: settings.enableBoulders,
+    boulderAmount: settings.boulderAmount,
+    boulderDrawDistance: settings.boulderDrawDistance,
+    // Forest
+    enableForest: settings.enableForest,
+    forestSeed: settings.forestSeed,
+    forestUnitsPerMetre: settings.forestUnitsPerMetre,
+    forestTreeSpacing: settings.forestTreeSpacing,
+    forestMaxSlope: settings.forestMaxSlope,
+    forestConiferShare: settings.forestConiferShare,
+    forestLifeCycle: settings.forestLifeCycle,
+    forestYearsPerSunCycle: settings.forestYearsPerSunCycle,
+    forestYear: settings.forestYear,
+    forestTreeCount: settings.forestTreeCount,
+    forestDetailDistance: settings.forestDetailDistance,
+    forestMidDistance: settings.forestMidDistance,
+    forestBillboardDistance: settings.forestBillboardDistance,
+    forestDrawDistance: settings.forestDrawDistance,
+    forestWindStrength: settings.forestWindStrength,
     // Water
     enableWater: settings.enableWater,
     waterWaveSteepness: settings.waterWaveSteepness,
@@ -59,6 +136,35 @@ export const imguiParams = {
 	waterSwellShoreDistance: settings.waterSwellShoreDistance,
     // Atmosphere
     enableAtmosphere: settings.enableAtmosphere,
+    // Clouds and weather
+    enableClouds: settings.enableClouds,
+    weatherMode: settings.weatherMode,
+    weatherSeed: settings.weatherSeed,
+    weatherNow: settings.weatherNow,
+    cloudForceTower: settings.cloudForceTower,
+    cloudCoverageBias: settings.cloudCoverageBias,
+    cloudDensity: settings.cloudDensity,
+    cloudHeight: settings.cloudHeight,
+    cloudLayers: settings.cloudLayers,
+    cloudCrispness: settings.cloudCrispness,
+    cloudDriftSpeed: settings.cloudDriftSpeed,
+    cloudSteps: settings.cloudSteps,
+    cloudDrawDistance: settings.cloudDrawDistance,
+    // Particles
+    enableLeaves: settings.enableLeaves,
+    leafAmount: settings.leafAmount,
+    leafSize: settings.leafSize,
+    leafWeight: settings.leafWeight,
+    enableSeaSpray: settings.enableSeaSpray,
+    sprayAmount: settings.sprayAmount,
+    enableRain: settings.enableRain,
+    rainAmount: settings.rainAmount,
+    rainDistance: settings.rainDistance,
+    // Wind
+    windDirectionAngle: settings.windDirectionAngle,
+    windGustiness: settings.windGustiness,
+    windGustSize: settings.windGustSize,
+    windGustSpeed: settings.windGustSpeed,
     additionalAltitude: settings.additionalAltitude,
     atmosphereScaleToScene: settings.atmosphereScaleToScene,
 	atmosphereSunRotationDemo: settings.atmosphereSunRotationDemo,
@@ -93,7 +199,9 @@ camFolder.add(imguiParams, 'camPosX', -2000, 2000).name('Pos X');
 camFolder.add(imguiParams, 'camPosY', -2000, 2000).name('Pos Y');
 camFolder.add(imguiParams, 'camPosZ', -2000, 2000).name('Pos Z');
 camFolder.add(imguiParams, 'camNearPlane', 0.1, 100).name('Near Plane');
-camFolder.add(imguiParams, 'camFarPlane', 100, 10000).name('Far Plane');
+camFolder.add(imguiParams, 'camFarPlane', 100, 20000).name('Far Plane');
+camFolder.add(imguiParams, 'cameraFlyMode').name('Fly Camera (WASD + RMB)');
+camFolder.add(imguiParams, 'cameraFlySpeed', 5, 5000, 5).name('Fly Speed');
 
 const sunFolder = gui.addFolder('Sun');
 sunFolder.add(imguiParams, 'sunPosX', -2000, 2000).name('Pos X');
@@ -101,18 +209,134 @@ sunFolder.add(imguiParams, 'sunPosY', -2000, 2000).name('Pos Y');
 sunFolder.add(imguiParams, 'sunPosZ', -2000, 2000).name('Pos Z');
 sunFolder.add(imguiParams, 'sunIntensity', 0, 500000).name('Intensity');
 sunFolder.add(imguiParams, 'sunCycleAngle', 0, 6.2832).name('Cycle Angle (2 pi)');
+sunFolder.add(imguiParams, 'timeCycleMultiplier', 0, 100, 0.1).name('Time Multiplier');
+sunFolder.add(imguiParams, 'sunCycleCount').name('Sun Cycles (days)').disable();
+
+const moonFolder = gui.addFolder('Moon');	//while the sun cycle runs (Atmosphere) it moves the moon as well, opposite the sun
+moonFolder.add(imguiParams, 'enableMoon').name('Enable');
+moonFolder.add(imguiParams, 'moonPosX', -2000, 2000).name('Pos X');
+moonFolder.add(imguiParams, 'moonPosY', -2000, 2000).name('Pos Y');
+moonFolder.add(imguiParams, 'moonPosZ', -2000, 2000).name('Pos Z');
+moonFolder.add(imguiParams, 'moonBrightness', 0, 4, 0.05).name('Brightness');
+moonFolder.add(imguiParams, 'moonSize', 0.25, 8, 0.05).name('Size (degrees)');
 
 const shadowFolder = gui.addFolder('Shadows');
 shadowFolder.add(imguiParams, 'shadowMapPCFKernelSize', 1, 16, 1).name('PCF Kernel Size');
 shadowFolder.add(imguiParams, 'shadowMapAcneBias', 0, 0.05, 0.0001).name('Acne Bias');
 
+const screenFolder = gui.addFolder('Screen Space');	//worked out from the finished frame: see screenEffects.js
+screenFolder.add(imguiParams, 'enablePostEffects').name('Enable');
+screenFolder.add(imguiParams, 'enableScreenShadows').name('Shadows');
+screenFolder.add(imguiParams, 'screenShadowStrength', 0, 1, 0.01).name('Shadow Strength');
+screenFolder.add(imguiParams, 'screenShadowThickness', 0.0005, 0.04, 0.0005).name('Shadow Thickness');
+screenFolder.add(imguiParams, 'screenShadowContrast', 1, 8, 0.1).name('Shadow Contrast');
+screenFolder.add(imguiParams, 'enableSSAO').name('Ambient Occlusion');
+screenFolder.add(imguiParams, 'ssaoRadius', 0.25, 20, 0.25).name('AO Radius');
+screenFolder.add(imguiParams, 'ssaoStrength', 0, 2, 0.05).name('AO Strength');
+screenFolder.add(imguiParams, 'enableSSR').name('Water Reflections');
+screenFolder.add(imguiParams, 'ssrStrength', 0, 1, 0.01).name('Reflection Strength');
+screenFolder.add(imguiParams, 'ssrDistance', 100, 6000, 50).name('Reflection Distance');
+screenFolder.add(imguiParams, 'displayScreenShading').name('Show Shading Only');
+
+const displayFolder = gui.addFolder('Display');	//see fxaa.js and textureFiltering.js
+displayFolder.add(imguiParams, 'enableFXAA').name('FXAA');
+displayFolder.add(imguiParams, 'fxaaSubpixel', 0, 1, 0.05).name('FXAA Softening');
+displayFolder.add(imguiParams, 'anisotropicFiltering', { '1x (off)': 1, '2x': 2, '4x': 4, '8x': 8, '16x': 16 }).name('Anisotropic Filtering');
+
+const terrainFolder = gui.addFolder('Terrain');	//changing any of these but Enable generates the land again
+terrainFolder.add(imguiParams, 'enableTerrain').name('Enable');
+terrainFolder.add(imguiParams, 'terrainSeed', 0, 999, 1).name('Seed');
+terrainFolder.add(imguiParams, 'terrainLandScale', 1000, 8000, 50).name('Land Mass Size');
+terrainFolder.add(imguiParams, 'terrainMountainHeight', 0, 2500, 10).name('Mountain Height');
+terrainFolder.add(imguiParams, 'terrainSnowLine', 50, 2500, 10).name('Snow Line');
+terrainFolder.add(imguiParams, 'terrainBeachHeight', 1, 15, 0.5).name('Beach Height');
+terrainFolder.add(imguiParams, 'terrainBankHeight', 0, 5, 0.1).name('Beach Bank Height');
+terrainFolder.add(imguiParams, 'terrainSeaFloorDepth', 40, 500, 5).name('Sea Floor Depth');
+terrainFolder.add(imguiParams, 'terrainShelfWidth', 1, 6, 0.1).name('Shelf Width');
+terrainFolder.add(imguiParams, 'terrainHillHeight', 0, 3, 0.05).name('Hill Height');
+terrainFolder.add(imguiParams, 'terrainWoodland', 0, 1, 0.01).name('Woodland');
+terrainFolder.add(imguiParams, 'terrainLakes', 0, 1, 0.01).name('Lakes');
+terrainFolder.add(imguiParams, 'terrainRockDetail', 0, 3, 0.05).name('Rock Detail');
+terrainFolder.add(imguiParams, 'terrainRockVeins', 0, 2, 0.05).name('Rock Veins');
+terrainFolder.add(imguiParams, 'terrainGroundDetail', 0, 2, 0.05).name('Sand, Turf and Forest Floor');
+terrainFolder.add(imguiParams, 'terrainDepthBias', 0, 4, 0.05).name('Depth Bias');
+terrainFolder.add(imguiParams, 'terrainResolution', { '1k': 1024, '2k': 2048, '4k': 4096, '8k': 8192 }).name('Mesh Detail');	//these two only change the mesh, the land stays as it is
+terrainFolder.add(imguiParams, 'terrainDetailDistance', 0.75, 5, 0.05).name('Detail Distance');
+
 const grassFolder = gui.addFolder('Grass');
 grassFolder.add(imguiParams, 'enableGrass').name('Enable');
-grassFolder.add(imguiParams, 'grassTotalBladeCount', 1, settings.grassTotalHARDLIMIT, 1).name('Blade Count')
-    .onChange((value) => {
-        settings.grassTotalBladeCount = value;
-        grass.grassUpdateStorageVertexBuffer();  // resize the storage buffer
-    });
+grassFolder.add(imguiParams, 'grassTotalBladeCount', 1000, settings.grassTotalHARDLIMIT, 1000).name('Blade Count');
+grassFolder.add(imguiParams, 'grassDrawDistance', 20, 1500, 5).name('Draw Distance');
+grassFolder.add(imguiParams, 'grassBladeHeight', 0.2, 6, 0.05).name('Blade Height');
+grassFolder.add(imguiParams, 'grassBladeWidth', 0.02, 1, 0.01).name('Blade Width');
+grassFolder.add(imguiParams, 'grassWindStrength', 0, 3, 0.05).name('Wind Strength');
+
+const grassLodFolder = grassFolder.addFolder('Level of Detail');	//rings of thinner and simpler grass round the camera, see vfc_grass.js
+grassLodFolder.add(imguiParams, 'grassLodRings', 1, 8, 1).name('Rings');
+grassLodFolder.add(imguiParams, 'grassLodNearDistance', 5, 200, 1).name('Full Detail Distance');
+grassLodFolder.add(imguiParams, 'grassLodFarBlades', 0.2, 1, 0.01).name('Far Blade Share');
+
+const grassClumpFolder = grassFolder.addFolder('Clumping');
+grassClumpFolder.add(imguiParams, 'grassClumpSize', 0.4, 12, 0.1).name('Clump Size');
+grassClumpFolder.add(imguiParams, 'grassClumpPull', 0, 1, 0.01).name('Pull to Middle');
+grassClumpFolder.add(imguiParams, 'grassClumpHeight', 0, 1, 0.01).name('Shared Height');
+grassClumpFolder.add(imguiParams, 'grassClumpFacing', 0, 1, 0.01).name('Shared Facing');
+grassClumpFolder.add(imguiParams, 'grassClumpColor', 0, 1, 0.01).name('Shared Color');
+
+const boulderFolder = gui.addFolder('Boulders');
+boulderFolder.add(imguiParams, 'enableBoulders').name('Enable');
+boulderFolder.add(imguiParams, 'boulderAmount', 0, 5, 0.05).name('Amount');
+boulderFolder.add(imguiParams, 'boulderDrawDistance', 200, 8000, 50).name('Draw Distance');
+
+const forestFolder = gui.addFolder('Forest');	//changing Seed, Tree Scale, Spacing, Max Slope or Conifer Share plants the forest again
+forestFolder.add(imguiParams, 'enableForest').name('Enable');
+forestFolder.add(imguiParams, 'forestSeed', 0, 999, 1).name('Seed');
+forestFolder.add(imguiParams, 'forestUnitsPerMetre', 0.5, 4, 0.1).name('Tree Scale (units per m)');
+forestFolder.add(imguiParams, 'forestTreeSpacing', 5, 30, 0.5).name('Tree Spacing');
+forestFolder.add(imguiParams, 'forestMaxSlope', 0.05, 0.8, 0.01).name('Max Slope');
+forestFolder.add(imguiParams, 'forestConiferShare', 0, 1, 0.01).name('Conifer Share');
+forestFolder.add(imguiParams, 'forestLifeCycle').name('Life Cycle');
+forestFolder.add(imguiParams, 'forestYearsPerSunCycle', 0.25, 50, 0.25).name('Years per Sun Cycle');
+forestFolder.add(imguiParams, 'forestYear').name('Forest Year').disable();
+forestFolder.add(imguiParams, 'forestTreeCount').name('Trees').disable();
+forestFolder.add(imguiParams, 'forestDetailDistance', 10, 300, 5).name('Full Detail Distance');
+forestFolder.add(imguiParams, 'forestMidDistance', 20, 800, 5).name('Mid Detail Distance');
+forestFolder.add(imguiParams, 'forestBillboardDistance', 50, 3000, 10).name('Billboard Distance');
+forestFolder.add(imguiParams, 'forestDrawDistance', 100, 12000, 50).name('Draw Distance');
+forestFolder.add(imguiParams, 'forestWindStrength', 0, 3, 0.05).name('Wind Strength');
+
+const cloudFolder = gui.addFolder('Clouds and Weather');	//see weather.js and clouds.js
+cloudFolder.add(imguiParams, 'enableClouds').name('Enable');
+cloudFolder.add(imguiParams, 'weatherMode', ['auto', 'sunny', 'overcast', 'storm']).name('Weather');
+cloudFolder.add(imguiParams, 'weatherNow').name('Weather Now').disable();
+cloudFolder.add(imguiParams, 'weatherSeed', 0, 999, 1).name('Weather Seed');
+cloudFolder.add(imguiParams, 'cloudForceTower').name('Cumulonimbus (held weather)');
+cloudFolder.add(imguiParams, 'cloudCoverageBias', -0.5, 0.5, 0.01).name('More / Less Cloud');
+cloudFolder.add(imguiParams, 'cloudDensity', 0.2, 3, 0.05).name('Density');
+cloudFolder.add(imguiParams, 'cloudLayers', { 'low': 1, 'low and middle': 2, 'low, middle and cirrus': 3 }).name('Layers');
+cloudFolder.add(imguiParams, 'cloudCrispness', 0, 1, 0.01).name('Crispness');
+cloudFolder.add(imguiParams, 'cloudHeight', -400, 4000, 50).name('Height');
+cloudFolder.add(imguiParams, 'cloudDriftSpeed', 0, 20, 0.5).name('Drift Speed');
+cloudFolder.add(imguiParams, 'cloudSteps', 16, 128, 1).name('Quality (steps)');
+cloudFolder.add(imguiParams, 'cloudDrawDistance', 8000, 80000, 500).name('Draw Distance');
+
+const particleFolder = gui.addFolder('Particles');	//see particles.js
+particleFolder.add(imguiParams, 'enableLeaves').name('Leaves');
+particleFolder.add(imguiParams, 'leafAmount', 0, 5, 0.05).name('Leaf Amount');
+particleFolder.add(imguiParams, 'leafSize', 0.1, 2, 0.01).name('Leaf Size');
+particleFolder.add(imguiParams, 'leafWeight', 0.3, 3, 0.05).name('Leaf Weight');
+particleFolder.add(imguiParams, 'enableSeaSpray').name('Sea Spray');
+particleFolder.add(imguiParams, 'sprayAmount', 0, 1, 0.01).name('Spray Amount');
+particleFolder.add(imguiParams, 'enableRain').name('Rain');
+particleFolder.add(imguiParams, 'rainAmount', 0, 1, 0.01).name('Rain Amount');
+particleFolder.add(imguiParams, 'rainDistance', 10, 150, 1).name('Rain Distance');
+
+const windFolder = gui.addFolder('Wind');	//moves the grass and the trees. See wind.js
+windFolder.add(imguiParams, 'waterWindSpeed', 0, 20).name('Wind Speed');	//the same setting as Wind Speed under Water
+windFolder.add(imguiParams, 'windDirectionAngle', 0, 360, 1).name('Direction (degrees)');
+windFolder.add(imguiParams, 'windGustiness', 0, 1, 0.01).name('Gustiness');
+windFolder.add(imguiParams, 'windGustSize', 100, 3000, 10).name('Gust Size');
+windFolder.add(imguiParams, 'windGustSpeed', 0, 8, 0.1).name('Gust Speed (x wind speed)');
 
 const waterFolder = gui.addFolder('Water');
 waterFolder.add(imguiParams, 'enableWater').name('Enable');
@@ -144,8 +368,8 @@ waterShoreFolder.add(imguiParams, 'waterShoreWaveLength2', 12, 80, 0.5).name('Wa
 waterShoreFolder.add(imguiParams, 'waterShoreWaveSpeed', 0, 3, 0.05).name('Wave Speed');
 
 const waterSwellFolder = waterFolder.addFolder('Deep Sea Swell');
-waterSwellFolder.add(imguiParams, 'waterDeepSeaDepth', 1, 200, 1).name('Deep Sea Depth');
-waterSwellFolder.add(imguiParams, 'waterSwellHeight', 0, 40, 0.5).name('Swell Height');
+waterSwellFolder.add(imguiParams, 'waterDeepSeaDepth', 1, 1000, 1).name('Deep Sea Depth');
+waterSwellFolder.add(imguiParams, 'waterSwellHeight', 0, 200, 0.5).name('Swell Height');
 waterSwellFolder.add(imguiParams, 'waterSwellLength', 100, 2000, 10).name('Swell Length');
 waterSwellFolder.add(imguiParams, 'waterSwellSteepness', 0, 1, 0.01).name('Steepness');
 waterSwellFolder.add(imguiParams, 'waterSwellSpeed', 0, 3, 0.05).name('Speed');
@@ -173,7 +397,9 @@ const debugDisplayModes = ["final",
 							"Atmosphere Transmittance LUT Texture",
 							"Choppy Displacement D(k,t)",
 							"Choppy Displacement D(x,t) Shifted",
-							"Shore Distance Field"];
+							"Shore Distance Field",
+							"Wind Texture",
+							"Cloud Coverage (r: sun through, g: cloud overhead, b: rain)"];
 
 let selectedDebugDisplayMode;
 const debugFolder = gui.addFolder('Debug');
@@ -195,6 +421,8 @@ debugFolder.add(debugViewState, 'mode', debugDisplayModes).name('View Mode').onC
     settings.displayWaterDisplacementSpectrum  = selectedDebugDisplayMode === 13;
     settings.displayWaterDisplacement          = selectedDebugDisplayMode === 14;
     settings.displayShoreDistance              = selectedDebugDisplayMode === 15;
+    settings.displayWindTexture                = selectedDebugDisplayMode === 16;
+    settings.displayCloudCoverage              = selectedDebugDisplayMode === 17;
 
     if (selectedDebugDisplayMode === 2) {
         water.waterPipelineSignalUpdate('line-list');
@@ -204,6 +432,9 @@ debugFolder.add(debugViewState, 'mode', debugDisplayModes).name('View Mode').onC
 });
 debugFolder.add(imguiParams, 'debugTextureRescaleSize', [32, 64, 128, 256, 512, 1024]).name('Debug Texture Size');
 debugFolder.add(imguiParams, 'displayShoreDistanceDebugRange', 5, 300).name('Shore Distance View Range');
+
+// every folder starts shut, the ones inside other folders as well
+gui.foldersRecursive().forEach((folder) => folder.close());
 
 
 const dropdownManagedKeys = new Set([
@@ -221,6 +452,8 @@ const dropdownManagedKeys = new Set([
 	'displayWaterDisplacementSpectrum',
 	'displayWaterDisplacement',
 	'displayShoreDistance',
+	'displayWindTexture',
+	'displayCloudCoverage',
 ]);
 
 export function refreshControlsUI() {
@@ -283,6 +516,8 @@ const scaleFolder = entityFolder.addFolder('Scale');
 scaleFolder.add(entityParams, 'scaleX', 0, 10).name('X').onChange(v => scene.entityModels[selectedEntity].worldScale[0] = v);
 scaleFolder.add(entityParams, 'scaleY', 0, 10).name('Y').onChange(v => scene.entityModels[selectedEntity].worldScale[1] = v);
 scaleFolder.add(entityParams, 'scaleZ', 0, 10).name('Z').onChange(v => scene.entityModels[selectedEntity].worldScale[2] = v);
+
+entityGUI.foldersRecursive().forEach((folder) => folder.close());
 
 export function refreshEntityFolder() {
     const e = scene.entityModels[selectedEntity];

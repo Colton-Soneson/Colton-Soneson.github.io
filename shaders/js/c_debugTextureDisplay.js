@@ -7,6 +7,8 @@ struct DebugTextureUniforms {
 	@location(1) textureSize: vec2f,
 	@location(2) mapRange: f32,
 	@location(3) rescale: f32,
+	@location(4) scroll: vec2f,		// how far the texture has slid across the view, in its own texels. It wraps round
+	@location(5) redOnly: f32,		// 1.0 shows the red channel alone, as grey
 };
 @group(0) @binding(0) var<uniform> DTU: DebugTextureUniforms;
 
@@ -32,7 +34,7 @@ struct DebugTextureUniforms {
 		let startX = width - displayWidth;
 
         // only process threads within the display region
-        if (threadID.x >= displayWidth || threadID.y >= displayHeight) {
+        if (threadID.x < startX || threadID.y >= displayHeight) {
             // outside display region — write canvas pixel through unchanged
             var passthrough = textureLoad(inCanvasTexture, threadID);
             textureStore(outTexture, threadID, passthrough);
@@ -44,13 +46,16 @@ struct DebugTextureUniforms {
         let v = f32(threadID.y) / f32(displayHeight);
 
         // map UV to exact texel in source texture
-        let texX = u32(u * f32(texWidth));
-        let texY = u32(v * f32(texHeight));
+		//		(slid back by the scroll: what was at the left edge is now that many texels in)
+        let texX = (u32(u * f32(texWidth)) + texWidth - u32(DTU.scroll.x) % texWidth) % texWidth;
+        let texY = (u32(v * f32(texHeight)) + texHeight - u32(DTU.scroll.y) % texHeight) % texHeight;
 
         var inputDebugCol = textureLoad(inDebugTexture, vec2<u32>(texX, texY));
 
         var outCol = inputDebugCol;
-        if (all(outCol == vec4f(0.0, 0.0, 0.0, 0.0))) {
+        if (DTU.redOnly > 0.5) {
+            outCol = vec4f(outCol.r, outCol.r, outCol.r, 1.0);
+        } else if (all(outCol == vec4f(0.0, 0.0, 0.0, 0.0))) {
             outCol = textureLoad(inCanvasTexture, threadID);
         }
 

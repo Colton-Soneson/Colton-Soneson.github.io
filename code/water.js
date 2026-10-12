@@ -27,6 +27,7 @@ import { SHORE_FIELD_DOWNSCALE } from '../shaders/js/vfc_water.js'
 
 import * as transformations from './transformations.js'
 import * as scene from './scene.js'
+import * as terrain from './terrain.js'	//the water reads where the land is, everywhere in the world, from terrain.terrainWaterTexture
 import * as primitives from '../models/primitives.js'
 
 //GET THE LIGHT CREATION OUT OF THE MAIN
@@ -34,6 +35,8 @@ import {uniformBufferLights} from './rotatingCube.js'
 
 //the water reflects the sky and fogs into the horizon colour, both read from the sky view LUT
 import {skyViewLUTtexture} from './atmosphere.js'
+import * as screenEffects from './screenEffects.js'
+import * as clouds from './clouds.js'
 
 // compute shaders and buffers
 //-------------------------------------------------
@@ -274,7 +277,7 @@ function getWaveFadeDistance() {
 
 //model list specific
 const uboOffset = 256;	//this is a defaulted max for UBO, nothing I wrote equals up to 256, its a limiter
-const totalwaterUniformArraySize = 256; //(4 * 4 * 4) 4x4 matrix for MVP, forget the rest for in shader
+const totalwaterUniformArraySize = 320; //(4 * 4 * 4) 4x4 matrix for MVP, forget the rest for in shader
 const waterUniformBuffer = device.createBuffer({
   label: "water space Uniform",
   size: totalwaterUniformArraySize,
@@ -582,6 +585,10 @@ function getwaterComputeInfo(tileOffsetX = 0, tileOffsetZ = 0, tile = null) {
 	waterCompBuffer.push(settings.waterSwellSteepness);
 	waterCompBuffer.push(settings.waterSwellSpeed);
 	waterCompBuffer.push(settings.waterSwellShoreDistance);
+
+	// the terrain grid, so the mesh pass can look a world position up in the terrain's texture. A size of 0 tells it there is no land
+	waterCompBuffer.push(settings.enableTerrain ? settings.terrainWorldSize * 0.5 : 0);
+	waterCompBuffer.push(terrain.land.cellSize);
 	
 		
 	return new Float32Array(waterCompBuffer);
@@ -623,6 +630,18 @@ function waterMeshUniformBufferUpdates(numInstances, tileOffset) {
 		bufferResult.push(settings.enableAtmosphere ? 1 : 0);
 		bufferResult.push(settings.waterHorizonFogDistance);
 		bufferResult.push(settings.waterClarityDepth);
+
+		bufferResult.push(0, 0, 0);	//(the vec4f after this has to start on a 16 byte boundary, and with these three in front of it it does)
+
+		//and for the reflections it finds on the screen: the two numbers of the projection matrix that turn a depth back into a distance,
+		//		how strongly they show (not at all if there is no copy of the frame to find them in), and how far out they are looked for
+		bufferResult.push(transformations.projectionMatrix[10]);
+		bufferResult.push(transformations.projectionMatrix[14]);
+		bufferResult.push(screenEffects.sceneCopyReady ? settings.ssrStrength : 0);
+		bufferResult.push(settings.ssrDistance);
+
+		//and where the cloud coverage map is, for the shadows of the clouds on the water
+		bufferResult.push(...clouds.cloudMapValues());
 		
 		const result = new Float32Array(bufferResult);
 		
@@ -693,6 +712,26 @@ const bindGroupVFLayout = device.createBindGroupLayout({
     binding: 3,
     visibility: GPUShaderStage.FRAGMENT,
     sampler: {}
+  },
+  {
+    binding: 6,								//the frame as it stood before the water, to find reflections in. See screenEffects.js
+    visibility: GPUShaderStage.FRAGMENT,
+    texture: {}
+  },
+  {
+    binding: 7,								//and its depth
+    visibility: GPUShaderStage.FRAGMENT,
+    texture: { sampleType: 'depth' }
+  },
+  {
+    binding: 8,								//the clouds from above: their shadows on the water. See clouds.js
+    visibility: GPUShaderStage.FRAGMENT,
+    texture: {}
+  },
+  {
+    binding: 9,
+    visibility: GPUShaderStage.FRAGMENT,
+    sampler: {}
   }
   ]
 });
@@ -760,6 +799,13 @@ const bindGroupCLayout = device.createBindGroupLayout({
 		access: "read-only",
 		dimension: "2d",
     }
+  },
+  {
+    binding: 8,								//the whole world's land: ground height and distance to shore
+    visibility:  GPUShaderStage.COMPUTE,
+    texture: {
+		sampleType: 'unfilterable-float',
+	}
   }
   ]
 });
@@ -1141,6 +1187,22 @@ function createVFBindGroupswater() {
 			{
 				binding: 3,
 				resource: linSampler
+			},
+			{
+				binding: 6,
+				resource: screenEffects.sceneColorTexture.createView()
+			},
+			{
+				binding: 7,
+				resource: screenEffects.sceneDepthTexture.createView()
+			},
+			{
+				binding: 8,
+				resource: clouds.cloudCoverageView
+			},
+			{
+				binding: 9,
+				resource: clouds.cloudMapSampler
 			}
 			]
 		});
@@ -1186,6 +1248,10 @@ function createCompBindGroupwater(vertexBuffer, indexBuffer, computeUniformBuffe
 			{
 				binding: 7,
 				resource: shoreDistanceTexture.createView()
+			},
+			{
+				binding: 8,
+				resource: terrain.terrainWaterTexture.createView()
 			}
 			]
 		});
@@ -1684,12 +1750,23 @@ function redirectWindDirectionTemp() {
 	//settings.windDirection[1] = Math.sin(step * 0.00053);
 }
 
+// The mesh of the tile under the camera, as the water's compute pass last left it, for the spray to look for crests in (particles.js):
+//		8 numbers a vertex, the 4th of them the foam. Nothing while the tiles are being made again
+export function waterCrestVertices() {
+	if (resolutionRebuildPending || waterVertexBuffers.length == 0 || waterVertexBuffers.length != waterTileLayout.length) {
+		return null;
+	}
+	const middle = Math.floor(waterVertexBuffers.length / 2);	// the tiles are in rows, so the middle one of the list is the middle one of the grid
+	return { buffer: waterVertexBuffers[middle], count: waterTileLayout[middle].vertexCount };
+}
+
 let lastWaterTileResolution = settings.waterTileResolution;
 let lastWaterTileInstanceCount = settings.waterTileInstanceCount;
 let lastWaterOceanPlanePhysicalSize = settings.waterOceanPlanePhysicalSize;
 let lastWaterGridSize = settings.waterGridSize;
 let lastWaterWindSpeed = settings.waterWindSpeed;
 let lastWaterWaveLength = settings.waterWaveLength;
+let lastWindDirection = [settings.windDirection[0], settings.windDirection[1]];
 let resolutionRebuildPending = false;
 
 async function recreateResolutionDependentResources() {
@@ -1887,7 +1964,10 @@ export function waterPass(mainpassDepthTexture) {
 	// force recalculate H0K due to phillips spectrum input change
 	if (settings.waterOceanPlanePhysicalSize !== lastWaterOceanPlanePhysicalSize ||
 		settings.waterWindSpeed !== lastWaterWindSpeed ||
+		settings.windDirection[0] !== lastWindDirection[0] || settings.windDirection[1] !== lastWindDirection[1] ||	//the waves run with the wind
 		settings.waterWaveLength !== lastWaterWaveLength) {
+
+		lastWindDirection = [settings.windDirection[0], settings.windDirection[1]];
 		
 		lastWaterOceanPlanePhysicalSize = settings.waterOceanPlanePhysicalSize;
 		lastWaterWindSpeed = settings.waterWindSpeed;

@@ -5,13 +5,16 @@ import {canvasFormat} from './deviceSelection.js'
 
 import { mat4, vec3 } from 'https://wgpu-matrix.org/dist/3.x/wgpu-matrix.module.js';
 
-import {postEffectPassSSS} from './SSS.js'
+import {screenEffectsPass} from './screenEffects.js'
+import {fxaaPass} from './fxaa.js'
+import * as textureFiltering from './textureFiltering.js'
 import {postEffectPassTextureDebug_DEPTH32FLOAT} from './debugTextureDisplay.js'
 import {postEffectPassTextureDebug_RGBA8UNORM} from './debugTextureDisplay.js'
 import {postEffectPassTextureDebug_RGBA32FLOAT} from './debugTextureDisplay.js'
 import {postEffectPassTextureDebug_RGBA16FLOAT} from './debugTextureDisplay.js'
 import {postEffectPassTextureDebug_R32FLOAT} from './debugTextureDisplay.js'
 import {grassPass} from './computeGrass.js'
+import {forestPass} from './forest.js'
 import {waterPass} from './water.js'
 import {atmospherePass} from './atmosphere.js'
 
@@ -22,6 +25,13 @@ import * as scene from './scene.js'
 import * as grass from './computeGrass.js'
 import * as water from './water.js'
 import * as atmosphere from './atmosphere.js'
+import * as terrain from './terrain.js'
+import * as forest from './forest.js'
+import * as boulders from './boulders.js'
+import * as wind from './wind.js'
+import * as clouds from './clouds.js'
+import * as particles from './particles.js'
+import * as cameraControls from './cameraControls.js'
 import { settings } from './settings.js';
 import * as userInterface from './imguiLoader.js';
 
@@ -61,6 +71,14 @@ function getLightsInfo() {
 	lightsBuffer.push(settings.shadowMapAcneBias);
 	
 	lightsBuffer.push(settings.displayLightingMode);
+
+	//the moon: which way it is and how bright (the 3 numbers before it are only there to start it on a 16 byte boundary, as a vec4f has to)
+	lightsBuffer.push(0.0, 0.0, 0.0);
+	const moonDistance = Math.hypot(settings.moonPosX, settings.moonPosY, settings.moonPosZ) || 1;
+	lightsBuffer.push(settings.moonPosX / moonDistance);
+	lightsBuffer.push(settings.moonPosY / moonDistance);
+	lightsBuffer.push(settings.moonPosZ / moonDistance);
+	lightsBuffer.push(settings.enableMoon ? settings.moonBrightness : 0.0);
 	
 	return new Float32Array(lightsBuffer);
 }
@@ -93,13 +111,7 @@ export const uniformBufferLights = device.createBuffer({
 const depthTexture = device.createTexture({
   size: [canvas.width, canvas.height],
   format: 'depth24plus',
-  usage: GPUTextureUsage.RENDER_ATTACHMENT,
-});
-
-//linear sampling
-const linSampler = device.createSampler({
-  magFilter: 'linear',
-  minFilter: 'linear',
+  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,	//read back by the screen space effects, and copied for the water's reflections
 });
 
 //GPUBindGroup, bind groups connect uniform in the shader
@@ -185,7 +197,7 @@ function createGenericBindGroups(numModels){
 				},
 				{
 				binding: 3,
-				resource: linSampler 
+				resource: textureFiltering.filteredSampler()	//the models' textures: anisotropic, at whatever level the setting is on 
 				},
 				{
 				binding: 4,
@@ -203,7 +215,8 @@ function createGenericBindGroups(numModels){
 	return result;
 }
 
-const bindGroups = createGenericBindGroups(scene.entityModels.length);
+let bindGroups = createGenericBindGroups(scene.entityModels.length);
+let bindGroupsFiltering = textureFiltering.filteringLevel();	//the level the sampler in them is at. They are made again when the setting moves
 
 const shadowMapBindGroups = shadowMapping.createShadowMapBindGroups(scene.entityModels.length);
 
@@ -284,6 +297,10 @@ export function updateRotatingCubePass() {
 	
 	// ImGUI setting updates
 	userInterface.refreshControlsUI();
+
+	// fly camera: after the controls have written their values (so the Pos sliders still work), before anything reads the camera
+	cameraControls.updateCamera();
+	wind.windUpdate();		//the air moves on, before anything reads it
 	userInterface.refreshEntityFolder();
 	
 	//update skybox to position onto camera
@@ -292,8 +309,19 @@ export function updateRotatingCubePass() {
 	}
 	
 	//generate per-draw uniforms (not with dynamic uniform buffers though)
+	//procedural land: regenerates if its settings changed (which can move the buildings), so before the model uniforms
+	terrain.terrainUpdate();
+	forest.forestUpdate();		//after the land: the forest is planted again whenever the land under it changes
+	boulders.boulderUpdate();	//and the boulders laid out again
+	particles.particleUpdate();		//what the leaves, the spray and the rain all need to know this frame
+	clouds.cloudUpdate(encoder);	//the weather moves on, and the picture of the clouds from above is taken: their shadows are read from it all through the frame
+
 	genericUniformBufferUpdates(scene.entityModels);
-	
+	if (bindGroupsFiltering !== textureFiltering.filteringLevel()) {
+		bindGroups = createGenericBindGroups(scene.entityModels.length);
+		bindGroupsFiltering = textureFiltering.filteringLevel();
+	}
+
 	shadowMapping.shadowMapUniformBufferUpdates(scene.entityModels);
 	
 	//to go through models
@@ -354,6 +382,8 @@ export function updateRotatingCubePass() {
 	}
 	prevModCombo = 0;
 	
+	terrain.terrainHeightMapPass(heightPass);	//this is how the water gets to know where the land and the sea bed are
+
 	heightPass.end();
 	
 	
@@ -388,19 +418,31 @@ export function updateRotatingCubePass() {
 		prevModCombo += mod;
 	}
 	prevModCombo = 0;
-		
+
+	terrain.terrainPass(pass);
+	boulders.boulderPass(pass);
+
 	pass.end();
 	
 	//post effect section
-	if(settings.enablePostEffects)
-	{
-		postEffectPassSSS(encoder, context.getCurrentTexture());
-	}
+	//(the screen space effects run further down, once the grass and the trees are in the frame as well)
 	
 	if(settings.enableGrass)
 	{
 		grassPass(encoder, depthTexture);
 	}
+
+	if(settings.enableForest)
+	{
+		forestPass(encoder, depthTexture);
+	}
+
+	//leaves blowing off the trees: solid, so they go in with the rest and get shaded with it
+	particles.leafPass(encoder, depthTexture);
+
+	//screen space shadows and ambient occlusion over everything solid, and the copies of the frame the water finds its reflections in.
+	//		Before the water and the sky are drawn
+	screenEffectsPass(encoder, context.getCurrentTexture(), depthTexture);
 	
 	device.queue.submit([encoder.finish()]);
 	
@@ -413,9 +455,18 @@ export function updateRotatingCubePass() {
 	{
 		atmospherePass(depthTexture);
 	}
+
+	//the clouds go over everything, the sky included
+	clouds.cloudPass(depthTexture);
+
+	//spray off the waves and rain: see-through, so last, over everything that is behind them
+	particles.weatherParticlePass(depthTexture);
 	
 	const encoderDebug = device.createCommandEncoder();
-	
+
+	//anti-aliasing over the finished frame. The debug views go on after it, and are left as they are
+	fxaaPass(encoderDebug, context.getCurrentTexture());
+
 	if(settings.displayHeightMap)
 	{
 		postEffectPassTextureDebug_DEPTH32FLOAT(encoderDebug, context.getCurrentTexture(), scene.heightMapDepthTexture, scene.heightMapSampler);
@@ -467,6 +518,15 @@ export function updateRotatingCubePass() {
 	
 	if(settings.displayTransmittanceLUTtexture) {
 		postEffectPassTextureDebug_RGBA16FLOAT(encoderDebug, context.getCurrentTexture(), atmosphere.transmittanceLUTtexture);
+	}
+
+	if(settings.displayCloudCoverage) {
+		postEffectPassTextureDebug_RGBA8UNORM(encoderDebug, context.getCurrentTexture(), clouds.cloudCoverageTexture);
+	}
+
+	if(settings.displayWindTexture) {
+		//the gusts alone, slid as far as the wind has carried them: the texture as it lies on the ground
+		postEffectPassTextureDebug_RGBA8UNORM(encoderDebug, context.getCurrentTexture(), wind.windTexture, wind.windScrollTexels(), true);
 	}
 	
 	// update the settings from changes made in render loop unless UI settings are changed directly

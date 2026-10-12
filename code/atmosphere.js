@@ -6,6 +6,7 @@ import {canvasFormat} from './deviceSelection.js'
 import { mat4, vec3 } from 'https://wgpu-matrix.org/dist/3.x/wgpu-matrix.module.js';
 
 import { settings } from './settings.js';
+import { weatherNow } from './weather.js';
 
 import { c_transmittance_LUT } from '../shaders/js/vfc_atmosphere.js'
 import { c_skyView_LUT } from '../shaders/js/vfc_atmosphere.js'
@@ -71,7 +72,7 @@ export const skyViewLUTtexture = device.createTexture({
 });
 const skyViewView = skyViewLUTtexture.createView();
 
-const atmosphereUBOArraySize = 96;	//invViewProj (mat4) + sun direction (vec4) + cam pos (vec4) = 96
+const atmosphereUBOArraySize = 128;	//invViewProj (mat4) + sun direction (vec4) + cam pos (vec4) = 96
 const atmosphereUniformBuffer = device.createBuffer({
     label: 'atmosphere uniforms',
     size: atmosphereUBOArraySize,
@@ -104,6 +105,19 @@ function updateSkyUniforms() {
 	bufferResult.push(0);
 	bufferResult.push(1);	//padding
 	
+	//the moon: which way it is and how bright, then how its disc is drawn: the angle from its middle to its edge (radians)
+	bufferResult.push(settings.moonPosX);
+	bufferResult.push(settings.moonPosY);
+	bufferResult.push(settings.moonPosZ);
+	bufferResult.push(settings.enableMoon ? settings.moonBrightness : 0);
+
+	bufferResult.push(settings.moonSize * Math.PI / 180);
+	//the weather: how much of the sky is taken up by cloud (none until it is most of it), and how dark that cloud is
+	const overcast = settings.enableClouds ? Math.min(Math.max((weatherNow.coverage - 0.6) / 0.35, 0), 1) : 0;
+	bufferResult.push(overcast);
+	bufferResult.push(weatherNow.gloom);
+	bufferResult.push(settings.enableClouds ? 1 : 0);	//with clouds on, the moon's disc is drawn with them, behind them (vf_cloudComposite). Not here
+
 	const result = new Float32Array(bufferResult);
 	
 	device.queue.writeBuffer(atmosphereUniformBuffer, 
@@ -263,21 +277,33 @@ const skyVFBindGroup = device.createBindGroup({
     ],
 });
 
+// How many times the sun has gone round since the page loaded: the world's clock, in days.
+//		Anything that keeps time (the forest) reads this, so it all speeds up, slows down and stops together with the sun
+export let sunCycles = 0;
+
 export function sunCycle(cycleSpeed)
 {
 	settings.sunCycleAngle = (settings.sunCycleAngle || 0) + cycleSpeed;
     if (settings.sunCycleAngle > Math.PI * 2) settings.sunCycleAngle -= Math.PI * 2;
 
+	sunCycles += cycleSpeed / (Math.PI * 2);
+	settings.sunCycleCount = Math.round(sunCycles * 100) / 100;		// for the controls to show
+
     // ellipse — wide on X, tall on Y, flat on Z
 	// HARD CODED FOR NOW
     settings.sunPosX = Math.cos(settings.sunCycleAngle) * 110.0;
     settings.sunPosY = (Math.sin(settings.sunCycleAngle) * 50.0) + 25.0;
+
+	// the moon goes round the same ellipse half a turn behind, over the other side of the sky (its z is its own).
+	//		The ellipse sits high (+25), so each of them is up for more than half the time and they share the sky at dawn and dusk
+	settings.moonPosX = -Math.cos(settings.sunCycleAngle) * 110.0;
+	settings.moonPosY = (-Math.sin(settings.sunCycleAngle) * 50.0) + 25.0;
 }
 
 export function atmospherePass(mainpassDepthTexture)
 {	
 	if(settings.atmosphereSunRotationDemo) {
-		sunCycle(0.01)
+		sunCycle(0.01 * settings.timeCycleMultiplier)
 	}
 
 	updateSkyUniforms();

@@ -140,6 +140,8 @@ export const c_skyView_LUT =
 		invViewProj:    mat4x4f,
 		sunDir:         vec4f,
 		cameraPosition: vec4f,
+		moonDir:        vec4f,	// xyz: towards the moon, w: how bright it is
+		moonLook:       vec4f,	// x: the angle from the middle of its disc to the edge, radians. y: how overcast it is, 0 to 1, z: how dark the cloud is
 	};
 	@group(0) @binding(0) var<uniform> SU: SkyUniforms;
 	@group(0) @binding(1) var transmitLUT: texture_2d<f32>;
@@ -204,6 +206,13 @@ export const c_skyView_LUT =
 		let cosAngle = dot(rd, sun);
 		let phaseR   = phaseRayleigh(cosAngle);
 		let phaseM   = phaseMie(cosAngle, 0.8);
+
+		// the moon lights the air as well: the same scattering over again with the light coming from where the moon is.
+		//		It is what makes a moonlit night blue instead of black, and puts a glow round the moon
+		let moon = normalize(SU.moonDir.xyz);
+		let cosAngleMoon = dot(rd, moon);
+		let moonPhaseR = phaseRayleigh(cosAngleMoon);
+		let moonPhaseM = phaseMie(cosAngleMoon, 0.8);
 	
 		// find where the ray hits the atmosphere and ground
 		let hitAtmos = raySphereIntersect(ro, rd, ATMOS_RADIUS);
@@ -219,6 +228,8 @@ export const c_skyView_LUT =
 	
 		let dt = tMax / f32(STEPS);
 		var scatterR = vec3f(0.0);		// accumulated Rayleigh scattered light
+		var moonScatterR = vec3f(0.0);	// and the same two for the light of the moon
+		var moonScatterM = vec3f(0.0);
 		var scatterM = vec3f(0.0);		// accumulated Mie scattered light
 		var throughput = vec3f(1.0); 	// how much light still survives along the view ray so far
 	
@@ -242,13 +253,27 @@ export const c_skyView_LUT =
 			// Accumulate in-scattered light
 			scatterR += throughput * transmitToSun * rayleighScatter * densR;
 			scatterM += throughput * transmitToSun * mieScatter * densM;
+
+			// and the same from the moon
+			let transmitToMoon = sampleTransmittance(length(pos), dot(normalize(pos), moon));
+			moonScatterR += throughput * transmitToMoon * rayleighScatter * densR;
+			moonScatterM += throughput * transmitToMoon * mieScatter * densM;
 			
 			// Attenuate throughput by how much this step absorbed/scattered away (Beer-Lambert)
 			throughput *= exp(-(rayleighScatter * densR + (mieScatter + 1.11e-6) * densM));
 		}
 	
 		// combine Rayleigh and Mie contributions, weighted by their phase functions
-		let color = scatterR * phaseR + scatterM * phaseM;
+		// (the moon is the sun's light thrown back by grey rock, and a tiny fraction as strong. Far more here than the real
+		//		400,000th, or a night sky would just be black on a screen: enough to see by)
+		let moonLight = vec3f(0.8, 0.88, 1.0) * 0.035 * SU.moonDir.w;
+		var color = scatterR * phaseR + scatterM * phaseM + moonLight * (moonScatterR * moonPhaseR + moonScatterM * moonPhaseM);
+
+		// Under a sky full of cloud there is no blue to see and less light altogether: the sky goes grey, and darker the heavier
+		//		the cloud. Everything that takes its color from this LUT follows: the haze far things fade into, what the water
+		//		mirrors, the light the clouds get from the sky
+		let grey = dot(color, vec3f(0.3, 0.45, 0.25));
+		color = mix(color, vec3f(grey, grey, grey * 1.04) * (0.6 - 0.35 * SU.moonLook.z), SU.moonLook.y);
 		textureStore(skyOut, vec2i(gid.xy), vec4f(color, 1.0));
 }
 `;
@@ -287,6 +312,8 @@ export const f_sky =
 		invViewProj:    mat4x4f,
 		sunDir:         vec4f,
 		cameraPosition: vec4f,
+		moonDir:        vec4f,	// xyz: towards the moon, w: how bright it is
+		moonLook:       vec4f,	// x: the angle from the middle of its disc to the edge, radians. w: 1.0 if the clouds draw the disc (see vf_cloudComposite)
 	};
 	@group(0) @binding(0) var<uniform> Sky: SkyUniforms;
 	@group(0) @binding(1) var skyLUT:    texture_2d<f32>;
@@ -319,6 +346,17 @@ export const f_sky =
 	
 		// Exposure tone mapping
 		let exposed = 1.0 - exp(-color * 10.0);
-		return vec4f(pow(exposed, vec3f(1.0/2.2)), 1.0);
+		var skyColor = pow(exposed, vec3f(1.0/2.2));
+
+		// The moon: a plain white disc, wherever the view comes within its radius of the way to the moon.
+		//		In daylight it is a pale ghost of itself, and it is gone under the horizon
+		let toMoon = normalize(Sky.moonDir.xyz);
+		let fromMiddle = acos(clamp(dot(rd, toMoon), -1.0, 1.0));
+		let disc = 1.0 - smoothstep(0.93 * Sky.moonLook.x, Sky.moonLook.x, fromMiddle);
+		let daylight = smoothstep(-0.08, 0.25, normalize(Sky.sunDir.xyz).y);
+		let showing = disc * saturate(Sky.moonDir.w) * mix(1.0, 0.4, daylight) * smoothstep(-0.02, 0.01, rd.y) * (1.0 - Sky.moonLook.w);
+		skyColor = mix(skyColor, vec3f(0.95, 0.96, 1.0), showing);
+
+		return vec4f(skyColor, 1.0);
 }
 `;

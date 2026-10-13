@@ -1,6 +1,7 @@
 import {device} from './deviceSelection.js'
 
 import { settings } from './settings.js';
+import { weatherNow } from './weather.js';
 
 /*
 	The wind.
@@ -21,6 +22,8 @@ import { settings } from './settings.js';
 			that goes round things rather than piling up or thinning out anywhere
 
 	The wind itself is two settings the water already had: windDirection, and waterWindSpeed (metres per second).
+	The season and the weather blow harder on top of that (weatherNow.wind, see weather.js): a spring day more than a
+	summer one, a storm more than either. Only the air over the land feels that. The sea keeps to the setting.
 */
 
 export const WIND_TEXTURE_SIZE = 256;
@@ -29,6 +32,11 @@ export const WIND_TEXTURE_SIZE = 256;
 //		a gale lays the grass flat, it does not stretch it
 export function windPower(speed) {
 	return 2.2 * Math.tanh(speed / 11);
+}
+
+// the speed of the wind right now, metres per second: the setting, times whatever the season and the weather add
+export function windSpeedNow() {
+	return settings.waterWindSpeed * weatherNow.wind;
 }
 
 // Gradient noise that repeats: the same value at x and at x + period, so a texture made of it tiles. About -0.7 to 0.7
@@ -165,7 +173,7 @@ export function windUpdate() {
 	seconds += elapsed;
 
 	const heading = windHeading();
-	const speed = settings.waterWindSpeed * settings.forestUnitsPerMetre * settings.windGustSpeed;	// world units a second
+	const speed = windSpeedNow() * settings.forestUnitsPerMetre * settings.windGustSpeed;	// world units a second
 	const tile = Math.max(settings.windGustSize, 1);
 	scrollX = (scrollX + heading[0] * speed * elapsed) % tile;
 	scrollZ = (scrollZ + heading[1] * speed * elapsed) % tile;
@@ -183,7 +191,7 @@ export function windScrollTexels() {
 //		blow	xy: the way the wind blows, z: gustiness, w: time in seconds
 export function windUniformValues() {
 	const heading = windHeading();
-	return [scrollX, scrollZ, 1 / Math.max(settings.windGustSize, 1), windPower(settings.waterWindSpeed),
+	return [scrollX, scrollZ, 1 / Math.max(settings.windGustSize, 1), windPower(windSpeedNow()),
 			heading[0], heading[1], settings.windGustiness, seconds];
 }
 

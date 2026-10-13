@@ -7,6 +7,7 @@ import { mat4, vec3 } from 'https://wgpu-matrix.org/dist/3.x/wgpu-matrix.module.
 
 import {screenEffectsPass} from './screenEffects.js'
 import {fxaaPass} from './fxaa.js'
+import {smaaPass} from './smaa.js'
 import * as textureFiltering from './textureFiltering.js'
 import {postEffectPassTextureDebug_DEPTH32FLOAT} from './debugTextureDisplay.js'
 import {postEffectPassTextureDebug_RGBA8UNORM} from './debugTextureDisplay.js'
@@ -31,6 +32,9 @@ import * as boulders from './boulders.js'
 import * as wind from './wind.js'
 import * as clouds from './clouds.js'
 import * as particles from './particles.js'
+import * as lightShafts from './lightShafts.js'
+import * as lightning from './lightning.js'
+import * as birds from './birds.js'
 import * as cameraControls from './cameraControls.js'
 import { settings } from './settings.js';
 import * as userInterface from './imguiLoader.js';
@@ -314,6 +318,8 @@ export function updateRotatingCubePass() {
 	forest.forestUpdate();		//after the land: the forest is planted again whenever the land under it changes
 	boulders.boulderUpdate();	//and the boulders laid out again
 	particles.particleUpdate();		//what the leaves, the spray and the rain all need to know this frame
+	birds.birdUpdate();				//the hawks fly on
+	lightning.lightningUpdate();	//a strike that is going on flickers and dies, and now and then a new one starts
 	clouds.cloudUpdate(encoder);	//the weather moves on, and the picture of the clouds from above is taken: their shadows are read from it all through the frame
 
 	genericUniformBufferUpdates(scene.entityModels);
@@ -440,6 +446,9 @@ export function updateRotatingCubePass() {
 	//leaves blowing off the trees: solid, so they go in with the rest and get shaded with it
 	particles.leafPass(encoder, depthTexture);
 
+	//and the hawks
+	birds.birdPass(encoder, depthTexture);
+
 	//screen space shadows and ambient occlusion over everything solid, and the copies of the frame the water finds its reflections in.
 	//		Before the water and the sky are drawn
 	screenEffectsPass(encoder, context.getCurrentTexture(), depthTexture);
@@ -459,13 +468,20 @@ export function updateRotatingCubePass() {
 	//the clouds go over everything, the sky included
 	clouds.cloudPass(depthTexture);
 
+	//a bolt of lightning, if there is one at this moment
+	lightning.lightningPass(depthTexture);
+
+	//the shafts of sun between the clouds, the flash of the lightning, and with the camera under the sea, the water it is looking through
+	lightShafts.lightShaftPass(context.getCurrentTexture(), depthTexture);
+
 	//spray off the waves and rain: see-through, so last, over everything that is behind them
 	particles.weatherParticlePass(depthTexture);
 	
 	const encoderDebug = device.createCommandEncoder();
 
-	//anti-aliasing over the finished frame. The debug views go on after it, and are left as they are
+	//anti-aliasing over the finished frame: whichever of the two the setting names. The debug views go on after it, and are left as they are
 	fxaaPass(encoderDebug, context.getCurrentTexture());
+	smaaPass(encoderDebug, context.getCurrentTexture());
 
 	if(settings.displayHeightMap)
 	{

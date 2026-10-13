@@ -74,7 +74,7 @@ const MOUNTAINS = {
 	flankSlope: 1.35,			// how steeply the ground falls away either side of a ridge crest, as rise over run
 	minor: 0.72,				// how high the lesser ridges are next to the main ones. Each finer level of the tree is this much of the one before: lower = deeper valleys between the main ridges
 	wobble: 0.2,				// how much the crest of a ridge goes up and down along its length (minor peaks and the saddles between them), 0 to 1
-	wobbleLength: 110,			// and about how far apart those are
+	wobbleLength: 180,			// and about how far apart those are. (Much shorter and the crest goes up and down faster than the faces fall away from it, and every high point on it comes out as a cone)
 	valley: 24,					// how wide a strip in the bottom of each valley is rounded off
 	erodeScale: 1400,			// the size of the largest shapes the erosion noise carves
 };
@@ -195,7 +195,7 @@ function boxBlur(source, points, radius) {
 }
 
 //-------------------------------THE LAND WITHOUT ITS MOUNTAINS-------------------------------
-// params: seed, worldSize, landScale, seaFloorDepth, shelfWidth, beachHeight, bankHeight, hillHeight, woodland, lakes (see the terrain settings in settings.js)
+// params: seed, worldSize, landScale, seaFloorDepth, seaBedGrade, shelfWidth, beachHeight, bankHeight, hillHeight, woodland, lakes (see the terrain settings in settings.js)
 // returns { sample, erodedFbm, foothillShape }
 //		sample(x, z) -> { height: above sea level (negative under it) BEFORE any mountain is added,
 //						  mountain: 0 to 1, how far into a mountain range,
@@ -288,7 +288,8 @@ export function createTerrainSampler(params) {
 		const inland = continent - seaThreshold;	// > 0 is land, and it grows with distance from the shore
 
 		if (inland <= 0) {
-			// under water: a shelf that eases away from the beach, then drops to the sea floor, a long way down
+			// under water: a shelf that eases away from the beach, then the drop-off. (From the drop-off on down the bed keeps
+			//		falling at a steady grade, which is added in generateTerrain: see THE SEA BED there)
 			const floor = -params.seaFloorDepth * smoothstep(0, 0.2, shelfRun(-inland));
 			return { height: floor - 0.2, mountain: 0, rise: 0, woodland: 0, marsh: 0, room: 0 };
 		}
@@ -422,7 +423,10 @@ function growRidges(rise, points, seed, cellSize, mountainHeight, shape) {
 		const occupied = new Int32Array(size * size).fill(-1);
 
 		if (level == 0) {
-			// seeds: one on every peak of the rise, the cells that are higher than all 8 around them
+			// seeds: one on every peak of the rise, the cells that are higher than all 8 around them.
+			//		(In the heart of a wide range the rise is at its full 1 over a whole stretch of cells, all exactly as high as each
+			//		other. Of two cells that tie, only the one that comes first counts, or every cell of the stretch would be a seed:
+			//		a block of peaks standing a cell apart with nothing joining them, each of which comes out as a perfect cone)
 			for (let y = 0; y < size; y++) {
 				for (let x = 0; x < size; x++) {
 					const here = riseAt(x, y);
@@ -430,7 +434,9 @@ function growRidges(rise, points, seed, cellSize, mountainHeight, shape) {
 					let peak = true;
 					for (let dy = -1; dy <= 1 && peak; dy++) {
 						for (let dx = -1; dx <= 1; dx++) {
-							if ((dx != 0 || dy != 0) && riseAt(x + dx, y + dy) > here) { peak = false; break; }
+							if (dx == 0 && dy == 0) continue;
+							const other = riseAt(x + dx, y + dy);
+							if (other > here || (other == here && (dy < 0 || (dy == 0 && dx < 0)))) { peak = false; break; }
 						}
 					}
 					if (peak) {
@@ -683,16 +689,18 @@ export function generateTerrain(params) {
 
 	// How far every cell is from the nearest cell that passes a test, in cells. Two sweeps across the grid, each cell taking
 	//		the shortest way through a neighbour (as in growRidges)
-	const distanceTo = (test) => {
+	//		round: also through the 4 neighbours a knight's move away, which brings what would be eight sided rings of distance near enough to circles
+	const distanceTo = (test, round = false) => {
 		const distance = new Float32Array(points * points);
 		for (let i = 0; i < points * points; i++) distance[i] = test(i) ? 0 : 1e9;
+		const through = round ? [[-1, 0], [0, -1], [-1, -1], [1, -1], [-2, -1], [2, -1], [-1, -2], [1, -2]] : [[-1, 0], [0, -1], [-1, -1], [1, -1]];
 		for (let sweep = 0; sweep < 2; sweep++) {
 			const sign = sweep == 0 ? 1 : -1;
 			for (let k = 0; k < points * points; k++) {
 				const i = sweep == 0 ? k : points * points - 1 - k;
 				const col = i % points, row = (i - col) / points;
 				let best = distance[i];
-				for (const [dx, dy] of [[-1, 0], [0, -1], [-1, -1], [1, -1]]) {
+				for (const [dx, dy] of through) {
 					const nx = col + dx * sign, ny = row + dy * sign;
 					if (nx < 0 || ny < 0 || nx >= points || ny >= points) continue;
 					best = Math.min(best, distance[ny * points + nx] + Math.hypot(dx, dy));
@@ -718,6 +726,27 @@ export function generateTerrain(params) {
 		// the nearest water is a lake: in one, or on the wet ground round one. This is what the water reads to know to lie calm
 		lakes[i] = (lake || (heights[i] >= 0 && marshes[i] > 0.05)) ? 1 : 0;
 	}
+
+	/*
+		THE SEA BED. sample runs it out from the beach as a shallow shelf and then drops it away, to the Drop-off Depth setting.
+		It used to level out there, a floor as flat as a table all the way to the edge of the world. Now it keeps on down
+		from the drop-off at one steady grade (params.seaBedGrade: 0.42 is 42 down for every 100 out) for as far as the
+		land's mesh goes.
+
+		A steady grade needs to know how far out a place is, and the noise the coast is made from cant say: its slope is
+		different everywhere. So it is measured, across the grid: how far every point of the sea is from the line half way
+		down the drop-off (0 on the land, on the shelf and on the top half of the drop). The bed is lowered by the grade
+		times that. Half way down is where the drop-off is steepest, so the two run together: the drop eases off into the
+		grade instead of levelling out and then starting down again.
+	*/
+	const seaBedGrade = Math.max(params.seaBedGrade ?? 0, 0);
+	let beyondDrop = new Float32Array(points * points);		// world units out past the middle of the drop-off
+	if (seaBedGrade > 0) {
+		const out = distanceTo((i) => !(sea[i] && heights[i] < -0.5 * params.seaFloorDepth), true);
+		beyondDrop = boxBlur(out, points, 3).map((distance) => distance * cellSize);	// (blurred a little: the grid still leaves corners in it)
+	}
+	// how much lower the bed is for being that far out. It comes on over the first 60 or so units, not at a crease
+	const bedFall = (out) => seaBedGrade * out * out / (out + 60);
 
 	// the mountains: the ridge skeleton, with the eroded noise roughing it up and carving the faces between the ridges
 	const { ridges, crests } = growRidges(rises, points, params.seed, cellSize, params.mountainHeight, MOUNTAINS);
@@ -772,7 +801,7 @@ export function generateTerrain(params) {
 	for (let row = 0; row < points; row++) {
 		for (let col = 0; col < points; col++) {
 			const i = row * points + col;
-			heights[i] += withFoothills(col * cellSize - half, row * cellSize - half, massif[i], footings[i], rooms[i]);
+			heights[i] += withFoothills(col * cellSize - half, row * cellSize - half, massif[i], footings[i], rooms[i]) - bedFall(beyondDrop[i]);
 			woodlands[i] = Math.max(woodlands[i], foothillWooded * (1 - marshes[i]));
 			covers[i] = coverOf(mountains[i], woodlands[i], marshes[i]);
 			zones[i] = classifyZone(heights[i], covers[i], params, !sea[i]);
@@ -819,7 +848,7 @@ export function generateTerrain(params) {
 		}
 		const raised = withFoothills(x, z, mountain, gridAt(footings, x, z), result.room);
 		landAtCover = coverOf(result.mountain, Math.max(result.woodland, foothillWooded * (1 - marsh)), marsh);
-		return result.height + raised;
+		return result.height + raised - (result.height < 0 ? bedFall(gridAt(beyondDrop, x, z)) : 0);
 	}
 
 	/*

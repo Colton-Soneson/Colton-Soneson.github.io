@@ -119,15 +119,20 @@ export const groundTextures =
 		rgb: what to multiply the color of the sand by. a: relief.
 			wet: 0 dry to 1 wet through (the strip the waves reach, and everything under the water)
 
-		ripples		the little ridges the wind (or under water, the swash) leaves across sand: a sine, bent by noise, sharpened
-					to ridges by 1 - |sine|. In patches, and washed nearly flat where the sand is wet
+		ripples		the little ridges the wind leaves across dry sand: a sine, bent by noise, sharpened to ridges
+					by 1 - |sine|. In patches
 		grain		noise at the size of a grain, and now and then a dark one
 		stones		the points of the cells: a pebble or a bit of shell lies at one in seven of them
+
+		Wet sand is none of that. Every wave that runs up the beach lays it flat again: the ripples are gone, the grains are
+		packed too close to tell apart, and the stones are half sunk in it. What is left is smooth, dark and shining (the
+		shine is put on in vf_terrain.js, which knows where the sky and the sun are)
 	*/
 	fn beachSand(xz: vec2f, pixel: f32, wet: f32) -> vec4f {
 		// lighter and darker stretches
-		var tint = vec3f(1.0, 1.0, 1.0) * (0.95 + 0.1 * noise(xz / 7.0));
+		var tint = vec3f(1.0, 1.0, 1.0) * (0.95 + 0.1 * noise(xz / 7.0) * (1.0 - 0.6 * wet));
 		var relief = 0.0;
+		let dry = 1.0 - wet;
 
 		//ripples
 		let rippleLength = 1.2;
@@ -135,7 +140,7 @@ export const groundTextures =
 		if (rippleShown > 0.0) {
 			let push = noise(xz / 5.5) * 2.6 + noise(xz / 1.9 + vec2f(7.0, 3.0)) * 0.55;
 			let ridge = 1.0 - abs(sin((dot(xz, vec2f(0.86, 0.5)) + push) * 3.14159 / rippleLength));
-			let rippled = smoothstep(0.3, 0.62, noise(xz / 14.0 + vec2f(3.0, 9.0))) * rippleShown * (1.0 - 0.75 * wet);
+			let rippled = smoothstep(0.3, 0.62, noise(xz / 14.0 + vec2f(3.0, 9.0))) * rippleShown * dry * dry;
 			relief += (ridge * ridge - 0.33) * 0.09 * rippled;
 			tint *= 1.0 + (ridge * ridge - 0.33) * 0.12 * rippled;
 		}
@@ -148,12 +153,12 @@ export const groundTextures =
 			let rounded = saturate(1.0 - cell.nearest / radius);
 			let stone = step(0.86, cell.id.x) * smoothstep(0.0, 0.3, rounded) * stoneShown;
 			let pale = step(0.5, fract(cell.id.y * 7.3));		// shell, or a dark pebble
-			tint = mix(tint, mix(vec3f(0.68, 0.64, 0.6), vec3f(1.12, 1.1, 1.06), pale), stone);
-			relief += sqrt(rounded) * 0.07 * stone;
+			tint = mix(tint, mix(vec3f(0.68, 0.64, 0.6), vec3f(1.12, 1.1, 1.06), pale), stone * (1.0 - 0.35 * wet));
+			relief += sqrt(rounded) * 0.07 * stone * (1.0 - 0.65 * wet);
 		}
 
 		//grain
-		let grainShown = saturate(0.09 / (pixel * 2.5) - 1.0);
+		let grainShown = saturate(0.09 / (pixel * 2.5) - 1.0) * (1.0 - 0.85 * wet);
 		if (grainShown > 0.0) {
 			let coarse = noise(xz / 0.07);
 			let fine = noise(xz / 0.031 + vec2f(9.0, 4.0));
@@ -174,8 +179,9 @@ export const groundTextures =
 		Grass seen from above and from far off: what the ground under the blades is, and all there is of a meadow from further
 		away than the blades are drawn. Made to look like a field of them, so the one runs into the other.
 			patches		wide stretches of lusher and drier grass, which can be told apart from any distance
-			tufts		cells, at three sizes: each its own shade of green (and the odd one dry, as the odd blade is), darker
-						round its edge where it goes under the next. The widest are whole stands of grass, and show from a hilltop
+			tufts		cells, at three sizes: each a little its own shade of green (and the odd one dry, as the odd blade is),
+						a touch darker round its edge where it goes under the next. Kept faint: any stronger and what shows is the cells.
+						The widest are whole stands of grass, and show from a hilltop
 			blades		noise stretched many times longer than it is wide is a mat of flattened blades. Five of them, at
 						five angles, lighter where a blade lies on top and darker between
 	*/
@@ -193,9 +199,9 @@ export const groundTextures =
 			let tuftShown = saturate(tuftSize / (pixel * 3.0) - 1.0);
 			if (tuftShown > 0.0) {
 				let cell = cellsAt(xz / tuftSize + vec2f(f32(layer) * 17.0, f32(layer) * 3.0));
-				let inFromEdge = smoothstep(0.0, 0.3, cell.border);
-				var shade = vec3f(1.0, 1.0, 1.0) * (0.84 + 0.3 * cell.id.x) * (0.8 + 0.2 * inFromEdge);
-				shade = mix(shade, shade * vec3f(1.25, 1.1, 0.7), step(0.9, cell.id.y) * 0.8);
+				let inFromEdge = smoothstep(0.0, 0.45, cell.border);
+				var shade = vec3f(1.0, 1.0, 1.0) * (0.93 + 0.14 * cell.id.x) * (0.91 + 0.09 * inFromEdge);
+				shade = mix(shade, shade * vec3f(1.25, 1.1, 0.7), step(0.9, cell.id.y) * 0.35);
 				let strength = tuftShown * select(0.6, 1.0, layer == 1);
 				tint *= mix(vec3f(1.0, 1.0, 1.0), shade, strength);
 				relief += (inFromEdge - 0.5) * 0.01 * min(tuftSize, 3.0) * strength;

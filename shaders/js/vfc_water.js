@@ -1696,6 +1696,20 @@ export const f_water =
 			seeThrough *= (1.0 - F) * (1.0 - foam) * (1.0 - fog);
 		}
 
+		// Seen from underneath (the camera is under the sea) it is none of the above: no mirror of the sky, no foam. What shows
+		//		through the surface is the sky over it, bent on its way in to the water so that all of it fits in a circle
+		//		overhead (Snell's window, its edge wobbling with the waves). Outside that circle no light from above can
+		//		reach the eye at all, and the surface is a mirror of the dark water under it.
+		//		(the water between the eye and the surface is put in afterwards: vf_lightShafts.js)
+		if (dot(N, V) < 0.0 && Lights.camPos.y < input.worldPos.y) {
+			let leaving = refract(-V, -N, 1.33);		// the way the line of sight carries on once it is out in the air. Nothing if it cannot get out
+			var underside = vec3f(0.02, 0.1, 0.14) * (0.15 + 0.85 * smoothstep(-0.08, 0.25, L.y));
+			if (dot(leaving, leaving) > 0.5 && UBO.atmosphereEnabled > 0.5) {
+				underside = mix(underside, skyColorAt(vec3f(leaving.x, max(leaving.y, HORIZON_LIFT), leaving.z)) * (0.6 + 0.4 * clouded.r), smoothstep(0.0, 0.3, leaving.y));
+			}
+			return vec4f(underside, 1.0);
+		}
+
 		return vec4f(color, 1.0 - seeThrough);
 	}
 `;

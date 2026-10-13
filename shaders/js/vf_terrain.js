@@ -215,6 +215,9 @@ export const vf_terrain =
 		depthA : f32,				// the two numbers of the projection matrix a depth is made from: depth = -depthA + depthB / distance in front of the camera
 		depthB : f32,
 		grassDistance : f32,		// how far from the camera the blades of grass are drawn. 0 if there are none
+		snowCover : f32,			// how much snow has fallen and is lying, 0 to 1 (see SNOWBUILD)
+		hay : f32,					// how far the grass has gone the color of hay, 0 to 1 (the fall and the winter)
+		topDownViewProj : mat4x4f,	// the camera the top down height map is taken with
 	}
 	@group(0) @binding(0) var<uniform> UBO: TerrainUniforms;
 
@@ -269,6 +272,7 @@ export const vf_terrain =
 	@group(0) @binding(4) var skyLUT: texture_2d<f32>;
 	@group(0) @binding(5) var skySampler: sampler;
 	@group(0) @binding(6) var terrainFields: texture_2d<f32>;	// the land data: per grid point its height, mountain value, normal.x, normal.z (see terrain.js)
+	@group(0) @binding(7) var topDownHeightMap: texture_depth_2d;	// the land and what stands on it, from straight above: what the sky can see
 
 	const COLOR_SEABED: vec3f    = ${zoneColor(ZONE_OCEAN)};
 	const COLOR_BEACH: vec3f     = ${zoneColor(ZONE_BEACH)};
@@ -281,6 +285,7 @@ export const vf_terrain =
 	const COLOR_EARTH: vec3f     = vec3f(0.36, 0.27, 0.18);	// bare soil, on the face of the bank between the sand and the grass
 	const COLOR_SCREE: vec3f     = vec3f(0.52, 0.50, 0.47);	// loose broken stone, paler than the rock it fell from
 	const COLOR_TURF: vec3f      = vec3f(0.27, 0.36, 0.17);	// the tough short grass of high ground
+	const COLOR_HAY: vec3f       = vec3f(0.62, 0.54, 0.27);	// the grassland once the summer is over
 
 	const PI: f32 = 3.14159265;
 	const HORIZON_LIFT: f32 = 0.016;	// see f_water: reads the first row of sky above the horizon, not the seam under it
@@ -376,9 +381,10 @@ export const vf_terrain =
 			marble = vec4f(mix(vec3f(1.0, 1.0, 1.0), veined.rgb, UBO.rockVeins), veined.a * UBO.rockVeins);
 		}
 		var sand = vec4f(1.0, 1.0, 1.0, 0.0);
+		// wet through under the water and up the strip the waves run over, drying out from there up the beach. The line it dries along wanders
+		let wetSand = 1.0 - smoothstep(0.15, 0.68 * UBO.beachHeight, height + 0.7 * (noise(input.worldPos.xz / 13.0 + vec2f(5.0, 21.0)) - 0.5));
 		if (beach > 0.001 && height > -10.0 && UBO.groundDetail > 0.0) {
-			// wet through under the water and for the strip above it that the waves reach
-			let grained = beachSand(input.worldPos.xz, pixel, 1.0 - smoothstep(0.1, 0.9, height));
+			let grained = beachSand(input.worldPos.xz, pixel, wetSand);
 			sand = vec4f(mix(vec3f(1.0, 1.0, 1.0), grained.rgb, saturate(UBO.groundDetail)), grained.a * UBO.groundDetail);
 		}
 		// (from far off the floor of the forest is the green it always was: there the trees are what is seen, not what lies under them)
@@ -431,10 +437,33 @@ export const vf_terrain =
 		let ledgeNormal = normalize(mix(groundNormal, rockNormal, 0.35));
 		let clings = saturate(0.5 + 0.2 * altitude);
 		let lies = smoothstep(mix(0.72, 0.3, clings), mix(0.88, 0.55, clings), ledgeNormal.y + 0.12 * crevice);
-		let snow = smoothstep(-1.0, 0.6, altitude + 1.4 * (crevice - 0.3)) * lies * (1.0 - beach);
+		let mountainSnow = smoothstep(-1.0, 0.6, altitude + 1.4 * (crevice - 0.3)) * lies * (1.0 - beach);
+
+		//------------------SNOWBUILD-----------------
+		// Snow that has fallen (weather.js), as against the snow that is always on the heights. It lies wherever the sky can
+		//		see the ground. The top down height map, the picture of the land taken from straight above that the water
+		//		reads its depth from, is the sky's view: if what that picture saw at this spot was higher than this pixel,
+		//		there is something over it (a roof, an overhang, the face of a cliff) and no snow got here.
+		//		(the picture only covers the ground round the camera. Further off everything counts as open to the sky)
+		//		Not on the beach: the sea keeps the sand clear. Not on steep ground. Thinner under the trees.
+		//		It comes in patches first, which grow until they join, and it goes the same way
+		var built = 0.0;
+		if (UBO.snowCover > 0.001) {
+			let seen = UBO.topDownViewProj * vec4f(input.worldPos, 1.0);
+			let seenUV = seen.xy * vec2f(0.5, -0.5) + vec2f(0.5, 0.5);
+			var open = 1.0;
+			if (seenUV.x > 0.0 && seenUV.x < 1.0 && seenUV.y > 0.0 && seenUV.y < 1.0) {
+				let top = textureLoad(topDownHeightMap, vec2i(seenUV * vec2f(textureDimensions(topDownHeightMap))), 0);
+				open = step(seen.z - 0.0015, top);		// (0.0015 of the picture's depth is 1.5 units: the two meshes do not agree any closer than that)
+			}
+			let patchy = 0.6 * noise(input.worldPos.xz / 11.0 + vec2f(7.0, 3.0)) + 0.4 * noise(input.worldPos.xz / 1.9);
+			let settled = smoothstep(0.75 * patchy, 0.75 * patchy + 0.25, UBO.snowCover * 1.25);
+			built = settled * open * smoothstep(0.5, 0.72, groundNormal.y) * (1.0 - beach) * smoothstep(0.2, 1.2, height) * (1.0 - 0.4 * forest) * (1.0 - 0.5 * marsh);
+		}
+		let snow = max(mountainSnow, built);
 
 		//------------------WHAT IS HERE-----------------
-		var albedo = COLOR_GRASSLAND * turf.rgb;
+		var albedo = mix(COLOR_GRASSLAND, COLOR_HAY, 0.8 * UBO.hay) * turf.rgb;
 		albedo = mix(albedo, mix(COLOR_FOREST, litter.rgb, litterNear), forest);
 		albedo = mix(albedo, rock, rocky);
 		albedo = mix(albedo, COLOR_SNOW, snow);
@@ -446,7 +475,9 @@ export const vf_terrain =
 		albedo = mix(albedo, COLOR_LAKEBED, marsh * smoothstep(-0.3, 2.5, -height));
 
 		// the relief of whichever of the three shows here. Snow buries it, and so do the loose stone and the turf on a mountain
-		let relief = (marble.a * rocky * (1.0 - 0.7 * scree) * (1.0 - highTurf) + sand.a * beach + litter.a * forest * litterNear * (1.0 - rocky) + turf.a * meadow) * (1.0 - snow);
+		//		Snow has a relief of its own: drifts, and a fine crust
+		let snowRelief = (noise(input.worldPos.xz / 4.5) - 0.5) * 0.05 + (noise(input.worldPos.xz / 0.8) - 0.5) * 0.03 * saturate(1.6 / (pixel * 4.0) - 1.0);
+		let relief = (marble.a * rocky * (1.0 - 0.7 * scree) * (1.0 - highTurf) + sand.a * beach + litter.a * forest * litterNear * (1.0 - rocky) + turf.a * meadow) * (1.0 - snow) + snowRelief * snow;
 
 		// snow lies over the small shapes and rounds them off: it is lit by a smoother surface than the rock under it
 		let smoothNormal = normalize(mix(rockNormal, groundNormal, 0.65 * snow));
@@ -497,6 +528,28 @@ export const vf_terrain =
 		let sunLight = daylight * 0.72 * diffuse * visibility;
 		let sunTint = mix(vec3f(1.0, 1.0, 1.0), Lights.sunCol.rgb, 0.3 * (1.0 - saturate(L.y * 3.0)));	// warmer as the sun gets low
 		var color = albedo * ((skyLight * mix(vec3f(1.0, 1.0, 1.0), vec3f(0.78, 0.88, 1.08), snow) + sunLight) * sunTint + moonLight(N));
+
+		// Snow glints: here and there a crystal lies at the one angle that throws the sun straight at the eye. Which crystals
+		//		do changes with every step the eye or the sun takes, and that is the sparkle
+		if (snow > 0.01) {
+			let crystal = hash(floor(input.worldPos * 7.0));
+			let lined = fract(crystal * 57.3 + dot(toLand / max(away, 0.0001), vec3f(5.3, 3.1, 4.7)) * 9.0 + dot(L, vec3f(2.9, 4.3, 3.7)) * 9.0);
+			let glint = step(0.9, crystal) * smoothstep(0.82, 0.97, lined) * (1.0 - smoothstep(25.0, 90.0, away));
+			color += vec3f(1.0, 1.0, 1.0) * glint * snow * daylight * visibility * 0.9;
+		}
+
+		//------------------WET SAND-----------------
+		// smooth enough to shine: it shows the sky, more of it the lower the angle it is looked along (as water does), and the sun
+		let shine = wetSand * beach * smoothstep(-1.0, 0.0, height);
+		if (shine > 0.001) {
+			let toEye = -toLand / max(away, 0.0001);
+			let mirrored = reflect(-toEye, N);
+			let glancing = 0.04 + 0.96 * pow(1.0 - saturate(dot(N, toEye)), 5.0);
+			if (UBO.atmosphereEnabled > 0.5) {
+				color = mix(color, skyColorAt(vec3f(mirrored.x, abs(mirrored.y) + 0.02, mirrored.z)), saturate(glancing * 1.5) * 0.75 * shine);
+			}
+			color += sunTint * pow(saturate(dot(mirrored, L)), 160.0) * daylight * visibility * 0.7 * shine;
+		}
 
 		//------------------HORIZON FOG-----------------
 		// same as the water: far land fades into the color of the sky on the horizon behind it

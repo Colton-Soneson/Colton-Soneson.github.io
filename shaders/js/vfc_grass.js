@@ -62,7 +62,7 @@ export const vf_grass =
 		windBlow : vec4f,
 		wind : vec4f,				// xy: wind direction, z: height of the bank between the beach and the grass
 		clump : vec4f,				// x: how far apart the clumps are, y: pull, z: height, w: facing (see CLUMPS above)
-		clumpLook : vec4f,			// x: color
+		clumpLook : vec4f,			// x: color. And the season: y: how far the grass has gone to hay, z: how much snow is lying on it (both 0 to 1, see weather.js)
 		rings : array<vec4f, ${GRASS_MAX_RINGS}>,	// a ring's x: blades along one side of its grid, y: cell size, z: how far out it reaches, w: pieces in a blade
 	}
 	@group(0) @binding(0) var<uniform> UBO: GrassUniforms;
@@ -320,6 +320,11 @@ export const vf_grass =
 		let shade = 0.85 + 0.3 * input.tone;
 		let dry = mix(vec3f(1.0, 1.0, 1.0), vec3f(1.25, 1.1, 0.7), step(0.9, input.tone));
 		albedo *= shade * dry;
+		// the fall and the winter: hay, paler towards the tip
+		let hay = vec3f(0.74, 0.64, 0.33);
+		albedo = mix(albedo, hay * (0.5 + 0.65 * input.along) * shade, 0.85 * UBO.clumpLook.y);
+		// snow lies on the upper part of every blade
+		albedo = mix(albedo, vec3f(0.94, 0.96, 0.99), 0.85 * UBO.clumpLook.z * smoothstep(0.25, 0.8, input.along));
 		// reeds: dark and wet at the foot, straw colored towards the top
 		albedo = mix(albedo, mix(COLOR_MARSH, COLOR_REED, input.along) * shade, 0.8 * input.reed);
 
@@ -342,7 +347,8 @@ export const vf_grass =
 		// far off, a blade is smaller than a pixel and all that shading just reads as dark speckle. So with distance it goes over to the
 		//		color of the turf under it (grassTurf in f_groundTextures.js: the same green, in the same sort of shades), and the far
 		//		field of grass melts into the terrain
-		let farColor = mix(COLOR_GRASSLAND * mix(0.9, 1.1, input.tone) * mix(vec3f(1.0, 1.0, 1.0), dry, 0.5), COLOR_MARSH, input.reed);
+		var farColor = mix(mix(COLOR_GRASSLAND, hay * 0.84, 0.8 * UBO.clumpLook.y) * mix(0.9, 1.1, input.tone) * mix(vec3f(1.0, 1.0, 1.0), dry, 0.5), COLOR_MARSH, input.reed);
+		farColor = mix(farColor, vec3f(0.94, 0.96, 0.99), 0.85 * UBO.clumpLook.z);
 		let surface = mix(albedo * amongst, farColor, smoothstep(0.015, 0.14, input.distant));
 		var color = surface * (light * sunTint + moonLight(N));
 

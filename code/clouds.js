@@ -16,6 +16,7 @@ import * as terrain from './terrain.js'
 import { createTileableNoise, tileableFbm } from './wind.js'
 import { weatherUpdate, weatherNow } from './weather.js'
 import { lightNow } from './lighting.js'
+import { lightningNow } from './lightning.js'
 
 //the clouds are lit by the sky as well as the sun, read from the sky view LUT
 import {skyViewLUTtexture} from './atmosphere.js'
@@ -32,7 +33,10 @@ import {skyViewLUTtexture} from './atmosphere.js'
 const WEATHER_MAP_SIZE = 256;		// texels along a side of the weather map
 const WEATHER_TILE = 21000.0;		// and the stretch of world one tile of it covers
 const MOUNTAIN_MAP_SIZE = 64;
-const CIRRUS_HEIGHT = 6200.0;		// world units above the sea
+const HIGH_HEIGHT = 6200.0;			// the bottom of the high layer, world units above the sea
+const HIGH_DEPTH = [260.0, 700.0];	// how deep it is: as cirrus, and as the sheet of an overcast day
+const SHELF_BOTTOM = 230.0;			// a shelf cloud: the height of its bottom above the sea, and how deep it is
+const SHELF_DEPTH = 760.0;
 const MIDDLE_HEIGHT = 2550.0;		// the bottom of the middle layer: clear of the highest peaks
 const MIDDLE_DEPTH = 420.0;
 const TOWER_TOP = 4300.0;			// how high a cumulonimbus stands, whatever the depth of the layer it grows out of
@@ -199,10 +203,11 @@ const cloudTexture = device.createTexture({
 	usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
 });
 const cloudView = cloudTexture.createView();
+export const cloudMarchView = cloudView;	// for the shafts of light, which need to know where the sky is open (lightShafts.js)
 
 const cloudUniformBuffer = device.createBuffer({
   label: "cloud Uniform",
-  size: 384,
+  size: 512,
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 });
 
@@ -250,14 +255,14 @@ function cloudUniformBufferUpdates() {
 	const seaLevel = settings.waterWorldPosY;
 	bufferResult.push(seaLevel + weatherNow.base + settings.cloudHeight);
 	bufferResult.push(seaLevel + weatherNow.base + settings.cloudHeight + weatherNow.depth);
-	bufferResult.push(seaLevel + CIRRUS_HEIGHT + settings.cloudHeight);
+	bufferResult.push(0);
 	bufferResult.push(settings.terrainWorldSize * 0.5);
 
 	//weather
 	bufferResult.push(weatherNow.coverage);
 	bufferResult.push(weatherNow.kind);
 	bufferResult.push(weatherNow.density * settings.cloudDensity);
-	bufferResult.push(weatherNow.cirrus);
+	bufferResult.push(0);
 
 	//scroll
 	bufferResult.push(driftX);
@@ -278,7 +283,7 @@ function cloudUniformBufferUpdates() {
 	bufferResult.push(settings.cloudSteps);
 	bufferResult.push(settings.cloudDrawDistance);
 	bufferResult.push(settings.cloudDrawDistance * 0.6);
-	bufferResult.push(weatherNow.rain);
+	bufferResult.push(Math.max(weatherNow.rain, weatherNow.snow));	//(the coverage map says where it rains. In winter the same places are where it snows)
 
 	//the middle layer
 	bufferResult.push(seaLevel + MIDDLE_HEIGHT + settings.cloudHeight);
@@ -286,10 +291,10 @@ function cloudUniformBufferUpdates() {
 	bufferResult.push(settings.cloudLayers >= 2 ? weatherNow.middle : 0);
 	bufferResult.push(settings.cloudDensity);
 
-	//shape: how many times deeper than the low layer the cumulonimbus stands, how sharp the edges of the heaps are, and whether there is cirrus
+	//shape: how many times deeper than the low layer the cumulonimbus stands, and how sharp the edges of the heaps are
 	bufferResult.push(Math.max((TOWER_TOP - weatherNow.base) / weatherNow.depth, 1.2));
 	bufferResult.push(settings.cloudCrispness);
-	bufferResult.push(settings.cloudLayers >= 3 ? 1 : 0);
+	bufferResult.push(0);
 	bufferResult.push(0);
 
 	//the moon: drawn with the clouds, so that they can hide it. Which way it is and the angle from the middle of its disc to
@@ -297,6 +302,28 @@ function cloudUniformBufferUpdates() {
 	const moonDistance = Math.hypot(settings.moonPosX, settings.moonPosY, settings.moonPosZ) || 1;
 	bufferResult.push(settings.moonPosX / moonDistance, settings.moonPosY / moonDistance, settings.moonPosZ / moonDistance, settings.moonSize * Math.PI / 180);
 	bufferResult.push(settings.enableMoon ? Math.min(settings.moonBrightness, 1) * (1 - 0.6 * light.daylight) : 0, 0, 0, 0);
+
+	//the high layer: cirrus, or the sheet of an overcast day (deeper, and thick enough to be grey from underneath)
+	const sheet = weatherNow.sheet;
+	bufferResult.push(seaLevel + HIGH_HEIGHT + settings.cloudHeight);
+	bufferResult.push(seaLevel + HIGH_HEIGHT + settings.cloudHeight + HIGH_DEPTH[0] + (HIGH_DEPTH[1] - HIGH_DEPTH[0]) * sheet);
+	bufferResult.push(settings.cloudLayers >= 3 ? weatherNow.cirrus : 0);
+	bufferResult.push(sheet);
+	//how thick it is, how much of the sun it lets down on to the layers under it, and how far off it fades into the haze
+	bufferResult.push((0.22 - 0.07 * sheet) * settings.cloudDensity);
+	bufferResult.push(settings.cloudLayers >= 3 ? 1 - 0.55 * sheet : 1);
+	bufferResult.push(settings.cloudDrawDistance * 1.7);
+	bufferResult.push(0);
+
+	//the shelf cloud (see weather.js for when there is one, and shelfDensity in vfc_clouds.js for its shape)
+	bufferResult.push(weatherNow.shelf[0], weatherNow.shelf[1], weatherNow.shelf[2], weatherNow.shelf[3]);
+	bufferResult.push(weatherNow.shelf[4], weatherNow.shelf[5], seaLevel + SHELF_BOTTOM + settings.cloudHeight, seaLevel + SHELF_BOTTOM + SHELF_DEPTH + settings.cloudHeight);
+
+	//what the storm has brought (weather.js): the tornado, the hurricane, how far each has turned, the green of the light, and the lightning (lightning.js)
+	bufferResult.push(weatherNow.tornado[0], weatherNow.tornado[1], weatherNow.tornado[2], weatherNow.tornado[3]);
+	bufferResult.push(weatherNow.hurricane[0], weatherNow.hurricane[1], weatherNow.hurricane[2], weatherNow.hurricane[3]);
+	bufferResult.push(weatherNow.spin[0], weatherNow.spin[1], weatherNow.green, lightningNow.flash);
+	bufferResult.push(lightningNow.position[0], lightningNow.position[1], lightningNow.position[2], lightningNow.reach);
 
 	const result = new Float32Array(bufferResult);
 	device.queue.writeBuffer(cloudUniformBuffer, 0, result.buffer, result.byteOffset, result.byteLength);

@@ -13,6 +13,7 @@ import * as transformations from './transformations.js'
 import * as terrain from './terrain.js'
 import { FOREST_THRESHOLD } from './terrainGenerator.js'
 import * as wind from './wind.js'
+import { weatherNow, seasonNow } from './weather.js'
 
 //the grass fades into the horizon color, read from the sky view LUT (same as the water and the land)
 import {skyViewLUTtexture} from './atmosphere.js'
@@ -99,7 +100,8 @@ function grassUniformBufferUpdates() {
 	bufferResult.push(settings.terrainBeachHeight);
 
 	//blade
-	bufferResult.push(settings.grassBladeHeight);
+	//(as tall as the season has it: cut down over the winter, grown back over the spring. And bowed under snow)
+	bufferResult.push(settings.grassBladeHeight * seasonNow.grassHeight * (1 - 0.3 * weatherNow.snowCover));
 	bufferResult.push(settings.grassBladeWidth);
 	bufferResult.push(FOREST_THRESHOLD);
 	bufferResult.push(settings.grassWindStrength);
@@ -124,7 +126,7 @@ function grassUniformBufferUpdates() {
 	bufferResult.push(settings.grassClumpHeight);
 	bufferResult.push(settings.grassClumpFacing);
 	bufferResult.push(settings.grassClumpColor);
-	bufferResult.push(0, 0, 0);
+	bufferResult.push(seasonNow.hay, weatherNow.snowCover, 0);
 
 	//the rings, and nothing for the ones there are not
 	for (let ring = 0; ring < GRASS_MAX_RINGS; ring++) {

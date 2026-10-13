@@ -142,6 +142,7 @@ export const c_skyView_LUT =
 		cameraPosition: vec4f,
 		moonDir:        vec4f,	// xyz: towards the moon, w: how bright it is
 		moonLook:       vec4f,	// x: the angle from the middle of its disc to the edge, radians. y: how overcast it is, 0 to 1, z: how dark the cloud is
+		tint:           vec4f,	// x: how green the light has gone, 0 to 1 (under a tornado or a hurricane)
 	};
 	@group(0) @binding(0) var<uniform> SU: SkyUniforms;
 	@group(0) @binding(1) var transmitLUT: texture_2d<f32>;
@@ -274,6 +275,8 @@ export const c_skyView_LUT =
 		//		mirrors, the light the clouds get from the sky
 		let grey = dot(color, vec3f(0.3, 0.45, 0.25));
 		color = mix(color, vec3f(grey, grey, grey * 1.04) * (0.6 - 0.35 * SU.moonLook.z), SU.moonLook.y);
+		// and the sickly green of the sky under the worst storms (a deep cloud lets the green of the light through best)
+		color *= mix(vec3f(1.0, 1.0, 1.0), vec3f(0.6, 1.08, 0.52), SU.tint.x);
 		textureStore(skyOut, vec2i(gid.xy), vec4f(color, 1.0));
 }
 `;
@@ -314,6 +317,7 @@ export const f_sky =
 		cameraPosition: vec4f,
 		moonDir:        vec4f,	// xyz: towards the moon, w: how bright it is
 		moonLook:       vec4f,	// x: the angle from the middle of its disc to the edge, radians. w: 1.0 if the clouds draw the disc (see vf_cloudComposite)
+		tint:           vec4f,	// (for the sky view LUT)
 	};
 	@group(0) @binding(0) var<uniform> Sky: SkyUniforms;
 	@group(0) @binding(1) var skyLUT:    texture_2d<f32>;

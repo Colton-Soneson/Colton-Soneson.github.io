@@ -14,8 +14,21 @@ export const CLOUD_MAP_WORKGROUP = 8;
 		low			the one the weather is made of: heaps (cumulus) in fair weather, a lumpy sheet when it is overcast, deep
 					dark rain cloud in a storm. Its bottom is well under the height of the mountains, which stand up through it
 		middle		small heaps in wide fields, far above the peaks (altocumulus). Thin: there to give the sky depth
-		cirrus		ice, higher again: not a volume, a streaked sheet the ray goes through once
-		Each ray walks through the low and the middle layer in whichever order it meets them.
+		high		ice, higher again. In fair weather cirrus: long fibres combed out by the wind. When it is overcast
+					this is the layer that closes over, into one grey sheet from horizon to horizon (cirrostratus), and
+					the low cloud under it stays broken
+		Each ray walks through all three, in whichever order it meets them: from the ground the low one first, from
+		above them all the high one first.
+
+		And now and then a SHELF CLOUD (shelfDensity): a long low wedge of cloud standing off the coast, the front edge of
+		weather out at sea. It is part of the low layer and is walked with it.
+
+	WHAT A STORM CAN BRING (weather.js says when)
+		a tornado		a funnel of cloud from the bottom of the low layer to the ground (twisterDensity). Walked with
+						the low layer, which for as long as there is one is taken to reach all the way down
+		a hurricane		not a cloud of its own but a pattern in where the low cloud is: a clear eye, a wall of cloud
+						round it, and arms that wind out from the wall (weatherAt)
+		lightning		its flash, as light inside the cloud round where it struck (the bolt itself is lightning.js)
 
 	WHERE THERE IS CLOUD (cloudDensity)
 		the weather map		a picture laid over the world from above that says, place by place, how much cloud there is.
@@ -60,17 +73,25 @@ const cloudUniforms =
 		cameraPosition : vec4f,		// xyz
 		lightDirection : vec4f,		// xyz: towards the sun, or the moon at night, 1 long
 		lightColor : vec4f,			// rgb: the color and strength of that light. a: how strong the light of the sky is
-		layer : vec4f,				// x: height of the bottom of the clouds, y: of their top, z: of the cirrus, w: half the width of the world
-		weather : vec4f,			// x: coverage, y: kind (0 sheet, 0.5 heaps, 1 towers), z: density, w: how much cirrus
+		layer : vec4f,				// x: height of the bottom of the clouds, y: of their top, z: (spare), w: half the width of the world
+		weather : vec4f,			// x: coverage, y: kind (0 sheet, 0.5 heaps, 1 towers), z: density, w: (spare)
 		scroll : vec4f,				// xy: how far the clouds have drifted, z: 1 / the size of a tile of the weather map, w: gloom (how grey the cloud is)
 		tower : vec4f,				// the cumulonimbus. xy: where it stands (x, z), z: its radius, w: how built up it is, 0 none
 		screen : vec4f,				// xy: the size of the picture the march draws (half the screen), zw: the two numbers that turn a depth into a distance
 		map : vec4f,				// the coverage map. xy: the middle of it (x, z), z: 1 / its width, w: the height its shadows are worked out at
 		quality : vec4f,			// x: steps along a ray, y: how far off clouds are drawn, z: where they fade into the haze, w: rain, 0 to 1
 		middle : vec4f,				// the middle layer. x: height of its bottom, y: of its top, z: how much of the sky it covers (0 none), w: how thick it is
-		shape : vec4f,				// x: how many times deeper than the low layer a cumulonimbus stands, y: how sharp the edge of a heap is, z: 1.0 if there is cirrus
+		shape : vec4f,				// x: how many times deeper than the low layer a cumulonimbus stands, y: how sharp the edge of a heap is
 		moon : vec4f,				// xyz: towards the moon, w: the angle from the middle of its disc to its edge, radians
 		moonLook : vec4f,			// x: how strongly the disc shows, 0 none
+		high : vec4f,				// the high layer. x: height of its bottom, y: of its top, z: how much of it there is (0 none), w: 0 cirrus to 1 a closed sheet
+		highLook : vec4f,			// x: how thick it is, y: how much of the sun it lets down on to the layers under it, z: how far off it fades into the haze
+		shelf : vec4f,				// the shelf cloud: it lies along part of a circle. xy: the middle of the circle (x, z), z: its radius, w: how built up the cloud is, 0 none
+		shelfLook : vec4f,			// x: which way from the middle of the circle the middle of the cloud is (radians, round from +x towards +z), y: half the angle it spans, z: height of its bottom, w: of its top
+		tornado : vec4f,			// xy: where it is (x, z), z: the radius of the funnel where it meets the cloud, w: how built up it is, 0 none
+		hurricane : vec4f,			// xy: where its eye is (x, z), z: its radius, w: how built up it is, 0 none
+		storm : vec4f,				// x: how far the hurricane has turned (radians), y: the tornado's clock (seconds), z: how green the light is, 0 to 1, w: how bright the lightning is at this moment
+		strike : vec4f,				// xyz: where in the cloud the lightning's light is, w: how far it spreads
 	}
 	@group(0) @binding(0) var<uniform> CU: CloudUniforms;
 `;
@@ -87,10 +108,13 @@ const cloudDensity =
 
 	const SHAPE_TILE: f32 = 1500.0;		// world size of one tile of the shape noise: a billow is about a third of this
 	const DETAIL_TILE: f32 = 380.0;
+	const SHELF_WIDTH: f32 = 1150.0;	// how far a shelf cloud runs back from its middle line, and forward of it to its front edge
 
 	// left behind by cloudDensity and middleDensity: how far into the body of the cloud the point is, 0 at its edge, before the
 	//		fine noise has worn the edges. The light is worked out from it (see "folds" at the top of the file)
 	var<private> cloudBody: f32;
+	// and by cloudDensity: how much of the cloud at the point is shelf cloud, 0 to 1 (it is lit darker: it stands in the shadow of its own weather)
+	var<private> cloudShelf: f32;
 
 	fn remap(value: f32, fromLow: f32, fromHigh: f32, toLow: f32, toHigh: f32) -> f32 {
 		return toLow + (value - fromLow) / (fromHigh - fromLow) * (toHigh - toLow);
@@ -101,6 +125,16 @@ const cloudDensity =
 		return CU.layer.y + (CU.shape.x - 1.0) * (CU.layer.y - CU.layer.x) * step(0.001, CU.tower.w);
 	}
 
+	// and how low: the bottom of the layer, or of the shelf cloud if there is one and it hangs lower
+	fn cloudFloor() -> f32 {
+		let withShelf = min(CU.layer.x, mix(CU.layer.x, CU.shelfLook.z, step(0.001, CU.shelf.w)));
+		return mix(withShelf, min(withShelf, CU.map.w), step(0.001, CU.tornado.w));		// (a tornado comes all the way down, to the height of the sea)
+	}
+
+	fn mountainsUnder(xz: vec2f) -> f32 {
+		return textureSampleLevel(mountainMap, clampSampler, (xz + vec2f(CU.layer.w, CU.layer.w)) / (2.0 * CU.layer.w), 0.0).r;
+	}
+
 	// The weather over a place. x: how much cloud, 0 to 1. y: what kind. z: how far it is from the middle of the cumulonimbus, in radii of it
 	fn weatherAt(xz: vec2f) -> vec3f {
 		let map = textureSampleLevel(weatherMap, repeatSampler, (xz - CU.scroll.xy) * CU.scroll.z, 0.0);
@@ -109,8 +143,29 @@ const cloudDensity =
 		// the weather map is cloud wherever it is above a line, and the coverage sets the line. Cloud gathers over mountains
 		let field = map.r * 0.75 + map.a * 0.25 + 0.06 * mountains;
 		// (never quite all the way: heaped cloud always has the shape noise cutting bays and towers into it. A sheet or a rain cloud is let fill in)
-		let cover = saturate(remap(field, 1.0 - CU.weather.x, 1.0 - CU.weather.x + 0.3, 0.0, 1.0)) * mix(0.66, 1.0, smoothstep(0.7, 0.95, CU.weather.x));
-		let kind = saturate(CU.weather.y + (map.g - 0.5) * 0.35);
+		var cover = saturate(remap(field, 1.0 - CU.weather.x, 1.0 - CU.weather.x + 0.3, 0.0, 1.0)) * mix(0.66, 1.0, smoothstep(0.7, 0.95, CU.weather.x));
+		var kind = saturate(CU.weather.y + (map.g - 0.5) * 0.35);
+
+		// THE HURRICANE. Inside its radius where the cloud is, is not left to the weather map: it is drawn.
+		//		the eye		clear, right in the middle
+		//		the wall	a ring of solid cloud round the eye, the tallest cloud in the storm
+		//		the arms	two bands of cloud winding out from the wall. The further out along an arm, the further round
+		//					it has got (a spiral whose angle grows with the logarithm of the distance, which is what
+		//					keeps the arms the same shape at every size), and the whole of it turns
+		if (CU.hurricane.w > 0.0) {
+			let fromEye = xz - CU.hurricane.xy;
+			let outward = length(fromEye) / CU.hurricane.z;		// 0 in the eye, 1 at the outer edge
+			if (outward < 1.0) {
+				let bearing = atan2(fromEye.y, fromEye.x);
+				let arms = 0.5 + 0.5 * sin(2.0 * bearing + 7.5 * log(max(outward, 0.03)) - 2.0 * CU.storm.x);
+				let banded = smoothstep(0.3, 0.7, arms + 0.5 * (field - 0.5)) * (1.0 - smoothstep(0.7, 1.0, outward));
+				let wall = 1.0 - smoothstep(0.1, 0.34, outward);
+				let eye = smoothstep(0.035, 0.06, outward);
+				let share = CU.hurricane.w * (1.0 - smoothstep(0.85, 1.0, outward));
+				cover = mix(cover, max(wall, banded) * eye, share);
+				kind = mix(kind, mix(0.6, 1.0, wall), share);
+			}
+		}
 		return vec3f(cover, kind, distance(xz, CU.tower.xy) / CU.tower.z);
 	}
 
@@ -122,8 +177,80 @@ const cloudDensity =
 		return mix(mix(sheet, heaps, saturate(kind * 2.0)), towers, saturate(kind * 2.0 - 1.0));
 	}
 
-	// How much cloud there is at a point. detailed: whether to wear the edges away with the detail noise (not worth it for shadows)
-	fn cloudDensity(p: vec3f, detailed: bool) -> f32 {
+	/*
+		THE SHELF CLOUD. Cold air pouring out ahead of weather at sea lifts the warm air in front of it into one long roll,
+		and what is seen from the land is a dark wedge along the horizon: thin at its front edge, low down, and thickening
+		back into a bank, with its face laid down in level plates like a stack of slates.
+		Here it lies along part of a circle round the middle of the land, so it stands off the coast whichever way it is.
+			across		where a point is across it: -1 its front edge (the side towards the land), 0 its middle line, 1 its back
+			roof		how high its top is there, as a share of its full height: low over the front edge, full further back
+	*/
+	fn shelfDensity(p: vec3f) -> f32 {
+		if (CU.shelf.w <= 0.0 || p.y <= CU.shelfLook.z || p.y >= CU.shelfLook.w) {
+			return 0.0;
+		}
+		let fromMiddle = p.xz - CU.shelf.xy;
+		let across = (length(fromMiddle) - CU.shelf.z) / SHELF_WIDTH;
+		if (abs(across) >= 1.0) {
+			return 0.0;
+		}
+		// how far round from the middle of the cloud, 0 to 1 at either end of it
+		let turned = atan2(fromMiddle.y, fromMiddle.x) - CU.shelfLook.x;
+		let around = abs(turned - 6.2831853 * round(turned / 6.2831853)) / CU.shelfLook.y;
+		if (around >= 1.0) {
+			return 0.0;
+		}
+		let h = (p.y - CU.shelfLook.z) / (CU.shelfLook.w - CU.shelfLook.z);
+		// its outline is pushed in and out by the billows, slowly: it is a smooth cloud, not a heaped one
+		let drifted = p - vec3f(CU.scroll.x, 0.0, CU.scroll.y) * 0.3;
+		let shape = textureSampleLevel(shapeNoise, repeatSampler, drifted * vec3f(1.0, 2.2, 1.0) / (SHAPE_TILE * 1.6), 0.0);
+		// the plates: going back from the front edge the top goes up in steps, each a level deck with a short rise to the next
+		let back = smoothstep(-1.0, 0.4, across + 0.16 * (shape.r - 0.5));
+		let tier = (floor(back * 5.0) + smoothstep(0.5, 1.0, fract(back * 5.0))) / 5.0;
+		let roof = (0.2 + 0.8 * tier) * (0.92 + 0.16 * shape.g);
+		// and its underside is ragged: scraps of cloud hang down from it
+		let underside = 0.14 * shape.b * smoothstep(-0.9, -0.3, across);
+		let inside = (1.0 - smoothstep(roof - 0.05, roof, h)) * smoothstep(underside, underside + 0.05, h)
+					* smoothstep(-1.0, -0.94, across) * (1.0 - smoothstep(0.55, 1.0, across)) * (1.0 - smoothstep(0.7, 1.0, around));
+		return inside * CU.shelf.w;
+	}
+
+	/*
+		THE TORNADO: a funnel of cloud from the bottom of the low layer down to the ground.
+			up			how far up it a point is: 0 at the ground (the height of the sea: the land hides whatever of it is under the land), 1 where it meets the cloud
+			the funnel	narrow at the ground, widening slowly at first and then fast into the cloud. Its middle line is not
+						straight, it leans and snakes, and the whole thing wanders (weather.js moves it)
+			the turning	its outline is pushed in and out by the shape noise, read in a frame that turns round the middle
+						line, faster lower down: that is what makes it look as if it spins
+			the wall cloud	the cloud it hangs from bulges down round the top of it
+			the debris	round its foot, a low wide cloud of everything it has picked up
+		As it builds it comes down out of the cloud: the bottom of it is the last part to appear.
+	*/
+	fn twisterDensity(p: vec3f) -> f32 {
+		if (CU.tornado.w <= 0.0 || p.y >= CU.layer.x + 60.0 || p.y <= CU.map.w) {
+			return 0.0;
+		}
+		let up = saturate((p.y - CU.map.w) / (CU.layer.x - CU.map.w));
+		let clock = CU.storm.y;
+		let middle = CU.tornado.xy + vec2f(sin(up * 2.7 + clock * 0.31), cos(up * 2.1 + clock * 0.23)) * CU.tornado.z * 0.55 * (1.0 - up);
+		let fromMiddle = p.xz - middle;
+		let outward = length(fromMiddle);
+		if (outward > CU.tornado.z * 3.4) {
+			return 0.0;
+		}
+		let turn = atan2(fromMiddle.y, fromMiddle.x) + clock * (1.9 - 1.2 * up) + up * 5.0;
+		let churn = textureSampleLevel(shapeNoise, repeatSampler, vec3f(cos(turn) * outward, p.y * 0.4 - clock * 14.0, sin(turn) * outward) / 300.0, 0.0).r;
+
+		let radius = CU.tornado.z * (0.14 + 0.86 * pow(up, 2.6));
+		let reached = smoothstep(1.02 - 1.15 * CU.tornado.w, 1.12 - 1.15 * CU.tornado.w, up);		// how far down it has come
+		let funnel = (1.0 - smoothstep(0.5, 1.0, outward / radius + 0.55 * (churn - 0.5))) * reached;
+		let wallCloud = (1.0 - smoothstep(1.2, 3.2, outward / CU.tornado.z + 0.6 * (churn - 0.5))) * smoothstep(0.72, 0.9, up) * 0.8 * saturate(CU.tornado.w * 2.0);
+		let debris = (1.0 - smoothstep(0.0, 0.2, up)) * (1.0 - smoothstep(0.25, 1.0, outward / (CU.tornado.z * 1.1))) * smoothstep(0.3, 0.7, churn) * 0.6 * smoothstep(0.85, 1.0, CU.tornado.w);
+		return max(funnel, max(wallCloud, debris));
+	}
+
+	// How much cloud there is at a point of the low layer itself. detailed: whether to wear the edges away with the detail noise (not worth it for shadows)
+	fn layerDensity(p: vec3f, detailed: bool) -> f32 {
 		if (p.y <= CU.layer.x) {
 			return 0.0;
 		}
@@ -184,6 +311,27 @@ const cloudDensity =
 		return density * CU.weather.z * thickest;
 	}
 
+	// How much cloud there is at a point: the low layer, or the shelf cloud where there is more of that
+	fn cloudDensity(p: vec3f, detailed: bool) -> f32 {
+		cloudBody = 0.0;
+		cloudShelf = 0.0;
+		let layered = layerDensity(p, detailed);
+		let shelf = shelfDensity(p);
+		if (shelf * 2.2 > layered) {
+			cloudBody = max(cloudBody, shelf);
+			cloudShelf = 1.0;
+			return shelf * 2.2 * max(CU.weather.z, 1.0);
+		}
+		// (a tornado is lit dark as well: it hangs under the thickest of the storm)
+		let twister = twisterDensity(p);
+		if (twister * 2.6 > layered) {
+			cloudBody = max(cloudBody, twister);
+			cloudShelf = 1.0;
+			return twister * 2.6;
+		}
+		return layered;
+	}
+
 	// How much cloud there is at a point of the middle layer: the same billows, read smaller, in fields of their own
 	fn middleDensity(p: vec3f, detailed: bool) -> f32 {
 		let h = (p.y - CU.middle.x) / (CU.middle.y - CU.middle.x);
@@ -212,6 +360,40 @@ const cloudDensity =
 		}
 		density = mix(density, 1.0 - pow(1.0 - density, 4.0), CU.shape.y);
 		return density * CU.middle.w * 0.8;
+	}
+
+	// How much cloud there is at a point of the high layer. Ice, not water, so no heaps: either cirrus, long fibres combed
+	//		out by the wind that curl over at their ends (mares' tails), or, when the weather is overcast, a sheet that
+	//		closes the sky from one side to the other (CU.high.w: 0 the one, 1 the other). detailed: with the fibres in it
+	fn highDensity(p: vec3f, detailed: bool) -> f32 {
+		let h = (p.y - CU.high.x) / (CU.high.y - CU.high.x);
+		if (CU.high.z <= 0.0 || h <= 0.0 || h >= 1.0) {
+			return 0.0;
+		}
+		let drifted = (p.xz - CU.scroll.xy * 1.6) * CU.scroll.z;		// (the wind is faster again up there)
+		// the weather map read long and thin makes streaks, and read from a place pushed aside by itself the streaks curl at their ends
+		let curl = textureSampleLevel(weatherMap, repeatSampler, drifted * 2.3 + vec2f(0.61, 0.13), 0.0).ga - vec2f(0.5, 0.5);
+		let streaks = textureSampleLevel(weatherMap, repeatSampler, drifted * vec2f(1.2, 3.9) + curl * 0.07, 0.0).b * 0.6
+					+ textureSampleLevel(weatherMap, repeatSampler, drifted * vec2f(4.1, 11.3) + curl * 0.16 + vec2f(0.3, 0.7), 0.0).b * 0.4;
+		// there is more of it over the mountains
+		let amount = CU.high.z * mix(0.9, 1.45, mountainsUnder(p.xz));
+		let wisps = smoothstep(1.0 - 0.58 * amount, 1.0 - 0.58 * amount + 0.36, streaks);
+		// (a sheet has no gaps in it, only thicker and thinner stretches)
+		let cover = mix(wisps, 0.7 + 0.3 * streaks, CU.high.w);
+		if (cover <= 0.0) {
+			return 0.0;
+		}
+		// thickest through its middle, thinning to nothing above and below
+		var density = cover * 4.0 * h * (1.0 - h);
+		cloudBody = density;
+		if (detailed) {
+			// the fibres: the fine noise read stretched out the way the streaks run, which takes most of the cloud away between them. Much less of that in a sheet
+			//		(ten times as long as they are wide, and bent by the same push that curls the streaks)
+			let fine = textureSampleLevel(detailNoise, repeatSampler, vec3f((p.x - CU.scroll.x * 1.6) / 9000.0, p.y / 900.0, (p.z - CU.scroll.y * 1.6) / 900.0) + vec3f(curl.x, 0.0, curl.y) * 0.22, 0.0).rgb;
+			let fibres = fine.r * 0.4 + fine.g * 0.35 + fine.b * 0.25;
+			density *= mix(mix(0.3, 1.45, smoothstep(0.3, 0.7, fibres)), 0.85 + 0.3 * fibres, CU.high.w);
+		}
+		return density * CU.highLook.x;
 	}
 `;
 
@@ -340,24 +522,33 @@ export const c_cloudCoverage =
 		// towards the sun, from where the way to it from the ground here comes up into the bottom of the clouds.
 		//		(a sun right down on the horizon is taken as a little way up, or the shadows would run off for ever)
 		let toLight = normalize(vec3f(CU.lightDirection.x, max(CU.lightDirection.y, 0.14), CU.lightDirection.z));
-		let enter = vec3f(xz.x, CU.map.w, xz.y) + toLight * ((CU.layer.x - CU.map.w) / toLight.y);
-		let stride = (ceiling - CU.layer.x) / toLight.y / f32(SHADOW_STEPS);
+		let bottom = cloudFloor();
+		let enter = vec3f(xz.x, CU.map.w, xz.y) + toLight * ((bottom - CU.map.w) / toLight.y);
+		let stride = (ceiling - bottom) / toLight.y / f32(SHADOW_STEPS);
 		var inTheWay = 0.0;
 		for (var i = 0; i < SHADOW_STEPS; i++) {
 			inTheWay += cloudDensity(enter + toLight * (stride * (f32(i) + 0.5)), false) * stride;
 		}
 
+		// the sun has to get through the high layer as well: one reading of it, half way up, where the way to the sun crosses it.
+		//		Cirrus takes a little off the sun. The sheet of an overcast day takes most of it
+		let highMiddle = 0.5 * (CU.high.x + CU.high.y);
+		let highThere = highDensity(vec3f(xz.x, CU.map.w, xz.y) + toLight * ((highMiddle - CU.map.w) / toLight.y), false);
+		let highInTheWay = highThere * 0.67 * (CU.high.y - CU.high.x) / toLight.y;
+
 		// and straight up
-		let rise = (ceiling - CU.layer.x) / f32(OVERHEAD_STEPS);
+		let rise = (ceiling - bottom) / f32(OVERHEAD_STEPS);
 		var overhead = 0.0;
 		for (var i = 0; i < OVERHEAD_STEPS; i++) {
-			overhead += cloudDensity(vec3f(xz.x, CU.layer.x + rise * (f32(i) + 0.5), xz.y), false) * rise;
+			overhead += cloudDensity(vec3f(xz.x, bottom + rise * (f32(i) + 0.5), xz.y), false) * rise;
 		}
 		let cover = 1.0 - exp(-overhead * 0.016);
+		// (a closed sheet overhead counts as cloud overhead. Cirrus does not: there is blue between the fibres)
+		let highOverhead = saturate(highDensity(vec3f(xz.x, highMiddle, xz.y), false) / max(CU.highLook.x, 0.0001)) * CU.high.w;
 
 		// rain falls out of the deep of the cloud, not from under its ragged edges
 		let rain = smoothstep(0.55, 0.9, cover) * CU.quality.w;
-		textureStore(coverageOut, id.xy, vec4f(exp(-inTheWay * 0.008), cover, rain, 1.0));
+		textureStore(coverageOut, id.xy, vec4f(exp(-inTheWay * 0.008 - highInTheWay * 0.009), max(cover, 0.8 * highOverhead), rain, 1.0));
 	}
 `;
 
@@ -442,10 +633,6 @@ export const vf_cloudMarch =
 		return vec2f(0.0, furthest);
 	}
 
-	fn mountainsUnder(xz: vec2f) -> f32 {
-		return textureSampleLevel(mountainMap, clampSampler, (xz + vec2f(CU.layer.w, CU.layer.w)) / (2.0 * CU.layer.w), 0.0).r;
-	}
-
 	@fragment
 	fn fragmentMain(@builtin(position) fragCoord: vec4f) -> @location(0) vec4f {
 		//------------------THE RAY-----------------
@@ -458,20 +645,45 @@ export const vf_cloudMarch =
 
 		// how far it can go: to whatever solid thing was drawn at this pixel, if anything was
 		let depth = textureLoad(depthTexture, min(vec2i(fragCoord.xy) * 2, vec2i(textureDimensions(depthTexture)) - vec2i(1, 1)), 0);
-		var furthest = CU.quality.y;
+		var solid = 1000000000.0;
 		if (depth < 1.0) {
 			let scenePoint = CU.invViewProjectionMatrix * vec4f(ndc, depth, 1.0);
-			furthest = min(furthest, distance(scenePoint.xyz / scenePoint.w, origin));
+			solid = distance(scenePoint.xyz / scenePoint.w, origin);
+		}
+		let furthest = min(CU.quality.y, solid);
+
+		// The stretches of it that are inside the three layers. (The high layer is followed much further out than the others:
+		//		it is so high that a ray only a little above the horizon has a very long way to go to reach it, and a sheet
+		//		that stopped half way down the sky would not be an overcast one)
+		var stretches = array<vec2f, 3>(
+			stretchBetween(origin, direction, cloudFloor(), cloudCeiling(), furthest),
+			stretchBetween(origin, direction, CU.middle.x, CU.middle.y, furthest),
+			stretchBetween(origin, direction, CU.high.x, CU.high.y, min(CU.highLook.z * 1.8, solid)));
+		if (CU.middle.z <= 0.0) {
+			stretches[1] = vec2f(0.0, -1.0);
+		}
+		if (CU.high.z <= 0.0) {
+			stretches[2] = vec2f(0.0, -1.0);
 		}
 
-		// the stretches of it that are inside the two layers
-		let lowStretch = stretchBetween(origin, direction, CU.layer.x, cloudCeiling(), furthest);
-		let middleStretch = stretchBetween(origin, direction, CU.middle.x, CU.middle.y, furthest);
+		// which to walk first: whichever the ray comes to first (a layer it never comes to goes last, and is passed over)
+		var comesTo = array<f32, 3>(0.0, 0.0, 0.0);
+		for (var k = 0; k < 3; k++) {
+			comesTo[k] = select(1000000000.0 + f32(k), stretches[k].x, stretches[k].y > stretches[k].x);
+		}
+		var order = array<i32, 3>(0, 1, 2);
+		for (var sweep = 0; sweep < 2; sweep++) {
+			for (var k = 0; k < 2 - sweep; k++) {
+				if (comesTo[order[k]] > comesTo[order[k + 1]]) {
+					let held = order[k];
+					order[k] = order[k + 1];
+					order[k + 1] = held;
+				}
+			}
+		}
 
 		var light = vec3f(0.0, 0.0, 0.0);		// what the clouds send to the eye
 		var through = 1.0;						// how much of what is behind them still shows
-		var meanDistance = 0.0;					// how far off the cloud is, weighted by how much of it shows
-		var meanWeight = 0.0;
 
 		//------------------THE LIGHT-----------------
 		let cosAngle = dot(direction, CU.lightDirection.xyz);
@@ -482,20 +694,26 @@ export const vf_cloudMarch =
 		let grey = 1.0 - 0.75 * CU.scroll.w;
 		let jitter = pixelNoise(fragCoord.xy);
 
-		// the two layers, the nearer one first
-		for (var turn = 0; turn < 2; turn++) {
-			let isMiddle = (turn == 0) == (middleStretch.x < lowStretch.x);
-			var stretch = lowStretch;
-			var steps = i32(CU.quality.x);
-			if (isMiddle) {
-				stretch = middleStretch;
-				steps = max(steps / 3, 8);
-				if (CU.middle.z <= 0.0) {
-					continue;
-				}
-			}
+		// the three layers, the nearest first
+		for (var turn = 0; turn < 3; turn++) {
+			let which = order[turn];			// 0 the low layer, 1 the middle, 2 the high
+			let stretch = stretches[which];
 			if (stretch.y <= stretch.x) {
 				continue;
+			}
+			// (the thinner the layer and the less there is to find in it, the fewer the steps)
+			var steps = i32(CU.quality.x);
+			var shortest = 12.0;
+			var longest = 46.0;
+			var hazeDistance = CU.quality.z;
+			if (which == 1) {
+				steps = max(steps / 3, 8);
+			}
+			if (which == 2) {
+				steps = max(steps / 4, 8);
+				shortest = 24.0;
+				longest = 140.0;
+				hazeDistance = CU.highLook.z;
 			}
 
 			//------------------THE MARCH-----------------
@@ -503,7 +721,7 @@ export const vf_cloudMarch =
 			//		however much it takes for them to reach the end of the stretch between them. A ray that grazes along a layer for
 			//		miles walks the near cloud as finely as one that goes straight up through it, and the far cloud coarsely
 			let reachOut = stretch.y - stretch.x;
-			let first = clamp(reachOut / f32(steps), 12.0, 46.0);
+			let first = clamp(reachOut / f32(steps), shortest, longest);
 			// (a long stretch gets more steps as well, up to 3 times as many: stretched over too few, the far steps are so long
 			//		that where each one happens to land shows, as stripes across the far cloud)
 			let longer = log(max(reachOut / (first * f32(steps)), 1.0));
@@ -521,18 +739,30 @@ export const vf_cloudMarch =
 				let p = origin + direction * travelled;
 				var density = 0.0;
 				var h = 0.0;
-				if (isMiddle) {
+				if (which == 1) {
 					density = middleDensity(p, true);
 					h = saturate((p.y - CU.middle.x) / (CU.middle.y - CU.middle.x));
+				} else if (which == 2) {
+					density = highDensity(p, true);
+					h = saturate((p.y - CU.high.x) / (CU.high.y - CU.high.x));
 				} else {
 					density = cloudDensity(p, true);
 					h = saturate((p.y - CU.layer.x) / (cloudCeiling() - CU.layer.x));		// (through the whole of the slab: with a cumulonimbus standing, that is to the top of it)
 				}
 				if (density > 0.0) {
 					let body = cloudBody;
+					let shelfShare = select(0.0, cloudShelf, which == 0);
 					var inTheWay = 0.0;
-					if (isMiddle) {
+					var sunDown = CU.highLook.y;		// the sun on the lower two layers has come through the high one
+					var skyDown = 1.0 + 2.6 * (1.0 - CU.highLook.y);		// and what the high layer took off the sun it sends down as its own even light
+					if (which == 1) {
 						inTheWay = middleToLight(p) * SCATTER;
+					} else if (which == 2) {
+						// (no walk towards the sun for this one: it is a thin even layer, and what is in the way is near
+						//		enough what is here, for as far as there is still to go up through it)
+						inTheWay = density * (CU.high.y - p.y) / max(CU.lightDirection.y, 0.2) * SCATTER * 0.7;
+						sunDown = 1.0;
+						skyDown = 1.0;
 					} else {
 						inTheWay = cloudToLight(p) * SCATTER;
 					}
@@ -550,16 +780,27 @@ export const vf_cloudMarch =
 						rounder *= 0.5;
 					}
 					// folds: more light is scattered in to the body of a cloud than to its thin edges, and less to its underside
-					sun *= (0.3 + 0.7 * pow(saturate(body * 2.4), mix(0.45, 1.1, h))) * mix(0.6, 1.0, smoothstep(0.0, 0.3, h));
+					//		(not in the high layer: ice in a thin sheet has no body to speak of)
+					if (which < 2) {
+						sun *= (0.3 + 0.7 * pow(saturate(body * 2.4), mix(0.45, 1.1, h))) * mix(0.6, 1.0, smoothstep(0.0, 0.3, h));
+					}
 					// and from the sky: from above in the top of the cloud, only from the horizon down in the bottom of it
 					let ambient = mix(ambientLow, ambientHigh * 0.5, h) * CU.lightColor.a * mix(0.3, 1.0, h);
-					let lit = (CU.lightColor.rgb * sun * 4.0 * PI * grey + ambient * grey * 0.3);
+					var lit = (CU.lightColor.rgb * sun * sunDown * 4.0 * PI * grey + ambient * skyDown * grey * 0.3) * (1.0 - 0.45 * shelfShare);
+					// the green of the light under a tornado or a hurricane
+					lit *= mix(vec3f(1.0, 1.0, 1.0), vec3f(0.62, 1.06, 0.54), CU.storm.z);
+					// lightning: light from inside the cloud itself, round where it struck, and a little of it everywhere
+					if (CU.storm.w > 0.0) {
+						let toStrike = p - CU.strike.xyz;
+						lit += vec3f(0.72, 0.8, 1.0) * CU.storm.w * (0.55 * exp(-dot(toStrike, toStrike) / (CU.strike.w * CU.strike.w)) + 0.012);
+					}
 
+					// Far off the clouds go into the haze like everything else: there is less and less of them, and they
+					//		just fade away into the sky behind them
+					let hazed = exp(-pow(travelled / hazeDistance, 2.0));
 					// what this step adds, and what it hides of everything further on (Hillaire's energy conserving sum)
-					let fade = exp(-density * SCATTER * stride);
+					let fade = exp(-density * SCATTER * stride * hazed);
 					light += through * lit * (1.0 - fade);
-					meanDistance += travelled * through * (1.0 - fade);
-					meanWeight += through * (1.0 - fade);
 					through *= fade;
 				}
 				stepStart += stride;
@@ -567,38 +808,6 @@ export const vf_cloudMarch =
 			}
 		}
 
-		//------------------CIRRUS-----------------
-		// High thin streaks of ice, far above the rest: not a volume, just a sheet the ray passes through once.
-		//		Only where the ray gets that far: where nothing solid is in the way
-		if (direction.y > 0.02 && depth >= 1.0 && CU.weather.w > 0.0 && CU.shape.z > 0.5 && origin.y < CU.layer.z) {
-			let reach = (CU.layer.z - origin.y) / direction.y;
-			if (reach < CU.quality.y * 1.6) {
-				let at = origin.xz + direction.xz * reach;
-				let drifted = (at - CU.scroll.xy * 1.6) * CU.scroll.z;
-				// the weather map read long and thin makes streaks, and read from a place pushed aside by itself the streaks
-				//		curl at their ends: mares' tails
-				let curl = textureSampleLevel(weatherMap, repeatSampler, drifted * 2.3 + vec2f(0.61, 0.13), 0.0).ga - vec2f(0.5, 0.5);
-				let streaks = textureSampleLevel(weatherMap, repeatSampler, drifted * vec2f(1.2, 3.9) + curl * 0.07, 0.0).b * 0.6
-							+ textureSampleLevel(weatherMap, repeatSampler, drifted * vec2f(4.1, 11.3) + curl * 0.16 + vec2f(0.3, 0.7), 0.0).b * 0.4;
-				// There is more of it over the mountains: over the ground the cirrus itself is above, and wherever the line of sight
-				//		passes over a range on its way up (which is where cirrus is seen to stand behind the peaks: the cloud
-				//		straight over a mountain is nearly overhead by the time the mountain is near enough to see)
-				let pastPeaks = origin.xz + direction.xz * max((CU.map.w + 1100.0 - origin.y) / direction.y, 0.0);
-				let mountains = max(mountainsUnder(at), mountainsUnder(pastPeaks));
-				let amount = CU.weather.w * mix(0.5, 1.45, mountains);
-				let sheet = smoothstep(1.0 - 0.58 * amount, 1.0 - 0.58 * amount + 0.36, streaks) * 0.55 * (1.0 - smoothstep(0.5, 1.0, reach / (CU.quality.y * 1.6)));
-				let cirrusLight = CU.lightColor.rgb * (0.5 + 2.2 * phase(dot(direction, CU.lightDirection.xyz), 0.6)) + skyLight(vec3f(0.0, 1.0, 0.0)) * CU.lightColor.a * 0.4;
-				light += through * cirrusLight * sheet;
-				through *= 1.0 - sheet;
-			}
-		}
-
-		// far off the clouds go into the haze like everything else: they just fade away into the sky behind them
-		if (meanWeight > 0.0) {
-			let clear = exp(-pow(meanDistance / meanWeight / CU.quality.z, 2.0));
-			light *= clear;
-			through = 1.0 - (1.0 - through) * clear;
-		}
 		return vec4f(light, through);
 	}
 `;

@@ -10,6 +10,7 @@ import { vf_boulders } from '../shaders/js/vf_boulders.js'
 
 import * as transformations from './transformations.js'
 import * as terrain from './terrain.js'
+import { weatherNow } from './weather.js'
 
 //the boulders fade into the horizon color, read from the sky view LUT (same as the water, the land, the grass and the trees)
 import {skyViewLUTtexture} from './atmosphere.js'
@@ -18,8 +19,9 @@ import {skyViewLUTtexture} from './atmosphere.js'
 import {uniformBufferLights} from './rotatingCube.js'
 
 /*
-	Boulders at the foot of the mountains and on their ridges. boulderGenerator.js makes their shapes and works out where
-	they lie, this file owns the result and draws it, vf_boulders.js is the shader.
+	Boulders: at the foot of the mountains and on their ridges, under the trees, in the grass, along the top of the beaches
+	and out in the sea. boulderGenerator.js makes their shapes and works out where they lie, this file owns the result and
+	draws it, vf_boulders.js is the shader.
 
 	There are BOULDER_SHAPES shapes of boulder and each has two meshes, a fine one and a coarse one for far away.
 	Every frame the boulders near enough to see are sorted by shape and by which mesh they get, their records are written
@@ -29,6 +31,7 @@ import {uniformBufferLights} from './rotatingCube.js'
 const NEAR_DETAIL = 2;		// times the ball's triangles are cut into 4: 320 triangles
 const FAR_DETAIL = 1;		// 80 triangles
 const NEAR_SIZES = 55;		// a boulder gets the fine mesh while it is nearer than this many times its own size
+const SEEN_SIZES = 700;		// and is not drawn at all from further off than this many times its size: by then it is smaller than a pixel
 
 // every setting where the boulders lie depends on. If one of these changes (or the land does) they are laid out again
 function getBoulderParams() {
@@ -37,6 +40,8 @@ function getBoulderParams() {
 		amount: settings.boulderAmount,
 		seaLevel: settings.waterWorldPosY,
 		unitsPerMetre: settings.forestUnitsPerMetre,
+		beachHeight: settings.terrainBeachHeight,
+		bankHeight: settings.terrainBankHeight,
 	};
 }
 
@@ -125,6 +130,8 @@ function boulderUniformBufferUpdates() {
 	bufferResult.push(settings.terrainRockDetail);
 	bufferResult.push(settings.boulderDrawDistance);
 	bufferResult.push(settings.terrainRockVeins);
+
+	bufferResult.push(weatherNow.snowCover, 0, 0, 0);	//how much snow has fallen and is lying (weather.js)
 
 	const result = new Float32Array(bufferResult);
 	device.queue.writeBuffer(boulderUniformBuffer, 0, result.buffer, result.byteOffset, result.byteLength);
@@ -256,7 +263,7 @@ export function boulderPass(pass) {
 	for (let at = 0; at < boulders.length; at += BOULDER_FLOATS) {
 		const x = boulders[at], y = boulders[at + 1], z = boulders[at + 2], size = boulders[at + 3];
 		const away = Math.hypot(x - settings.camPosX, y - settings.camPosY, z - settings.camPosZ);
-		if (away > settings.boulderDrawDistance) continue;
+		if (away > settings.boulderDrawDistance || away > size * SEEN_SIZES) continue;
 		if (planes.some((plane) => plane[0] * x + plane[1] * y + plane[2] * z + plane[3] < -size * 2)) continue;
 		lists[boulders[at + 11] * 2 + (away < size * NEAR_SIZES ? 0 : 1)].push(at);
 	}

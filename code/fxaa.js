@@ -7,7 +7,8 @@ import { settings } from './settings.js';
 import { vf_fxaa } from '../shaders/js/vf_fxaa.js'
 
 /*
-	Anti-aliasing over the finished frame. See vf_fxaa.js for how it works.
+	FXAA: anti-aliasing over the finished frame. See vf_fxaa.js for how it works. (The other kind is SMAA, in smaa.js. The
+	Anti-Aliasing setting says which of the two runs.)
 
 	It is the last thing done to the picture (only the debug views go over it afterwards): the frame is copied, and the
 	copy is drawn back over the frame through the shader.
@@ -78,7 +79,7 @@ const fxaaBindGroup = device.createBindGroup({
 
 export function fxaaPass(aEncoder, canvasTexture) {
 
-	if (!settings.enableFXAA) {
+	if (settings.antiAliasing != "fxaa") {
 		return;
 	}
 

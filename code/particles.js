@@ -4,8 +4,8 @@ import {canvasFormat} from './deviceSelection.js'
 
 import { settings } from './settings.js';
 
-import { c_leaves, vf_leaves, c_spray, vf_spray, vf_rain } from '../shaders/js/vfc_particles.js'
-import { PARTICLE_WORKGROUP_SIZE, LEAF_VERTICES, SPRAY_VERTICES, RAIN_VERTICES } from '../shaders/js/vfc_particles.js'
+import { c_leaves, vf_leaves, c_spray, vf_spray, vf_rain, vf_snow } from '../shaders/js/vfc_particles.js'
+import { PARTICLE_WORKGROUP_SIZE, LEAF_VERTICES, SPRAY_VERTICES, RAIN_VERTICES, SNOW_VERTICES } from '../shaders/js/vfc_particles.js'
 
 import * as transformations from './transformations.js'
 import * as terrain from './terrain.js'
@@ -15,14 +15,15 @@ import * as scene from './scene.js'
 import * as water from './water.js'
 import * as wind from './wind.js'
 import * as clouds from './clouds.js'
-import { weatherNow } from './weather.js'
+import { weatherNow, seasonNow } from './weather.js'
 import { BOULDER_FLOATS } from './boulderGenerator.js'
 
 //GET THE LIGHT CREATION OUT OF THE MAIN
 import {uniformBufferLights} from './rotatingCube.js'
 
 /*
-	The particles: leaves off the trees, spray off the wave crests, rain. See the top of vfc_particles.js for how each works.
+	The particles: leaves off the trees, spray off the wave crests, rain and snow. See the top of vfc_particles.js for how each works.
+	The leaves only come down in the fall (see the seasons in weather.js), and snow takes the place of rain in the winter.
 
 	Three times a frame:
 		particleUpdate		before anything is drawn: the numbers they all share, and (now and then) the lists the leaves need,
@@ -35,6 +36,7 @@ import {uniformBufferLights} from './rotatingCube.js'
 const LEAF_COUNT = 4096;			// leaves there can be in the air at once
 const SPRAY_COUNT = 4096;			// bits of spray
 const RAIN_COUNT = 9000;			// raindrops in the box of air round the camera
+const SNOW_COUNT = 16000;			// and snowflakes
 const MAX_SOURCES = 64;				// trees leaves come from at one time
 const MAX_OBSTACLES = 128;			// things that stand in a leaf's way at one time
 const SOURCE_DISTANCE = 120.0;		// how far from the camera a tree can be and still shed leaves that are drawn
@@ -48,6 +50,7 @@ const leafShaderModule = device.createShaderModule({ label: "vf_leaves", code: v
 const spraySimShaderModule = device.createShaderModule({ label: "c_spray", code: c_spray });
 const sprayShaderModule = device.createShaderModule({ label: "vf_spray", code: vf_spray });
 const rainShaderModule = device.createShaderModule({ label: "vf_rain", code: vf_rain });
+const snowShaderModule = device.createShaderModule({ label: "vf_snow", code: vf_snow });
 
 // Buffers
 //-------------------------------------------------
@@ -186,7 +189,7 @@ function particleUniformBufferUpdates() {
 
 	//step
 	bufferResult.push(elapsed);
-	bufferResult.push(settings.waterWindSpeed * settings.forestUnitsPerMetre);
+	bufferResult.push(wind.windSpeedNow() * settings.forestUnitsPerMetre);
 	bufferResult.push(frame % 1000000);
 	bufferResult.push(settings.leafAmount);
 
@@ -210,6 +213,11 @@ function particleUniformBufferUpdates() {
 	bufferResult.push(settings.sprayAmount);
 	bufferResult.push(settings.rainDistance);
 	bufferResult.push(settings.rainAmount);
+
+	//season
+	bufferResult.push(seasonNow.autumn);
+	bufferResult.push(settings.enableSnow && settings.enableClouds ? weatherNow.snow * settings.snowAmount : 0);
+	bufferResult.push(0, 0);
 
 	const result = new Float32Array(bufferResult);
 	device.queue.writeBuffer(particleUniformBuffer, 0, result.buffer, result.byteOffset, result.byteLength);
@@ -290,6 +298,7 @@ function createSoftPipeline(label, shaderModule) {
 }
 const sprayPipeline = createSoftPipeline("spray pipeline", sprayShaderModule);
 const rainPipeline = createSoftPipeline("rain pipeline", rainShaderModule);
+const snowPipeline = createSoftPipeline("snow pipeline", snowShaderModule);
 
 const linSampler = device.createSampler({
   magFilter: 'linear',
@@ -306,7 +315,8 @@ export function particleUpdate() {
 
 // The leaves: moved on, then drawn with the solid things
 export function leafPass(aEncoder, mainpassDepthTexture) {
-	if (!settings.enableLeaves || !settings.enableTerrain || !terrain.terrainFieldsTexture) {
+	// (they only come down in the fall, unless the setting says all year round)
+	if (!settings.enableLeaves || !settings.enableTerrain || !terrain.terrainFieldsTexture || !(seasonNow.leafFall || settings.leavesAllYear)) {
 		return;
 	}
 
@@ -358,7 +368,8 @@ export function leafPass(aEncoder, mainpassDepthTexture) {
 export function weatherParticlePass(mainpassDepthTexture) {
 	const spraying = crests !== null;
 	const raining = settings.enableRain && settings.enableClouds && weatherNow.rain > 0.001;
-	if (!spraying && !raining) {
+	const snowing = settings.enableSnow && settings.enableClouds && weatherNow.snow > 0.001;
+	if (!spraying && !raining && !snowing) {
 		return;
 	}
 	const encoder = device.createCommandEncoder();
@@ -418,6 +429,19 @@ export function weatherParticlePass(mainpassDepthTexture) {
 			],
 		}));
 		pass.draw(RAIN_VERTICES, RAIN_COUNT, 0, 0);
+	}
+	if (snowing) {
+		pass.setPipeline(snowPipeline);
+		pass.setBindGroup(0, device.createBindGroup({
+			label: "snow bind group",
+			layout: snowPipeline.getBindGroupLayout(0),
+			entries: [
+				{ binding: 0, resource: { buffer: particleUniformBuffer } },
+				{ binding: 1, resource: clouds.cloudCoverageView },
+				{ binding: 2, resource: linSampler },
+			],
+		}));
+		pass.draw(SNOW_VERTICES, SNOW_COUNT, 0, 0);
 	}
 	pass.end();
 

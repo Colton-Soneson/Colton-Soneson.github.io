@@ -14,6 +14,7 @@ import { vf_terrain } from '../shaders/js/vf_terrain.js'
 import * as transformations from './transformations.js'
 import * as scene from './scene.js'
 import * as shadowMapping from './shadowMapping.js'
+import { weatherNow, seasonNow } from './weather.js'
 
 //the land fades into the horizon color, read from the sky view LUT (same as the water)
 import {skyViewLUTtexture} from './atmosphere.js'
@@ -65,6 +66,7 @@ function getTerrainParams() {
 		woodland: settings.terrainWoodland,
 		lakes: settings.terrainLakes,
 		seaFloorDepth: settings.terrainSeaFloorDepth,
+		seaBedGrade: settings.terrainSeaBedGrade,
 		shelfWidth: settings.terrainShelfWidth,
 		mountainHeight: settings.terrainMountainHeight,
 		beachHeight: settings.terrainBeachHeight,
@@ -317,7 +319,7 @@ const terrainShaderModule = device.createShaderModule({
 //-------------------------------------------------
 const terrainUniformBuffer = device.createBuffer({
   label: "terrain Uniform",
-  size: 256,
+  size: 320,
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 });
 
@@ -373,6 +375,12 @@ function terrainUniformBufferUpdates() {
 	bufferResult.push(transformations.projectionMatrix[14]);
 	//how far the blades of grass are drawn (0 if there are none): the turf under them is in their shade
 	bufferResult.push(settings.enableGrass ? settings.grassDrawDistance : 0);
+	//how much snow is lying and how far the grass has gone to hay (weather.js), and the top down camera, to tell what the snow could not get to
+	bufferResult.push(weatherNow.snowCover);
+	bufferResult.push(seasonNow.hay);
+	for(let i = 0; i < 16; i++) {
+		bufferResult.push(topDownViewProjMat[i]);
+	}
 
 	const result = new Float32Array(bufferResult);
 	device.queue.writeBuffer(terrainUniformBuffer, 0, result.buffer, result.byteOffset, result.byteLength);
@@ -436,6 +444,13 @@ const bindGroupVFLayout = device.createBindGroupLayout({
     texture: {
 		sampleType: 'unfilterable-float',
 	}
+  },
+  {
+    binding: 7,								//the top down height map: what the sky can see of the ground (for the snow)
+    visibility: GPUShaderStage.FRAGMENT,
+    texture: {
+		sampleType: 'depth',
+	}
   }
   ]
 });
@@ -483,6 +498,10 @@ function createVFBindGroupTerrain() {
 			{
 				binding: 6,
 				resource: terrainFieldsTexture.createView()
+			},
+			{
+				binding: 7,
+				resource: scene.heightMapView
 			}
 			]
 		});

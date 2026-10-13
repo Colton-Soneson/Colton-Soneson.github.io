@@ -5,12 +5,16 @@
 		the shapes		a few boulders, each a ball knocked about until it looks like a rock (see buildBoulderMesh)
 		the places		where they lie on the land (see placeBoulders). A mountain sheds rock: it comes off the crest and the
 						faces and ends up at the foot, where the slope eases off. So boulders lie scattered along the foot of every
-						range, in loose fields with long gaps between them. And along the main ridges there are small
-						outcrops, knots of standing rock that the crest has weathered down around.
+						range, in loose fields with long gaps between them, of every size from a football to a house. Along the main
+						ridges there are small outcrops, knots of standing rock that the crest has weathered down around.
+						And away from the mountains: stones lying about under the trees and in the grass, a line of them along
+						the top of every beach where the sea has undercut the bank, and big rocks out in the water past the edge
+						of the shallows, the nearer ones standing clear of the waves.
 */
 
 import { seededRandom } from './terrainGenerator.js'
 import { MOUNTAIN_THRESHOLD } from './terrainGenerator.js'
+import { ZONE_OCEAN, ZONE_BEACH, ZONE_GRASSLAND, ZONE_FOREST } from './terrainGenerator.js'
 
 export const BOULDER_SHAPES = 4;			// how many different boulders there are
 export const BOULDER_VERTEX_FLOATS = 6;		// position (3), normal (3)
@@ -102,7 +106,7 @@ export function buildBoulderMesh(shape, detail) {
 /*
 	Where the boulders lie.
 		land		generateTerrain's result
-		params		seed, amount (1 = the usual number, 0 = none), seaLevel, unitsPerMetre
+		params		seed, amount (1 = the usual number, 0 = none), seaLevel, unitsPerMetre, beachHeight, bankHeight
 
 	Returns a Float32Array, BOULDER_FLOATS per boulder:
 		 0  x, y, z			 3  size: how far across it is, world units
@@ -133,17 +137,18 @@ export function placeBoulders(land, params) {
 	//		bare mountain, and not on a slope a boulder would have rolled on down. Most of the foot is left empty though:
 	//		boulders come in fields, below the gullies and faces that feed them, so a spot also has to be in one of the patches a slow noise picks out
 	const fields = (x, z) => Math.sin(x / 190 + 1.3) * Math.sin(z / 230 - 0.7) + 0.6 * Math.sin((x + z) / 97 + 2.1) * Math.sin((x - z) / 121);
-	const wanted = Math.round(420 * params.amount);
+	const wanted = Math.round(3360 * params.amount);
 	for (let attempt = 0, found = 0; attempt < wanted * 600 && found < wanted; attempt++) {
 		const x = (random() * 2 - 1) * half, z = (random() * 2 - 1) * half;
 		const i = pointAt(x, z);
 		const cover = land.covers[i];
 		if (cover < MOUNTAIN_THRESHOLD - 0.1 || cover > MOUNTAIN_THRESHOLD + 0.12) continue;
 		if (land.normals[i * 3 + 1] < 0.62 || land.heights[i] < params.seaLevel + 6) continue;
-		if (fields(x, z) < 0.25) continue;
+		if (fields(x, z) < 0.15) continue;
 
-		// mostly small, the odd one the size of a house
-		const size = (1.1 + 4.2 * Math.pow(random(), 2.6)) * metre;
+		// nearly all of them small, down to the size of a football, and the odd one the size of a house
+		//		(half are under half a metre, one in ten is over 3.5, one in a hundred over 11)
+		const size = 0.35 * Math.exp(3.6 * Math.pow(random(), 4)) * metre;
 		add(x, z, size, 1);
 		found++;
 		// and a big one usually has a few bits of itself lying round it
@@ -152,6 +157,45 @@ export function placeBoulders(land, params) {
 			add(x + Math.cos(angle) * away, z + Math.sin(angle) * away, size * (0.2 + 0.25 * random()), 1);
 		}
 	}
+
+	// Spots tried at random all over the land, and a boulder put at each one that passes a test, until there are enough.
+	//		fits(i, x, z): is this spot (and the grid point i nearest it) the right kind of ground. size, tall: see add
+	const scatter = (wanted, fits, size, tall) => {
+		for (let attempt = 0, found = 0; attempt < wanted * 600 && found < wanted; attempt++) {
+			const x = (random() * 2 - 1) * half, z = (random() * 2 - 1) * half;
+			if (!fits(pointAt(x, z), x, z)) continue;
+			add(x, z, size(), tall());
+			found++;
+		}
+	};
+	const above = (i) => land.heights[i] - params.seaLevel;		// how far above the sea a grid point is
+
+	//---under the trees
+	// stones of every size on the forest floor, thicker in some stretches than others. Not on the steep ground: they would not have stopped there
+	scatter(Math.round(5000 * params.amount),
+		(i, x, z) => land.zones[i] == ZONE_FOREST && land.normals[i * 3 + 1] > 0.72 && fields(x * 1.7 + 300, z * 1.7 - 120) > -0.15,
+		() => 0.45 * Math.exp(2.8 * Math.pow(random(), 3.5)) * metre, () => 1);
+
+	//---in the grass
+	// small ones only, but big enough to stand clear of the grass
+	scatter(Math.round(7000 * params.amount),
+		(i, x, z) => land.zones[i] == ZONE_GRASSLAND && land.covers[i] >= 0 && land.normals[i * 3 + 1] > 0.8 && fields(x * 2.3 - 80, z * 2.3 + 510) > 0.05,
+		() => (0.7 + 1.6 * Math.pow(random(), 2)) * metre, () => 1);
+
+	//---along the top of the beach
+	// where the sand ends and the bank steps up to the turf: the sea has washed the soil out from round them and left them there.
+	//		(the ground is only ever that low at the shore. Round a lake it is marsh, which has no bank)
+	const bankFoot = params.beachHeight - 0.9, bankTop = params.beachHeight + params.bankHeight + 1.6;
+	scatter(Math.round(3000 * params.amount),
+		(i, x, z) => (land.zones[i] == ZONE_BEACH || land.zones[i] == ZONE_GRASSLAND) && land.covers[i] >= 0 && above(i) > bankFoot && above(i) < bankTop && fields(x * 2.9 + 40, z * 2.9 + 77) > -0.1,
+		() => (0.3 + 1.9 * Math.pow(random(), 2.4)) * metre, () => 1);
+
+	//---out in the sea
+	// big ones, on the bed past the edge of the shallows, where it starts to drop away. The ones in the shallower water stand
+	//		up out of it. Fewer the deeper it gets: down there nobody sees them
+	scatter(Math.round(340 * params.amount),
+		(i, x, z) => land.zones[i] == ZONE_OCEAN && above(i) < -5 && above(i) > -70 && random() < Math.max(1.5 + above(i) / 22, 0.12) && fields(x * 0.8 - 210, z * 0.8 + 33) > -0.2,
+		() => (6 + 15 * Math.pow(random(), 1.6)) * metre, () => 1.2 + 1.0 * random());
 
 	//---on the ridgelines
 	// every so often along the main ridges: a knot of rocks standing on the crest, taller than they are wide

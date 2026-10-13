@@ -21,6 +21,7 @@ import { mat4 } from 'https://wgpu-matrix.org/dist/3.x/wgpu-matrix.module.js';
 import * as transformations from './transformations.js'
 import * as terrain from './terrain.js'
 import * as wind from './wind.js'
+import { seasonNow } from './weather.js'
 import { filteredSampler, filteringLevel } from './textureFiltering.js'
 
 //the trees fade into the horizon color, read from the sky view LUT (same as the water, the land and the grass)
@@ -585,7 +586,7 @@ function forestUniformValues(bake) {
 	bufferResult.push(settings.forestUnitsPerMetre);
 	bufferResult.push(settings.waterHorizonFogDistance);
 	bufferResult.push(settings.enableAtmosphere ? 1 : 0);
-	bufferResult.push(0);
+	bufferResult.push(bake ? 0 : seasonNow.autumn);		//how far the broadleaved trees have turned (weather.js). Never in a billboard's picture: that is turned when it is drawn
 
 	//atlas
 	bufferResult.push(ATLAS_COLUMNS);

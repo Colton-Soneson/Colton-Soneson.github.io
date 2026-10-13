@@ -3,17 +3,19 @@ import { moonShapes } from './f_moon.js';
 import { cloudShadeShapes } from './vfc_clouds.js';
 
 export const PARTICLE_WORKGROUP_SIZE = 64;
-export const LEAF_VERTICES = 6;			// a leaf is one flat card: 2 triangles
+export const LEAF_ALONG = 4;			// a leaf is a small sheet, this many squares along its length by 2 across (one each side of the rib), so that it can be bent
+export const LEAF_VERTICES = LEAF_ALONG * 2 * 6;
 export const SPRAY_VERTICES = 6;
 export const RAIN_VERTICES = 6;
+export const SNOW_VERTICES = 6;
 export const LEAF_ROCK = 0.95;			// how far a falling leaf tips over each way as it rocks, radians
 
 /*
-	The particles: leaves blowing off the trees, spray off the crests of the waves, and rain. See particles.js for what runs when.
+	The particles: leaves blowing off the trees, spray off the crests of the waves, rain and snow. See particles.js for what runs when.
 
 	LEAVES and SPRAY are kept: each one has a place and a speed in a buffer, and a compute shader moves them all on a little
-	every frame (c_leaves, c_spray). RAIN is not kept at all: where a drop is can be worked out from the time alone, so it
-	is, in the vertex shader that draws it (vf_rain).
+	every frame (c_leaves, c_spray). RAIN and SNOW are not kept at all: where a drop or a flake is can be worked out from
+	the time alone, so it is, in the vertex shader that draws it (vf_rain, vf_snow).
 
 	All three are drawn the way the grass and the trees are, with no models and no vertex buffers: one instance is one
 	particle, and the vertex shader makes a small card for it out of the number of the vertex.
@@ -34,6 +36,7 @@ const particleUniforms =
 		counts : vec4f,				// x: how many places leaves can come from, y: how many things stand in their way, z: how many vertices of water there are to look for crests in, w: rain, 0 to 1
 		cloudMap : vec4f,			// where the cloud coverage map is: what cloudShadeAt takes (vfc_clouds.js)
 		amounts : vec4f,			// x: size of a leaf, y: how much spray, z: how far from the camera rain is drawn, w: how much rain
+		season : vec4f,				// x: how far the leaves have turned for the fall, 0 to 1, y: how hard it is snowing, 0 to 1 (weather.js)
 	}
 	@group(0) @binding(0) var<uniform> PU: ParticleUniforms;
 
@@ -262,7 +265,7 @@ export const c_leaves =
 	}
 `;
 
-// The leaves drawn: a card each, leaning the way the leaf is as it falls (see HOW A LEAF FALLS), flat once it has landed, cut to the outline of a leaf in the fragment shader
+// The leaves drawn: a small bent sheet each (see LEAF_ALONG), leaning the way the leaf is as it falls (see HOW A LEAF FALLS), lying level once it has landed, cut to the outline of a leaf in the fragment shader
 export const vf_leaves =
 `
 	${particleUniforms}
@@ -301,7 +304,10 @@ export const vf_leaves =
 			return output;
 		}
 		let own = random(instanceIndex * 7919u + 13u);
-		let corner = cardCorner(vertexIndex);
+		// which square of the sheet this vertex is a corner of, and from that where on the leaf it is: -1 to 1 along it and across it
+		let square = vertexIndex / 6u;
+		let across = square / ${LEAF_ALONG}u;
+		let corner = (vec2f(f32(square % ${LEAF_ALONG}u), f32(across)) + cardCorner(vertexIndex % 6u) * 0.5 + vec2f(0.5, 0.5)) / vec2f(${LEAF_ALONG}.0, 2.0) * 2.0 - vec2f(1.0, 1.0);
 
 		// which way it faces: its length level, pointing wherever it has swung round to, and tipped about its length by its
 		//		rocking and tumbling (the same numbers c_leaves falls by). Flat on the ground
@@ -314,11 +320,29 @@ export const vf_leaves =
 			size *= saturate(leaf.life / 1.2);		// it goes by shrinking away
 		}
 		let side = level * cos(tilt) + vec3f(0.0, 1.0, 0.0) * sin(tilt);
+		let face = cross(along, side);
 
-		let position = leaf.position + (along * corner.x + side * corner.y * 0.55) * size;
+		// No leaf is flat. It bows from end to end, its two halves fold up from the rib between them, and it has a
+		//		twist along its length. Each leaf its own amount of each. (One lying on the ground has its face down:
+		//		there the bends go the other way, so its ends and edges curl up off the ground and not in to it)
+		var bow = 0.16 + 0.2 * fract(own * 5.3);
+		var fold = (0.22 + 0.2 * fract(own * 11.9)) * 0.55;
+		var twist = (fract(own * 17.3) - 0.5) * 0.5;
+		if (leaf.state > 2.5) {
+			bow = -bow;
+			fold = -fold;
+			twist = -twist;
+		}
+		let lift = bow * corner.x * corner.x + fold * abs(corner.y) + twist * corner.x * corner.y;
+
+		let position = leaf.position + (along * corner.x + side * corner.y * 0.55 + face * lift) * size;
 		output.pos = PU.viewProjectionMatrix * vec4f(position, 1.0);
 		output.card = corner;
-		output.normal = cross(along, side);
+		// the way the bent surface faces here: the flat face, leant back by how fast the lift is changing along the leaf and across it
+		//		(the two halves either side of the rib lean opposite ways, which is why a vertex on the rib needs to know its half)
+		let leanAlong = 2.0 * bow * corner.x + twist * corner.y;
+		let leanAcross = fold * (f32(across) * 2.0 - 1.0) + twist * corner.x;
+		output.normal = 0.55 * face - leanAcross * side - 0.55 * leanAlong * along;
 		output.tone = fract(own * 37.0);
 		return output;
 	}
@@ -332,6 +356,9 @@ export const vf_leaves =
 		// green ones, yellow ones, and brown ones that were ready to fall anyway
 		var albedo = mix(vec3f(0.2, 0.36, 0.1), vec3f(0.6, 0.5, 0.12), smoothstep(0.25, 0.55, input.tone));
 		albedo = mix(albedo, vec3f(0.42, 0.22, 0.08), smoothstep(0.6, 0.9, input.tone));
+		// in the fall they have turned: yellow and orange, with the brown ones still among them
+		let turned = mix(mix(vec3f(0.84, 0.6, 0.1), vec3f(0.8, 0.3, 0.07), smoothstep(0.2, 0.55, input.tone)), vec3f(0.42, 0.22, 0.08), smoothstep(0.75, 0.95, input.tone));
+		albedo = mix(albedo, turned, PU.season.x);
 		albedo *= 1.0 - 0.3 * (1.0 - smoothstep(0.0, 0.12, abs(input.card.y)));		// the rib
 
 		// the same light as everything else, on whichever side of the leaf is seen
@@ -595,7 +622,8 @@ export const vf_rain =
 		output.card = corner;
 		// fading out towards the edge of the box, so drops do not pop as they wrap round
 		let fromMiddle = abs(position - middle) / (box * 0.5);
-		output.strength = (1.0 - smoothstep(0.75, 1.0, max(fromMiddle.x, max(fromMiddle.y, fromMiddle.z)))) * saturate(PU.counts.w);
+		//		(and in towards the camera: a drop right in front of the lens is a pale bar from the top of the picture to the bottom)
+		output.strength = (1.0 - smoothstep(0.75, 1.0, max(fromMiddle.x, max(fromMiddle.y, fromMiddle.z)))) * saturate(PU.counts.w) * smoothstep(1.0, 4.0, distance(position, middle));
 		return output;
 	}
 
@@ -603,5 +631,67 @@ export const vf_rain =
 	fn fragmentMain(input: RainOutput) -> @location(0) vec4f {
 		let soft = (1.0 - abs(input.card.x)) * (1.0 - input.card.y * input.card.y);
 		return vec4f(0.72, 0.78, 0.86, 0.34 * soft * input.strength);
+	}
+`;
+
+/*
+	SNOW
+	The same trick as the rain: a flake's place is where it started plus how far it has fallen since time 0, wrapped into
+	the box of air round the camera. What is different is how it falls. A flake is nearly all air: it comes down at a
+	metre and a half a second where a raindrop does nine, goes wherever the wind goes, and swings from side to side on
+	its way. Each is a small soft dot. It snows where it would rain (the blue channel of the cloud coverage map).
+*/
+export const vf_snow =
+`
+	${particleUniforms}
+
+	@group(0) @binding(1) var cloudMap: texture_2d<f32>;
+	@group(0) @binding(2) var cloudMapSampler: sampler;
+
+	${cloudShadeShapes}
+
+	struct SnowOutput {
+		@builtin(position) pos: vec4f,
+		@location(0) card: vec2f,
+		@location(1) strength: f32,
+	};
+
+	@vertex
+	fn vertexMain(@builtin(vertex_index) vertexIndex: u32, @builtin(instance_index) instanceIndex: u32) -> SnowOutput {
+		var output: SnowOutput;
+		output.pos = vec4f(2.0, 2.0, 2.0, 1.0);
+		if (PU.season.y <= 0.0) {
+			return output;
+		}
+		let corner = cardCorner(vertexIndex);
+		let box = vec3f(PU.amounts.z * 2.0, PU.amounts.z * 1.3, PU.amounts.z * 2.0);
+		let start = vec3f(random(instanceIndex * 3u + 11u), random(instanceIndex * 3u + 12u), random(instanceIndex * 3u + 13u)) * box;
+
+		let velocity = vec3f(PU.windBlow.x * PU.step.y * 0.9, -1.5 * PU.terrain.w * (0.7 + 0.6 * random(instanceIndex + 177u)), PU.windBlow.y * PU.step.y * 0.9);
+		let swing = random(instanceIndex + 311u) * 6.2832;
+		let fallen = start + velocity * PU.cameraPosition.w
+					+ vec3f(sin(PU.cameraPosition.w * 1.3 + swing), 0.0, cos(PU.cameraPosition.w * 1.1 + swing * 1.7)) * 0.35 * PU.terrain.w;
+		let middle = PU.cameraPosition.xyz;
+		let position = middle + (fract((fallen - middle) / box) - vec3f(0.5, 0.5, 0.5)) * box;
+
+		// is it snowing here? (thinner snow is fewer flakes: each has its own point at which it joins in)
+		let snowing = cloudShadeAt(position, vec3f(0.0, 1.0, 0.0), PU.cloudMap).b;
+		if (snowing * PU.season.y <= random(instanceIndex + 991u)) {
+			return output;
+		}
+
+		// a dot facing the camera, every flake its own size
+		let size = (0.03 + 0.04 * random(instanceIndex + 53u)) * PU.terrain.w;
+		output.pos = PU.viewProjectionMatrix * vec4f(position + (PU.cameraRight.xyz * corner.x + PU.cameraUp.xyz * corner.y) * size, 1.0);
+		output.card = corner;
+		let fromMiddle = abs(position - middle) / (box * 0.5);
+		output.strength = (1.0 - smoothstep(0.75, 1.0, max(fromMiddle.x, max(fromMiddle.y, fromMiddle.z)))) * smoothstep(0.6, 2.5, distance(position, middle));
+		return output;
+	}
+
+	@fragment
+	fn fragmentMain(input: SnowOutput) -> @location(0) vec4f {
+		let soft = saturate(1.0 - dot(input.card, input.card));
+		return vec4f(0.95, 0.97, 1.0, 0.9 * soft * input.strength);
 	}
 `;

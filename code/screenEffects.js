@@ -105,7 +105,7 @@ function screenUniformBufferUpdates(sun, occlusion) {
 
 	//the shadows of the clouds: where the coverage map is, how much of the sky is cloud, and whether there are clouds at all
 	bufferResult.push(...clouds.cloudMapValues());
-	bufferResult.push(clouds.cloudsShowing() ? weatherNow.coverage : 0);
+	bufferResult.push(clouds.cloudsShowing() ? Math.max(weatherNow.coverage, weatherNow.skyCover) : 0);
 	bufferResult.push(clouds.cloudsShowing() ? 1 : 0);
 	bufferResult.push(0, 0);
 

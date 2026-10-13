@@ -47,7 +47,7 @@ export const imguiParams = {
     ssrDistance: settings.ssrDistance,
     displayScreenShading: settings.displayScreenShading,
     // Display
-    enableFXAA: settings.enableFXAA,
+    antiAliasing: settings.antiAliasing,
     fxaaSubpixel: settings.fxaaSubpixel,
     anisotropicFiltering: settings.anisotropicFiltering,
     // Grass
@@ -58,6 +58,7 @@ export const imguiParams = {
     terrainDetailDistance: settings.terrainDetailDistance,
     terrainLandScale: settings.terrainLandScale,
     terrainSeaFloorDepth: settings.terrainSeaFloorDepth,
+    terrainSeaBedGrade: settings.terrainSeaBedGrade,
     terrainShelfWidth: settings.terrainShelfWidth,
     terrainHillHeight: settings.terrainHillHeight,
     terrainWoodland: settings.terrainWoodland,
@@ -136,12 +137,22 @@ export const imguiParams = {
 	waterSwellShoreDistance: settings.waterSwellShoreDistance,
     // Atmosphere
     enableAtmosphere: settings.enableAtmosphere,
+    // Seasons
+    seasonMode: settings.seasonMode,
+    seasonStart: settings.seasonStart,
+    seasonLength: settings.seasonLength,
+    seasonNow: settings.seasonNow,
+    snowbuildTriggers: settings.snowbuildTriggers,
+    snowCover: settings.snowCover,
     // Clouds and weather
     enableClouds: settings.enableClouds,
     weatherMode: settings.weatherMode,
     weatherSeed: settings.weatherSeed,
     weatherNow: settings.weatherNow,
     cloudForceTower: settings.cloudForceTower,
+    cloudForceShelf: settings.cloudForceShelf,
+    enableLightning: settings.enableLightning,
+    lightningRate: settings.lightningRate,
     cloudCoverageBias: settings.cloudCoverageBias,
     cloudDensity: settings.cloudDensity,
     cloudHeight: settings.cloudHeight,
@@ -150,8 +161,19 @@ export const imguiParams = {
     cloudDriftSpeed: settings.cloudDriftSpeed,
     cloudSteps: settings.cloudSteps,
     cloudDrawDistance: settings.cloudDrawDistance,
+    // Birds
+    enableBirds: settings.enableBirds,
+    birdGroups: settings.birdGroups,
+    birdSize: settings.birdSize,
+    birdSpeed: settings.birdSpeed,
+    // Light shafts and under water
+    enableLightShafts: settings.enableLightShafts,
+    lightShaftStrength: settings.lightShaftStrength,
+    enableUnderwater: settings.enableUnderwater,
+    causticStrength: settings.causticStrength,
     // Particles
     enableLeaves: settings.enableLeaves,
+    leavesAllYear: settings.leavesAllYear,
     leafAmount: settings.leafAmount,
     leafSize: settings.leafSize,
     leafWeight: settings.leafWeight,
@@ -160,6 +182,8 @@ export const imguiParams = {
     enableRain: settings.enableRain,
     rainAmount: settings.rainAmount,
     rainDistance: settings.rainDistance,
+    enableSnow: settings.enableSnow,
+    snowAmount: settings.snowAmount,
     // Wind
     windDirectionAngle: settings.windDirectionAngle,
     windGustiness: settings.windGustiness,
@@ -238,8 +262,8 @@ screenFolder.add(imguiParams, 'ssrStrength', 0, 1, 0.01).name('Reflection Streng
 screenFolder.add(imguiParams, 'ssrDistance', 100, 6000, 50).name('Reflection Distance');
 screenFolder.add(imguiParams, 'displayScreenShading').name('Show Shading Only');
 
-const displayFolder = gui.addFolder('Display');	//see fxaa.js and textureFiltering.js
-displayFolder.add(imguiParams, 'enableFXAA').name('FXAA');
+const displayFolder = gui.addFolder('Display');	//see smaa.js, fxaa.js and textureFiltering.js
+displayFolder.add(imguiParams, 'antiAliasing', { 'SMAA': 'smaa', 'FXAA': 'fxaa', 'off': 'off' }).name('Anti-Aliasing');
 displayFolder.add(imguiParams, 'fxaaSubpixel', 0, 1, 0.05).name('FXAA Softening');
 displayFolder.add(imguiParams, 'anisotropicFiltering', { '1x (off)': 1, '2x': 2, '4x': 4, '8x': 8, '16x': 16 }).name('Anisotropic Filtering');
 
@@ -251,7 +275,8 @@ terrainFolder.add(imguiParams, 'terrainMountainHeight', 0, 2500, 10).name('Mount
 terrainFolder.add(imguiParams, 'terrainSnowLine', 50, 2500, 10).name('Snow Line');
 terrainFolder.add(imguiParams, 'terrainBeachHeight', 1, 15, 0.5).name('Beach Height');
 terrainFolder.add(imguiParams, 'terrainBankHeight', 0, 5, 0.1).name('Beach Bank Height');
-terrainFolder.add(imguiParams, 'terrainSeaFloorDepth', 40, 500, 5).name('Sea Floor Depth');
+terrainFolder.add(imguiParams, 'terrainSeaFloorDepth', 40, 500, 5).name('Drop-off Depth');
+terrainFolder.add(imguiParams, 'terrainSeaBedGrade', 0, 0.8, 0.01).name('Sea Bed Grade');
 terrainFolder.add(imguiParams, 'terrainShelfWidth', 1, 6, 0.1).name('Shelf Width');
 terrainFolder.add(imguiParams, 'terrainHillHeight', 0, 3, 0.05).name('Hill Height');
 terrainFolder.add(imguiParams, 'terrainWoodland', 0, 1, 0.01).name('Woodland');
@@ -305,23 +330,47 @@ forestFolder.add(imguiParams, 'forestBillboardDistance', 50, 3000, 10).name('Bil
 forestFolder.add(imguiParams, 'forestDrawDistance', 100, 12000, 50).name('Draw Distance');
 forestFolder.add(imguiParams, 'forestWindStrength', 0, 3, 0.05).name('Wind Strength');
 
+const seasonFolder = gui.addFolder('Seasons');	//see weather.js
+seasonFolder.add(imguiParams, 'seasonMode', ['auto', 'spring', 'summer', 'fall', 'winter']).name('Season');
+seasonFolder.add(imguiParams, 'seasonNow').name('Season Now').disable();
+seasonFolder.add(imguiParams, 'seasonStart', ['spring', 'summer', 'fall', 'winter']).name('First Season');
+seasonFolder.add(imguiParams, 'seasonLength', 1, 32, 1).name('Days in a Season');
+seasonFolder.add({ trigger: () => { imguiParams.snowbuildTriggers += 1; } }, 'trigger').name('Trigger Snowbuild');
+seasonFolder.add(imguiParams, 'snowCover').name('Snow Lying').disable();
+
 const cloudFolder = gui.addFolder('Clouds and Weather');	//see weather.js and clouds.js
 cloudFolder.add(imguiParams, 'enableClouds').name('Enable');
-cloudFolder.add(imguiParams, 'weatherMode', ['auto', 'sunny', 'overcast', 'storm']).name('Weather');
+cloudFolder.add(imguiParams, 'weatherMode', ['auto', 'sunny', 'overcast', 'storm', 'thunderstorm', 'winter storm', 'tornado', 'hurricane']).name('Weather');
 cloudFolder.add(imguiParams, 'weatherNow').name('Weather Now').disable();
 cloudFolder.add(imguiParams, 'weatherSeed', 0, 999, 1).name('Weather Seed');
 cloudFolder.add(imguiParams, 'cloudForceTower').name('Cumulonimbus (held weather)');
+cloudFolder.add(imguiParams, 'cloudForceShelf').name('Shelf Cloud');
+cloudFolder.add(imguiParams, 'enableLightning').name('Lightning');
+cloudFolder.add(imguiParams, 'lightningRate', 0.1, 5, 0.1).name('Lightning Rate');
 cloudFolder.add(imguiParams, 'cloudCoverageBias', -0.5, 0.5, 0.01).name('More / Less Cloud');
 cloudFolder.add(imguiParams, 'cloudDensity', 0.2, 3, 0.05).name('Density');
-cloudFolder.add(imguiParams, 'cloudLayers', { 'low': 1, 'low and middle': 2, 'low, middle and cirrus': 3 }).name('Layers');
+cloudFolder.add(imguiParams, 'cloudLayers', { 'low': 1, 'low and middle': 2, 'low, middle and high': 3 }).name('Layers');
 cloudFolder.add(imguiParams, 'cloudCrispness', 0, 1, 0.01).name('Crispness');
 cloudFolder.add(imguiParams, 'cloudHeight', -400, 4000, 50).name('Height');
 cloudFolder.add(imguiParams, 'cloudDriftSpeed', 0, 20, 0.5).name('Drift Speed');
 cloudFolder.add(imguiParams, 'cloudSteps', 16, 128, 1).name('Quality (steps)');
 cloudFolder.add(imguiParams, 'cloudDrawDistance', 8000, 80000, 500).name('Draw Distance');
 
+const birdFolder = gui.addFolder('Birds');	//see birds.js
+birdFolder.add(imguiParams, 'enableBirds').name('Enable');
+birdFolder.add(imguiParams, 'birdGroups', 0, 3, 1).name('Groups');
+birdFolder.add(imguiParams, 'birdSize', 1, 30, 0.5).name('Wingspan');
+birdFolder.add(imguiParams, 'birdSpeed', 0.2, 3, 0.05).name('Speed');
+
+const shaftFolder = gui.addFolder('Light Shafts and Underwater');	//see lightShafts.js
+shaftFolder.add(imguiParams, 'enableLightShafts').name('Light Shafts');
+shaftFolder.add(imguiParams, 'lightShaftStrength', 0, 4, 0.05).name('Shaft Strength');
+shaftFolder.add(imguiParams, 'enableUnderwater').name('Underwater View');
+shaftFolder.add(imguiParams, 'causticStrength', 0, 4, 0.05).name('Caustic Strength');
+
 const particleFolder = gui.addFolder('Particles');	//see particles.js
-particleFolder.add(imguiParams, 'enableLeaves').name('Leaves');
+particleFolder.add(imguiParams, 'enableLeaves').name('Leaves (in the fall)');
+particleFolder.add(imguiParams, 'leavesAllYear').name('Leaves All Year');
 particleFolder.add(imguiParams, 'leafAmount', 0, 5, 0.05).name('Leaf Amount');
 particleFolder.add(imguiParams, 'leafSize', 0.1, 2, 0.01).name('Leaf Size');
 particleFolder.add(imguiParams, 'leafWeight', 0.3, 3, 0.05).name('Leaf Weight');
@@ -329,7 +378,9 @@ particleFolder.add(imguiParams, 'enableSeaSpray').name('Sea Spray');
 particleFolder.add(imguiParams, 'sprayAmount', 0, 1, 0.01).name('Spray Amount');
 particleFolder.add(imguiParams, 'enableRain').name('Rain');
 particleFolder.add(imguiParams, 'rainAmount', 0, 1, 0.01).name('Rain Amount');
-particleFolder.add(imguiParams, 'rainDistance', 10, 150, 1).name('Rain Distance');
+particleFolder.add(imguiParams, 'rainDistance', 10, 150, 1).name('Rain and Snow Distance');
+particleFolder.add(imguiParams, 'enableSnow').name('Snow');
+particleFolder.add(imguiParams, 'snowAmount', 0, 1, 0.01).name('Snow Amount');
 
 const windFolder = gui.addFolder('Wind');	//moves the grass and the trees. See wind.js
 windFolder.add(imguiParams, 'waterWindSpeed', 0, 20).name('Wind Speed');	//the same setting as Wind Speed under Water

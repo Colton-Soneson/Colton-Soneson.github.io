@@ -72,7 +72,7 @@ export const skyViewLUTtexture = device.createTexture({
 });
 const skyViewView = skyViewLUTtexture.createView();
 
-const atmosphereUBOArraySize = 128;	//invViewProj (mat4) + sun direction (vec4) + cam pos (vec4) = 96
+const atmosphereUBOArraySize = 160;	//invViewProj (mat4) + sun direction, cam pos, the moon (2), the tint (5 vec4) = 144
 const atmosphereUniformBuffer = device.createBuffer({
     label: 'atmosphere uniforms',
     size: atmosphereUBOArraySize,
@@ -113,10 +113,13 @@ function updateSkyUniforms() {
 
 	bufferResult.push(settings.moonSize * Math.PI / 180);
 	//the weather: how much of the sky is taken up by cloud (none until it is most of it), and how dark that cloud is
-	const overcast = settings.enableClouds ? Math.min(Math.max((weatherNow.coverage - 0.6) / 0.35, 0), 1) : 0;
+	const overcast = settings.enableClouds ? weatherNow.skyCover : 0;
 	bufferResult.push(overcast);
 	bufferResult.push(weatherNow.gloom);
 	bufferResult.push(settings.enableClouds ? 1 : 0);	//with clouds on, the moon's disc is drawn with them, behind them (vf_cloudComposite). Not here
+
+	//how green the light has gone: under a tornado or a hurricane (weather.js)
+	bufferResult.push(settings.enableClouds ? weatherNow.green : 0, 0, 0, 0);
 
 	const result = new Float32Array(bufferResult);
 	
@@ -303,7 +306,7 @@ export function sunCycle(cycleSpeed)
 export function atmospherePass(mainpassDepthTexture)
 {	
 	if(settings.atmosphereSunRotationDemo) {
-		sunCycle(0.01 * settings.timeCycleMultiplier)
+		sunCycle(0.01 / 0.75 * settings.timeCycleMultiplier)	//(a day takes three quarters of the frames it used to: about 470 of them)
 	}
 
 	updateSkyUniforms();

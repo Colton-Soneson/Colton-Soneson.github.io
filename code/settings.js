@@ -3,7 +3,7 @@ import { mat4, vec3, vec2 } from 'https://wgpu-matrix.org/dist/3.x/wgpu-matrix.m
 export const settings = {
 	//--------------------TIME---------------------
     step: 0,
-	timeCycleMultiplier: 1.0,			//how fast the days go by. Scales the speed of the sun, and with it everything that keeps time by the sun (the forest)
+	timeCycleMultiplier: 1.0,			//how fast the days go by. Scales the speed of the sun, and with it everything that keeps time by the sun (the forest, the weather)
 	sunCycleCount: 0,					//days so far. Read only: counted in atmosphere.js as the sun goes round
 	//---------------------TRS---------------------
     camPosX: 0.0,
@@ -51,9 +51,10 @@ export const settings = {
 	ssrDistance: 1500.0,				//water further from the camera than this only reflects the sky
 	displayScreenShading: false,		//shows the shadows and the ambient occlusion on their own
 	//-------------------DISPLAY-------------------
-	enableFXAA: true,					//anti-aliasing over the finished frame: smooths the stair steps along edges. See vf_fxaa.js
-	fxaaSubpixel: 0.75,					//how much anything smaller than a pixel (a far blade of grass) is softened into what is round it. 0 = edges only
-	fxaaEdgeThreshold: 0.125,			//how much the brightness has to change for it to count as an edge. Lower smooths more of the picture and costs more
+	antiAliasing: "smaa",				//smooths the stair steps along edges, working from the finished frame. "smaa" (see vf_smaa.js), "fxaa" (vf_fxaa.js) or "off"
+	smaaEdgeThreshold: 0.1,				//SMAA: how much the brightness has to change between two pixels to count as an edge. Lower finds fainter edges and costs more
+	fxaaSubpixel: 0.75,					//FXAA: how much anything smaller than a pixel (a far blade of grass) is softened into what is round it. 0 = edges only
+	fxaaEdgeThreshold: 0.125,			//FXAA: how much the brightness has to change for it to count as an edge. Lower smooths more of the picture and costs more
 	anisotropicFiltering: 8,			//1 (off), 2, 4, 8 or 16: keeps pictures sharp on surfaces seen at a low angle. See textureFiltering.js
 	//-------------------TERRAIN-------------------
 	enableTerrain: true,
@@ -62,7 +63,8 @@ export const settings = {
 	terrainResolution: 4096,			//how fine the mesh is next to the camera: what the world would be across at that fineness. 1024 (1k), 2048, 4096 or 8192 (8k, a vertex every 1 unit)
 	terrainDetailDistance: 2.0,			//how far the fine mesh reaches: a chunk of land is drawn at half the fineness once it is this many times its own width away
 	terrainLandScale: 4200.0,			//size of the biggest shapes in the coastline. Bigger = fewer and larger land masses
-	terrainSeaFloorDepth: 160.0,		//how far under the surface the sea floor is once its away from the land
+	terrainSeaFloorDepth: 160.0,		//how deep the drop-off at the edge of the shallows goes, before the sea bed settles to its steady grade
+	terrainSeaBedGrade: 0.42,			//how steeply the sea bed keeps going down from the drop-off out to the edge of the land: 0.42 is 42 down for every 100 out. 0 = a flat sea floor
 	terrainShelfWidth: 3.0,				//how far the shallows run out from a beach before the sea bed drops away. 1 = a short step off the sand, 3 = three times that
 	terrainHillHeight: 1.0,				//how much the grassland rolls. 0 = flat, 1 = hills a few dozen units high
 	terrainWoodland: 0.5,				//how much of the grassland is wooded, 0 to 1. The forest round the mountains is there whatever this is
@@ -95,7 +97,7 @@ export const settings = {
 	grassWindStrength: 1.0,			//how far the wind pushes the tips over
 	//-------------------BOULDERS------------------
 	enableBoulders: true,
-	boulderAmount: 1.0,					//how many boulders lie at the foot of the mountains and stand on their ridges. 1 = a few hundred of each, 0 = none
+	boulderAmount: 1.0,					//how many boulders there are: at the foot of the mountains, under the trees, in the grass, along the top of the beaches, out in the sea and on the ridges. 1 = about twenty thousand in all, 0 = none
 	boulderDrawDistance: 2500.0,		//how far off they are drawn
 	//--------------------FOREST-------------------
 	enableForest: true,
@@ -114,23 +116,44 @@ export const settings = {
 	forestBillboardDistance: 420.0,		//further off than this a tree is a billboard: 2 flat cards with its picture on
 	forestDrawDistance: 5000.0,			//how far off trees are drawn at all
 	forestWindStrength: 1.0,			//how far the wind bends the trees
+	//-------------------SEASONS-------------------
+	seasonMode: "auto",					//"auto": the seasons go round with the days (see weather.js). Or hold it at "spring", "summer", "fall" or "winter"
+	seasonStart: "summer",				//which season the first day is in
+	seasonLength: 8,					//days in a season
+	seasonNow: "summer",				//what the season is. Read only
+	snowbuildTriggers: 0,				//counts presses of the Trigger Snowbuild control: each one sets snow building on the ground, whatever the season
+	snowCover: 0,						//how much snow is lying, 0 to 1. Read only
 	//--------------CLOUDS AND WEATHER-------------
 	enableClouds: true,
-	weatherMode: "auto",				//"auto": two weathers a day, drawn by lot (see weather.js). Or hold it at "sunny", "overcast" or "storm"
+	weatherMode: "auto",				//"auto": two weathers a day, drawn by lot (see weather.js). Or hold it at "sunny", "overcast", "storm", "thunderstorm", "winter storm", "tornado" or "hurricane"
 	weatherSeed: 1,						//which run of weather. The same seed gives the same weather on the same day
 	weatherNow: "sunny",				//what the weather is. Read only
 	cloudForceTower: false,				//while the weather is held: stand a cumulonimbus in the sky (on "auto" one comes with 1 storm in 5 that follows sunny weather)
+	enableLightning: true,				//lightning in the storms that have it (see lightning.js). On "auto" which storms do is drawn by lot, more of them in summer
+	lightningRate: 1.0,					//how often it strikes. 1 = every few seconds
+	cloudForceShelf: false,				//stand a shelf cloud off the coast south of the start, whatever the day drew (on "auto" 1 day in 10 has one, somewhere round the edge of the world)
 	cloudCoverageBias: 0.0,				//more (+) or less (-) cloud than the weather asks for
 	cloudDensity: 1.0,					//how thick the cloud is. Thicker cloud is darker underneath and casts a heavier shadow
-	cloudLayers: 3,						//1: the low layer only, 2: and the middle layer above it, 3: and the cirrus above that
+	cloudLayers: 3,						//1: the low layer only, 2: and the middle layer above it, 3: and the high layer above that (cirrus, and the grey sheet of an overcast day: without it overcast is only dimmer)
 	cloudCrispness: 0.7,				//how sharp the edge of a heaped cloud is, 0 to 1. 0 = soft all the way out, 1 = a hard white rim
 	cloudHeight: 0.0,					//lifts or lowers every layer of cloud, world units
 	cloudDriftSpeed: 4.0,				//how many times faster than the wind at the ground the clouds drift
 	cloudSteps: 48,						//steps along each ray through the clouds. More is smoother and costs more
 	cloudDrawDistance: 36000.0,			//how far off clouds are drawn. They fade into the haze over the last part of it
 	displayCloudCoverage: false,
+	//--------------------BIRDS--------------------
+	enableBirds: true,					//hawks: small groups that soar over the grassland by day and roost in the forest by night. See birds.js
+	birdGroups: 3,						//how many groups, 0 to 3. Each is 1 to 5 birds
+	birdSize: 6.0,						//from wing tip to wing tip, world units (twice life size: a real one would be a speck from the ground)
+	birdSpeed: 1.0,						//how fast they fly. 1 = about 13 metres a second
+	//----------LIGHT SHAFTS AND UNDER WATER--------
+	enableLightShafts: true,			//shafts of sun in the air between the clouds (crepuscular rays). They show while the sky is part cloud and part clear. See vf_lightShafts.js
+	lightShaftStrength: 1.0,
+	enableUnderwater: true,				//with the camera under the sea: the water's color and murk, the surface from underneath, caustics on the sea bed and shafts of light in the water
+	causticStrength: 1.0,				//how strongly the waves gather and spread the light under them
 	//------------------PARTICLES------------------
-	enableLeaves: true,					//leaves blow off the trees near the camera and are carried on the wind. See particles.js
+	enableLeaves: true,					//in the fall, leaves blow off the trees near the camera and are carried on the wind. See particles.js
+	leavesAllYear: false,				//have them come down in every season
 	leafAmount: 1.0,					//how readily they let go. They let go more readily in a wind whatever this is
 	leafSize: 0.42,						//half the length of a leaf, world units (bigger than life: a real one would be a speck)
 	leafWeight: 1.0,					//how heavy a leaf is for its size. 1 falls at about 2 metres a second in still air, heavier falls faster and is carried less far
@@ -139,11 +162,13 @@ export const settings = {
 	enableRain: true,					//rain, near the camera, wherever the cloud overhead is deep enough to rain (storms)
 	rainAmount: 1.0,					//how heavy, 0 to 1
 	rainDistance: 45.0,					//how far from the camera it is drawn
+	enableSnow: true,					//snow, in the same places, when the storm is a winter storm
+	snowAmount: 1.0,					//how heavy, 0 to 1
 	//--------------------WIND---------------------
 	//the wind is waterWindSpeed (metres per second) blowing along windDirection, both down in the water settings. See wind.js
 	windDirectionAngle: 45.0,			//which way the wind blows, in degrees round from +x towards +z. Moving it sets windDirection
 	windGustiness: 0.7,					//how uneven the wind is from place to place. 0 = the same everywhere, 1 = from dead calm to twice the wind speed
-	windGustSize: 640.0,				//world size of one tile of the wind texture: about three gusts fit across it
+	windGustSize: 900.0,				//world size of one tile of the wind texture: about three gusts fit across it
 	windGustSpeed: 2.0,					//how fast the gusts cross the ground, in wind speeds. 1 = at the speed of the wind
 	//--------------------WATER--------------------
 	enableWater: true,
@@ -173,7 +198,7 @@ export const settings = {
 	waterShoreWaveLength2: 21.5,
 	waterShoreWaveSpeed: 1.0,			//1.0 keeps pace with the dominant open ocean waves
 	//deep sea swell
-	waterDeepSeaDepth: 600.0,			//water at least this deep (or with no sea bed at all) is deep sea and gets the full swell
+	waterDeepSeaDepth: 219.0,			//water at least this deep (or with no sea bed at all) is deep sea and gets the full swell
 	waterSwellHeight: 60.0,				//height of the biggest swell crests. 0 turns the swell off
 	waterSwellLength: 320.0,			//wavelength of the main swell
 	waterSwellSteepness: 0.8,			//0 = smooth sine rollers, 1 = full trochoid with peaked crests and flat troughs

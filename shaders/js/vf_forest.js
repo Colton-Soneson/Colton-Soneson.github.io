@@ -50,7 +50,7 @@ const structs =
 		viewProjectionMatrix : mat4x4f,
 		cameraPosition : vec4f,		// xyz, and w: time in seconds (for the wind)
 		clock : vec4f,				// x: the forest's clock in years, y: wind strength, zw: wind direction
-		world : vec4f,				// x: world units in a metre, y: horizon fog distance, z: 1.0 if the atmosphere is on
+		world : vec4f,				// x: world units in a metre, y: horizon fog distance, z: 1.0 if the atmosphere is on, w: how far the broadleaved trees have turned for the fall, 0 to 1
 		atlas : vec4f,				// the billboard pictures. x: how many to a row, y: how many rows, z: how many are side views (the views from above come after), w: ages per archetype
 		bake : vec4f,				// only while a billboard is being baked. x: the view (1.0 from the side, 2.0 from above), y: half the depth of the view, z: its height
 		life : vec4f,				// x: how long a dead tree takes to fall over, y: and then to go back into the ground. Years of the forest's clock
@@ -356,6 +356,18 @@ const common =
 	// every tree a slightly different green: one a bit yellower, the next a bit bluer
 	fn treeTint(treeRandom: f32) -> vec3f {
 		return mix(vec3f(1.12, 1.02, 0.78), vec3f(0.88, 1.0, 1.12), treeRandom);
+	}
+
+	// The fall. Every tree turns its own color (yellow, orange, the odd deep red) and in its own time: some are well on
+	//		before others have started. The color is as light or dark as the leaf was, so the shading of the crown is kept.
+	//		amount: how far the fall has come on, 0 to 1 (0 for a conifer, which does not turn)
+	fn autumnLeaf(leaf: vec3f, treeRandom: f32, amount: f32) -> vec3f {
+		let early = fract(treeRandom * 3.71);
+		let turned = smoothstep(0.55 * early, 0.55 * early + 0.45, amount);
+		let hue = fract(treeRandom * 7.31);
+		var color = mix(vec3f(0.88, 0.64, 0.1), vec3f(0.86, 0.38, 0.06), smoothstep(0.2, 0.6, hue));
+		color = mix(color, vec3f(0.62, 0.13, 0.07), smoothstep(0.7, 0.95, hue));
+		return mix(leaf, color * dot(leaf, vec3f(1.0, 1.0, 1.0)) * 1.25, turned);
 	}
 
 	// foliage lit. N: which way it faces
@@ -774,7 +786,8 @@ export const vf_forestFoliage = structs + common +
 		// the foliage of a dead tree browns before it drops, a clump at a time: the color its species goes, as light or dark as the leaf was
 		let archetype = archetypes[input.archetype];
 		let brown = archetype.dry.rgb * (dot(leaf.rgb, vec3f(1.0, 1.0, 1.0)) / dot(archetype.leaf.rgb, vec3f(1.0, 1.0, 1.0)));
-		let albedo = mix(leaf.rgb * treeTint(input.treeRandom), brown, smoothstep(0.0, 0.5, input.dry * (0.6 + 0.8 * input.look.y)));
+		let living = autumnLeaf(leaf.rgb * treeTint(input.treeRandom), input.treeRandom, select(0.0, UBO.world.w, archetype.growth.w > 1.5));
+		let albedo = mix(living, brown, smoothstep(0.0, 0.5, input.dry * (0.6 + 0.8 * input.look.y)));
 		return vec4f(litLeaf(albedo, foliageNormal(input), input.light, input.worldPos), 1.0);
 	}
 
@@ -815,7 +828,7 @@ export const vf_forestBillboard = structs + common +
 		@location(6) @interpolate(flat) depth: vec2f,		// x: half the depth of the side view, y: the height of the view from above, world units
 		@location(7) @interpolate(flat) right: vec3f,		// the side view's own directions in the world: across it,
 		@location(8) @interpolate(flat) trunk: vec3f,		//		and up it (straight up, until the tree falls)
-		@location(9) @interpolate(flat) dying: vec2f,		// x: see treeDryness, y: see treeGone
+		@location(9) @interpolate(flat) dying: vec3f,		// x: see treeDryness, y: see treeGone, z: how far it has turned for the fall (see autumnLeaf)
 		@location(10) @interpolate(flat) dryColor: vec4f,	// rgb: the color its foliage dries to, a: how bright its living foliage is, to match
 	};
 
@@ -886,7 +899,7 @@ export const vf_forestBillboard = structs + common +
 		output.depth = vec2f(cell.size.x, cell.size.y) * fit;
 		output.right = right;
 		output.trunk = trunk;
-		output.dying = vec2f(treeDryness(tree), treeGone(tree));
+		output.dying = vec3f(treeDryness(tree), treeGone(tree), select(0.0, UBO.world.w, archetype.growth.w > 1.5));
 		output.dryColor = vec4f(archetype.dry.rgb, dot(archetype.leaf.rgb, vec3f(1.0, 1.0, 1.0)));
 		return output;
 	}
@@ -903,7 +916,7 @@ export const vf_forestBillboard = structs + common +
 		@location(6) @interpolate(flat) depth: vec2f,
 		@location(7) @interpolate(flat) right: vec3f,
 		@location(8) @interpolate(flat) trunk: vec3f,
-		@location(9) @interpolate(flat) dying: vec2f,
+		@location(9) @interpolate(flat) dying: vec3f,
 		@location(10) @interpolate(flat) dryColor: vec4f,
 	};
 
@@ -970,7 +983,7 @@ export const vf_forestBillboard = structs + common +
 		// drying out: the wood greys and the foliage browns, as on the meshes (see barkColor and the foliage's fragmentMain)
 		let grey = dot(color.rgb, vec3f(0.4, 0.4, 0.4)) * vec3f(1.05, 1.0, 0.94);
 		let brown = input.dryColor.rgb * (dot(color.rgb, vec3f(1.0, 1.0, 1.0)) / input.dryColor.a);
-		let leafColor = mix(color.rgb * treeTint(input.look.y), brown, smoothstep(0.0, 0.5, input.dying.x * (0.6 + 0.8 * clump)));
+		let leafColor = mix(autumnLeaf(color.rgb * treeTint(input.look.y), input.look.y, input.dying.z), brown, smoothstep(0.0, 0.5, input.dying.x * (0.6 + 0.8 * clump)));
 
 		let wood = lit(mix(color.rgb, grey, 0.7 * input.dying.x), saturate(dot(N, L)), light, worldPos);
 		let leafy = litLeaf(leafColor, N, light, worldPos);

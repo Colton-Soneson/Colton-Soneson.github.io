@@ -13,7 +13,8 @@ const zoneColor = (zone) => `vec3f(${TERRAIN_ZONES[zone].color.map((c) => c.toFi
 	how big, which way it lies and its own proportions, and the vertex shader puts the mesh there.
 
 	They are made of the mountain: the same rock color, the same cracks and breaks worked out for every pixel (rockShapes, from
-	the terrain's shader), the same light, and snow on top of the ones that lie above the snow line.
+	the terrain's shader), the same light, and snow on top of the ones that lie above the snow line. The ones standing in the
+	sea are wet and dark from the waves up to a little above the water, and green with weed below it.
 */
 export const vf_boulders =
 `
@@ -28,6 +29,7 @@ export const vf_boulders =
 		rockDetail : f32,			// how strongly the small shapes of the rock show
 		drawDistance : f32,			// how far off boulders are drawn. They shrink into the ground over the last part of it
 		rockVeins : f32,			// how strongly the veins of the rock show
+		snowCover : f32,			// how much snow has fallen and is lying, 0 to 1 (weather.js)
 	}
 	@group(0) @binding(0) var<uniform> UBO: BoulderUniforms;
 
@@ -149,12 +151,17 @@ export const vf_boulders =
 		let height = input.worldPos.y - UBO.seaLevel;
 		let moss = smoothstep(0.55, 0.85, rockNormal.y) * (1.0 - smoothstep(0.3 * UBO.snowLine, 0.55 * UBO.snowLine, height)) * smoothstep(0.35, 0.6, noise(input.worldPos.xz / 3.1));
 		albedo = mix(albedo, COLOR_MOSS * mix(1.1, 0.8, crevice), moss * 0.8);
+		// in the sea: wet as far up as the waves splash (the line wanders round the rock), and weed on it from the waterline down
+		let splashed = 1.0 - smoothstep(0.6, 3.2, height + 1.2 * (noise(input.worldPos.xz / 2.3) - 0.5));
+		albedo = mix(albedo, vec3f(0.07, 0.11, 0.06), 0.7 * (1.0 - smoothstep(-1.5, 0.4, height)));
+		albedo *= mix(1.0, 0.55, splashed);
 
 		//------------------SNOW-----------------
 		// above the snow line it lies on whatever of the boulder faces up
 		let snowBand = 0.1 * UBO.snowLine;
 		let altitude = (height - UBO.snowLine) / snowBand;
-		let snow = smoothstep(-1.0, 0.6, altitude) * smoothstep(0.35, 0.6, rockNormal.y);
+		//		(and so does snow that has fallen, wherever the boulder is. Not at the waterline: the sea keeps that clear)
+		let snow = max(smoothstep(-1.0, 0.6, altitude), smoothstep(0.0, 0.6, UBO.snowCover) * smoothstep(1.0, 3.0, height)) * smoothstep(0.35, 0.6, rockNormal.y);
 		albedo = mix(albedo, COLOR_SNOW, snow);
 		let N = normalize(mix(rockNormal, faceNormal, 0.65 * snow));
 

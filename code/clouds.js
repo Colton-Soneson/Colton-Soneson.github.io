@@ -196,13 +196,15 @@ export const cloudCoverageTexture = device.createTexture({
 });
 export const cloudCoverageView = cloudCoverageTexture.createView();
 
-// the march. rgb: the light the clouds send to the eye, a: how much of what is behind them shows through. At half the canvas's size,
-//		and made again when that changes (see display.js)
-let halfSize, cloudTexture, cloudView;
+// the march. rgb: the light the clouds send to the eye, a: how much of what is behind them shows through. At a half, a third or a
+//		quarter of the canvas's size (settings.cloudResolution: the clouds are soft, and the march is most of their cost), and made
+//		again when that or the canvas's size changes (see display.js)
+let halfSize, cloudTexture, cloudView, cloudDivisor = 0;
 export let cloudMarchView;	// for the shafts of light, which need to know where the sky is open (lightShafts.js)
 function makeCloudTexture() {
 	if (cloudTexture) cloudTexture.destroy();
-	halfSize = [Math.max(Math.ceil(canvas.width / 2), 1), Math.max(Math.ceil(canvas.height / 2), 1)];
+	cloudDivisor = Number(settings.cloudResolution) || 2;
+	halfSize = [Math.max(Math.ceil(canvas.width / cloudDivisor), 1), Math.max(Math.ceil(canvas.height / cloudDivisor), 1)];
 	cloudTexture = device.createTexture({
 		label: "cloud march",
 		size: halfSize,
@@ -494,6 +496,9 @@ const compositePipeline = device.createRenderPipeline({
 
 // Early in the frame, before anything is drawn: see the top of the file
 export function cloudUpdate(aEncoder) {
+	if ((Number(settings.cloudResolution) || 2) !== cloudDivisor) {
+		makeCloudTexture();
+	}
 	weatherUpdate();
 
 	// the clouds drift with the wind, a good deal faster than the air at the ground

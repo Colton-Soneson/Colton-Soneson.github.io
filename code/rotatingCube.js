@@ -41,6 +41,7 @@ import * as cameraControls from './cameraControls.js'
 import { settings } from './settings.js';
 import * as userInterface from './imguiLoader.js';
 import * as profiler from './profiler.js';
+import { frameDrawn } from './loading.js';
 
 import { vf_p_generic3D } from '../shaders/js/vf_p_generic.js'
 
@@ -329,6 +330,7 @@ function updateSkyboxPosition(skyboxEntity)
 export function updateRotatingCubePass() {
 
 	profiler.beginFrame();		//the Performance window: every pass from here to endFrame is timed while it is on
+	profiler.cpuMark('Controls and Camera');	//(and the CPU time of the frame is noted a stretch at a time, at each cpuMark down to cpuFrameDone)
 	const encoder = device.createCommandEncoder();
 	
 	// ImGUI setting updates
@@ -352,14 +354,19 @@ export function updateRotatingCubePass() {
 	
 	//generate per-draw uniforms (not with dynamic uniform buffers though)
 	//procedural land: regenerates if its settings changed (which can move the buildings), so before the model uniforms
+	profiler.cpuMark('Terrain Update');
 	terrain.terrainUpdate();
+	profiler.cpuMark('Forest Update');
 	forest.forestUpdate();		//after the land: the forest is planted again whenever the land under it changes
+	profiler.cpuMark('Boulders, Particles, Birds Update');
 	boulders.boulderUpdate();	//and the boulders laid out again
 	particles.particleUpdate();		//what the leaves, the spray and the rain all need to know this frame
 	birds.birdUpdate();				//the hawks fly on
 	lightning.lightningUpdate();	//a strike that is going on flickers and dies, and now and then a new one starts
+	profiler.cpuMark('Cloud Map');
 	profiler.section('Cloud Map', () => clouds.cloudUpdate(encoder));	//the weather moves on, and the picture of the clouds from above is taken: their shadows are read from it all through the frame
 
+	profiler.cpuMark('Shadow and Height Map');
 	genericUniformBufferUpdates(scene.entityModels);
 	if (bindGroupsFiltering !== textureFiltering.filteringLevel()) {
 		bindGroups = createGenericBindGroups(scene.entityModels.length);
@@ -436,6 +443,7 @@ export function updateRotatingCubePass() {
 
 
 	//-------------MAIN PASS------------------
+	profiler.cpuMark('Main Pass');
 	const mainPassParts = profiler.section('Main Pass', () => profiler.renderPassParts(encoder, {
 		colorAttachments: [{
 		view: context.getCurrentTexture().createView(),
@@ -478,17 +486,20 @@ export function updateRotatingCubePass() {
 	//post effect section
 	//(the screen space effects run further down, once the grass and the trees are in the frame as well)
 
+	profiler.cpuMark('Grass');
 	if(settings.enableGrass)
 	{
 		profiler.section('Grass', () => grassPass(encoder, depthTexture));
 	}
 
+	profiler.cpuMark('Forest');
 	if(settings.enableForest)
 	{
 		profiler.section('Forest', () => forestPass(encoder, depthTexture));
 	}
 
 	//leaves blowing off the trees: solid, so they go in with the rest and get shaded with it
+	profiler.cpuMark('Leaves and Birds');
 	profiler.section('Leaves', () => particles.leafPass(encoder, depthTexture));
 
 	//and the hawks
@@ -496,15 +507,18 @@ export function updateRotatingCubePass() {
 
 	//screen space shadows and ambient occlusion over everything solid, and the copies of the frame the water finds its reflections in.
 	//		Before the water and the sky are drawn
+	profiler.cpuMark('Screen Space');
 	profiler.section('Screen Space', () => screenEffectsPass(encoder, context.getCurrentTexture(), depthTexture));
 
 	device.queue.submit([encoder.finish()]);
 
+	profiler.cpuMark('Water');
 	if(settings.enableWater)
 	{
 		profiler.section('Water', () => waterPass(depthTexture));
 	}
 
+	profiler.cpuMark('Atmosphere, Clouds, Lightning');
 	if(settings.enableAtmosphere)
 	{
 		profiler.section('Atmosphere', () => atmospherePass(depthTexture));
@@ -517,11 +531,13 @@ export function updateRotatingCubePass() {
 	profiler.section('Lightning', () => lightning.lightningPass(depthTexture));
 
 	//the shafts of sun between the clouds, the flash of the lightning, and with the camera under the sea, the water it is looking through
+	profiler.cpuMark('Light Shafts, Spray, Rain');
 	profiler.section('Light Shafts', () => lightShafts.lightShaftPass(context.getCurrentTexture(), depthTexture));
 
 	//spray off the waves and rain: see-through, so last, over everything that is behind them
 	profiler.section('Spray, Rain and Snow', () => particles.weatherParticlePass(depthTexture));
 
+	profiler.cpuMark('Anti-Aliasing, Debug Views');
 	const encoderDebug = device.createCommandEncoder();
 
 	//anti-aliasing over the finished frame: whichever of the two the setting names. The debug views go on after it, and are left as they are
@@ -593,13 +609,17 @@ export function updateRotatingCubePass() {
 	}
 	
 	// update the settings from changes made in render loop unless UI settings are changed directly
+	profiler.cpuMark('Controls Sync');
 	if(!userInterface.guiActive) {
 		userInterface.syncSettingsToParams();
 	}
 
 	device.queue.submit([encoderDebug.finish()]);
 
+	profiler.cpuMark('Performance Window, Presets');
 	profiler.endFrame();	//after the last submit: the times are copied out, and come back to the window a frame or two later
 	userInterface.refreshPerformanceWindow();
 	userInterface.updateGraphicsPresets();	//the frame rate check that picks the graphics preset (see graphicsPresets.js)
+	profiler.cpuFrameDone();
+	frameDrawn();	//the loading screen goes once the first frames are drawn (loading.js)
 }

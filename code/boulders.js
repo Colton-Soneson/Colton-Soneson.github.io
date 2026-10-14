@@ -10,6 +10,7 @@ import { vf_boulders } from '../shaders/js/vf_boulders.js'
 
 import * as transformations from './transformations.js'
 import * as terrain from './terrain.js'
+import * as horizon from './horizon.js'
 import { weatherNow } from './weather.js'
 
 //the boulders fade into the horizon color, read from the sky view LUT (same as the water, the land, the grass and the trees)
@@ -57,6 +58,14 @@ let instanceData = new Float32Array(0);
 let laidParams = "";					// the params the boulders were laid out from
 let laidLand;							// and the land they were laid out on
 
+// The boulders sorted into squares of ground (CELL_SIZE across), so that a whole square behind the camera or out of reach is
+//		skipped without looking at any boulder in it. Each: x, y, z of its middle, radius (round all of it and its biggest boulder),
+//		biggest (size), and the boulders in it (their first float in boulders)
+const CELL_SIZE = 256;
+let cells = [];
+// what the last frame drew, kept while the camera and the settings stay put (see boulderPass)
+let keptDraws = null, keptDrawsFor = '';
+
 // the meshes: [shape][0 fine, 1 coarse] -> { buffer, vertices }
 const meshes = [];
 for (let shape = 0; shape < BOULDER_SHAPES; shape++) {
@@ -85,6 +94,24 @@ function layBoulders() {
 		size: instanceData.byteLength,
 		usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
 	});
+
+	// the squares
+	const byKey = new Map();
+	for (let at = 0; at < boulders.length; at += BOULDER_FLOATS) {
+		const key = Math.floor(boulders[at] / CELL_SIZE) + ',' + Math.floor(boulders[at + 2] / CELL_SIZE);
+		if (!byKey.has(key)) byKey.set(key, { at: [], low: Infinity, high: -Infinity, biggest: 0, x: (Math.floor(boulders[at] / CELL_SIZE) + 0.5) * CELL_SIZE, z: (Math.floor(boulders[at + 2] / CELL_SIZE) + 0.5) * CELL_SIZE });
+		const cell = byKey.get(key);
+		cell.at.push(at);
+		cell.low = Math.min(cell.low, boulders[at + 1]);
+		cell.high = Math.max(cell.high, boulders[at + 1]);
+		cell.biggest = Math.max(cell.biggest, boulders[at + 3]);
+	}
+	cells = [...byKey.values()];
+	for (const cell of cells) {
+		cell.y = (cell.low + cell.high) * 0.5;
+		cell.radius = Math.hypot(CELL_SIZE * 0.5, (cell.high - cell.low) * 0.5, CELL_SIZE * 0.5) + 2 * cell.biggest;
+	}
+	keptDraws = null;
 
 	laidParams = JSON.stringify(params);
 	laidLand = terrain.land;
@@ -257,32 +284,50 @@ export function boulderPass(pass) {
 		return;
 	}
 
-	// which boulders, with which mesh. One list for every (shape, mesh), reused every frame
+	// Which boulders, with which mesh: one list for every (shape, mesh). Worked out again only when the camera or the draw
+	//		distance has changed, otherwise last frame's lists (already on the GPU) are drawn again
 	const planes = transformations.getFrustumPlanes();
-	const lists = Array.from({ length: BOULDER_SHAPES * 2 }, () => []);
-	for (let at = 0; at < boulders.length; at += BOULDER_FLOATS) {
-		const x = boulders[at], y = boulders[at + 1], z = boulders[at + 2], size = boulders[at + 3];
-		const away = Math.hypot(x - settings.camPosX, y - settings.camPosY, z - settings.camPosZ);
-		if (away > settings.boulderDrawDistance || away > size * SEEN_SIZES) continue;
-		if (planes.some((plane) => plane[0] * x + plane[1] * y + plane[2] * z + plane[3] < -size * 2)) continue;
-		lists[boulders[at + 11] * 2 + (away < size * NEAR_SIZES ? 0 : 1)].push(at);
-	}
-
-	// their records end to end, list after list
-	let count = 0;
-	const starts = [];
-	for (const list of lists) {
-		starts.push(count);
-		for (const at of list) {
-			instanceData.set(boulders.subarray(at, at + BOULDER_FLOATS), count * BOULDER_FLOATS);
-			count++;
+	const drawsFor = planes.flat().join() + '|' + settings.boulderDrawDistance + '|' + settings.landOcclusion;
+	if (!keptDraws || drawsFor !== keptDrawsFor) {
+		const lists = Array.from({ length: BOULDER_SHAPES * 2 }, () => []);
+		const occluding = horizon.readyHorizon();
+		for (const cell of cells) {
+			// the whole square out of reach, or behind the camera or off to one side
+			const cellAway = Math.hypot(cell.x - settings.camPosX, cell.y - settings.camPosY, cell.z - settings.camPosZ) - cell.radius;
+			if (cellAway > settings.boulderDrawDistance || cellAway > cell.biggest * SEEN_SIZES) continue;
+			if (planes.some((plane) => plane[0] * cell.x + plane[1] * cell.y + plane[2] * cell.z + plane[3] < -cell.radius)) continue;
+			// or behind a hill (see horizon.js)
+			if (occluding && horizon.hidden(cell.x, cell.z, cell.high + 2 * cell.biggest, cell.radius)) continue;
+			for (const at of cell.at) {
+				const x = boulders[at], y = boulders[at + 1], z = boulders[at + 2], size = boulders[at + 3];
+				const away = Math.hypot(x - settings.camPosX, y - settings.camPosY, z - settings.camPosZ);
+				if (away > settings.boulderDrawDistance || away > size * SEEN_SIZES) continue;
+				if (planes.some((plane) => plane[0] * x + plane[1] * y + plane[2] * z + plane[3] < -size * 2)) continue;
+				lists[boulders[at + 11] * 2 + (away < size * NEAR_SIZES ? 0 : 1)].push(at);
+			}
 		}
+
+		// their records end to end, list after list
+		let count = 0;
+		const starts = [];
+		for (const list of lists) {
+			starts.push(count);
+			for (const at of list) {
+				instanceData.set(boulders.subarray(at, at + BOULDER_FLOATS), count * BOULDER_FLOATS);
+				count++;
+			}
+		}
+		if (count > 0) {
+			device.queue.writeBuffer(instanceBuffer, 0, instanceData, 0, count * BOULDER_FLOATS);
+		}
+		keptDraws = { lists: lists, starts: starts, count: count };
+		keptDrawsFor = drawsFor;
 	}
+	const { lists, starts, count } = keptDraws;
 	boulderStats.drawn = count;
 	if (count == 0) {
 		return;
 	}
-	device.queue.writeBuffer(instanceBuffer, 0, instanceData, 0, count * BOULDER_FLOATS);
 	boulderUniformBufferUpdates();
 
 	pass.setPipeline(boulderPipeline);

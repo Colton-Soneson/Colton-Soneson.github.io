@@ -14,6 +14,7 @@ import { vf_terrainBakeMips } from '../shaders/js/vf_terrain.js'
 
 import { filteredSampler, mipLevelsFor } from './textureFiltering.js'
 import * as profiler from './profiler.js'
+import { setLoadingStage, showStage } from './loading.js'
 
 import * as transformations from './transformations.js'
 import * as scene from './scene.js'
@@ -87,7 +88,7 @@ function getTerrainParams() {
 export let land;				// the generated terrain, see generateTerrain in terrainGenerator.js for whats in it
 export let terrainFieldsTexture;	// the land as a texture for shaders (the grass), one texel per grid point: height, what covers it (see coverOf in terrainGenerator.js), normal.x, normal.z
 export let terrainWaterTexture;		// what the water needs to know about the land, one texel per grid point: height of the ground, distance to the nearest land, and 1.0 where the water is a lake
-export const terrainStats = { chunks: 0, drawn: 0, triangles: 0, built: 0, nearChunks: 0, bakedChunks: 0, bakes: 0, bakedThisFrame: 0 };	// kept / in the tree this frame / drawn in the main pass / made this frame / drawn with the relief in the depth / drawn from a bake / bakes kept / bakes made this frame, for anyone who wants to show it
+export const terrainStats = { chunks: 0, drawn: 0, triangles: 0, built: 0, nearChunks: 0, bakedChunks: 0, bakes: 0, bakedThisFrame: 0, waiting: 0 };	// kept / in the tree this frame / drawn in the main pass / made this frame / drawn with the relief in the depth / drawn from a bake / bakes kept / bakes made this frame / still to be made, for anyone who wants to show it
 const chunks = new Map();		// every chunk there is, by name (see chunkName)
 let rootChunks = [];			// the top of the tree
 let chosenChunks = [];			// the chunks that make up the land this frame, see chooseChunks
@@ -194,9 +195,46 @@ function placeBuildings() {
 //-------------------------------------------------
 const chunkName = (x0, z0, size) => size + ":" + x0 + ":" + z0;
 
-// Makes the chunk covering a square of the land and puts its mesh on the GPU
+/*
+	THE WORKER. The chunks wanted while the camera moves are made in terrainWorker.js, on a thread of its own, and put on the GPU
+	here when they come back: a chunk is a few milliseconds of noise, and flying fast wants a lot of them, all of which came out
+	of the frames when they were made here. At most WORKER_IN_FLIGHT are asked for at a time, nearest first, so what it is
+	making is never far behind where the camera is now. Every new land is sent to it first (its chunkGrids, see makeChunkBuilder).
+	The chunks made with the land (resetChunks) are still made here: nothing can be drawn until they are.
+	Where a worker cant run, chunks are made here as before, BUILD_MILLISECONDS a frame.
+*/
+const WORKER_IN_FLIGHT = 3;
+let landGeneration = 0;				// which land the chunks asked of the worker are of. One that comes back of an older land is thrown away
+const inFlight = new Set();			// names of the chunks asked of the worker and not back yet
+let builtSince = 0;					// chunks made since the last frame (terrainStats.built)
+let chunkWorker = null;
+try {
+	chunkWorker = new Worker(new URL('./terrainWorker.js', import.meta.url), { type: 'module' });
+	chunkWorker.onmessage = (event) => {
+		const made = event.data;
+		const name = chunkName(made.x0, made.z0, made.size);
+		inFlight.delete(name);
+		if (made.generation == landGeneration && made.vertices && !chunks.has(name)) {
+			addChunk(made.x0, made.z0, made.size, made);
+		}
+	};
+	chunkWorker.onerror = (event) => {
+		console.warn('The terrain worker stopped, chunks are made on the main thread from now on:', event.message);
+		chunkWorker = null;
+		inFlight.clear();
+	};
+} catch (error) {
+	console.warn('No terrain worker, chunks are made on the main thread:', error);
+	chunkWorker = null;
+}
+
+// Makes the chunk covering a square of the land here, and puts its mesh on the GPU
 function buildChunk(x0, z0, size) {
-	const mesh = land.buildChunk(x0, z0, size, CHUNK_CELLS);
+	return addChunk(x0, z0, size, land.buildChunk(x0, z0, size, CHUNK_CELLS));
+}
+
+// Puts a chunk's mesh (see buildChunk in terrainGenerator.js) on the GPU
+function addChunk(x0, z0, size, mesh) {
 	const vertexBuffer = device.createBuffer({
 		label: "terrain chunk vertices",
 		size: mesh.vertices.byteLength,
@@ -206,7 +244,7 @@ function buildChunk(x0, z0, size) {
 
 	const chunk = { x0: x0, z0: z0, size: size, minY: mesh.minY, maxY: mesh.maxY, vertexBuffer: vertexBuffer, lastUsed: chunkFrame };
 	chunks.set(chunkName(x0, z0, size), chunk);
-	terrainStats.built++;
+	builtSince++;
 	return chunk;
 }
 
@@ -270,14 +308,28 @@ function chooseChunks() {
 	terrainStats.drawn = chosenChunks.length;
 }
 
-// Makes wanted chunks, nearest first, for as long as the time allows (always at least one, or nothing would ever get made)
+// Makes wanted chunks, nearest first: asks the worker for them, or makes them here for as long as the time allows (always at
+//		least one, or nothing would ever get made)
 function buildWantedChunks(milliseconds) {
 	if (wantedChunks.length == 0) {
 		return;
 	}
 	const started = performance.now();
 	wantedChunks.sort((a, b) => a.distance - b.distance);
-	for (const wanted of wantedChunks) {
+	if (chunkWorker && milliseconds != Infinity) {
+		for (const wanted of wantedChunks) {
+			if (inFlight.size >= WORKER_IN_FLIGHT) {
+				break;
+			}
+			const name = chunkName(wanted.x0, wanted.z0, wanted.size);
+			if (!chunks.has(name) && !inFlight.has(name)) {
+				inFlight.add(name);
+				chunkWorker.postMessage({ generation: landGeneration, x0: wanted.x0, z0: wanted.z0, size: wanted.size, cells: CHUNK_CELLS });
+			}
+		}
+		milliseconds = -1;		// (and none made here)
+	}
+	for (const wanted of milliseconds < 0 ? [] : wantedChunks) {
 		if (!chunks.has(chunkName(wanted.x0, wanted.z0, wanted.size))) {
 			buildChunk(wanted.x0, wanted.z0, wanted.size);
 		}
@@ -371,10 +423,20 @@ function regenerateTerrain() {
 	placeBuildings();
 	resetChunks();
 
+	// the worker makes its chunks from the same land (a copy of the grids: about 17MB, once a land)
+	landGeneration++;
+	inFlight.clear();
+	if (chunkWorker) {
+		chunkWorker.postMessage({ land: landGeneration, params: params, grids: land.chunkGrids });
+	}
+
 	generatedParams = JSON.stringify(params);
 	console.log("Terrain generated: ", chunks.size, " chunks to start with");
 }
+// the loading screen says so first, and waits until that is on the screen: this is the longest stretch of the loading (see loading.js)
+await showStage('Generating the land', 0.35);
 regenerateTerrain();
+setLoadingStage('Getting everything else ready', 0.75);
 
 // shaders
 //-------------------------------------------------
@@ -924,10 +986,12 @@ export function terrainUpdate() {
 	}
 
 	// the mesh: which chunks are the land from where the camera is now, and a few more of the ones that are still to be made
-	terrainStats.built = 0;
 	chooseChunks();
 	buildWantedChunks(BUILD_MILLISECONDS);
 	terrainStats.chunks = chunks.size;
+	terrainStats.built = builtSince;
+	terrainStats.waiting = wantedChunks.length;
+	builtSince = 0;
 
 	terrainUniformBufferUpdates();
 	bakeWantedChunks();		//(after the uniforms: the bake reads them)

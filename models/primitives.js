@@ -1,4 +1,14 @@
-import {loadObjFileVerts, loadObjFileFaces, loadObjFileNormals, loadObjFileUVs} from '../code/objLoader.js'
+import {loadObjFileVerts, loadObjFileFaces, loadObjFileNormals, loadObjFileUVs, fileBlob, prefetchFiles} from '../code/objLoader.js'
+
+// every file below, asked for all at once before any of them is waited for: they download side by side instead of one after
+//		another (see objLoader.js). Each model's four loaders then share its one download
+prefetchFiles([
+	'./models/islandhouse2.obj', './textures/FinalIslandHouse2FlipY.png',
+	'./models/lighthouse.obj', './textures/FinalLighthouseTextureFlipY.png',
+	'./models/bench.obj', './textures/BenchTextureFlipY.png',
+	'./models/skybox.obj', './textures/skyboxTexture.png',
+	'./models/test.obj', './textures/testFlipY.png',
+]);
 
 //---------------OBJ MODEL---------------------
 export const vertDim = 3; //primitives.pIslandHouse.dimensions;
@@ -25,11 +35,20 @@ function Primitive(dimensions, vertices, faces, normals, uvs, textureBitmap, wor
 }
 
 //----------------------HELPER FUNCS----------------------
+// A model's picture, at most MODEL_TEXTURE_MOST across. The house's and the lighthouse's come at 4096: with their mip levels
+//		that was 90MB each on the GPU, for buildings a few dozen units across, which never show more than a few hundred pixels of
+//		it. Anything bigger is shrunk on the way in (the file itself is untouched)
+const MODEL_TEXTURE_MOST = 1024;
 async function loadTextureImageBitmap(path){
-	const response = await fetch(path);
-	const imageBitmap = await createImageBitmap(await response.blob());
-	
-	return imageBitmap;
+	const imageBitmap = await createImageBitmap(await fileBlob(path));	//(one download, shared: see objLoader.js)
+	const most = Math.max(imageBitmap.width, imageBitmap.height);
+	if (most <= MODEL_TEXTURE_MOST) {
+		return imageBitmap;
+	}
+	const scale = MODEL_TEXTURE_MOST / most;
+	const smaller = await createImageBitmap(imageBitmap, { resizeWidth: Math.round(imageBitmap.width * scale), resizeHeight: Math.round(imageBitmap.height * scale), resizeQuality: 'high' });
+	imageBitmap.close();
+	return smaller;
 }
 
 
@@ -73,6 +92,8 @@ export const pBench = new Primitive(
 	"Bench",
 );
 
+// not loaded: nothing draws it any more (the land is made in terrain.js). It was 4.3MB to download. Take the comment marks off to have it back, and put its files back in prefetchFiles above
+/*
 export const pGround = new Primitive(
 	3, 
 	new Float32Array(await loadObjFileVerts('./models/ground.obj')),
@@ -85,7 +106,10 @@ export const pGround = new Primitive(
 	new Float32Array([0.45,0.45,0.45]),
 	"Ground",
 );
+*/
 
+// not loaded: nothing draws it any more (the sea is made in water.js). It was 3.8MB to download. Take the comment marks off to have it back, and put its files back in prefetchFiles above
+/*
 export const pWavePlane = new Primitive(
 	3, 
 	new Float32Array(await loadObjFileVerts('./models/waveplane.obj')),
@@ -98,6 +122,7 @@ export const pWavePlane = new Primitive(
 	new Float32Array([10,10,10]),
 	"Waves",
 );
+*/
 
 export const pSkybox = new Primitive(
 	3, 
@@ -112,6 +137,8 @@ export const pSkybox = new Primitive(
 	"Skybox",
 );
 
+// not loaded: nothing draws it (the grass is made in computeGrass.js). Take the comment marks off to have it back, and put its files back in prefetchFiles above
+/*
 export const pGrassBlade = new Primitive(
 	3, 	//we will need to make this 2
 	new Float32Array(await loadObjFileVerts('./models/basicgrass.obj')),
@@ -124,6 +151,7 @@ export const pGrassBlade = new Primitive(
 	new Float32Array([3,3,3]),
 	"grassBlade",
 );
+*/
 
 export const pTest = new Primitive(
 	3, 

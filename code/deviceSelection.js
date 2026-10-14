@@ -1,5 +1,6 @@
 import { settings } from './settings.js';
 import { renderSizeFor } from './display.js';
+import { setLoadingStage } from './loading.js';
 
 export const canvas = document.querySelector("canvas");
 
@@ -26,6 +27,7 @@ export const canTimestamp = adapter.features.has('timestamp-query');
 export const device = await adapter.requestDevice({
 	requiredFeatures: canTimestamp ? ['timestamp-query'] : [],
 });
+setLoadingStage('Downloading the models', 0.15);	//(the loading screen: see loading.js. The models are what is fetched next)
 
 
 export const context = canvas.getContext("webgpu");

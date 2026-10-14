@@ -40,7 +40,8 @@ export function renderSizeFor(pageWidth, pageHeight, lines) {
 
 	It can only help where it is the pixels that cost (the GPU). If the time goes on the CPU, drawing smaller changes nothing,
 	and it ends at MIN_SCALE.
-	A target over READY_FPS counts as READY_FPS: the main loop runs every 17 milliseconds (main.js), which tops out at 58.8.
+	A target over READY_FPS counts as READY_FPS: the main loop is kept to 60 a second (main.js), and a frame now and then
+	comes late on any machine.
 */
 export const MIN_SCALE = 0.5;
 const SCALE_STEP = 0.05;

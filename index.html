@@ -6,20 +6,63 @@
     <!-- phones lay the page out at their own size instead of zoomed out, and the canvas can run under a notch -->
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>WebGPU Life</title>
-	<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/9.3.2/math.js"></script>
+	<!-- deferred: it downloads alongside everything else instead of holding up the first picture of the page, and still runs before main.js -->
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/9.3.2/math.js" defer></script>
 
-	<!-- ImGUI (lil-gui) -->
-	<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lil-gui@0.19/dist/lil-gui.min.css">
-	<script src="https://cdn.jsdelivr.net/npm/lil-gui@0.19/dist/lil-gui.min.js"></script>
+	<!-- ImGUI (lil-gui): the script is imported by code/imguiLoader.js. Its style sheet is not waited for before the page is drawn (the controls come much later) -->
+	<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lil-gui@0.19/dist/lil-gui.min.css" media="print" onload="this.media='all'">
 
-	<!-- the canvas covers the whole page, whatever size the window is. What it is drawn at is the Resolution setting (see code/display.js) -->
+	<!-- the canvas covers the whole page, whatever size the window is. What it is drawn at is the Resolution setting (see code/display.js).
+	     (body > canvas: the page's own canvas only, not the graphs inside the Performance window) -->
 	<style>
 		html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
-		canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+		body > canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+
+		/* the loading screen: see code/loading.js */
+		#loading { position: fixed; inset: 0; z-index: 20; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+			background: #0b0e14; color: #d7dbe3; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; transition: opacity 0.6s ease; }
+		#loading.loading-done { opacity: 0; pointer-events: none; }
+		#loading .loading-ring { width: 46px; height: 46px; border-radius: 50%; border: 4px solid rgba(215, 219, 227, 0.15); border-top-color: #8fb8ff;
+			animation: loading-spin 0.9s linear infinite; }
+		#loading .loading-title { font-size: 20px; letter-spacing: 0.04em; }
+		#loading .loading-stage { font-size: 13px; opacity: 0.65; min-height: 1.2em; }
+		#loading .loading-bar { width: min(280px, 70vw); height: 4px; border-radius: 2px; background: rgba(215, 219, 227, 0.15); overflow: hidden; }
+		#loading .loading-bar > div { width: 5%; height: 100%; background: #8fb8ff; transition: width 0.4s ease; }
+		#loading .loading-error { max-width: min(460px, 85vw); text-align: center; font-size: 14px; line-height: 1.5; color: #ffb4a8; display: none; }
+		#loading.loading-failed .loading-error { display: block; }
+		#loading.loading-failed .loading-ring { animation: none; border-top-color: #ffb4a8; }
+		@keyframes loading-spin { to { transform: rotate(360deg); } }
 	</style>
   </head>
   <body>
     <canvas width="1920" height="1080"></canvas>
+
+	<!-- up before anything else has loaded, gone once the first frames are drawn -->
+	<div id="loading">
+		<div class="loading-ring"></div>
+		<div class="loading-title">Loading</div>
+		<div class="loading-stage">Downloading</div>
+		<div class="loading-bar"><div></div></div>
+		<div class="loading-error"></div>
+	</div>
+	<script>
+		// if it cannot run here, or something goes wrong while it loads, the loading screen says so instead of spinning for ever
+		(function () {
+			const screen = document.getElementById('loading');
+			const fail = (text) => {
+				if (!screen || !screen.isConnected || screen.classList.contains('loading-failed')) return;	// (the first thing that went wrong is the one worth reading)
+				screen.classList.add('loading-failed');
+				screen.querySelector('.loading-title').textContent = 'Could not start';
+				screen.querySelector('.loading-error').textContent = text;
+			};
+			if (!navigator.gpu) {
+				fail('This site draws with WebGPU, which this browser does not have (or has turned off). A recent Chrome or Edge on a desktop will run it.');
+			}
+			window.addEventListener('error', (event) => fail('Something went wrong while loading: ' + event.message));
+			window.addEventListener('unhandledrejection', (event) => fail('Something went wrong while loading: ' + (event.reason && event.reason.message || event.reason)));
+		})();
+	</script>
+
     <script type="module" src="main.js" defer></script>
   </body>
 </html>

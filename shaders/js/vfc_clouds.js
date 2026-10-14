@@ -644,7 +644,9 @@ export const vf_cloudMarch =
 		let direction = normalize(farPoint.xyz / farPoint.w - nearPoint.xyz / nearPoint.w);
 
 		// how far it can go: to whatever solid thing was drawn at this pixel, if anything was
-		let depth = textureLoad(depthTexture, min(vec2i(fragCoord.xy) * 2, vec2i(textureDimensions(depthTexture)) - vec2i(1, 1)), 0);
+		//		(the march is a half, a third or a quarter of the size of the frame, see cloudResolution: the depth is read at the matching place)
+		let depthSize = vec2i(textureDimensions(depthTexture));
+		let depth = textureLoad(depthTexture, min(vec2i(fragCoord.xy * vec2f(depthSize) / CU.screen.xy), depthSize - vec2i(1, 1)), 0);
 		var solid = 1000000000.0;
 		if (depth < 1.0) {
 			let scenePoint = CU.invViewProjectionMatrix * vec4f(ndc, depth, 1.0);
@@ -848,14 +850,16 @@ export const vf_cloudComposite =
 
 		// the 9 pixels of the march around this one. (9 and not the nearest 4: every ray of the march starts a different way
 		//		into its first step, by a pattern made to even out over any 3 by 3 block, and this is where it is evened out)
-		let place = fragCoord.xy * 0.5 - vec2f(0.5, 0.5);
+		//		(the march is a half, a third or a quarter of the size of the frame: see cloudResolution)
+		let ratio = vec2f(fullSize) / vec2f(halfSize);
+		let place = fragCoord.xy / ratio - vec2f(0.5, 0.5);
 		let base = vec2i(round(place));
 		var total = vec4f(0.0, 0.0, 0.0, 0.0);
 		var weights = 0.0;
 		for (var j = -1; j <= 1; j++) {
 			for (var i = -1; i <= 1; i++) {
 				let texel = clamp(base + vec2i(i, j), vec2i(0, 0), halfSize - vec2i(1, 1));
-				let there = viewDistance(textureLoad(depthTexture, min(texel * 2, fullSize - vec2i(1, 1)), 0));
+				let there = viewDistance(textureLoad(depthTexture, min(vec2i(vec2f(texel) * ratio), fullSize - vec2i(1, 1)), 0));
 				let apart = length(vec2f(texel) - place);
 				let weight = (1.0 - 0.3 * apart) / (0.001 + abs(there - here) / here);
 				total += textureLoad(cloudTexture, texel, 0) * weight;

@@ -102,6 +102,7 @@ export const settings = {
 	grassWindStrength: 1.0,			//how far the wind pushes the tips over
 	//-------------------BOULDERS------------------
 	enableBoulders: true,
+	landOcclusion: true,				//trees and boulders behind a hill are not drawn: see horizon.js
 	boulderAmount: 1.0,					//how many boulders there are: at the foot of the mountains, under the trees, in the grass, along the top of the beaches, out in the sea and on the ridges. 1 = about twenty thousand in all, 0 = none
 	boulderDrawDistance: 2500.0,		//how far off they are drawn
 	//--------------------FOREST-------------------
@@ -145,6 +146,7 @@ export const settings = {
 	cloudHeight: 0.0,					//lifts or lowers every layer of cloud, world units
 	cloudDriftSpeed: 4.0,				//how many times faster than the wind at the ground the clouds drift
 	cloudSteps: 48,						//steps along each ray through the clouds. More is smoother and costs more
+	cloudResolution: 2,					//the clouds are marched at the size of the frame divided by this: 2 (half), 3 or 4 (a quarter). They are soft, and the march is most of what they cost
 	cloudDrawDistance: 36000.0,			//how far off clouds are drawn. They fade into the haze over the last part of it
 	displayCloudCoverage: false,
 	//--------------------BIRDS--------------------

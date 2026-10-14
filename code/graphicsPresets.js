@@ -19,7 +19,7 @@
 		The first seconds after the page loads or the preset changes are not counted: chunks, bakes and the forest are still being made.
 		While the page is hidden the browser runs it at 1 frame a second, so nothing is counted then either.
 
-		GOOD_FPS is 55, not 60: the main loop runs every 17 milliseconds (main.js), so 58.8 is the most it can ever do.
+		GOOD_FPS is 55, not 60: the main loop is kept to 60 a second (main.js), and a frame now and then comes late on any machine.
 */
 
 export const PRESET_NAMES = ['very low', 'low', 'medium', 'high', 'ultra'];
@@ -31,17 +31,17 @@ export const PRESETS = {
 		shadowMapPCFKernelSize: 0, enableScreenShadows: false, enableSSAO: false, enableSSR: false, enableLightShafts: false,
 		antiAliasing: 'fxaa', anisotropicFiltering: 2,
 		grassTotalBladeCount: 100000, grassDrawDistance: 250, grassLodRings: 3,
-		forestDetailDistance: 25, forestMidDistance: 80, forestThinnedRings: 2, forestBillboardDistance: 220, forestDrawDistance: 2500,
-		boulderDrawDistance: 800, waterTileResolution: 256, cloudSteps: 20, cloudDrawDistance: 20000,
+		forestDetailDistance: 25, forestMidDistance: 80, forestThinnedRings: 2, forestBillboardDistance: 220, forestDrawDistance: 1800,
+		boulderDrawDistance: 800, waterTileResolution: 256, cloudSteps: 20, cloudDrawDistance: 20000, cloudResolution: 4, waterTileInstanceCount: 3,
 	},
 	'low': {
 		terrainResolution: 1024, terrainDetailDistance: 1.0, terrainFarBake: 128, terrainRockDetail: 1, terrainRockVeins: 0, terrainGroundDetail: 1,
 		dynamicResolution: true,
-		shadowMapPCFKernelSize: 0, enableScreenShadows: true, enableSSAO: false, enableSSR: true, enableLightShafts: true,
+		shadowMapPCFKernelSize: 0, enableScreenShadows: true, enableSSAO: false, enableSSR: true, enableLightShafts: false,
 		antiAliasing: 'fxaa', anisotropicFiltering: 4,
 		grassTotalBladeCount: 200000, grassDrawDistance: 450, grassLodRings: 4,
-		forestDetailDistance: 40, forestMidDistance: 120, forestThinnedRings: 2, forestBillboardDistance: 300, forestDrawDistance: 3500,
-		boulderDrawDistance: 1500, waterTileResolution: 256, cloudSteps: 28, cloudDrawDistance: 26000,
+		forestDetailDistance: 40, forestMidDistance: 120, forestThinnedRings: 2, forestBillboardDistance: 300, forestDrawDistance: 2800,
+		boulderDrawDistance: 1500, waterTileResolution: 256, cloudSteps: 28, cloudDrawDistance: 26000, cloudResolution: 3, waterTileInstanceCount: 3,
 	},
 	'medium': {
 		terrainResolution: 2048, terrainDetailDistance: 1.25, terrainFarBake: 128, terrainRockDetail: 1, terrainRockVeins: 1, terrainGroundDetail: 1,
@@ -50,7 +50,7 @@ export const PRESETS = {
 		antiAliasing: 'smaa', anisotropicFiltering: 8,
 		grassTotalBladeCount: 300000, grassDrawDistance: 700, grassLodRings: 5,
 		forestDetailDistance: 50, forestMidDistance: 150, forestThinnedRings: 2, forestBillboardDistance: 360, forestDrawDistance: 4500,
-		boulderDrawDistance: 2000, waterTileResolution: 256, cloudSteps: 36, cloudDrawDistance: 32000,
+		boulderDrawDistance: 2000, waterTileResolution: 256, cloudSteps: 36, cloudDrawDistance: 32000, cloudResolution: 3, waterTileInstanceCount: 5,
 	},
 	'high': {
 		terrainResolution: 4096, terrainDetailDistance: 1.25, terrainFarBake: 128, terrainRockDetail: 1, terrainRockVeins: 1, terrainGroundDetail: 1,
@@ -59,7 +59,7 @@ export const PRESETS = {
 		antiAliasing: 'smaa', anisotropicFiltering: 8,
 		grassTotalBladeCount: 420000, grassDrawDistance: 900, grassLodRings: 6,
 		forestDetailDistance: 60, forestMidDistance: 180, forestThinnedRings: 2, forestBillboardDistance: 420, forestDrawDistance: 5000,
-		boulderDrawDistance: 2500, waterTileResolution: 512, cloudSteps: 48, cloudDrawDistance: 36000,
+		boulderDrawDistance: 2500, waterTileResolution: 512, cloudSteps: 48, cloudDrawDistance: 36000, cloudResolution: 2, waterTileInstanceCount: 5,
 	},
 	'ultra': {
 		terrainResolution: 8192, terrainDetailDistance: 1.5, terrainFarBake: 256, terrainRockDetail: 1, terrainRockVeins: 1, terrainGroundDetail: 1,
@@ -68,7 +68,7 @@ export const PRESETS = {
 		antiAliasing: 'smaa', anisotropicFiltering: 16,
 		grassTotalBladeCount: 600000, grassDrawDistance: 1200, grassLodRings: 7,
 		forestDetailDistance: 80, forestMidDistance: 240, forestThinnedRings: 2, forestBillboardDistance: 600, forestDrawDistance: 7000,
-		boulderDrawDistance: 3500, waterTileResolution: 512, cloudSteps: 64, cloudDrawDistance: 45000,
+		boulderDrawDistance: 3500, waterTileResolution: 512, cloudSteps: 64, cloudDrawDistance: 45000, cloudResolution: 2, waterTileInstanceCount: 5,
 	},
 };
 

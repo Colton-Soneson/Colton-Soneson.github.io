@@ -95,6 +95,7 @@ export const imguiParams = {
     grassWindStrength: settings.grassWindStrength,
     // Boulders
     enableBoulders: settings.enableBoulders,
+    landOcclusion: settings.landOcclusion,
     boulderAmount: settings.boulderAmount,
     boulderDrawDistance: settings.boulderDrawDistance,
     // Forest
@@ -169,6 +170,7 @@ export const imguiParams = {
     cloudCrispness: settings.cloudCrispness,
     cloudDriftSpeed: settings.cloudDriftSpeed,
     cloudSteps: settings.cloudSteps,
+    cloudResolution: settings.cloudResolution,
     cloudDrawDistance: settings.cloudDrawDistance,
     // Birds
     enableBirds: settings.enableBirds,
@@ -440,6 +442,7 @@ cloudFolder.add(imguiParams, 'cloudCrispness', 0, 1, 0.01).name('Crispness');
 cloudFolder.add(imguiParams, 'cloudHeight', -400, 4000, 50).name('Height');
 cloudFolder.add(imguiParams, 'cloudDriftSpeed', 0, 20, 0.5).name('Drift Speed');
 cloudFolder.add(imguiParams, 'cloudSteps', 16, 128, 1).name('Quality (steps)');
+cloudFolder.add(imguiParams, 'cloudResolution', { 'half': 2, 'third': 3, 'quarter': 4 }).name('Resolution (of the frame)');
 cloudFolder.add(imguiParams, 'cloudDrawDistance', 8000, 80000, 500).name('Draw Distance');
 
 const birdFolder = gui.addFolder('Birds');	//see birds.js
@@ -566,6 +569,7 @@ debugFolder.add(debugViewState, 'mode', debugDisplayModes).name('View Mode').onC
         water.waterPipelineSignalUpdate('triangle-list');
     }
 });
+debugFolder.add(imguiParams, 'landOcclusion').name('Hide What the Land Hides');	//trees and boulders behind hills are skipped, see horizon.js
 debugFolder.add(imguiParams, 'debugTextureRescaleSize', [32, 64, 128, 256, 512, 1024]).name('Debug Texture Size');
 debugFolder.add(imguiParams, 'displayShoreDistanceDebugRange', 5, 300).name('Shore Distance View Range');
 
@@ -638,13 +642,23 @@ export function refreshControlsUI() {
     });
 }
 
+// only the controls whose value changed are redrawn: redrawing all of them every frame was a good part of the CPU time of a frame
+let allControllers = null;
 export function syncSettingsToParams() {
+    const changed = new Set();
     Object.keys(imguiParams).forEach(key => {
-        if (key in settings && !dropdownManagedKeys.has(key)) {
+        if (key in settings && !dropdownManagedKeys.has(key) && imguiParams[key] !== settings[key]) {
             imguiParams[key] = settings[key];
+            changed.add(key);
         }
     });
-    gui.controllersRecursive().forEach(c => c.updateDisplay());	//every controller, however deep its folder is
+    if (changed.size == 0) {
+        return;
+    }
+    allControllers ??= gui.controllersRecursive();	//every controller, however deep its folder is
+    for (const controller of allControllers) {
+        if (controller.object === imguiParams && changed.has(controller.property)) controller.updateDisplay();
+    }
 }
 
 //-----------------------ENTITY BASED SETTINGS----------------------------
@@ -707,15 +721,28 @@ export function refreshEntityFolder() {
 }
 
 //-----------------------PERFORMANCE WINDOW----------------------------
-// GPU time of every pass in the frame, filed under what it belongs to (see profiler.js). A row with an arrow opens to show
-//		the passes inside it and the shader each one runs. The bars are all to one scale: full width is the longest top row
-//		of the frame before. Shut, and not timing, until it is asked to
+// Nothing is timed, and nothing shows but the checkboxes, until Enable is ticked. Then, from the top:
+//		the frame rate	over the last 10 seconds as a graph, with its average and its lows (the slow frames, see THE GRAPHS in profiler.js)
+//		the CPU			the CPU time of each frame as a graph, and where it goes (CPU TIME in profiler.js)
+//		the GPU			the GPU time of each frame as a graph, and of every pass in the frame, filed under what it belongs to (see
+//						profiler.js). A row with an arrow opens to show the passes inside it and the shader each one runs. The bars are
+//						all to one scale: full width is the longest top row of the frame before
+//		Pause Graphs holds the graphs still (the rows carry on). Shut until it is asked for
 const perfGUI = new GUI({ title: 'Performance', width: 380, container: dockRight });	//(in the dock, see WHERE THE WINDOWS GO)
 
 const perfView = { sortByTime: false };
-perfGUI.add(profiler.timing, 'enabled').name('Enable');
+perfGUI.add(profiler.timing, 'enabled').name('Enable').onChange((on) => {
+	if (on) {
+		profiler.clearTimes();		// (what was there is from before it was turned off)
+		perfShownFrame = -1;
+		perfScale = 0;
+	}
+	perfBox.style.display = on ? '' : 'none';
+	perfOff.style.display = on ? 'none' : '';
+});
 perfGUI.add(profiler.timing, 'average').name('Average 30 Frames');
 perfGUI.add(perfView, 'sortByTime').name('Sort by Time');
+perfGUI.add(profiler.graphs, 'paused').name('Pause Graphs');
 
 const perfStyle = document.createElement('style');
 perfStyle.textContent = `
@@ -731,13 +758,28 @@ perfStyle.textContent = `
 .perf-row.perf-top .perf-name { font-weight: bold; }
 .perf-shader { position: relative; flex: none; margin-left: 6px; color: var(--string-color); font-family: var(--font-family-mono); font-size: 10px; opacity: 0.9; }
 .perf-ms { position: relative; flex: none; width: 58px; text-align: right; color: var(--number-color); font-family: var(--font-family-mono); }
+.perf-heading { padding: 6px var(--padding) 2px; color: var(--text-color); font-weight: bold; opacity: 0.85; }
+.perf-graph { display: block; position: static; inset: auto; width: calc(100% - 2 * var(--padding)); height: 80px; margin: 2px var(--padding) 4px; touch-action: auto; }	/* (position, inset: a page rule for every canvas cannot move it) */
 .perf-note { padding: 2px var(--padding) 6px; color: var(--text-color); opacity: 0.55; font-size: 10px; white-space: normal; line-height: 1.35; }
 `;
 document.head.appendChild(perfStyle);
 
 const perfBox = document.createElement('div');
+const perfHeading = (text) => { const heading = document.createElement('div'); heading.className = 'perf-heading'; heading.textContent = text; return heading; };
+const perfText = () => { const text = document.createElement('div'); text.className = 'perf-summary'; text.style.whiteSpace = 'pre'; return text; };
+const perfCanvas = () => { const canvas = document.createElement('canvas'); canvas.className = 'perf-graph'; return canvas; };
+const perfFrameText = perfText(), perfFrameGraph = perfCanvas();
+const perfCpuText = perfText(), perfCpuGraph = perfCanvas();
+const perfGpuGraph = perfCanvas();
+let perfGpuStats = '';
+const perfOff = document.createElement('div');
+perfOff.className = 'perf-note';
+perfOff.textContent = 'Timing is off. Enable times the CPU and the GPU, with a graph of each.';
+const perfCpuRows = document.createElement('div');
+perfCpuRows.className = 'perf-rows';
 const perfSummary = document.createElement('div');
 perfSummary.className = 'perf-summary';
+perfSummary.style.whiteSpace = 'pre';
 const perfRows = document.createElement('div');
 perfRows.className = 'perf-rows';
 const perfNote = document.createElement('div');
@@ -745,8 +787,11 @@ perfNote.className = 'perf-note';
 perfNote.textContent = 'GPU time of each pass. While timing, a pass drawn with several shaders is split into one pass per shader, '
 	+ 'which costs a little. Copies between passes are not timed. Chrome and Edge can round the times to 0.1 ms unless started with '
 	+ '--enable-webgpu-developer-features.';
-perfBox.append(perfSummary, perfRows, perfNote);
-perfGUI.$children.appendChild(perfBox);
+perfBox.append(perfHeading('Frame Rate (last 10 s)'), perfFrameText, perfFrameGraph,
+	perfHeading('CPU, ms per frame'), perfCpuText, perfCpuGraph, perfCpuRows,
+	perfHeading('GPU, ms per frame'), perfSummary, perfGpuGraph, perfRows, perfNote);
+perfBox.style.display = 'none';
+perfGUI.$children.append(perfOff, perfBox);
 
 perfGUI.close();
 
@@ -803,24 +848,140 @@ function perfVisibleRows(nodes, depth, list) {
 	return list;
 }
 
+/*
+	A graph of one of the series (see THE GRAPHS in profiler.js): the last frames as a line, oldest on the left, taller is slower.
+	Behind it the 60 and 30 fps marks (where they fit), and across it the 5% and 1% lows. The scale grows to fit the slowest
+	frames, and what the top is stands in the corner.
+		floor	the least the top of the graph goes down to, ms
+*/
+function drawGraph(canvas, values, stats, color, floor) {
+	const ratio = window.devicePixelRatio || 1;
+	const width = Math.round(canvas.clientWidth * ratio), height = Math.round(canvas.clientHeight * ratio);
+	if (width == 0) return;
+	if (canvas.width != width || canvas.height != height) {
+		canvas.width = width;
+		canvas.height = height;
+	}
+	const ctx = canvas.getContext('2d');
+	ctx.clearRect(0, 0, width, height);
+	ctx.fillStyle = 'rgba(255, 255, 255, 0.04)';
+	ctx.fillRect(0, 0, width, height);
+
+	const slowest = values.reduce((most, value) => Math.max(most, value), 0);
+	const step = slowest * 1.15 > 20 ? 10 : 1;
+	const top = Math.max(floor, Math.ceil(slowest * 1.15 / step) * step);	// ms at the top of the graph
+	const y = (ms) => height - Math.min(ms / top, 1) * height;
+	ctx.font = `${10 * ratio}px monospace`;
+	ctx.lineWidth = ratio;
+	// a line across, labelled at labelAt (0 to 1 of the way across. The fps marks are labelled on the right, the lows on the
+	//		left and a third of the way in, so the labels of lines close together dont land on each other)
+	const level = (ms, lineColor, label, labelAt) => {
+		ctx.strokeStyle = lineColor;
+		ctx.fillStyle = lineColor;
+		ctx.beginPath();
+		ctx.moveTo(0, y(ms));
+		ctx.lineTo(width, y(ms));
+		ctx.stroke();
+		ctx.textAlign = labelAt == 1 ? 'right' : 'left';
+		ctx.fillText(label, labelAt == 1 ? width - 3 * ratio : 3 * ratio + labelAt * width, Math.max(y(ms) - 2 * ratio, 22 * ratio));
+		ctx.textAlign = 'left';
+	};
+	ctx.setLineDash([]);
+	if (1000 / 60 < top) level(1000 / 60, 'rgba(255, 255, 255, 0.3)', '60 fps', 1);
+	if (1000 / 30 < top) level(1000 / 30, 'rgba(255, 255, 255, 0.3)', '30 fps', 1);
+	ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+	ctx.textAlign = 'right';
+	ctx.fillText(top + ' ms', width - 3 * ratio, 11 * ratio);
+	ctx.textAlign = 'left';
+
+	if (values.length > 1) {
+		ctx.strokeStyle = color;
+		ctx.beginPath();
+		const from = width - (values.length - 1) / (profiler.SERIES_FRAMES - 1) * width;
+		for (let i = 0; i < values.length; i++) {
+			const x = from + i / (profiler.SERIES_FRAMES - 1) * width;
+			if (i == 0) ctx.moveTo(x, y(values[i]));
+			else ctx.lineTo(x, y(values[i]));
+		}
+		ctx.stroke();
+	}
+
+	ctx.setLineDash([4 * ratio, 3 * ratio]);
+	if (stats.worst5 > 0) level(stats.worst5, '#f0c060', '5% low', 0);
+	if (stats.worst1 > 0) level(stats.worst1, '#ff7a6a', '1% low', 0.3);
+	ctx.setLineDash([]);
+}
+
+// the three graphs and the lines over them. Held still while the graphs are paused
+function drawGraphs() {
+	if (profiler.graphs.paused) {
+		return;
+	}
+	const frame = profiler.series.frame.stats(), cpu = profiler.series.cpu.stats(), gpu = profiler.series.gpu.stats();
+	const fps = (ms) => (ms > 0 ? 1000 / ms : 0).toFixed(1);
+	perfFrameText.textContent = `avg ${fps(frame.average)} fps · 5% low ${fps(frame.worst5)} · 1% low ${fps(frame.worst1)}`;
+	perfCpuText.textContent = `avg ${cpu.average.toFixed(2)} ms · 5% low ${cpu.worst5.toFixed(2)} · 1% low ${cpu.worst1.toFixed(2)}`;
+	perfGpuStats = `avg ${gpu.average.toFixed(2)} ms · 5% low ${gpu.worst5.toFixed(2)} · 1% low ${gpu.worst1.toFixed(2)}`;
+	drawGraph(perfFrameGraph, profiler.series.frame.recent(), frame, '#8fb8ff', 40);
+	drawGraph(perfCpuGraph, profiler.series.cpu.recent(), cpu, '#7fd98f', 4);
+	if (profiler.timing.supported) {
+		drawGraph(perfGpuGraph, profiler.series.gpu.recent(), gpu, '#f0a060', 4);
+	}
+}
+
+// Where the CPU time of a frame goes: one row for each stretch of the frame (see CPU TIME in profiler.js), with a bar to the
+//		scale of the longest
+const perfCpuRowElements = new Map();
+function drawCpuRows() {
+	const times = profiler.cpuTimes;
+	const longest = times.reduce((most, row) => Math.max(most, row.ms), 0.001);
+	const names = times.map((row) => row.name).join('\n');
+	if (perfCpuRows.dataset.names !== names) {
+		perfCpuRows.replaceChildren(...times.map((row) => {
+			if (!perfCpuRowElements.has(row.name)) {
+				const element = document.createElement('div');
+				element.className = 'perf-row';
+				element.style.paddingLeft = '16px';
+				const track = document.createElement('div');
+				track.className = 'perf-track';
+				track.style.left = '2px';
+				const fill = document.createElement('div');
+				fill.className = 'perf-fill';
+				track.appendChild(fill);
+				const name = document.createElement('span');
+				name.className = 'perf-name';
+				name.textContent = row.name;
+				const ms = document.createElement('span');
+				ms.className = 'perf-ms';
+				element.append(track, name, ms);
+				perfCpuRowElements.set(row.name, { element, fill, ms });
+			}
+			return perfCpuRowElements.get(row.name).element;
+		}));
+		perfCpuRows.dataset.names = names;
+	}
+	for (const row of times) {
+		const elements = perfCpuRowElements.get(row.name);
+		const share = Math.min(row.ms / longest, 1);
+		elements.fill.style.width = (share * 100).toFixed(1) + '%';
+		elements.fill.style.background = `hsl(${(130 - 130 * share).toFixed(0)}, 70%, 42%)`;
+		elements.ms.textContent = row.ms.toFixed(2) + ' ms';
+	}
+}
+
 // once a frame, after it is sent off
 export function refreshPerformanceWindow() {
-	if (perfGUI._closed) {
+	if (perfGUI._closed || !profiler.timing.enabled) {
 		return;
 	}
 	const data = profiler.latest;
+	drawGraphs();
+	drawCpuRows();
+	perfGpuGraph.style.display = profiler.timing.supported ? '' : 'none';
 	if (!profiler.timing.supported) {
 		perfSummary.textContent = 'No timestamp queries in this browser or on this GPU, so the passes cannot be timed.';
 		perfRows.replaceChildren();
 		perfShownKeys = '';
-		return;
-	}
-	if (!profiler.timing.enabled) {
-		perfSummary.textContent = 'Timing is off. Enable to time every pass.';
-		perfRows.replaceChildren();
-		perfShownKeys = '';
-		perfShownFrame = -1;
-		perfScale = 0;
 		return;
 	}
 	if (data.frame == perfShownFrame) {
@@ -828,11 +989,8 @@ export function refreshPerformanceWindow() {
 	}
 	perfShownFrame = data.frame;
 
-	const fps = data.frameMs > 0 ? 1000 / data.frameMs : 0;
-	perfSummary.textContent = `GPU ${data.total.toFixed(2)} ms in ${data.passCount} passes`
-		+ (data.untimedPasses ? ` (+${data.untimedPasses} untimed)` : '')
-		+ `\nCPU ${data.cpuMs.toFixed(2)} ms · frame ${data.frameMs.toFixed(1)} ms (${fps.toFixed(0)} fps)`;
-	perfSummary.style.whiteSpace = 'pre';
+	perfSummary.textContent = perfGpuStats + `\nthis frame ${data.total.toFixed(2)} ms in ${data.passCount} passes`
+		+ (data.untimedPasses ? ` (+${data.untimedPasses} untimed)` : '');
 
 	// bars: to the scale of the frame before (the first frame to its own)
 	const longestTop = data.tree.reduce((most, node) => Math.max(most, node.ms), 0);

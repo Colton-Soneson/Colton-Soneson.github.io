@@ -14,7 +14,7 @@ const READBACK_BUFFERS = 4;	// frames that can be waiting on their times at once
 const AVERAGE_FRAMES = 30;	// for the averaged view
 
 export const timing = {
-	enabled: false,		// the window's Enable
+	enabled: false,		// the window's Enable: times the CPU, the frames and (where the GPU can) every pass. Nothing is timed while it is off
 	average: false,		// show the mean of the last 30 frames, instead of the last frame alone
 	supported: canTimestamp,
 };
@@ -56,11 +56,113 @@ export function beginFrame() {
 	const now = performance.now();
 	latest.frameMs = lastFrameStart ? now - lastFrameStart : 0;
 	lastFrameStart = now;
+	if (latest.frameMs > 0 && timing.enabled && !graphs.paused) {
+		series.frame.push(latest.frameMs);
+	}
 	cpuStart = now;
 	recording = timing.enabled && canTimestamp;
 	sections = [];
 	passes = [];
 	untimed = 0;
+	cpuName = null;
+	cpuThisFrame.clear();
+}
+
+/*
+	CPU TIME, a stretch of the frame at a time. cpuMark(name) ends the stretch before it and starts one called name, so a few
+	marks down the frame (rotatingCube.js) account for all of it with nothing in between. cpuFrameDone ends the last one.
+	Only while Enable is ticked. What the window shows is each stretch averaged over the last frames (CPU_SMOOTHING),
+	as one frame's own times jump about too much to read. In the order the stretches first came in the frame
+*/
+const CPU_SMOOTHING = 0.1;		// how much of each new frame goes into the average
+let cpuName = null, cpuFrom = 0;
+const cpuThisFrame = new Map();
+const cpuAverage = new Map();
+export const cpuTimes = [];		// [{ name, ms }]: the averages
+export function cpuMark(name) {
+	if (!timing.enabled) {
+		return;
+	}
+	const now = performance.now();
+	if (cpuName) cpuThisFrame.set(cpuName, (cpuThisFrame.get(cpuName) ?? 0) + now - cpuFrom);
+	cpuName = name;
+	cpuFrom = now;
+}
+export function cpuFrameDone() {
+	if (!timing.enabled) {
+		return;
+	}
+	cpuMark(null);
+	if (!graphs.paused) {
+		let frameCpu = 0;
+		for (const ms of cpuThisFrame.values()) frameCpu += ms;
+		series.cpu.push(frameCpu);
+	}
+	for (const [name, ms] of cpuThisFrame) {
+		cpuAverage.set(name, cpuAverage.has(name) ? cpuAverage.get(name) + (ms - cpuAverage.get(name)) * CPU_SMOOTHING : ms);
+	}
+	for (const name of cpuAverage.keys()) {
+		if (!cpuThisFrame.has(name)) cpuAverage.set(name, cpuAverage.get(name) * (1 - CPU_SMOOTHING));	// a stretch that did not happen this frame cost nothing in it
+	}
+	cpuTimes.length = 0;
+	for (const [name, ms] of cpuAverage) cpuTimes.push({ name: name, ms: ms });
+}
+
+/*
+	THE GRAPHS: the last SERIES_LENGTH frames of three things, for the graphs in the Performance window. While Enable is ticked
+	and the graphs are not paused (graphs.paused, the window's Pause Graphs).
+		frame	the time from the start of one frame to the start of the next
+		cpu		the CPU time of the frame (all of CPU TIME's stretches added up)
+		gpu		the GPU time of the frame: every timed pass added up (copies between passes are not timed). It comes back a frame
+				or two after the frame, and not for a frame skipped (see endFrame)
+	Each can say its average and its lows: what the slow frames run at. The 5% low is the frame slower than 95% of them, the
+	1% low the one slower than 99%. A stutter that the average hides shows up there.
+*/
+const SERIES_LENGTH = 600;		// about 10 seconds at 60 frames a second
+class Series {
+	constructor() {
+		this.values = new Float32Array(SERIES_LENGTH);
+		this.next = 0;
+		this.count = 0;
+	}
+	push(value) {
+		this.values[this.next] = value;
+		this.next = (this.next + 1) % SERIES_LENGTH;
+		this.count = Math.min(this.count + 1, SERIES_LENGTH);
+	}
+	clear() {
+		this.next = 0;
+		this.count = 0;
+	}
+	// oldest first
+	recent() {
+		const out = new Float32Array(this.count);
+		for (let i = 0; i < this.count; i++) out[i] = this.values[(this.next - this.count + i + SERIES_LENGTH) % SERIES_LENGTH];
+		return out;
+	}
+	// { average, worst5, worst1 } in ms: the mean, and the values 95% and 99% of the rest are under
+	stats() {
+		if (this.count == 0) return { average: 0, worst5: 0, worst1: 0 };
+		const sorted = this.recent().sort();
+		const at = (share) => sorted[Math.min(Math.floor(sorted.length * share), sorted.length - 1)];
+		return { average: sorted.reduce((sum, value) => sum + value, 0) / sorted.length, worst5: at(0.95), worst1: at(0.99) };
+	}
+}
+export const SERIES_FRAMES = SERIES_LENGTH;
+export const series = { frame: new Series(), cpu: new Series(), gpu: new Series() };
+export const graphs = { paused: false };
+
+// starts the graphs and the CPU averages again from nothing (when Enable is ticked: what was there is from before it was off)
+export function clearTimes() {
+	for (const each of Object.values(series)) each.clear();
+	cpuAverage.clear();
+	cpuTimes.length = 0;
+}
+
+// { average, low5, low1 } in frames a second, over the frame times there are
+export function frameRates() {
+	const { average, worst5, worst1 } = series.frame.stats();
+	return average > 0 ? { average: 1000 / average, low5: 1000 / worst5, low1: 1000 / worst1 } : { average: 0, low5: 0, low1: 0 };
 }
 
 // file the passes asked for inside run() under name. Gives back what run() does
@@ -160,6 +262,9 @@ export function endFrame() {
 		});
 		readback.unmap();
 		freeReadbacks.push(readback);
+		if (!graphs.paused) {
+			series.gpu.push(ms.reduce((sum, each) => sum + each, 0));
+		}
 		buildTree(frame, ms, untimedPasses);
 	}, () => {
 		freeReadbacks.push(readback);	// the device went away

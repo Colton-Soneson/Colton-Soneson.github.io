@@ -1,6 +1,37 @@
+/*
+	Loading .obj model files. Each of the four loaders below reads one part of a file (the vertices, the uvs, the normals, the
+	faces), and a model needs all four. They share one download of the file (fileText): it is fetched once, however many of
+	them read it, instead of once for each. And prefetchFiles starts the downloads of a whole list of files at once, so they
+	come in side by side instead of one after another (see the top of models/primitives.js).
+*/
+const downloads = new Map();	// url -> the promise of its text, or of its blob for a picture
+
+// the text of a file, fetched the first time it is asked for
+export function fileText(url) {
+	if (!downloads.has(url)) {
+		downloads.set(url, fetch(url).then((response) => response.text()));
+	}
+	return downloads.get(url);
+}
+
+// the same for a picture (a texture), as a blob
+export function fileBlob(url) {
+	if (!downloads.has(url)) {
+		downloads.set(url, fetch(url).then((response) => response.blob()));
+	}
+	return downloads.get(url);
+}
+
+// starts every download on the list now. Pictures (.png, .jpg) as blobs, the rest as text
+export function prefetchFiles(urls) {
+	for (const url of urls) {
+		if (/\.(png|jpe?g)$/i.test(url)) fileBlob(url);
+		else fileText(url);
+	}
+}
+
 export async function loadObjFileVerts(url) {
-    const response = await fetch(url);
-    const text = await response.text();
+    const text = await fileText(url);
     const vertices = [];
 	
 	console.log("Model Vert Load");
@@ -21,8 +52,7 @@ export async function loadObjFileVerts(url) {
 }
 
 export async function loadObjFileUVs(url) {
-    const response = await fetch(url);
-    const text = await response.text();
+    const text = await fileText(url);
     const UVs = [];
 	
 	console.log("Model UV Load");
@@ -42,8 +72,7 @@ export async function loadObjFileUVs(url) {
 }
 
 export async function loadObjFileNormals(url) {
-    const response = await fetch(url);
-    const text = await response.text();
+    const text = await fileText(url);
     const normals = [];
 	
 	console.log("Model Normal Load");
@@ -68,8 +97,7 @@ export async function loadObjFileNormals(url) {
 //  pushing 9 element LOCATIONS at a time: 3 v, 3 vt, 3 vn
 //		push in as same order file makes it to be: v1,vt1,vn1,v2,vt2,vn2,...
 export async function loadObjFileFaces(url) {
-    const response = await fetch(url);
-    const text = await response.text();
+    const text = await fileText(url);
     const faces = [];
 	
 	console.log("Model Face Load");

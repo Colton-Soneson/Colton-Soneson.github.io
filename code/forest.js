@@ -21,6 +21,7 @@ import { mat4 } from 'https://wgpu-matrix.org/dist/3.x/wgpu-matrix.module.js';
 
 import * as transformations from './transformations.js'
 import * as terrain from './terrain.js'
+import * as horizon from './horizon.js'
 import * as wind from './wind.js'
 import { seasonNow } from './weather.js'
 import { filteredSampler, filteringLevel } from './textureFiltering.js'
@@ -166,7 +167,14 @@ let yearsPerSecond = 0;				// how fast the clock has been running lately
 let lastAdvance = performance.now();
 let treeData = new Float32Array(0);	// every tree's GPU record, kept here too so one can be changed and sent on its own
 let changedTrees = [];				// the trees whose record has to be sent again this frame
-export const forestStats = { trees: 0, drawn: new Array(LEVELS + 1).fill(0), drawCalls: 0, triangles: 0 };	// what the last frame drew (trees per level of detail, billboards last), for anyone who wants to show it
+let treesMoved = true;				// a tree came, went, or changed its stage or size since the draw calls were last worked out (see sortTreesIntoDraws)
+// A tree that came or went near the camera has the draw calls worked out again at once. Further off, where trees are billboards,
+//		the next refresh will do (DRAWS_REFRESH): with the life cycle running, one comes or goes somewhere in the forest every frame
+function noteMoved(tree) {
+	const away = Math.hypot(tree.x - settings.camPosX, tree.y - settings.camPosY, tree.z - settings.camPosZ);
+	if (away < settings.forestBillboardDistance * 1.5) treesMoved = true;
+}
+export const forestStats = { trees: 0, drawn: new Array(LEVELS + 1).fill(0), drawCalls: 0, triangles: 0, hiddenCells: 0 };	// what the last frame drew (trees per level of detail, billboards last), for anyone who wants to show it
 let cells = [];						// the squares of ground with trees in them, for skipping whole squares that are out of view
 let cellsByKey = new Map();
 
@@ -392,6 +400,7 @@ function addToCell(index) {
 	}
 	cell.trees.push(index);
 	tree.cell = cell;
+	cell.mostDetailScale = Math.max(cell.mostDetailScale ?? 0, tree.detailScale ?? 4);
 
 	// tall and wide enough for the biggest tree there is, standing or lying
 	const tallest = Math.max(...archetypes.map((archetype) => archetype.height)) * 1.3;
@@ -422,6 +431,7 @@ function plantTrees() {
 	cells = [];
 	cellsByKey = new Map();
 	changedTrees = [];
+	treesMoved = true;
 
 	// there can never be more trees than maxTrees, so that is how many records there is room for
 	const capacity = Math.max(params.maxTrees, trees.length, 1);
@@ -437,9 +447,9 @@ function plantTrees() {
 		wind: [settings.windDirection[0], settings.windDirection[1]],
 		makeTree: makeTree, treeRoom: treeRoom,
 		random: seededRandom(params.seed * 7919 + 577),
-		added: (index) => { if (listening) { ageTree(trees[index]); addToCell(index); changedTrees.push(index); } },
-		changed: (index) => { if (listening) { ageTree(trees[index], life.ageAt(trees[index], clock)); changedTrees.push(index); } },
-		removed: (index, tree) => { if (listening) { removeFromCell(index, tree); } },
+		added: (index) => { if (listening) { ageTree(trees[index]); addToCell(index); changedTrees.push(index); noteMoved(trees[index]); } },
+		changed: (index) => { if (listening) { const stage = trees[index].stage; ageTree(trees[index], life.ageAt(trees[index], clock)); changedTrees.push(index); if (trees[index].stage !== stage) noteMoved(trees[index]); } },	//(only a new stage puts it in another list. Its size is caught up with by DRAWS_REFRESH)
+		removed: (index, tree) => { if (listening) { removeFromCell(index, tree); noteMoved(tree); } },
 	});
 	if (settings.forestLifeCycle) {
 		life.settle(SETTLE_YEARS);
@@ -1080,9 +1090,22 @@ export function forestUpdate() {
 //		Returns the draw calls as { wood: [...], foliage: [...] }, each { slot, vertices, instances }
 const lists = [];	// one list of trees for every (archetype, stage, level of detail), reused every frame
 const billboards = [];	// and the one list of the trees that are billboards
+//		The lists are kept from one frame to the next, and only worked out again when something they depend on has changed: the
+//		camera (its place, which way it looks, the shape of the view), the level of detail settings, or a tree (treesMoved). Standing
+//		still, that is never, and sorting tens of thousands of trees was the most CPU time a frame took
+//		A tree that only grew a little (its size, and with it how soon it drops detail) is caught up with every DRAWS_REFRESH frames
+const DRAWS_REFRESH = 30;
+let keptDraws = null, keptDrawsFor = '', framesSinceSort = 0;
 function sortTreesIntoDraws() {
 	const planes = transformations.getFrustumPlanes();
 	const camX = settings.camPosX, camY = settings.camPosY, camZ = settings.camPosZ;
+	const drawsFor = planes.flat().join() + '|' + [settings.forestDetailDistance, settings.forestMidDistance, settings.forestBillboardDistance, settings.forestDrawDistance, settings.forestThinnedRings, archetypes.length, settings.landOcclusion].join();
+	if (keptDraws && !treesMoved && drawsFor === keptDrawsFor && ++framesSinceSort < DRAWS_REFRESH) {
+		return keptDraws;
+	}
+	treesMoved = false;
+	framesSinceSort = 0;
+	keptDrawsFor = drawsFor;
 
 	// the distances each level of detail ends at. They are distances for a tree of REFERENCE_HEIGHT, see detailDistance in vf_forest.js.
 	//		The thinned rings share out the stretch from the mid distance to the billboard distance, each the same many times
@@ -1107,15 +1130,33 @@ function sortTreesIntoDraws() {
 	}
 
 	forestStats.drawn = new Array(LEVELS + 1).fill(0);
+	forestStats.hiddenCells = 0;
+	const occluding = horizon.readyHorizon();
 	for (const cell of cells) {
 		// the whole cell behind the camera, off to one side, or too far away to draw anything of (a small tree's detail distance is up to 4x its real one)
 		if (planes.some((plane) => plane[0] * cell.x + plane[1] * cell.y + plane[2] * cell.z + plane[3] < -cell.radius)) continue;
-		if (Math.hypot(cell.x - camX, cell.y - camY, cell.z - camZ) - cell.radius > billboardEnd) continue;
+		const cellAway = Math.hypot(cell.x - camX, cell.y - camY, cell.z - camZ);
+		if (cellAway - cell.radius > billboardEnd) continue;
+		// or behind a hill (see horizon.js)
+		if (occluding && cell.trees.length > 0 && horizon.hidden(cell.x, cell.z, cell.top, cell.radius)) {
+			forestStats.hiddenCells++;
+			continue;
+		}
+
+		// a cell so far off that every tree in it is a billboard, and none of them past the draw distance: all of them, with no
+		//		sums for each tree. (A tree's detail distance is its own distance stretched by its detailScale, which is 0.8 at the least)
+		if ((cellAway - cell.radius) * 0.8 >= meshEnd && (cellAway + cell.radius) * (cell.mostDetailScale ?? 4) < billboardEnd) {
+			for (const i of cell.trees) billboards.push(i);
+			forestStats.drawn[LEVELS] += cell.trees.length;
+			continue;
+		}
 
 		for (const i of cell.trees) {
 			const tree = trees[i];
 			const detail = Math.hypot(tree.x - camX, tree.y - camY, tree.z - camZ) * tree.detailScale;
-			const level = ends.findIndex((end) => detail < end);
+			let level = 0;
+			while (level < LEVELS && detail >= ends[level]) level++;
+			if (level == LEVELS) level = -1;
 			if (level >= 0) {
 				lists[(tree.archetype * STAGES + tree.stage) * LEVELS + level].push(i);
 				forestStats.drawn[level]++;
@@ -1177,6 +1218,7 @@ function sortTreesIntoDraws() {
 		device.queue.writeBuffer(visibleBuffer, 0, visibleData.buffer, 0, listStart * 4);
 		device.queue.writeBuffer(drawUniformBuffer, 0, drawData, 0, slot * DRAW_STRIDE);
 	}
+	keptDraws = draws;
 	return draws;
 }
 

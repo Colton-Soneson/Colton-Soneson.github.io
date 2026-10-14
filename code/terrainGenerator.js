@@ -616,6 +616,148 @@ export function classifyZone(height, cover, params, lake = false) {
 	return ZONE_GRASSLAND;
 }
 
+// The mountain and its foothills at a place, as one height over the land they stand on: whichever is higher, rounded where
+//		they meet. mountain: how high the mountain alone is there, footing: the skirt there, room: see sample.
+//		Leaves how wooded the foothills make the place in wooded: the hills are forest
+function makeFoothills(foothillShape) {
+	const foothills = { wooded: 0, raise: (x, z, mountain, footing, room) => {
+	foothills.wooded = 0;
+	if (footing <= 0 || room <= 0) {
+		return mountain;
+	}
+	const hill = footing * room * foothillShape(x, z);
+	foothills.wooded = smoothstep(FOOTHILLS.wooded[0], FOOTHILLS.wooded[1], hill);
+	return smoothMax(mountain, hill, 0.5 * hill + 3);
+	} };
+	return foothills;
+}
+
+// how much lower the sea bed is for being out past the middle of the drop-off (see generateTerrain). It comes on over the first 60
+//		or so units, not at a crease
+function bedFall(params, out) {
+	return Math.max(params.seaBedGrade ?? 0, 0) * out * out / (out + 60);
+}
+
+//-------------------------------THE MESH-------------------------------
+/*
+	What makes the mesh of the land, apart from the rest of it: the grids it reads are passed in (chunkGrids, from generateTerrain),
+	so a worker can be handed a copy of them and make chunks off the main thread (see terrainWorker.js). The same params and grids
+	make the same chunks wherever it runs.
+		grids		{ ridges, marshes, footings, beyondDrop }, one entry per data grid point
+		sampler		createTerrainSampler(params), when there is one already
+*/
+export function makeChunkBuilder(params, grids, sampler = createTerrainSampler(params)) {
+	const { sample, erodedFbm, foothillShape } = sampler;
+	const { ridges, marshes, footings, beyondDrop } = grids;
+	const cells = params.dataResolution ?? 1024;
+	const points = cells + 1;
+	const cellSize = params.worldSize / cells;
+	const half = params.worldSize * 0.5;
+	const foothills = makeFoothills(foothillShape);
+
+	// one of the data grids at a world position, bilinear between the 4 grid points around it
+	function gridAt(grid, x, z) {
+		const gx = Math.min(Math.max((x + half) / cellSize, 0), cells - 0.0001), gz = Math.min(Math.max((z + half) / cellSize, 0), cells - 0.0001);
+		const col = Math.floor(gx), row = Math.floor(gz), fx = gx - col, fz = gz - row, i = row * points + col;
+		const top = grid[i] + (grid[i + 1] - grid[i]) * fx, bottom = grid[i + points] + (grid[i + points + 1] - grid[i + points]) * fx;
+		return top + (bottom - top) * fz;
+	}
+	// how high the ridge skeleton makes a world position
+	const ridgeAt = (x, z) => gridAt(ridges, x, z);
+
+	// The exact ground at any world position, the same sum the data grid was filled with. A mesh finer than the data grid gets its
+	//		extra detail from here: the noise layers go on down to a couple of units, only the ridge skeleton is limited to the grid.
+	//		Returns the height above sea level, and leaves what covers the point (see coverOf) in landAtCover
+	let landAtCover = 0;
+	function landAt(x, z) {
+		const result = sample(x, z);
+		// (how marshy it is comes from the data grid, which knows about every lake. sample only knows the ones it hollowed out itself)
+		const marsh = gridAt(marshes, x, z);
+		let mountain = 0;
+		if (result.rise > 0) {
+			const eroded = erodedFbm(x / MOUNTAINS.erodeScale, z / MOUNTAINS.erodeScale, 9);
+			const shape = ridgeAt(x, z) * (0.62 + 0.76 * eroded) + 0.14 * eroded;
+			mountain = params.mountainHeight * smoothstep(0, 0.3, result.rise) * shape;
+		}
+		const raised = foothills.raise(x, z, mountain, gridAt(footings, x, z), result.room);
+		landAtCover = coverOf(result.mountain, Math.max(result.woodland, foothills.wooded * (1 - marsh)), marsh);
+		return result.height + raised - (result.height < 0 ? bedFall(params, gridAt(beyondDrop, x, z)) : 0);
+	}
+
+	/*
+		The mesh of one square of the land: a chunk. terrain.js covers the world in these, small fine ones next to the
+		camera and big coarse ones far away, and asks for each as it comes to need it.
+			x0, z0		the corner of the square with the lowest x and z
+			size		the length of its sides
+			cells		how many cells it is cut into along a side. Every chunk has the same number, so a chunk of twice
+						the size is half as fine, and all of them can share one list of triangles (see chunkIndices)
+		Nothing is kept from one call to the next and nothing is random, so the same chunk asked for twice is the same chunk:
+		one that has been thrown away can always be made again.
+
+		Returns
+			vertices	8 floats each, the same layout as every other model: position (3), then "uv" (2) carrying what covers
+						the point (see coverOf) and the size of the chunk's cells instead, then normal (3)
+			minY, maxY	how low and how high it goes
+
+		The skirt. Where a fine chunk meets a coarse one their edges dont quite agree: the fine one has a vertex half way along
+		each of the coarse one's edges, and that vertex sits on the real ground while the coarse edge cuts straight across.
+		The gap that leaves shows the sky through the ground. So every chunk also has a skirt: its 4 edges again, hanging
+		straight down, like the sides of a box with no bottom. Whatever gap opens above, there is ground colored wall behind it.
+	*/
+	function buildChunk(x0, z0, size, cells) {
+		const cell = size / cells, perSide = cells + 1;
+
+		// the heights, with a ring of 1 extra point all round so the normals at the chunk's edge have a neighbour to slope against
+		const side = cells + 3;
+		const padHeight = new Float32Array(side * side), padCover = new Float32Array(side * side);
+		for (let j = -1; j <= cells + 1; j++) {
+			for (let i = -1; i <= cells + 1; i++) {
+				padHeight[(j + 1) * side + (i + 1)] = landAt(x0 + i * cell, z0 + j * cell);
+				padCover[(j + 1) * side + (i + 1)] = landAtCover;
+			}
+		}
+
+		const vertices = new Float32Array((perSide * perSide + 4 * perSide) * 8);
+		let v = 0, minY = Infinity, maxY = -Infinity;
+		for (let j = 0; j <= cells; j++) {
+			for (let i = 0; i <= cells; i++) {
+				const p = (j + 1) * side + (i + 1);
+				const height = padHeight[p];
+				const nx = padHeight[p - 1] - padHeight[p + 1], nz = padHeight[p - side] - padHeight[p + side];
+				const length = Math.hypot(nx, 2 * cell, nz);
+				vertices[v + 0] = x0 + i * cell;
+				vertices[v + 1] = params.seaLevel + height;
+				vertices[v + 2] = z0 + j * cell;
+				vertices[v + 3] = padCover[p];			// the shader works the zone colors out per pixel from this and the height, so they blend smoothly
+				vertices[v + 4] = cell;					// how fine this chunk's mesh is. Where it is coarse the shader gets the slope of the ground from the land data instead
+				vertices[v + 5] = nx / length;
+				vertices[v + 6] = 2 * cell / length;
+				vertices[v + 7] = nz / length;
+				minY = Math.min(minY, vertices[v + 1]);
+				maxY = Math.max(maxY, vertices[v + 1]);
+				v += 8;
+			}
+		}
+
+		// the skirt: the vertices of each edge again, lower. Deep enough to cover the most a neighbour twice as coarse can disagree by
+		const drop = cell * 3;
+		const edgeStart = [0, cells * perSide, 0, cells], edgeStep = [1, 1, perSide, perSide];	// first vertex of each edge, and the step to the next: top, bottom, left, right
+		for (let edge = 0; edge < 4; edge++) {
+			for (let k = 0; k <= cells; k++) {
+				const from = (edgeStart[edge] + k * edgeStep[edge]) * 8;
+				for (let f = 0; f < 8; f++) vertices[v + f] = vertices[from + f];
+				vertices[v + 1] -= drop;
+				v += 8;
+			}
+		}
+		minY -= drop;
+
+		return { vertices, minY, maxY };
+	}
+
+	return { landAt, buildChunk };
+}
+
 //-------------------------------THE GRID-------------------------------
 /*
 	Samples the land on a grid of points covering the world, centered on the origin.
@@ -631,6 +773,7 @@ export function classifyZone(height, cover, params, lake = false) {
 		ridgeCrests								points along the main ridges of the mountains, as [x, z, x, z, ...]
 		findSpawnPoints							the tag system: scattered points that lie in a given zone
 		buildChunk								the mesh of one square of the land, as fine or as coarse as asked for (terrain.js draws the land out of these)
+		chunkGrids								the grids buildChunk reads, so another thread can make a builder of its own (see makeChunkBuilder)
 */
 export function generateTerrain(params) {
 	const { sample, erodedFbm, foothillShape } = createTerrainSampler(params);
@@ -745,8 +888,6 @@ export function generateTerrain(params) {
 		const out = distanceTo((i) => !(sea[i] && heights[i] < -0.5 * params.seaFloorDepth), true);
 		beyondDrop = boxBlur(out, points, 3).map((distance) => distance * cellSize);	// (blurred a little: the grid still leaves corners in it)
 	}
-	// how much lower the bed is for being that far out. It comes on over the first 60 or so units, not at a crease
-	const bedFall = (out) => seaBedGrade * out * out / (out + 60);
 
 	// the mountains: the ridge skeleton, with the eroded noise roughing it up and carving the faces between the ridges
 	const { ridges, crests } = growRidges(rises, points, params.seed, cellSize, params.mountainHeight, MOUNTAINS);
@@ -784,25 +925,13 @@ export function generateTerrain(params) {
 		}
 	}
 
-	// The mountain and its foothills at a place, as one height over the land they stand on: whichever is higher, rounded where
-	//		they meet. mountain: how high the mountain alone is there, footing: the skirt there, room: see sample.
-	//		Leaves how wooded the foothills make the place in foothillWooded: the hills are forest
-	let foothillWooded = 0;
-	function withFoothills(x, z, mountain, footing, room) {
-		foothillWooded = 0;
-		if (footing <= 0 || room <= 0) {
-			return mountain;
-		}
-		const hill = footing * room * foothillShape(x, z);
-		foothillWooded = smoothstep(FOOTHILLS.wooded[0], FOOTHILLS.wooded[1], hill);
-		return smoothMax(mountain, hill, 0.5 * hill + 3);
-	}
+	const foothills = makeFoothills(foothillShape);
 
 	for (let row = 0; row < points; row++) {
 		for (let col = 0; col < points; col++) {
 			const i = row * points + col;
-			heights[i] += withFoothills(col * cellSize - half, row * cellSize - half, massif[i], footings[i], rooms[i]) - bedFall(beyondDrop[i]);
-			woodlands[i] = Math.max(woodlands[i], foothillWooded * (1 - marshes[i]));
+			heights[i] += foothills.raise(col * cellSize - half, row * cellSize - half, massif[i], footings[i], rooms[i]) - bedFall(params, beyondDrop[i]);
+			woodlands[i] = Math.max(woodlands[i], foothills.wooded * (1 - marshes[i]));
 			covers[i] = coverOf(mountains[i], woodlands[i], marshes[i]);
 			zones[i] = classifyZone(heights[i], covers[i], params, !sea[i]);
 			heights[i] += params.seaLevel;
@@ -821,106 +950,9 @@ export function generateTerrain(params) {
 		}
 	}
 
-	//-------------------------------THE MESH-------------------------------
-	// one of the data grids at a world position, bilinear between the 4 grid points around it
-	function gridAt(grid, x, z) {
-		const gx = Math.min(Math.max((x + half) / cellSize, 0), cells - 0.0001), gz = Math.min(Math.max((z + half) / cellSize, 0), cells - 0.0001);
-		const col = Math.floor(gx), row = Math.floor(gz), fx = gx - col, fz = gz - row, i = row * points + col;
-		const top = grid[i] + (grid[i + 1] - grid[i]) * fx, bottom = grid[i + points] + (grid[i + points + 1] - grid[i + points]) * fx;
-		return top + (bottom - top) * fz;
-	}
-	// how high the ridge skeleton makes a world position
-	const ridgeAt = (x, z) => gridAt(ridges, x, z);
-
-	// The exact ground at any world position, the same sum the data grid was filled with. A mesh finer than the data grid gets its
-	//		extra detail from here: the noise layers go on down to a couple of units, only the ridge skeleton is limited to the grid.
-	//		Returns the height above sea level, and leaves what covers the point (see coverOf) in landAtCover
-	let landAtCover = 0;
-	function landAt(x, z) {
-		const result = sample(x, z);
-		// (how marshy it is comes from the data grid, which knows about every lake. sample only knows the ones it hollowed out itself)
-		const marsh = gridAt(marshes, x, z);
-		let mountain = 0;
-		if (result.rise > 0) {
-			const eroded = erodedFbm(x / MOUNTAINS.erodeScale, z / MOUNTAINS.erodeScale, 9);
-			const shape = ridgeAt(x, z) * (0.62 + 0.76 * eroded) + 0.14 * eroded;
-			mountain = params.mountainHeight * smoothstep(0, 0.3, result.rise) * shape;
-		}
-		const raised = withFoothills(x, z, mountain, gridAt(footings, x, z), result.room);
-		landAtCover = coverOf(result.mountain, Math.max(result.woodland, foothillWooded * (1 - marsh)), marsh);
-		return result.height + raised - (result.height < 0 ? bedFall(gridAt(beyondDrop, x, z)) : 0);
-	}
-
-	/*
-		The mesh of one square of the land: a chunk. terrain.js covers the world in these, small fine ones next to the
-		camera and big coarse ones far away, and asks for each as it comes to need it.
-			x0, z0		the corner of the square with the lowest x and z
-			size		the length of its sides
-			cells		how many cells it is cut into along a side. Every chunk has the same number, so a chunk of twice
-						the size is half as fine, and all of them can share one list of triangles (see chunkIndices)
-		Nothing is kept from one call to the next and nothing is random, so the same chunk asked for twice is the same chunk:
-		one that has been thrown away can always be made again.
-
-		Returns
-			vertices	8 floats each, the same layout as every other model: position (3), then "uv" (2) carrying what covers
-						the point (see coverOf) and the size of the chunk's cells instead, then normal (3)
-			minY, maxY	how low and how high it goes
-
-		The skirt. Where a fine chunk meets a coarse one their edges dont quite agree: the fine one has a vertex half way along
-		each of the coarse one's edges, and that vertex sits on the real ground while the coarse edge cuts straight across.
-		The gap that leaves shows the sky through the ground. So every chunk also has a skirt: its 4 edges again, hanging
-		straight down, like the sides of a box with no bottom. Whatever gap opens above, there is ground colored wall behind it.
-	*/
-	function buildChunk(x0, z0, size, cells) {
-		const cell = size / cells, perSide = cells + 1;
-
-		// the heights, with a ring of 1 extra point all round so the normals at the chunk's edge have a neighbour to slope against
-		const side = cells + 3;
-		const padHeight = new Float32Array(side * side), padCover = new Float32Array(side * side);
-		for (let j = -1; j <= cells + 1; j++) {
-			for (let i = -1; i <= cells + 1; i++) {
-				padHeight[(j + 1) * side + (i + 1)] = landAt(x0 + i * cell, z0 + j * cell);
-				padCover[(j + 1) * side + (i + 1)] = landAtCover;
-			}
-		}
-
-		const vertices = new Float32Array((perSide * perSide + 4 * perSide) * 8);
-		let v = 0, minY = Infinity, maxY = -Infinity;
-		for (let j = 0; j <= cells; j++) {
-			for (let i = 0; i <= cells; i++) {
-				const p = (j + 1) * side + (i + 1);
-				const height = padHeight[p];
-				const nx = padHeight[p - 1] - padHeight[p + 1], nz = padHeight[p - side] - padHeight[p + side];
-				const length = Math.hypot(nx, 2 * cell, nz);
-				vertices[v + 0] = x0 + i * cell;
-				vertices[v + 1] = params.seaLevel + height;
-				vertices[v + 2] = z0 + j * cell;
-				vertices[v + 3] = padCover[p];			// the shader works the zone colors out per pixel from this and the height, so they blend smoothly
-				vertices[v + 4] = cell;					// how fine this chunk's mesh is. Where it is coarse the shader gets the slope of the ground from the land data instead
-				vertices[v + 5] = nx / length;
-				vertices[v + 6] = 2 * cell / length;
-				vertices[v + 7] = nz / length;
-				minY = Math.min(minY, vertices[v + 1]);
-				maxY = Math.max(maxY, vertices[v + 1]);
-				v += 8;
-			}
-		}
-
-		// the skirt: the vertices of each edge again, lower. Deep enough to cover the most a neighbour twice as coarse can disagree by
-		const drop = cell * 3;
-		const edgeStart = [0, cells * perSide, 0, cells], edgeStep = [1, 1, perSide, perSide];	// first vertex of each edge, and the step to the next: top, bottom, left, right
-		for (let edge = 0; edge < 4; edge++) {
-			for (let k = 0; k <= cells; k++) {
-				const from = (edgeStart[edge] + k * edgeStep[edge]) * 8;
-				for (let f = 0; f < 8; f++) vertices[v + f] = vertices[from + f];
-				vertices[v + 1] -= drop;
-				v += 8;
-			}
-		}
-		minY -= drop;
-
-		return { vertices, minY, maxY };
-	}
+	// the mesh (see makeChunkBuilder)
+	const chunkGrids = { ridges, marshes, footings, beyondDrop };
+	const { landAt, buildChunk } = makeChunkBuilder(params, chunkGrids, { sample, erodedFbm, foothillShape });
 
 	// distance from every grid point to the nearest land (0 on land), so the sea can tell how close it is to a coast anywhere in the world.
 	//		Worked out in two sweeps: first the nearest land up or down each column, then for each point the column that makes the shortest diagonal.
@@ -1007,7 +1039,7 @@ export function generateTerrain(params) {
 
 	const groundAt = (x, z) => params.seaLevel + landAt(x, z);
 
-	return { cells, points, cellSize, heights, mountains, woodlands, covers, marshes, lakes, zones, normals, shoreDistances, ridgeCrests, heightAt, groundAt, zoneAt, normalAt, findSpawnPoints, buildChunk };
+	return { cells, points, cellSize, heights, mountains, woodlands, covers, marshes, lakes, zones, normals, shoreDistances, ridgeCrests, heightAt, groundAt, zoneAt, normalAt, findSpawnPoints, buildChunk, chunkGrids };
 }
 
 // The triangles of a chunk (see buildChunk), as a list of vertex numbers. The same for every chunk with that many cells:

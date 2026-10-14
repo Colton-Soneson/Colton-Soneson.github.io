@@ -3,6 +3,10 @@ import { settings } from './settings.js';
 import * as scene from './scene.js';
 import * as water from './water.js';	//for water options
 import * as grass from './computeGrass.js'
+import * as profiler from './profiler.js';	//for the Performance window
+import { device, canvas, gpuInfo, gpuIsFallback, onRenderResize } from './deviceSelection.js';
+import { RESOLUTIONS, dynamicResolution } from './display.js';
+import { PRESETS, PRESET_NAMES, PresetCheck, detectStartingPreset } from './graphicsPresets.js';
 
 export const imguiParams = {
     // Time
@@ -47,6 +51,9 @@ export const imguiParams = {
     ssrDistance: settings.ssrDistance,
     displayScreenShading: settings.displayScreenShading,
     // Display
+    renderResolution: settings.renderResolution,
+    dynamicResolution: settings.dynamicResolution,
+    dynamicResolutionTarget: settings.dynamicResolutionTarget,
     antiAliasing: settings.antiAliasing,
     fxaaSubpixel: settings.fxaaSubpixel,
     anisotropicFiltering: settings.anisotropicFiltering,
@@ -56,6 +63,7 @@ export const imguiParams = {
     terrainSeed: settings.terrainSeed,
     terrainResolution: settings.terrainResolution,
     terrainDetailDistance: settings.terrainDetailDistance,
+    terrainFarBake: settings.terrainFarBake,
     terrainLandScale: settings.terrainLandScale,
     terrainSeaFloorDepth: settings.terrainSeaFloorDepth,
     terrainSeaBedGrade: settings.terrainSeaBedGrade,
@@ -104,6 +112,7 @@ export const imguiParams = {
     forestMidDistance: settings.forestMidDistance,
     forestBillboardDistance: settings.forestBillboardDistance,
     forestDrawDistance: settings.forestDrawDistance,
+    forestThinnedRings: settings.forestThinnedRings,
     forestWindStrength: settings.forestWindStrength,
     // Water
     enableWater: settings.enableWater,
@@ -213,10 +222,85 @@ export const imguiParams = {
 	debugTextureRescaleSize: settings.debugTextureRescaleSize,
 };
 
-export const gui = new GUI({ title: 'Controls' });
-gui.domElement.style.position = 'absolute';
-gui.domElement.style.top = '10px';
-gui.domElement.style.left = '20px';
+//-----------------------WHERE THE WINDOWS GO----------------------------
+// Over the canvas, in one dock: Controls and the Entity Editor along the top left, Performance top right. On a narrow
+//		screen (a phone) they would sit on top of each other, so there they go in one column down the left instead, which
+//		scrolls if they get taller than the screen
+const dockStyle = document.createElement('style');
+dockStyle.textContent = `
+#gui-dock { position: fixed; top: 10px; left: 10px; right: 10px; display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; pointer-events: none; z-index: 10; }
+#gui-dock > div { display: flex; align-items: flex-start; gap: 10px; }
+#gui-dock .lil-gui.root { pointer-events: auto; max-height: calc(100vh - 20px); max-height: calc(100dvh - 20px); }
+@media (max-width: 760px) {
+	#gui-dock { flex-direction: column; justify-content: flex-start; right: auto; width: min(380px, calc(100vw - 20px)); max-height: calc(100vh - 20px); max-height: calc(100dvh - 20px); overflow-y: auto; }
+	#gui-dock > div { flex-direction: column; align-items: stretch; width: 100%; }
+	#gui-dock .lil-gui.root { width: 100% !important; max-height: none; }
+}
+`;
+document.head.appendChild(dockStyle);
+const guiDock = document.createElement('div');
+guiDock.id = 'gui-dock';
+const dockLeft = document.createElement('div'), dockRight = document.createElement('div');
+guiDock.append(dockLeft, dockRight);
+document.body.appendChild(guiDock);
+
+export const gui = new GUI({ title: 'Controls', container: dockLeft });
+
+//-----------------------GRAPHICS PRESETS----------------------------
+// At the top, outside the folders. The preset to start on is guessed from the GPU, then checked by the frame rate: see
+//		graphicsPresets.js. Preset Override stops the check (it ticks itself once the frame rate is good)
+const presetState = { preset: 'medium', override: false, status: '', drawnAt: '' };
+
+// sets everything the preset has a value for, in the settings and in the controls
+function applyPreset(name) {
+	for (const [key, value] of Object.entries(PRESETS[name])) {
+		settings[key] = value;
+		if (key in imguiParams) imguiParams[key] = value;
+	}
+	presetState.preset = name;
+	gui.controllersRecursive().forEach((c) => c.updateDisplay());
+}
+
+const startingPreset = detectStartingPreset({
+	gpu: gpuInfo,
+	fallback: gpuIsFallback,
+	mobile: navigator.userAgentData?.mobile ?? /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent),
+	pixels: canvas.width * canvas.height,
+	memory: navigator.deviceMemory ?? 0,
+});
+console.log("Graphics preset to start on: " + startingPreset.preset + " (" + startingPreset.reason + ")");
+const presetCheck = new PresetCheck(startingPreset.preset, performance.now());
+
+const presetNames = Object.fromEntries(PRESET_NAMES.map((name) => [name.replace(/\b\w/g, (c) => c.toUpperCase()), name]));	// 'Very Low': 'very low', ...
+const presetController = gui.add(presetState, 'preset', presetNames).name('Graphics Preset').onChange((name) => {
+	applyPreset(name);
+	// chosen by hand: that is the user deciding, the check stops
+	if (presetCheck.state != 'done') presetCheck.stop('chosen by hand');
+	presetState.override = true;
+	overrideController.updateDisplay();
+});
+// how many pixels the picture is drawn with: not part of the presets (see display.js)
+gui.add(imguiParams, 'renderResolution', RESOLUTIONS).name('Resolution');
+// dynamic resolution: below the Resolution setting while the frame rate is under the target (see DYNAMIC RESOLUTION in display.js)
+gui.add(imguiParams, 'dynamicResolution').name('Dynamic Resolution');
+gui.add(imguiParams, 'dynamicResolutionTarget', 0, 60, 1).name('Target FPS');
+const drawnAtController = gui.add(presetState, 'drawnAt').name('Drawn At').disable();
+// A new Resolution setting or window size changes the frame rate a lot: the check gives it its settling time again, as for a new
+//		preset. Not for dynamic resolution's own changes though: it makes them all the time, and the check would never get to measure
+let sizedFor = [settings.renderResolution, canvas.clientWidth, canvas.clientHeight].join();
+onRenderResize(() => {
+	const now = [settings.renderResolution, canvas.clientWidth, canvas.clientHeight].join();
+	if (now != sizedFor && presetCheck.state != 'done') presetCheck.settle(performance.now());
+	sizedFor = now;
+});
+const overrideController = gui.add(presetState, 'override').name('Preset Override').onChange((on) => {
+	if (on) presetCheck.stop('override ticked');
+	else presetCheck.restart(presetState.preset, performance.now());
+});
+const statusController = gui.add(presetState, 'status').name('Auto Check').disable();
+
+// at the top too: the sun going round is what moves the days on, and with them the seasons, the weather and the forest
+gui.add(imguiParams, 'atmosphereSunRotationDemo').name('Sun Cycle (days and seasons)');
 
 const camFolder = gui.addFolder('Camera');
 camFolder.add(imguiParams, 'camPosX', -2000, 2000).name('Pos X');
@@ -285,8 +369,9 @@ terrainFolder.add(imguiParams, 'terrainRockDetail', 0, 3, 0.05).name('Rock Detai
 terrainFolder.add(imguiParams, 'terrainRockVeins', 0, 2, 0.05).name('Rock Veins');
 terrainFolder.add(imguiParams, 'terrainGroundDetail', 0, 2, 0.05).name('Sand, Turf and Forest Floor');
 terrainFolder.add(imguiParams, 'terrainDepthBias', 0, 4, 0.05).name('Depth Bias');
-terrainFolder.add(imguiParams, 'terrainResolution', { '1k': 1024, '2k': 2048, '4k': 4096, '8k': 8192 }).name('Mesh Detail');	//these two only change the mesh, the land stays as it is
+terrainFolder.add(imguiParams, 'terrainResolution', { '256': 256, '512': 512, '1k': 1024, '2k': 2048, '4k': 4096, '8k': 8192 }).name('Mesh Detail');	//these two only change the mesh, the land stays as it is
 terrainFolder.add(imguiParams, 'terrainDetailDistance', 0.75, 5, 0.05).name('Detail Distance');
+terrainFolder.add(imguiParams, 'terrainFarBake', { '256 (about 140MB)': 256, '128 (about 35MB)': 128, 'disabled (worked out live)': 0 }).name('Far Land Bake');	//see THE BAKE in terrain.js
 
 const grassFolder = gui.addFolder('Grass');
 grassFolder.add(imguiParams, 'enableGrass').name('Enable');
@@ -326,6 +411,7 @@ forestFolder.add(imguiParams, 'forestYear').name('Forest Year').disable();
 forestFolder.add(imguiParams, 'forestTreeCount').name('Trees').disable();
 forestFolder.add(imguiParams, 'forestDetailDistance', 10, 300, 5).name('Full Detail Distance');
 forestFolder.add(imguiParams, 'forestMidDistance', 20, 800, 5).name('Mid Detail Distance');
+forestFolder.add(imguiParams, 'forestThinnedRings', 0, 2, 1).name('Thinned Leaf Rings');	//levels of detail between the mid trees and the billboards, see forest.js
 forestFolder.add(imguiParams, 'forestBillboardDistance', 50, 3000, 10).name('Billboard Distance');
 forestFolder.add(imguiParams, 'forestDrawDistance', 100, 12000, 50).name('Draw Distance');
 forestFolder.add(imguiParams, 'forestWindStrength', 0, 3, 0.05).name('Wind Strength');
@@ -431,7 +517,6 @@ const atmosphereFolder = gui.addFolder('Atmosphere');
 atmosphereFolder.add(imguiParams, 'enableAtmosphere').name('Enable');
 atmosphereFolder.add(imguiParams, 'atmosphereScaleToScene', 0.1, 10).name('Scale');
 atmosphereFolder.add(imguiParams, 'additionalAltitude', -200, 200).name('Altitude Offset');
-atmosphereFolder.add(imguiParams, 'atmosphereSunRotationDemo').name('atmosphere sun demo enable');
 
 const debugDisplayModes = ["final", 
 							"shadow mapping visibility",
@@ -487,6 +572,44 @@ debugFolder.add(imguiParams, 'displayShoreDistanceDebugRange', 5, 300).name('Sho
 // every folder starts shut, the ones inside other folders as well
 gui.foldersRecursive().forEach((folder) => folder.close());
 
+// the preset the check starts on. (Up to here the settings are as settings.js has them, which is the High preset)
+applyPreset(startingPreset.preset);
+
+// Once a frame, after it is sent off: counts the frames the GPU has finished, and lets the preset check act on them
+let framesFinished = 0, framesCounted = 0, statusShown = 0;
+export function updateGraphicsPresets() {
+	device.queue.onSubmittedWorkDone().then(() => framesFinished++);
+	const now = performance.now();
+	const finished = framesFinished - framesCounted;
+	framesCounted = framesFinished;
+	dynamicResolution.frame(now, finished, document.hidden, settings.dynamicResolution, settings.dynamicResolutionTarget);	// (the size it asks for is put in place at the start of the next frame, see rotatingCube.js)
+	const action = presetCheck.frame(now, finished, document.hidden);
+	if (action && action.lower) {
+		applyPreset(action.lower);
+		console.log("Graphics preset lowered to " + action.lower + " (" + presetCheck.fps.toFixed(1) + " fps)");
+	}
+	if (action && action.done) {
+		console.log("Graphics preset check done: " + presetState.preset + ", " + action.done);
+		if (action.override) {
+			presetState.override = true;
+		}
+	}
+
+	// what the check is doing, twice a second
+	if (action || now - statusShown > 500) {
+		statusShown = now;
+		const fps = presetCheck.fps > 0 ? ', ' + Math.round(presetCheck.fps) + ' fps' : '';
+		presetState.status = presetCheck.state == 'done' ? 'done: ' + presetCheck.why
+			: presetCheck.state == 'settling' ? 'settling' + fps
+			: 'measuring' + fps;
+		statusController.updateDisplay();
+		presetState.drawnAt = canvas.width + ' x ' + canvas.height + (settings.dynamicResolution ? ' (' + Math.round(dynamicResolution.scale * 100) + '%)' : '');
+		drawnAtController.updateDisplay();
+		presetController.updateDisplay();
+		overrideController.updateDisplay();
+	}
+}
+
 
 const dropdownManagedKeys = new Set([
     'displayLightingMode',
@@ -525,10 +648,7 @@ export function syncSettingsToParams() {
 }
 
 //-----------------------ENTITY BASED SETTINGS----------------------------
-const entityGUI = new GUI({ title: 'Entity Editor' });
-entityGUI.domElement.style.position = 'absolute';
-entityGUI.domElement.style.top = '10px';
-entityGUI.domElement.style.left = '290px'; // offset past the first panel
+const entityGUI = new GUI({ title: 'Entity Editor', container: dockLeft });	//(beside the Controls, see WHERE THE WINDOWS GO)
 let selectedEntity = 0;
 
 // entity folder
@@ -584,6 +704,159 @@ export function refreshEntityFolder() {
     posFolder.controllers.forEach(c => c.updateDisplay());
     rotFolder.controllers.forEach(c => c.updateDisplay());
     scaleFolder.controllers.forEach(c => c.updateDisplay());
+}
+
+//-----------------------PERFORMANCE WINDOW----------------------------
+// GPU time of every pass in the frame, filed under what it belongs to (see profiler.js). A row with an arrow opens to show
+//		the passes inside it and the shader each one runs. The bars are all to one scale: full width is the longest top row
+//		of the frame before. Shut, and not timing, until it is asked to
+const perfGUI = new GUI({ title: 'Performance', width: 380, container: dockRight });	//(in the dock, see WHERE THE WINDOWS GO)
+
+const perfView = { sortByTime: false };
+perfGUI.add(profiler.timing, 'enabled').name('Enable');
+perfGUI.add(profiler.timing, 'average').name('Average 30 Frames');
+perfGUI.add(perfView, 'sortByTime').name('Sort by Time');
+
+const perfStyle = document.createElement('style');
+perfStyle.textContent = `
+.perf-summary { padding: 4px var(--padding); color: var(--text-color); font-family: var(--font-family-mono); line-height: 1.5; }
+.perf-rows { padding-bottom: 4px; }
+.perf-row { position: relative; display: flex; align-items: center; height: 18px; padding-right: 6px; cursor: default; white-space: nowrap; font-family: var(--font-family); }
+.perf-row.perf-open { cursor: pointer; }
+.perf-row:hover { background: var(--hover-color); }
+.perf-track { position: absolute; top: 2px; bottom: 2px; right: 2px; }
+.perf-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 2px; opacity: 0.6; }
+.perf-arrow { position: relative; width: 12px; flex: none; color: var(--text-color); opacity: 0.8; font-size: 9px; }
+.perf-name { position: relative; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; color: var(--text-color); }
+.perf-row.perf-top .perf-name { font-weight: bold; }
+.perf-shader { position: relative; flex: none; margin-left: 6px; color: var(--string-color); font-family: var(--font-family-mono); font-size: 10px; opacity: 0.9; }
+.perf-ms { position: relative; flex: none; width: 58px; text-align: right; color: var(--number-color); font-family: var(--font-family-mono); }
+.perf-note { padding: 2px var(--padding) 6px; color: var(--text-color); opacity: 0.55; font-size: 10px; white-space: normal; line-height: 1.35; }
+`;
+document.head.appendChild(perfStyle);
+
+const perfBox = document.createElement('div');
+const perfSummary = document.createElement('div');
+perfSummary.className = 'perf-summary';
+const perfRows = document.createElement('div');
+perfRows.className = 'perf-rows';
+const perfNote = document.createElement('div');
+perfNote.className = 'perf-note';
+perfNote.textContent = 'GPU time of each pass. While timing, a pass drawn with several shaders is split into one pass per shader, '
+	+ 'which costs a little. Copies between passes are not timed. Chrome and Edge can round the times to 0.1 ms unless started with '
+	+ '--enable-webgpu-developer-features.';
+perfBox.append(perfSummary, perfRows, perfNote);
+perfGUI.$children.appendChild(perfBox);
+
+perfGUI.close();
+
+const perfOpenRows = new Set();		// keys of the rows that are opened up
+const perfRowElements = new Map();	// key -> the row's elements, made once and kept
+let perfShownKeys = '';
+let perfShownFrame = -1;
+let perfScale = 0;					// ms that fills a bar: the longest top row of the frame before
+
+function perfRowFor(node, depth) {
+	let row = perfRowElements.get(node.key);
+	if (!row) {
+		const element = document.createElement('div');
+		element.className = 'perf-row';
+		element.style.paddingLeft = (4 + depth * 12) + 'px';
+		const track = document.createElement('div');
+		track.className = 'perf-track';
+		track.style.left = (2 + depth * 12) + 'px';
+		const fill = document.createElement('div');
+		fill.className = 'perf-fill';
+		track.appendChild(fill);
+		const arrow = document.createElement('span');
+		arrow.className = 'perf-arrow';
+		const name = document.createElement('span');
+		name.className = 'perf-name';
+		const shader = document.createElement('span');
+		shader.className = 'perf-shader';
+		const ms = document.createElement('span');
+		ms.className = 'perf-ms';
+		element.append(track, arrow, name, shader, ms);
+		if (depth == 0) element.classList.add('perf-top');
+		element.addEventListener('click', () => {
+			if (!element.classList.contains('perf-open')) return;
+			if (perfOpenRows.has(node.key)) perfOpenRows.delete(node.key);
+			else perfOpenRows.add(node.key);
+			perfShownFrame = -1;	// lay the rows out again now, not on the next frame's times
+			refreshPerformanceWindow();
+		});
+		row = { element, fill, arrow, name, shader, ms };
+		perfRowElements.set(node.key, row);
+	}
+	return row;
+}
+
+// the rows that show: the top ones, and inside each opened row the ones under it
+function perfVisibleRows(nodes, depth, list) {
+	const ordered = perfView.sortByTime ? [...nodes].sort((a, b) => b.ms - a.ms) : nodes;
+	for (const node of ordered) {
+		list.push([node, depth]);
+		if (node.children.length > 0 && perfOpenRows.has(node.key)) {
+			perfVisibleRows(node.children, depth + 1, list);
+		}
+	}
+	return list;
+}
+
+// once a frame, after it is sent off
+export function refreshPerformanceWindow() {
+	if (perfGUI._closed) {
+		return;
+	}
+	const data = profiler.latest;
+	if (!profiler.timing.supported) {
+		perfSummary.textContent = 'No timestamp queries in this browser or on this GPU, so the passes cannot be timed.';
+		perfRows.replaceChildren();
+		perfShownKeys = '';
+		return;
+	}
+	if (!profiler.timing.enabled) {
+		perfSummary.textContent = 'Timing is off. Enable to time every pass.';
+		perfRows.replaceChildren();
+		perfShownKeys = '';
+		perfShownFrame = -1;
+		perfScale = 0;
+		return;
+	}
+	if (data.frame == perfShownFrame) {
+		return;
+	}
+	perfShownFrame = data.frame;
+
+	const fps = data.frameMs > 0 ? 1000 / data.frameMs : 0;
+	perfSummary.textContent = `GPU ${data.total.toFixed(2)} ms in ${data.passCount} passes`
+		+ (data.untimedPasses ? ` (+${data.untimedPasses} untimed)` : '')
+		+ `\nCPU ${data.cpuMs.toFixed(2)} ms · frame ${data.frameMs.toFixed(1)} ms (${fps.toFixed(0)} fps)`;
+	perfSummary.style.whiteSpace = 'pre';
+
+	// bars: to the scale of the frame before (the first frame to its own)
+	const longestTop = data.tree.reduce((most, node) => Math.max(most, node.ms), 0);
+	const scale = perfScale > 0 ? perfScale : Math.max(longestTop, 0.001);
+	perfScale = Math.max(longestTop, 0.001);
+
+	const visible = perfVisibleRows(data.tree, 0, []);
+	const keys = visible.map(([node]) => node.key).join('\n');
+	if (keys !== perfShownKeys) {
+		perfRows.replaceChildren(...visible.map(([node, depth]) => perfRowFor(node, depth).element));
+		perfShownKeys = keys;
+	}
+	for (const [node, depth] of visible) {
+		const row = perfRowFor(node, depth);
+		const share = Math.min(node.ms / scale, 1);
+		row.fill.style.width = (share * 100).toFixed(1) + '%';
+		row.fill.style.background = `hsl(${(130 - 130 * share).toFixed(0)}, 70%, 42%)`;	// green for little, through yellow, to red for the longest
+		const opens = node.children.length > 0;
+		row.element.classList.toggle('perf-open', opens);
+		row.arrow.textContent = opens ? (perfOpenRows.has(node.key) ? '▼' : '▶') : '';
+		row.name.textContent = node.count > 1 ? `${node.name} ×${node.count}` : node.name;
+		row.shader.textContent = node.shader ?? '';
+		row.ms.textContent = node.ms.toFixed(2) + ' ms';
+	}
 }
 
 //----------------------WINDOWS EVENT LISTENERS-------------------------------

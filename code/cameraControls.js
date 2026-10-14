@@ -12,6 +12,9 @@ import * as transformations from './transformations.js'
 		Q / E						straight down / straight up
 		Shift						move 4x faster
 		mouse wheel					change the fly speed
+	and on a touch screen:
+		one finger drag				look around
+		two fingers					pull apart / pinch together to go forwards / backwards, drag both to slide left / right and up / down
 
 	The camera's position is still settings.camPosX/Y/Z, so everything that follows the camera (water tiles, grass, the top down
 	height map) and the Pos sliders keep working. What this adds is a direction: settings.camYaw and settings.camPitch,
@@ -103,6 +106,60 @@ canvas.addEventListener('wheel', (event) => {
 	}
 }, { passive: false });
 
+// Touch. Only fingers: a mouse or a pen still goes through the mouse controls above. Turning is done here as the fingers move;
+//		moving is noted (in screen pixels the fingers went) and done in updateCamera, at the fly speed
+const touchLookSensitivity = 0.005;		// radians of turn per pixel a finger drags
+const touchStepSeconds = 0.01;			// a pixel of pinch or two finger drag moves as far as this many seconds of a held key
+const touches = new Map();				// finger -> where it was last
+let touchMove = { forward: 0, right: 0, up: 0 };
+let pair = null;						// the two fingers' middle and how far apart they were, last time they moved
+
+function twoFingers() {
+	const [a, b] = [...touches.values()];
+	return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, apart: Math.hypot(a.x - b.x, a.y - b.y) };
+}
+
+canvas.addEventListener('pointerdown', (event) => {
+	if (event.pointerType != 'touch') return;
+	try {
+		canvas.setPointerCapture(event.pointerId);	// so a finger that slides off the canvas is still followed
+	} catch (error) {
+		// carry on without it
+	}
+	touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
+	pair = touches.size >= 2 ? twoFingers() : null;
+	if (document.activeElement) {
+		document.activeElement.blur();
+	}
+	event.preventDefault();
+});
+
+canvas.addEventListener('pointermove', (event) => {
+	const last = touches.get(event.pointerId);
+	if (!last || !settings.cameraFlyMode) return;
+	const dx = event.clientX - last.x, dy = event.clientY - last.y;
+	last.x = event.clientX;
+	last.y = event.clientY;
+	if (touches.size == 1) {
+		settings.camYaw -= dx * touchLookSensitivity;		// (the world follows the finger, the way a photo does when it is dragged)
+		settings.camPitch = Math.min(Math.max(settings.camPitch + dy * touchLookSensitivity, -maxPitch), maxPitch);
+	} else if (pair) {
+		const now = twoFingers();
+		touchMove.forward += now.apart - pair.apart;
+		touchMove.right -= now.x - pair.x;
+		touchMove.up += now.y - pair.y;
+		pair = now;
+	}
+	event.preventDefault();
+});
+
+function liftFinger(event) {
+	if (!touches.delete(event.pointerId)) return;
+	pair = touches.size >= 2 ? twoFingers() : null;
+}
+canvas.addEventListener('pointerup', liftFinger);
+canvas.addEventListener('pointercancel', liftFinger);
+
 // turns the camera to face the origin from wherever it is: the view the old camera always had
 export function pointCameraAtOrigin() {
 	const distance = Math.hypot(settings.camPosX, settings.camPosY, settings.camPosZ);
@@ -137,6 +194,15 @@ export function updateCamera() {
 
 	const forward = transformations.getCameraForward();
 	const right = transformations.getCameraRight();
+
+	// what the fingers did since the last frame (see Touch above)
+	if (touchMove.forward != 0 || touchMove.right != 0 || touchMove.up != 0) {
+		const touchStep = settings.cameraFlySpeed * touchStepSeconds;
+		settings.camPosX += (forward[0] * touchMove.forward + right[0] * touchMove.right) * touchStep;
+		settings.camPosY += (forward[1] * touchMove.forward + touchMove.up) * touchStep;
+		settings.camPosZ += (forward[2] * touchMove.forward + right[2] * touchMove.right) * touchStep;
+		touchMove = { forward: 0, right: 0, up: 0 };
+	}
 
 	let moveForward = 0, moveRight = 0, moveUp = 0;
 	if (keysDown.has('KeyW')) moveForward += 1;

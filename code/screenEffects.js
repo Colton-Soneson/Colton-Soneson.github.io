@@ -1,6 +1,8 @@
 import {device} from './deviceSelection.js'
 import {canvas} from './deviceSelection.js'
+import {onRenderResize} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
+import * as profiler from './profiler.js'
 
 import { settings } from './settings.js';
 
@@ -37,30 +39,40 @@ const screenShadeShaderModule = device.createShaderModule({
   code: vf_screenShade
 });
 
-const halfSize = [Math.max(Math.ceil(canvas.width / 2), 1), Math.max(Math.ceil(canvas.height / 2), 1)];
+// All at the canvas's size (the occlusion at half of it), and made again when that changes (see display.js)
+let halfSize, occlusionTexture, occlusionView;
+export let sceneColorTexture, sceneDepthTexture;
+function makeSizedTextures() {
+	for (const texture of [occlusionTexture, sceneColorTexture, sceneDepthTexture]) {
+		if (texture) texture.destroy();
+	}
+	halfSize = [Math.max(Math.ceil(canvas.width / 2), 1), Math.max(Math.ceil(canvas.height / 2), 1)];
 
-// how open every pixel is to the sky, 1.0 to 0.0, at half size
-const occlusionTexture = device.createTexture({
-	label: "ambient occlusion",
-	size: halfSize,
-	format: 'r8unorm',
-	usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-});
-const occlusionView = occlusionTexture.createView();
+	// how open every pixel is to the sky, 1.0 to 0.0, at half size
+	occlusionTexture = device.createTexture({
+		label: "ambient occlusion",
+		size: halfSize,
+		format: 'r8unorm',
+		usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+	});
+	occlusionView = occlusionTexture.createView();
 
-// the frame as it stood before the water was drawn: what a reflection in the water can show
-export const sceneColorTexture = device.createTexture({
-	label: "scene color before the water",
-	size: [canvas.width, canvas.height],
-	format: canvasFormat,
-	usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING,
-});
-export const sceneDepthTexture = device.createTexture({
-	label: "scene depth before the water",
-	size: [canvas.width, canvas.height],
-	format: 'depth24plus',
-	usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,	//(a depth texture can only be copied to if it could also be drawn to)
-});
+	// the frame as it stood before the water was drawn: what a reflection in the water can show
+	sceneColorTexture = device.createTexture({
+		label: "scene color before the water",
+		size: [canvas.width, canvas.height],
+		format: canvasFormat,
+		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING,
+	});
+	sceneDepthTexture = device.createTexture({
+		label: "scene depth before the water",
+		size: [canvas.width, canvas.height],
+		format: 'depth24plus',
+		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,	//(a depth texture can only be copied to if it could also be drawn to)
+	});
+}
+makeSizedTextures();
+onRenderResize(makeSizedTextures);
 export let sceneCopyReady = false;	// whether those two hold this frame
 
 const linSampler = device.createSampler({
@@ -258,6 +270,7 @@ export function screenEffectsPass(aEncoder, canvasTexture, depthTexture) {
 				clearValue: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
 				storeOp: "store",
 				}],
+				timestampWrites: profiler.timestamps('Ambient Occlusion', 'vf_ssao'),
 			});
 			pass.setPipeline(ssaoPipeline);
 			pass.setBindGroup(0, device.createBindGroup({
@@ -285,6 +298,7 @@ export function screenEffectsPass(aEncoder, canvasTexture, depthTexture) {
 			loadOp: "load",
 			storeOp: "store",
 			}],
+			timestampWrites: profiler.timestamps('Shade', 'vf_screenShade'),
 		});
 		pass.setPipeline(settings.displayScreenShading ? shadeViewPipeline : shadePipeline);
 		pass.setBindGroup(0, device.createBindGroup({

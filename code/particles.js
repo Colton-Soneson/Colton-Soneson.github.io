@@ -1,6 +1,7 @@
 import {device} from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
+import * as profiler from './profiler.js'
 
 import { settings } from './settings.js';
 
@@ -320,7 +321,7 @@ export function leafPass(aEncoder, mainpassDepthTexture) {
 		return;
 	}
 
-	const computePass = aEncoder.beginComputePass();
+	const computePass = aEncoder.beginComputePass({ timestampWrites: profiler.timestamps('Simulation', 'c_leaves') });
 	computePass.setPipeline(leafSimPipeline);
 	computePass.setBindGroup(0, device.createBindGroup({
 		label: "leaf simulation bind group",
@@ -349,6 +350,7 @@ export function leafPass(aEncoder, mainpassDepthTexture) {
 			depthLoadOp: 'load',
 			depthStoreOp: 'store',
 		},
+		timestampWrites: profiler.timestamps('Draw', 'vf_leaves'),
 	});
 	pass.setPipeline(leafPipeline);
 	pass.setBindGroup(0, device.createBindGroup({
@@ -375,7 +377,7 @@ export function weatherParticlePass(mainpassDepthTexture) {
 	const encoder = device.createCommandEncoder();
 
 	if (spraying) {
-		const computePass = encoder.beginComputePass();
+		const computePass = encoder.beginComputePass({ timestampWrites: profiler.timestamps('Spray Simulation', 'c_spray') });
 		computePass.setPipeline(spraySimPipeline);
 		computePass.setBindGroup(0, device.createBindGroup({
 			label: "spray simulation bind group",
@@ -392,7 +394,8 @@ export function weatherParticlePass(mainpassDepthTexture) {
 		computePass.end();
 	}
 
-	const pass = encoder.beginRenderPass({
+	//(one pass, or while the Performance window is timing, one for each of the three shaders: see renderPassParts in profiler.js)
+	const parts = profiler.renderPassParts(encoder, {
 		colorAttachments: [{
 			view: context.getCurrentTexture().createView(),
 			loadOp: "load",
@@ -404,7 +407,9 @@ export function weatherParticlePass(mainpassDepthTexture) {
 			depthStoreOp: 'store',
 		},
 	});
+	let pass;
 	if (spraying) {
+		pass = parts.next('Spray', 'vf_spray');
 		pass.setPipeline(sprayPipeline);
 		pass.setBindGroup(0, device.createBindGroup({
 			label: "spray bind group",
@@ -418,6 +423,7 @@ export function weatherParticlePass(mainpassDepthTexture) {
 		pass.draw(SPRAY_VERTICES, SPRAY_COUNT, 0, 0);
 	}
 	if (raining) {
+		pass = parts.next('Rain', 'vf_rain');
 		pass.setPipeline(rainPipeline);
 		pass.setBindGroup(0, device.createBindGroup({
 			label: "rain bind group",
@@ -431,6 +437,7 @@ export function weatherParticlePass(mainpassDepthTexture) {
 		pass.draw(RAIN_VERTICES, RAIN_COUNT, 0, 0);
 	}
 	if (snowing) {
+		pass = parts.next('Snow', 'vf_snow');
 		pass.setPipeline(snowPipeline);
 		pass.setBindGroup(0, device.createBindGroup({
 			label: "snow bind group",
@@ -443,7 +450,7 @@ export function weatherParticlePass(mainpassDepthTexture) {
 		}));
 		pass.draw(SNOW_VERTICES, SNOW_COUNT, 0, 0);
 	}
-	pass.end();
+	parts.end();
 
 	device.queue.submit([encoder.finish()]);
 }

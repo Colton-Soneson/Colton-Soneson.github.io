@@ -61,6 +61,10 @@ export function createSite(land, params) {
 	return function site(x, z) {
 		out.density = 0;
 		if (Math.abs(x) >= half || Math.abs(z) >= half) return out;
+		// the ground kept clear round the buildings (placeBuildings in terrain.js): nothing grows there, and no seed comes up there either
+		for (const clearing of land.clearings ?? []) {
+			if ((x - clearing.x) ** 2 + (z - clearing.z) ** 2 < clearing.radius ** 2) return out;
+		}
 
 		const mountain = sample(land.mountains, x, z, 1, 0);		// how far into a mountain range, the same number the zones are cut from
 		const flatness = sample(land.normals, x, z, 3, 1);			// the y of the ground normal: 1 level, 0 a wall

@@ -1,7 +1,9 @@
 import {device} from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvas} from './deviceSelection.js'
+import {onRenderResize} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
+import * as profiler from './profiler.js'
 
 import { c_DebugTexture_RGBA8UNORM } from '../shaders/js/c_debugTextureDisplay.js'
 import { c_DebugTexture_RGBA32FLOAT } from '../shaders/js/c_debugTextureDisplay.js'
@@ -77,11 +79,18 @@ const linSampler = device.createSampler({
 });
 
 //out texture
-const outTexture = device.createTexture({
-	size: {width: canvas.width, height: canvas.height},
-	format: "rgba8unorm",
-	usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
-});
+//		(at the canvas's size, and made again when that changes: see display.js)
+let outTexture;
+function makeOutTexture() {
+	if (outTexture) outTexture.destroy();
+	outTexture = device.createTexture({
+		size: {width: canvas.width, height: canvas.height},
+		format: "rgba8unorm",
+		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
+	});
+}
+makeOutTexture();
+onRenderResize(makeOutTexture);
 
 // Layouts
 //-------------------------------------------------
@@ -533,7 +542,7 @@ export function postEffectPassTextureDebug_RGBA8UNORM(aEncoder, aCanvasTexture, 
 	debugTextureUniformUpdate(aTextureToDebug, settings.displayDepthMapDebugRange, scroll, redOnly);
 	
 	// Start a compute pass 
-	const computePass = aEncoder.beginComputePass();	//do before render pass so RP can take latest CP results
+	const computePass = aEncoder.beginComputePass({ timestampWrites: profiler.timestamps('Debug View', 'c_DebugTexture_RGBA8UNORM') });	//do before render pass so RP can take latest CP results
 	
 	computePass.setPipeline(debugTexturePipeline_RGBA8UNORM);
 	computePass.setBindGroup(0, bindGroups[0]);	//same bind groups as rendering pass
@@ -555,7 +564,7 @@ export function postEffectPassTextureDebug_RGBA32FLOAT(aEncoder, aCanvasTexture,
 	debugTextureUniformUpdate(aTextureToDebug);
 	
 	// Start a compute pass 
-	const computePass = aEncoder.beginComputePass();	//do before render pass so RP can take latest CP results
+	const computePass = aEncoder.beginComputePass({ timestampWrites: profiler.timestamps('Debug View', 'c_DebugTexture_RGBA32FLOAT') });	//do before render pass so RP can take latest CP results
 	
 	computePass.setPipeline(debugTexturePipeline_RGBA32FLOAT);
 	computePass.setBindGroup(0, bindGroups[0]);	//same bind groups as rendering pass
@@ -577,7 +586,7 @@ export function postEffectPassTextureDebug_RGBA16FLOAT(aEncoder, aCanvasTexture,
 	debugTextureUniformUpdate(aTextureToDebug);
 	
 	// Start a compute pass 
-	const computePass = aEncoder.beginComputePass();	//do before render pass so RP can take latest CP results
+	const computePass = aEncoder.beginComputePass({ timestampWrites: profiler.timestamps('Debug View', 'c_DebugTexture_RGBA16FLOAT') });	//do before render pass so RP can take latest CP results
 	
 	computePass.setPipeline(debugTexturePipeline_RGBA16FLOAT);
 	computePass.setBindGroup(0, bindGroups[0]);	//same bind groups as rendering pass
@@ -600,7 +609,7 @@ export function postEffectPassTextureDebug_R32FLOAT(aEncoder, aCanvasTexture, aT
 	debugTextureUniformUpdate(aTextureToDebug, 1.0 / aValueRange);
 
 	// Start a compute pass
-	const computePass = aEncoder.beginComputePass();	//do before render pass so RP can take latest CP results
+	const computePass = aEncoder.beginComputePass({ timestampWrites: profiler.timestamps('Debug View', 'c_DebugTexture_R32FLOAT') });	//do before render pass so RP can take latest CP results
 
 	computePass.setPipeline(debugTexturePipeline_R32FLOAT);
 	computePass.setBindGroup(0, bindGroups[0]);	//same bind groups as rendering pass
@@ -623,7 +632,7 @@ export function postEffectPassTextureDebug_DEPTH32FLOAT(aEncoder, aCanvasTexture
 	debugTextureUniformUpdate(aTextureToDebug);
 	
 	// Start a compute pass 
-	const computePass = aEncoder.beginComputePass();	//do before render pass so RP can take latest CP results
+	const computePass = aEncoder.beginComputePass({ timestampWrites: profiler.timestamps('Debug View', 'c_DebugTexture_DEPTH32FLOAT') });	//do before render pass so RP can take latest CP results
 	
 	computePass.setPipeline(debugTexturePipeline_DEPTH32FLOAT);
 	computePass.setBindGroup(0, bindGroups[0]);	//same bind groups as rendering pass

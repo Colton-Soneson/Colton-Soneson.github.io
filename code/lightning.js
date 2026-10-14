@@ -2,6 +2,7 @@ import {device} from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvas} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
+import * as profiler from './profiler.js'
 
 import { settings } from './settings.js';
 
@@ -240,8 +241,8 @@ export function lightningPass(mainpassDepthTexture) {
 	for(let i = 0; i < 16; i++) {
 		bufferResult.push(viewProjectionMatrix[i]);
 	}
-	//(the view is 72 degrees from top to bottom, see projectionMatrix in transformations.js)
-	bufferResult.push(settings.camPosX, settings.camPosY, settings.camPosZ, 2 * Math.tan(Math.PI / 5) / canvas.height);
+	//(and how big a pixel is, see pixelSize in transformations.js)
+	bufferResult.push(settings.camPosX, settings.camPosY, settings.camPosZ, transformations.pixelSize());
 	bufferResult.push(lightningNow.flash, 0, 0, 0);
 	const result = new Float32Array(bufferResult);
 	device.queue.writeBuffer(lightningUniformBuffer, 0, result.buffer, result.byteOffset, result.byteLength);
@@ -258,6 +259,7 @@ export function lightningPass(mainpassDepthTexture) {
 			depthLoadOp: 'load',
 			depthStoreOp: 'store',
 		},
+		timestampWrites: profiler.timestamps('Bolt', 'vf_lightning'),
 	});
 	pass.setPipeline(lightningPipeline);
 	pass.setBindGroup(0, lightningBindGroup);

@@ -330,30 +330,139 @@ export const vf_terrain =
 		@location(4) meshCell: f32,
 	};
 
-	// the depth is written out as well as the color: it is the mesh's depth, moved by the relief of the ground (see the end of fragmentMain)
+	// What the ground is at a point, before any light falls on it. Near the camera it is worked out for every pixel (landMaterial).
+	//		Further off it is read back from a picture of it taken from above, once per chunk (fragmentMainBaked, and the bake in terrain.js)
+	struct LandMaterial {
+		albedo: vec3f,
+		normal: vec3f,		// what it is lit by: the slope of the ground, leaned by the small shapes and the relief
+		skyShade: f32,		// how much of the sky light gets to it: less down in a crevice of bare rock
+		snow: f32,			// how much of it is snow, 0 to 1
+		shine: f32,			// how wet and smooth the sand is, 0 to 1 (see WET SAND)
+		relief: f32,		// how far the surface stands up or is sunk, world units (see f_groundTextures.js)
+	};
+
+	// the depth is written out as well as the color: it is the mesh's depth, moved by the relief of the ground (see fragmentMain)
 	struct FragOutput {
 		@location(0) color: vec4f,
 		@builtin(frag_depth) depth: f32,
 	};
 
+	// for the land further off, where the relief is too small to matter: the color alone (see fragmentMainFar)
+	struct FarFragOutput {
+		@location(0) color: vec4f,
+	};
+
+	// the material worked out here and now, for a pixel on the screen
+	fn liveMaterial(input: FragInput) -> LandMaterial {
+		let away = length(input.worldPos - Lights.camPos.xyz);
+		return landMaterial(input.worldPos, input.fragNormal, input.mountain, input.meshCell, away * UBO.pixelSize, away);
+	}
+
+	// Near the camera: the color, and the depth moved by the relief
 	@fragment
 	fn fragmentMain(input: FragInput) -> FragOutput {
+		let m = liveMaterial(input);
+		var output: FragOutput;
+		output.color = vec4f(lightLand(m, input.worldPos, input.shadowPos), 1.0);
 
-		let height = input.worldPos.y - UBO.seaLevel;	// above the sea, negative under it
-		let toLand = input.worldPos - Lights.camPos.xyz;
-		let away = length(toLand);
+		//------------------DEPTH BIAS-----------------
+		// The depth of the pixel is the depth of the mesh, moved by the relief: nearer where the surface stands up, further in a
+		//		crack. That puts the grain of the ground into the depth texture, where the screen space shadows and the ambient
+		//		occlusion find it (see the top of f_groundTextures.js)
+		let inFront = UBO.depthB / (input.fragCoord.z + UBO.depthA);	// how far in front of the camera the mesh is here
+		let biased = saturate(input.fragCoord.z + UBO.depthB * (1.0 / max(inFront - m.relief * UBO.depthBias, 0.01) - 1.0 / inFront));
+		output.depth = select(biased, input.fragCoord.z, Lights.displayLightingMode == 1.0);
+		return output;
+	}
+
+	// Further off: the same color, and the mesh's own depth. A shader that writes its own depth has to be run for every pixel
+	//		before the GPU can tell if the pixel is hidden. One that does not can be skipped for every pixel already behind
+	//		something nearer, which is most of the land behind a hill. (terrainPass draws the chunks nearest first, to make the most of it)
+	@fragment
+	fn fragmentMainFar(input: FragInput) -> FarFragOutput {
+		var output: FarFragOutput;
+		output.color = vec4f(lightLand(liveMaterial(input), input.worldPos, input.shadowPos), 1.0);
+		return output;
+	}
+
+	//------------------THE BAKE-----------------
+	// Far off, the material comes out of two textures made for the chunk (see bakeChunk in terrain.js): a picture of the chunk taken
+	//		straight down. Reading them is a great deal cheaper than all the noise behind them. Only the light is worked out here
+	@group(0) @binding(8) var bakeSampler: sampler;
+	@group(1) @binding(0) var<uniform> bakedArea: vec4f;		// the chunk's square: west edge, north edge, width
+	@group(1) @binding(1) var bakedColor: texture_2d<f32>;		// rgb: albedo, a: skyShade
+	@group(1) @binding(2) var bakedShape: texture_2d<f32>;		// rg: normal.x and normal.z, b: snow, a: shine
+
+	@fragment
+	fn fragmentMainBaked(input: FragInput) -> FarFragOutput {
+		let uv = (input.worldPos.xz - bakedArea.xy) / bakedArea.z;
+		let color = textureSample(bakedColor, bakeSampler, uv);
+		let shape = textureSample(bakedShape, bakeSampler, uv);
+		var m: LandMaterial;
+		m.albedo = color.rgb;
+		m.skyShade = color.a;
+		let across = shape.xy * 2.0 - vec2f(1.0, 1.0);
+		m.normal = normalize(vec3f(across.x, sqrt(max(1.0 - dot(across, across), 0.0)), across.y));	// (the ground always faces up, so y is whatever makes the length 1)
+		m.snow = shape.z;
+		m.shine = shape.w;
+		m.relief = 0.0;
+		var output: FarFragOutput;
+		output.color = vec4f(lightLand(m, input.worldPos, input.shadowPos), 1.0);
+		return output;
+	}
+
+	// Taking the picture: the chunk drawn straight down into its two textures, one texel to every pixel
+	struct BakeUniforms {
+		area: vec4f,	// the square the picture covers: west edge, north edge, width, and the width of one texel, world units
+	};
+	@group(1) @binding(3) var<uniform> bake: BakeUniforms;
+
+	@vertex
+	fn vertexBake(input: VertexInput) -> VertexOutput {
+		var output: VertexOutput;
+		let across = (input.pos.xz - bake.area.xy) / bake.area.z;		// 0 to 1 over the picture. (the skirt hangs straight down, so it draws nothing)
+		output.pos = vec4f(across.x * 2.0 - 1.0, 1.0 - across.y * 2.0, 0.5, 1.0);
+		output.worldPos = input.pos;
+		output.fragNormal = input.norm;
+		output.mountain = input.fields.x;
+		output.meshCell = input.fields.y;
+		output.shadowPos = vec3f(0.0, 0.0, 0.0);
+		return output;
+	}
+
+	struct BakeOutput {
+		@location(0) color: vec4f,
+		@location(1) shape: vec4f,
+	};
+
+	@fragment
+	fn fragmentBake(input: FragInput) -> BakeOutput {
+		// as it is seen from far off: the small shapes fade out at the size of a texel instead of a pixel, and what only shows
+		//		near the camera (the litter under the trees, the shade of the blades on the turf) is left out
+		let m = landMaterial(input.worldPos, input.fragNormal, input.mountain, input.meshCell, bake.area.w, 1.0e6);
+		var output: BakeOutput;
+		output.color = vec4f(m.albedo, m.skyShade);
+		output.shape = vec4f(m.normal.xz * 0.5 + vec2f(0.5, 0.5), m.snow, m.shine);
+		return output;
+	}
+
+	// What the ground is made of at a point: see LandMaterial. pixel: how much ground one pixel (or one texel of a bake) covers
+	//		there. away: how far it is from the camera
+	fn landMaterial(worldPos: vec3f, fragNormal: vec3f, cover: f32, meshCell: f32, pixel: f32, away: f32) -> LandMaterial {
+
+		let height = worldPos.y - UBO.seaLevel;	// above the sea, negative under it
 
 		//------------------THE LIE OF THE GROUND-----------------
 		// from the mesh where it is fine, from the land data where the mesh is coarser than that
-		let groundNormal = normalize(mix(normalize(input.fragNormal), dataNormal(input.worldPos.xz), smoothstep(UBO.dataCell, UBO.dataCell * 2.5, input.meshCell)));
+		let groundNormal = normalize(mix(normalize(fragNormal), dataNormal(worldPos.xz), smoothstep(UBO.dataCell, UBO.dataCell * 2.5, meshCell)));
 
 		//------------------ZONES-----------------
 		// how much of each zone this pixel is, 0 to 1. Same rules as classifyZone in terrainGenerator.js, with soft edges
-		let mountain = smoothstep(UBO.mountainThreshold - 0.05, UBO.mountainThreshold + 0.05, input.mountain);
-		let forest = smoothstep(UBO.forestThreshold - 0.04, UBO.forestThreshold + 0.04, input.mountain) * (1.0 - mountain);
+		let mountain = smoothstep(UBO.mountainThreshold - 0.05, UBO.mountainThreshold + 0.05, cover);
+		let forest = smoothstep(UBO.forestThreshold - 0.04, UBO.forestThreshold + 0.04, cover) * (1.0 - mountain);
 		// the sand ends at the bank, the short step up to the turf: sand below the middle of it, grass from the top, bare earth on its face
 		//		(not round a lake: there the cover is below 0, which is marsh, and the ground runs down into the water as mud)
-		let marsh = saturate(-input.mountain);
+		let marsh = saturate(-cover);
 		let bank = max(UBO.bankHeight, 0.4);
 		let beach = (1.0 - smoothstep(UBO.beachHeight + 0.2 * bank, UBO.beachHeight + 0.7 * bank, height)) * (1.0 - marsh);
 		let bankFace = smoothstep(UBO.beachHeight + 0.05 * bank, UBO.beachHeight + 0.35 * bank, height)
@@ -367,31 +476,30 @@ export const vf_terrain =
 		//		less whatever part of it is straight in or out of the ground, is taken off the normal
 		var detail = vec4f(0.5, 0.0, 0.0, 0.0);
 		if (rocky > 0.001 && UBO.rockDetail > 0.0) {
-			detail = rockDetail(input.worldPos, away * UBO.pixelSize);
+			detail = rockDetail(worldPos, pixel);
 		}
 		let along = detail.yzw - groundNormal * dot(detail.yzw, groundNormal);
 		let rockNormal = normalize(groundNormal - along * UBO.rockDetail * rocky);
 
 		//------------------WHAT IT IS MADE OF, CLOSE UP-----------------
 		// (f_groundTextures.js) a color and a relief each, and only worked out where there is some of it to see
-		let pixel = away * UBO.pixelSize;
 		var marble = vec4f(1.0, 1.0, 1.0, 0.0);
 		if (rocky > 0.001 && UBO.rockVeins > 0.0) {
-			let veined = marbleRock(input.worldPos, pixel);
+			let veined = marbleRock(worldPos, pixel);
 			marble = vec4f(mix(vec3f(1.0, 1.0, 1.0), veined.rgb, UBO.rockVeins), veined.a * UBO.rockVeins);
 		}
 		var sand = vec4f(1.0, 1.0, 1.0, 0.0);
 		// wet through under the water and up the strip the waves run over, drying out from there up the beach. The line it dries along wanders
-		let wetSand = 1.0 - smoothstep(0.15, 0.68 * UBO.beachHeight, height + 0.7 * (noise(input.worldPos.xz / 13.0 + vec2f(5.0, 21.0)) - 0.5));
+		let wetSand = 1.0 - smoothstep(0.15, 0.68 * UBO.beachHeight, height + 0.7 * (noise(worldPos.xz / 13.0 + vec2f(5.0, 21.0)) - 0.5));
 		if (beach > 0.001 && height > -10.0 && UBO.groundDetail > 0.0) {
-			let grained = beachSand(input.worldPos.xz, pixel, wetSand);
+			let grained = beachSand(worldPos.xz, pixel, wetSand);
 			sand = vec4f(mix(vec3f(1.0, 1.0, 1.0), grained.rgb, saturate(UBO.groundDetail)), grained.a * UBO.groundDetail);
 		}
 		// (from far off the floor of the forest is the green it always was: there the trees are what is seen, not what lies under them)
 		var litter = vec4f(COLOR_FOREST, 0.0);
 		let litterNear = (1.0 - smoothstep(90.0, 320.0, away)) * saturate(UBO.groundDetail);
 		if (forest > 0.001 && litterNear > 0.0) {
-			litter = forestFloor(input.worldPos.xz, pixel);
+			litter = forestFloor(worldPos.xz, pixel);
 		}
 
 		// the grassland: everywhere that is none of the others. Its turf is in the shade of the blades standing on it, for as far
@@ -399,7 +507,7 @@ export const vf_terrain =
 		let meadow = (1.0 - forest) * (1.0 - rocky) * (1.0 - beach) * (1.0 - marsh);
 		var turf = vec4f(1.0, 1.0, 1.0, 0.0);
 		if (meadow > 0.001 && UBO.groundDetail > 0.0) {
-			let tufted = grassTurf(input.worldPos.xz, pixel);
+			let tufted = grassTurf(worldPos.xz, pixel);
 			turf = vec4f(mix(vec3f(1.0, 1.0, 1.0), tufted.rgb, saturate(UBO.groundDetail)), tufted.a * UBO.groundDetail);
 		}
 		if (UBO.grassDistance > 0.0) {
@@ -411,19 +519,19 @@ export const vf_terrain =
 
 		//------------------ROCK-----------------
 		// wide patches of warmer and cooler stone across the range, and nothing finer: the rest of what rock looks like is its shape
-		let stains = noise(input.worldPos.xz / 640.0 + vec2f(41.0, 7.0));
-		var rock = COLOR_MOUNTAIN * mix(vec3f(0.94, 0.97, 1.04), vec3f(1.1, 1.0, 0.88), stains) * mix(0.92, 1.06, noise(input.worldPos.xz / 150.0));
+		let stains = noise(worldPos.xz / 640.0 + vec2f(41.0, 7.0));
+		var rock = COLOR_MOUNTAIN * mix(vec3f(0.94, 0.97, 1.04), vec3f(1.1, 1.0, 0.88), stains) * mix(0.92, 1.06, noise(worldPos.xz / 150.0));
 		// crevices are dark: less light gets down into them, and what collects there is dirt
 		rock *= mix(1.03, 0.68, crevice);
 		rock *= marble.rgb;
 
 		// loose stone: on the slopes too steep for turf and not steep enough to shed it, in fans below the crags. Paler and smoother than the rock
-		let scree = smoothstep(0.6, 0.72, groundNormal.y) * (1.0 - smoothstep(0.8, 0.9, groundNormal.y)) * smoothstep(0.42, 0.6, noise(input.worldPos.xz / 85.0));
+		let scree = smoothstep(0.6, 0.72, groundNormal.y) * (1.0 - smoothstep(0.8, 0.9, groundNormal.y)) * smoothstep(0.42, 0.6, noise(worldPos.xz / 85.0));
 		rock = mix(rock, COLOR_SCREE * mix(1.05, 0.9, crevice), scree * 0.7);
 
 		// turf: gentle ground low on a mountain is green, in patches. It thins out with height, going long before the snow starts
-		let turfLine = UBO.snowLine * (0.5 + 0.25 * noise(input.worldPos.xz / 240.0));
-		let highTurf = smoothstep(0.74, 0.88, groundNormal.y + 0.14 * (noise(input.worldPos.xz / 23.0) - 0.5)) * (1.0 - smoothstep(0.6 * turfLine, turfLine, height)) * mountain;
+		let turfLine = UBO.snowLine * (0.5 + 0.25 * noise(worldPos.xz / 240.0));
+		let highTurf = smoothstep(0.74, 0.88, groundNormal.y + 0.14 * (noise(worldPos.xz / 23.0) - 0.5)) * (1.0 - smoothstep(0.6 * turfLine, turfLine, height)) * mountain;
 		rock = mix(rock, COLOR_TURF * mix(1.1, 0.85, crevice), highTurf);
 
 		//------------------SNOW-----------------
@@ -431,7 +539,7 @@ export const vf_terrain =
 		//		that face away from the sun, and around it the snow is only in the hollows, where it drifts and lasts longest.
 		//		(the sun in this world goes round by the -z side, see sunCycle in atmosphere.js)
 		let snowBand = 0.1 * UBO.snowLine;		// the height over which it goes from the first patches to full cover
-		let snowLine = UBO.snowLine * (1.0 + 0.16 * (noise(input.worldPos.xz / 520.0) - 0.5)) - 1.2 * snowBand * groundNormal.z;
+		let snowLine = UBO.snowLine * (1.0 + 0.16 * (noise(worldPos.xz / 520.0) - 0.5)) - 1.2 * snowBand * groundNormal.z;
 		let altitude = (height - snowLine) / snowBand;		// 0 on the line, 1 a band above it
 		// what it will lie on: ledges and hollows, not the faces between them. The higher up, the steeper the ground it clings to
 		let ledgeNormal = normalize(mix(groundNormal, rockNormal, 0.35));
@@ -449,14 +557,14 @@ export const vf_terrain =
 		//		It comes in patches first, which grow until they join, and it goes the same way
 		var built = 0.0;
 		if (UBO.snowCover > 0.001) {
-			let seen = UBO.topDownViewProj * vec4f(input.worldPos, 1.0);
+			let seen = UBO.topDownViewProj * vec4f(worldPos, 1.0);
 			let seenUV = seen.xy * vec2f(0.5, -0.5) + vec2f(0.5, 0.5);
 			var open = 1.0;
 			if (seenUV.x > 0.0 && seenUV.x < 1.0 && seenUV.y > 0.0 && seenUV.y < 1.0) {
 				let top = textureLoad(topDownHeightMap, vec2i(seenUV * vec2f(textureDimensions(topDownHeightMap))), 0);
 				open = step(seen.z - 0.0015, top);		// (0.0015 of the picture's depth is 1.5 units: the two meshes do not agree any closer than that)
 			}
-			let patchy = 0.6 * noise(input.worldPos.xz / 11.0 + vec2f(7.0, 3.0)) + 0.4 * noise(input.worldPos.xz / 1.9);
+			let patchy = 0.6 * noise(worldPos.xz / 11.0 + vec2f(7.0, 3.0)) + 0.4 * noise(worldPos.xz / 1.9);
 			let settled = smoothstep(0.75 * patchy, 0.75 * patchy + 0.25, UBO.snowCover * 1.25);
 			built = settled * open * smoothstep(0.5, 0.72, groundNormal.y) * (1.0 - beach) * smoothstep(0.2, 1.2, height) * (1.0 - 0.4 * forest) * (1.0 - 0.5 * marsh);
 		}
@@ -476,15 +584,15 @@ export const vf_terrain =
 
 		// the relief of whichever of the three shows here. Snow buries it, and so do the loose stone and the turf on a mountain
 		//		Snow has a relief of its own: drifts, and a fine crust
-		let snowRelief = (noise(input.worldPos.xz / 4.5) - 0.5) * 0.05 + (noise(input.worldPos.xz / 0.8) - 0.5) * 0.03 * saturate(1.6 / (pixel * 4.0) - 1.0);
+		let snowRelief = (noise(worldPos.xz / 4.5) - 0.5) * 0.05 + (noise(worldPos.xz / 0.8) - 0.5) * 0.03 * saturate(1.6 / (pixel * 4.0) - 1.0);
 		let relief = (marble.a * rocky * (1.0 - 0.7 * scree) * (1.0 - highTurf) + sand.a * beach + litter.a * forest * litterNear * (1.0 - rocky) + turf.a * meadow) * (1.0 - snow) + snowRelief * snow;
 
 		// snow lies over the small shapes and rounds them off: it is lit by a smoother surface than the rock under it
 		let smoothNormal = normalize(mix(rockNormal, groundNormal, 0.65 * snow));
 		// and the surface leans by the slope of the relief. The slope is taken from the pixels next door: how much the relief
 		//		changes across the screen, against how much the position does (Mikkelsen, "Bump Mapping Unparametrized Surfaces on the GPU")
-		let acrossX = dpdx(input.worldPos);
-		let acrossY = dpdy(input.worldPos);
+		let acrossX = dpdx(worldPos);
+		let acrossY = dpdy(worldPos);
 		let reliefX = dpdx(relief);
 		let reliefY = dpdy(relief);
 		let r1 = cross(acrossY, smoothNormal);
@@ -492,16 +600,32 @@ export const vf_terrain =
 		let area = dot(acrossX, r1);
 		let N = normalize(max(abs(area), 0.00000001) * smoothNormal - sign(area) * (reliefX * r1 + reliefY * r2));
 
+		var made: LandMaterial;
+		made.albedo = albedo;
+		made.normal = N;
+		// the sky's share is less down in a crevice, which has less sky over it
+		made.skyShade = mix(1.0, mix(1.0, 0.6, crevice), rocky * (1.0 - snow));
+		made.snow = snow;
+		made.shine = wetSand * beach * smoothstep(-1.0, 0.0, height);
+		made.relief = relief;
+		return made;
+	}
+
+	// How the ground is lit: what it is made of (m, see landMaterial), where it is, and where that is in the shadow map
+	fn lightLand(m: LandMaterial, worldPos: vec3f, shadowPos: vec3f) -> vec3f {
+		let toLand = worldPos - Lights.camPos.xyz;
+		let away = length(toLand);
+
 		//------------------LIGHT-----------------
 		let L = normalize(Lights.sunPos.xyz);			// the sun as a direction
 		let daylight = smoothstep(-0.08, 0.25, L.y);	// fades the sun out as it sets
 		// snow is not solid, light goes a little way into it and comes out again: its shaded side falls off more gently than rock's
-		let diffuse = mix(saturate(dot(N, L)), saturate((dot(N, L) + 0.3) / 1.3), snow);
+		let diffuse = mix(saturate(dot(m.normal, L)), saturate((dot(m.normal, L) + 0.3) / 1.3), m.snow);
 
 		// shadow map (PCF, same as the generic shader). It only covers a box around the middle of the world, so the shadows
 		//		fade out towards the edge of that box and everything outside it is just lit
-		let shadowMapEdge = min(min(input.shadowPos.x, 1.0 - input.shadowPos.x), min(input.shadowPos.y, 1.0 - input.shadowPos.y));
-		let insideShadowMap = saturate(shadowMapEdge / 0.08) * step(0.0, input.shadowPos.z) * step(input.shadowPos.z, 1.0);
+		let shadowMapEdge = min(min(shadowPos.x, 1.0 - shadowPos.x), min(shadowPos.y, 1.0 - shadowPos.y));
+		let insideShadowMap = saturate(shadowMapEdge / 0.08) * step(0.0, shadowPos.z) * step(shadowPos.z, 1.0);
 		let invShadowMapTextureSize = 1.0 / Lights.shadowMapTextureSize;
 		let kernelSize = i32(Lights.shadowMapKernelSize);
 		let kernelCount = (2.0 * Lights.shadowMapKernelSize + 1.0) * (2.0 * Lights.shadowMapKernelSize + 1.0);
@@ -509,42 +633,39 @@ export const vf_terrain =
 		for (var x = -kernelSize; x <= kernelSize; x++) {
 			for (var y = -kernelSize; y <= kernelSize; y++) {
 				let kernelOffset = vec2f(f32(x), f32(y)) * invShadowMapTextureSize;
-				visibility += textureSampleCompareLevel(myShadowMap, myShadowSampler, input.shadowPos.xy + kernelOffset, input.shadowPos.z - Lights.shadowMapAcneBias);
+				visibility += textureSampleCompareLevel(myShadowMap, myShadowSampler, shadowPos.xy + kernelOffset, shadowPos.z - Lights.shadowMapAcneBias);
 			}
 		}
 		visibility = mix(1.0, visibility / kernelCount, insideShadowMap);
 
 		if (Lights.displayLightingMode == 1.0) {
-			var shown: FragOutput;
-			shown.color = vec4f(visibility, 0.0, 0.0, 1.0);
-			shown.depth = input.fragCoord.z;
-			return shown;
+			return vec3f(visibility, 0.0, 0.0);
 		}
 
 		// a little light at night, sky light through the day, and the sun on top where it reaches.
 		//		The sky's share is less down in a crevice, which has less sky over it. And on snow it is blue: snow in shade is lit
 		//		by nothing but the sky and takes its color
-		let skyLight = (0.09 + daylight * 0.34) * mix(1.0, mix(1.0, 0.6, crevice), rocky * (1.0 - snow));
+		let skyLight = (0.09 + daylight * 0.34) * m.skyShade;
 		let sunLight = daylight * 0.72 * diffuse * visibility;
 		let sunTint = mix(vec3f(1.0, 1.0, 1.0), Lights.sunCol.rgb, 0.3 * (1.0 - saturate(L.y * 3.0)));	// warmer as the sun gets low
-		var color = albedo * ((skyLight * mix(vec3f(1.0, 1.0, 1.0), vec3f(0.78, 0.88, 1.08), snow) + sunLight) * sunTint + moonLight(N));
+		var color = m.albedo * ((skyLight * mix(vec3f(1.0, 1.0, 1.0), vec3f(0.78, 0.88, 1.08), m.snow) + sunLight) * sunTint + moonLight(m.normal));
 
 		// Snow glints: here and there a crystal lies at the one angle that throws the sun straight at the eye. Which crystals
 		//		do changes with every step the eye or the sun takes, and that is the sparkle
-		if (snow > 0.01) {
-			let crystal = hash(floor(input.worldPos * 7.0));
+		if (m.snow > 0.01) {
+			let crystal = hash(floor(worldPos * 7.0));
 			let lined = fract(crystal * 57.3 + dot(toLand / max(away, 0.0001), vec3f(5.3, 3.1, 4.7)) * 9.0 + dot(L, vec3f(2.9, 4.3, 3.7)) * 9.0);
 			let glint = step(0.9, crystal) * smoothstep(0.82, 0.97, lined) * (1.0 - smoothstep(25.0, 90.0, away));
-			color += vec3f(1.0, 1.0, 1.0) * glint * snow * daylight * visibility * 0.9;
+			color += vec3f(1.0, 1.0, 1.0) * glint * m.snow * daylight * visibility * 0.9;
 		}
 
 		//------------------WET SAND-----------------
 		// smooth enough to shine: it shows the sky, more of it the lower the angle it is looked along (as water does), and the sun
-		let shine = wetSand * beach * smoothstep(-1.0, 0.0, height);
+		let shine = m.shine;
 		if (shine > 0.001) {
 			let toEye = -toLand / max(away, 0.0001);
-			let mirrored = reflect(-toEye, N);
-			let glancing = 0.04 + 0.96 * pow(1.0 - saturate(dot(N, toEye)), 5.0);
+			let mirrored = reflect(-toEye, m.normal);
+			let glancing = 0.04 + 0.96 * pow(1.0 - saturate(dot(m.normal, toEye)), 5.0);
 			if (UBO.atmosphereEnabled > 0.5) {
 				color = mix(color, skyColorAt(vec3f(mirrored.x, abs(mirrored.y) + 0.02, mirrored.z)), saturate(glancing * 1.5) * 0.75 * shine);
 			}
@@ -559,14 +680,43 @@ export const vf_terrain =
 			color = mix(color, horizonColor, fog);
 		}
 
-		//------------------DEPTH BIAS-----------------
-		// The depth of the pixel is the depth of the mesh, moved by the relief: nearer where the surface stands up, further in a
-		//		crack. That puts the grain of the ground into the depth texture, where the screen space shadows and the ambient
-		//		occlusion find it (see the top of f_groundTextures.js)
-		var output: FragOutput;
-		output.color = vec4f(color, 1.0);
-		let inFront = UBO.depthB / (input.fragCoord.z + UBO.depthA);	// how far in front of the camera the mesh is here
-		output.depth = saturate(input.fragCoord.z + UBO.depthB * (1.0 / max(inFront - relief * UBO.depthBias, 0.01) - 1.0 / inFront));
+		return color;
+	}
+`;
+
+// The smaller copies of a chunk's bake (see bakeChunk in terrain.js), each from the one before it: both textures at once.
+//		The middle of a texel of the smaller copy is the corner where 4 texels of the larger meet, so one linear read is their average
+export const vf_terrainBakeMips =
+`
+	@group(0) @binding(0) var colorLarger: texture_2d<f32>;
+	@group(0) @binding(1) var shapeLarger: texture_2d<f32>;
+	@group(0) @binding(2) var largerSampler: sampler;
+
+	struct VertexOutput {
+		@builtin(position) pos: vec4f,
+		@location(0) uv: vec2f,
+	};
+
+	// one triangle that covers the whole picture
+	@vertex
+	fn vertexMain(@builtin(vertex_index) vertexIndex: u32) -> VertexOutput {
+		var corners = array<vec2f, 3>(vec2f(-1.0, -1.0), vec2f(3.0, -1.0), vec2f(-1.0, 3.0));
+		var output: VertexOutput;
+		output.pos = vec4f(corners[vertexIndex], 0.0, 1.0);
+		output.uv = corners[vertexIndex] * vec2f(0.5, -0.5) + vec2f(0.5, 0.5);
+		return output;
+	}
+
+	struct MipOutput {
+		@location(0) color: vec4f,
+		@location(1) shape: vec4f,
+	};
+
+	@fragment
+	fn fragmentMain(input: VertexOutput) -> MipOutput {
+		var output: MipOutput;
+		output.color = textureSampleLevel(colorLarger, largerSampler, input.uv, 0.0);
+		output.shape = textureSampleLevel(shapeLarger, largerSampler, input.uv, 0.0);
 		return output;
 	}
 `;

@@ -126,7 +126,7 @@ function boulderUniformBufferUpdates() {
 	bufferResult.push(settings.waterHorizonFogDistance);
 	bufferResult.push(settings.enableAtmosphere ? 1 : 0);
 
-	bufferResult.push(2 * Math.tan(Math.PI / 5) / canvas.height);	//how big a pixel is (the view is 72 degrees from top to bottom, see projectionMatrix in transformations.js)
+	bufferResult.push(transformations.pixelSize());	//how big a pixel is (see pixelSize in transformations.js)
 	bufferResult.push(settings.terrainRockDetail);
 	bufferResult.push(settings.boulderDrawDistance);
 	bufferResult.push(settings.terrainRockVeins);

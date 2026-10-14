@@ -2,6 +2,7 @@ import {device} from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvas} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
+import * as profiler from './profiler.js'
 
 import { mat4, vec3 } from 'https://wgpu-matrix.org/dist/3.x/wgpu-matrix.module.js';
 
@@ -1875,7 +1876,7 @@ function waterIFFT(spectrumTexture, stages) {
 	//convert RGBA32Float to F32ARRAY for speed and RW access
 	const encoderRtoA = device.createCommandEncoder();
 	let bindRtoACGroup = createCompBindGroupRtoAWater(spectrumTexture);
-	const computeRtoAPass = encoderRtoA.beginComputePass();
+	const computeRtoAPass = encoderRtoA.beginComputePass({ timestampWrites: profiler.timestamps('To Array', 'c_RealizationToArray') });
 	computeRtoAPass.setPipeline(waterRtoAComputePipeline);
 	computeRtoAPass.setBindGroup(0, bindRtoACGroup);
 	computeRtoAPass.dispatchWorkgroups(settings.waterTileResolution  / FFT_WORKGROUP_SIZE[0],
@@ -1897,7 +1898,7 @@ function waterIFFT(spectrumTexture, stages) {
 		waterComputeButterflyBufferUpdate(0.0, stageH, pingPongSwitch);	//set the direction, and stage count
 		
 		let encoder = device.createCommandEncoder();  // NEW encoder per stage
-		const computeIFFTPassH = encoder.beginComputePass();	
+		const computeIFFTPassH = encoder.beginComputePass({ timestampWrites: profiler.timestamps('Butterfly Horizontal', 'c_IFFT_2D') });
 		let bindButterflyCGroup = createCompBindGroupButterflyWater(/*uniformBufferRtoA, uniformBufferPingPong*/);	
 		computeIFFTPassH.setPipeline(waterButterflyComputePipeline);
 		computeIFFTPassH.setBindGroup(0, bindButterflyCGroup);
@@ -1922,7 +1923,7 @@ function waterIFFT(spectrumTexture, stages) {
 		waterComputeButterflyBufferUpdate(1.0, stageV, pingPongSwitch);	//set the direction, and stage count
 		
 		let encoder = device.createCommandEncoder();  // NEW encoder per stage
-		const computeIFFTPassV = encoder.beginComputePass();
+		const computeIFFTPassV = encoder.beginComputePass({ timestampWrites: profiler.timestamps('Butterfly Vertical', 'c_IFFT_2D') });
 		let bindButterflyCGroup = createCompBindGroupButterflyWater(/*uniformBufferRtoA, uniformBufferPingPong*/);	
 		computeIFFTPassV.setPipeline(waterButterflyComputePipeline);
 		computeIFFTPassV.setBindGroup(0, bindButterflyCGroup);
@@ -1996,7 +1997,7 @@ export function waterPass(mainpassDepthTexture) {
 		const encoderHk = device.createCommandEncoder();
 		
 		//h0k
-		const computeInitialHeightPass = encoderHk.beginComputePass();
+		const computeInitialHeightPass = encoderHk.beginComputePass({ timestampWrites: profiler.timestamps('Spectrum h0(k)', 'c_h0k') });
 		const bindSpectrumCGroup = createCompBindGroupSpectrumWater();
 		computeInitialHeightPass.setPipeline(waterSpectrumComputePipeline);
 		computeInitialHeightPass.setBindGroup(0, bindSpectrumCGroup);
@@ -2005,7 +2006,7 @@ export function waterPass(mainpassDepthTexture) {
 		computeInitialHeightPass.end();
 		
 		//h0-k conj
-		const computeConjPass = encoderHk.beginComputePass();
+		const computeConjPass = encoderHk.beginComputePass({ timestampWrites: profiler.timestamps('Spectrum Conjugate h0(-k)', 'c_h0kConj') });
 		const bindConjCGroup = createCompBindGroupConjWater();
 		computeConjPass.setPipeline(waterConjComputePipeline);
 		computeConjPass.setBindGroup(0, bindConjCGroup);
@@ -2026,7 +2027,7 @@ export function waterPass(mainpassDepthTexture) {
 		step += 0.025;
 		
 		//hkt
-		const computeHKTPass = encoderPrePass.beginComputePass();
+		const computeHKTPass = encoderPrePass.beginComputePass({ timestampWrites: profiler.timestamps('Realization h(k,t)', 'c_hkt') });
 		const bindRealizationCGroup = createCompBindGroupRealizationWater();
 		computeHKTPass.setPipeline(waterRealizationComputePipeline);
 		computeHKTPass.setBindGroup(0, bindRealizationCGroup);
@@ -2047,7 +2048,7 @@ export function waterPass(mainpassDepthTexture) {
 		
 		//pre compute twiddle values
 		let bindButterflyPreCompCGroup = createCompBindGroupButterflyPreCompWater();
-		const computePreCompPass = encoderPrePass.beginComputePass();
+		const computePreCompPass = encoderPrePass.beginComputePass({ timestampWrites: profiler.timestamps('Twiddle Precompute', 'c_PreComp') });
 		computePreCompPass.setPipeline(waterButterflyPreCompComputePipeline);
 		computePreCompPass.setBindGroup(0, bindButterflyPreCompCGroup);
 		computePreCompPass.dispatchWorkgroups(stages / PRECOMP_WORKGROUP_SIZE[0],
@@ -2059,18 +2060,19 @@ export function waterPass(mainpassDepthTexture) {
 		
 		//horizontal displacement goes through the IFFT first, all the way out to its final texture
 		//		it shares the ping pong buffers and finalIFFTOutput with the wave height, which gets loaded into them straight after
-		const displacementIFFTBuffer = waterIFFT(displacementRealizationTexture, stages);
-		
+		//		(filed under its own name in the Performance window, as is the wave height's below)
+		const displacementIFFTBuffer = profiler.section('Displacement IFFT', () => waterIFFT(displacementRealizationTexture, stages));
+
 		const encoderDisplacement = device.createCommandEncoder();
-		
-		const computeDisplacementAtoTPass = encoderDisplacement.beginComputePass();
+
+		const computeDisplacementAtoTPass = encoderDisplacement.beginComputePass({ timestampWrites: profiler.section('Displacement IFFT', () => profiler.timestamps('To Texture', 'c_ArrayToTexture')) });
 		computeDisplacementAtoTPass.setPipeline(waterAtoTComputePipeline);
 		computeDisplacementAtoTPass.setBindGroup(0, createCompBindGroupAtoTWater(displacementIFFTBuffer));
 		computeDisplacementAtoTPass.dispatchWorkgroups(settings.waterTileResolution / FFT_WORKGROUP_SIZE[0],
 														settings.waterTileResolution / FFT_WORKGROUP_SIZE[1]);
 		computeDisplacementAtoTPass.end();
 		
-		const computeDisplacementShiftPass = encoderDisplacement.beginComputePass();
+		const computeDisplacementShiftPass = encoderDisplacement.beginComputePass({ timestampWrites: profiler.section('Displacement IFFT', () => profiler.timestamps('Shift', 'c_Shift')) });
 		computeDisplacementShiftPass.setPipeline(waterShiftComputePipeline);
 		computeDisplacementShiftPass.setBindGroup(0, createCompBindGroupShiftWater(finalIFFTOutput, finalDisplacementTexture));
 		computeDisplacementShiftPass.dispatchWorkgroups(Math.ceil(settings.waterTileResolution / FFT_WORKGROUP_SIZE[0]),
@@ -2080,14 +2082,14 @@ export function waterPass(mainpassDepthTexture) {
 		device.queue.submit([encoderDisplacement.finish()]);
 		
 		//wave height, read out of the buffers by the array to texture and shift passes below
-		IFFTBuffer = waterIFFT(waveHeightRealization, stages);
+		IFFTBuffer = profiler.section('Height IFFT', () => waterIFFT(waveHeightRealization, stages));
 	}
 	
 	let aEncoder = device.createCommandEncoder();
 	
 	//convert F32ARRAY to RGBA32Float for speed and RW access
 	let bindAtoTCGroup = createCompBindGroupAtoTWater(IFFTBuffer);
-	const computeAtoTPass = aEncoder.beginComputePass();
+	const computeAtoTPass = aEncoder.beginComputePass({ timestampWrites: profiler.section('Height IFFT', () => profiler.timestamps('To Texture', 'c_ArrayToTexture')) });
 	computeAtoTPass.setPipeline(waterAtoTComputePipeline);
 	computeAtoTPass.setBindGroup(0, bindAtoTCGroup);
 	computeAtoTPass.dispatchWorkgroups(settings.waterTileResolution  / FFT_WORKGROUP_SIZE[0],
@@ -2102,7 +2104,7 @@ export function waterPass(mainpassDepthTexture) {
 	
 	//Shift and Copy
 	let bindShiftCGroup = createCompBindGroupShiftWater(finalIFFTOutput, finalWaveHeightTexture);
-	const computeShiftPass = aEncoder.beginComputePass();
+	const computeShiftPass = aEncoder.beginComputePass({ timestampWrites: profiler.section('Height IFFT', () => profiler.timestamps('Shift', 'c_Shift')) });
 	computeShiftPass.setPipeline(waterShiftComputePipeline);
 	computeShiftPass.setBindGroup(0, bindShiftCGroup);
 	computeShiftPass.dispatchWorkgroups(Math.ceil(settings.waterTileResolution / FFT_WORKGROUP_SIZE[0]), 
@@ -2118,13 +2120,13 @@ export function waterPass(mainpassDepthTexture) {
 	//		(the spaces buffer these read is the one waterMeshUniformBufferUpdates fills in below, written before this encoder is submitted)
 	const shoreDispatch = Math.ceil(shoreFieldResolution / FFT_WORKGROUP_SIZE[0]);
 
-	const computeShoreScanPass = aEncoder.beginComputePass();
+	const computeShoreScanPass = aEncoder.beginComputePass({ timestampWrites: profiler.timestamps('Shore Scan', 'c_ShoreScan') });
 	computeShoreScanPass.setPipeline(waterShoreScanComputePipeline);
 	computeShoreScanPass.setBindGroup(0, createCompBindGroupShoreScanWater());
 	computeShoreScanPass.dispatchWorkgroups(shoreDispatch, shoreDispatch);
 	computeShoreScanPass.end();
 
-	const computeShoreDistancePass = aEncoder.beginComputePass();
+	const computeShoreDistancePass = aEncoder.beginComputePass({ timestampWrites: profiler.timestamps('Shore Distance', 'c_ShoreDistance') });
 	computeShoreDistancePass.setPipeline(waterShoreDistanceComputePipeline);
 	computeShoreDistancePass.setBindGroup(0, createCompBindGroupShoreDistanceWater());
 	computeShoreDistancePass.dispatchWorkgroups(shoreDispatch, shoreDispatch);
@@ -2135,7 +2137,7 @@ export function waterPass(mainpassDepthTexture) {
 	const tileOffsets = getTileOffsets(settings.camPosX, settings.camPosZ);
 	
 	// Compute pass — builds mesh for each tile
-	const computePass = aEncoder.beginComputePass();
+	const computePass = aEncoder.beginComputePass({ timestampWrites: profiler.timestamps('Mesh Build', 'c_water') });
 	computePass.setPipeline(waterComputePipeline);
 	
 	waterMeshUniformBufferUpdates(1, tileOffsets[0]);	// spaces update, the same for every tile so once is enough
@@ -2171,6 +2173,7 @@ export function waterPass(mainpassDepthTexture) {
 			depthLoadOp: 'load',
 			depthStoreOp: 'store',
 		},
+		timestampWrites: profiler.timestamps('Surface', 'v_water + f_water'),
 	});
 	pass.setPipeline(waterPipeline);
 	pass.setBindGroup(0, createVFBindGroupswater());	// the same for every tile and the horizon plane

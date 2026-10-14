@@ -1,6 +1,8 @@
 import {device} from './deviceSelection.js'
 import {canvas} from './deviceSelection.js'
+import {onRenderResize} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
+import * as profiler from './profiler.js'
 
 import { settings } from './settings.js';
 
@@ -25,13 +27,14 @@ const fxaaUniformBuffer = device.createBuffer({
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 });
 
-// the copy of the frame the shader reads
-const frameCopyTexture = device.createTexture({
+// the copy of the frame the shader reads. At the canvas's size: it and the bind group are made again when that changes (see display.js)
+const makeFrameCopy = () => device.createTexture({
 	label: "fxaa copy of the frame",
 	size: [canvas.width, canvas.height],
 	format: canvasFormat,
 	usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
 });
+let frameCopyTexture = makeFrameCopy();
 
 //linear sampling: reading between two pixels is what does the blending
 const linSampler = device.createSampler({
@@ -58,7 +61,7 @@ const fxaaPipeline = device.createRenderPipeline({
 	},
 });
 
-const fxaaBindGroup = device.createBindGroup({
+const makeBindGroup = () => device.createBindGroup({
 	label: "fxaa bind group",
 	layout: fxaaPipeline.getBindGroupLayout(0),
 	entries: [
@@ -75,6 +78,12 @@ const fxaaBindGroup = device.createBindGroup({
 		resource: linSampler
 	}
 	]
+});
+let fxaaBindGroup = makeBindGroup();
+onRenderResize(() => {
+	frameCopyTexture.destroy();
+	frameCopyTexture = makeFrameCopy();
+	fxaaBindGroup = makeBindGroup();
 });
 
 export function fxaaPass(aEncoder, canvasTexture) {
@@ -94,6 +103,7 @@ export function fxaaPass(aEncoder, canvasTexture) {
 		loadOp: "load",
 		storeOp: "store",
 		}],
+		timestampWrites: profiler.timestamps('FXAA', 'vf_fxaa'),
 	});
 
 	pass.setPipeline(fxaaPipeline);

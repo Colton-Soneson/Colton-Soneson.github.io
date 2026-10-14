@@ -10,6 +10,10 @@ import { FOREST_THRESHOLD, MOUNTAIN_THRESHOLD } from './terrainGenerator.js'
 
 import { v_terrainDepth } from '../shaders/js/vf_terrain.js'
 import { vf_terrain } from '../shaders/js/vf_terrain.js'
+import { vf_terrainBakeMips } from '../shaders/js/vf_terrain.js'
+
+import { filteredSampler, mipLevelsFor } from './textureFiltering.js'
+import * as profiler from './profiler.js'
 
 import * as transformations from './transformations.js'
 import * as scene from './scene.js'
@@ -55,6 +59,10 @@ const ROOT_CHUNKS = 4;				// the biggest chunks, the top of the tree: this many 
 const CHUNKS_KEPT = 640;			// how many chunks are kept before the ones not used for longest are thrown away (about 140KB each on the GPU)
 const BUILD_MILLISECONDS = 5;		// the most time one frame spends making new chunks
 const SEA_FLOOR_DEPTH = 8;			// a chunk that is all at least this far under the sea is never drawn any finer: nobody can see it
+const RELIEF_DEPTH_DISTANCE = 250;	// chunks nearer than this put the relief of the ground into the depth (see terrainPass). By here the pebbles, grains and ripples have faded out anyway
+const BAKE_DISTANCE = 400;			// chunks at least this far off are drawn from their bake, when there is one (see THE BAKE). By here the litter under the trees has faded out too
+const MAX_BAKES = 200;				// the most chunks that keep a bake: about 35MB on the GPU at 128, 140MB at 256. The ones drawn longest ago go first
+const BAKE_TEXELS_PER_FRAME = 128 * 128 * 8;	// how much baking one frame does: 8 chunks at 128, 2 at 256
 
 // every setting the shape of the land depends on. If one of these changes the land is generated again
 function getTerrainParams() {
@@ -79,7 +87,7 @@ function getTerrainParams() {
 export let land;				// the generated terrain, see generateTerrain in terrainGenerator.js for whats in it
 export let terrainFieldsTexture;	// the land as a texture for shaders (the grass), one texel per grid point: height, what covers it (see coverOf in terrainGenerator.js), normal.x, normal.z
 export let terrainWaterTexture;		// what the water needs to know about the land, one texel per grid point: height of the ground, distance to the nearest land, and 1.0 where the water is a lake
-export const terrainStats = { chunks: 0, drawn: 0, triangles: 0, built: 0 };	// kept / in the tree this frame / drawn in the main pass / made this frame, for anyone who wants to show it
+export const terrainStats = { chunks: 0, drawn: 0, triangles: 0, built: 0, nearChunks: 0, bakedChunks: 0, bakes: 0, bakedThisFrame: 0 };	// kept / in the tree this frame / drawn in the main pass / made this frame / drawn with the relief in the depth / drawn from a bake / bakes kept / bakes made this frame, for anyone who wants to show it
 const chunks = new Map();		// every chunk there is, by name (see chunkName)
 let rootChunks = [];			// the top of the tree
 let chosenChunks = [];			// the chunks that make up the land this frame, see chooseChunks
@@ -98,16 +106,79 @@ let generatedParams = "";		// the params the current land was made from
 let pendingParams = "";			// and the ones waiting to be made, see terrainUpdate
 let pendingSince = 0;
 
-// The placeholder buildings, stood back up on the new land. A first use of the tag system: they go on flat grassland next to the starting shore
-function placeBuildings() {
-	const spots = land.findSpawnPoints(ZONE_GRASSLAND, 1, { near: [0, -70], radius: 240, maxSlope: 0.02, seed: 3 });
-	if (spots.length == 0) {
-		return;
-	}
-	const home = spots[0];
+/*
+	The buildings (the lighthouse, the house and the bench), stood back up on every new land: one group of them, as they stand
+	to each other in BUILDING_LAYOUT, on the grass at the top of a beach. The spot is the nearest one to where the camera
+	starts that has:
+		- each of the three on grassland, level, and all three at about the same height
+		- beach a little way off (BEACH_NEAREST to BEACH_FURTHEST from the middle of the group), and no sea that close
+		- no lake, marsh or forest under the group
+	Then the ground round them is kept clear (land.clearings): no trees grow there and no boulders lie there (forestGenerator.js,
+	boulderGenerator.js). And the shadow map's box is moved to them, as they are all there is in it (getLightViewProjectionMat)
+*/
+const BUILDING_LAYOUT = [["Lighthouse", 0, 0], ["IslandHouse", -12, 9], ["Bench", 16, 12]];	//name, then x and z away from the home spot
+const BUILDING_MIDDLE = [2, 6];				// the middle of the group, from the home spot
+const BUILDING_CLEARING = 32;				// the radius kept clear round that middle
+const BEACH_NEAREST = 25, BEACH_FURTHEST = 70;
+const BUILDINGS_FROM = [0, 150];			// where the search starts from: the camera's starting place (settings.js)
 
-	const layout = [["Lighthouse", 0, 0], ["IslandHouse", -12, 9], ["Bench", 16, 12]];	//name, then x and z away from the home spot
-	for (const [name, offsetX, offsetZ] of layout) {
+function findCoastSpot() {
+	const zone = (x, z) => land.zoneAt(x, z);
+	const level = (x, z) => land.normalAt(x, z)[1] > 0.985;
+	const step = Math.max(land.cellSize * 2, 6);
+	const half = settings.terrainWorldSize * 0.5 - 200;
+
+	// every flat piece of grass, nearest first
+	const candidates = [];
+	for (let z = -half; z < half; z += step) {
+		for (let x = -half; x < half; x += step) {
+			if (zone(x, z) == ZONE_GRASSLAND && level(x, z)) {
+				candidates.push([(x - BUILDINGS_FROM[0]) ** 2 + (z - BUILDINGS_FROM[1]) ** 2, x, z]);
+			}
+		}
+	}
+	candidates.sort((a, b) => a[0] - b[0]);
+
+	const angles = 24;
+	for (const [, x, z] of candidates) {
+		const homeHeight = land.heightAt(x, z);
+		const fits = BUILDING_LAYOUT.every(([, dx, dz]) => zone(x + dx, z + dz) == ZONE_GRASSLAND && level(x + dx, z + dz) && Math.abs(land.heightAt(x + dx, z + dz) - homeHeight) < 1.2);
+		if (!fits) continue;
+
+		const mx = x + BUILDING_MIDDLE[0], mz = z + BUILDING_MIDDLE[1];
+		let beach = false, blocked = false;
+		for (let a = 0; a < angles && !blocked; a++) {
+			const ax = Math.cos(a / angles * 2 * Math.PI), az = Math.sin(a / angles * 2 * Math.PI);
+			for (let r = 4; r <= BEACH_FURTHEST && !blocked; r += 4) {
+				const here = zone(mx + ax * r, mz + az * r);
+				if (r < BUILDING_CLEARING && (here == ZONE_LAKE || here == ZONE_MARSH || here == ZONE_FOREST || here == ZONE_MOUNTAIN)) blocked = true;
+				if (r < BEACH_NEAREST && (here == ZONE_BEACH || here == ZONE_OCEAN)) blocked = true;
+				if (here == ZONE_BEACH && r >= BEACH_NEAREST) beach = true;
+			}
+		}
+		if (beach && !blocked) {
+			return { x: x, z: z };
+		}
+	}
+	return null;
+}
+
+function placeBuildings() {
+	let home = findCoastSpot();
+	if (!home) {
+		// no beach on this land with grass behind it: any flat grass near the start will do
+		const spots = land.findSpawnPoints(ZONE_GRASSLAND, 1, { near: BUILDINGS_FROM, radius: 2000, maxSlope: 0.02, seed: 3 });
+		if (spots.length == 0) {
+			land.clearings = [];
+			return;
+		}
+		home = spots[0];
+	}
+	const mx = home.x + BUILDING_MIDDLE[0], mz = home.z + BUILDING_MIDDLE[1];
+	land.clearings = [{ x: mx, z: mz, radius: BUILDING_CLEARING }];
+	settings.shadowMapCenter = [mx, land.heightAt(mx, mz), mz];
+
+	for (const [name, offsetX, offsetZ] of BUILDING_LAYOUT) {
 		const index = scene.entityModels.findIndex((model) => model.name == name);
 		if (index < 0) {
 			continue;
@@ -221,6 +292,7 @@ function buildWantedChunks(milliseconds) {
 		unused.sort((a, b) => a[1].lastUsed - b[1].lastUsed);
 		for (const [name, chunk] of unused.slice(0, chunks.size - CHUNKS_KEPT)) {
 			chunk.vertexBuffer.destroy();
+			destroyBake(chunk);
 			chunks.delete(name);
 		}
 	}
@@ -230,6 +302,7 @@ function buildWantedChunks(milliseconds) {
 function resetChunks() {
 	for (const chunk of chunks.values()) {
 		chunk.vertexBuffer.destroy();
+		destroyBake(chunk);
 	}
 	chunks.clear();
 
@@ -360,10 +433,10 @@ function terrainUniformBufferUpdates() {
 	bufferResult.push(settings.enableAtmosphere ? 1 : 0);
 	bufferResult.push(settings.terrainBankHeight);
 
-	//for the rock: where the land data texture lies, and how big a pixel is (the view is 72 degrees from top to bottom, see projectionMatrix in transformations.js)
+	//for the rock: where the land data texture lies, and how big a pixel is (see pixelSize in transformations.js)
 	bufferResult.push(settings.terrainWorldSize * 0.5);
 	bufferResult.push(land.cellSize);
-	bufferResult.push(2 * Math.tan(Math.PI / 5) / canvas.height);
+	bufferResult.push(transformations.pixelSize());
 	bufferResult.push(settings.terrainRockDetail);
 
 	//for what the ground is made of close up (f_groundTextures.js), and the two numbers of the projection matrix a depth is made from,
@@ -451,7 +524,30 @@ const bindGroupVFLayout = device.createBindGroupLayout({
     texture: {
 		sampleType: 'depth',
 	}
+  },
+  {
+    binding: 8,								//for reading the bakes of the far chunks: anisotropic, at the level the setting asks for
+    visibility: GPUShaderStage.FRAGMENT,
+    sampler: {}
   }
+  ]
+});
+
+// a chunk's bake, for drawing it (see THE BAKE)
+const bindGroupBakedLayout = device.createBindGroupLayout({
+  label: "terrain baked chunk Bind Group Layout",
+  entries: [
+  { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: {} },		// the square it covers
+  { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: {} },		// color
+  { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: {} },		// shape
+  ]
+});
+
+// and for taking one: where the picture is, one slot of the buffer for each chunk baked this frame
+const bindGroupBakeLayout = device.createBindGroupLayout({
+  label: "terrain bake Bind Group Layout",
+  entries: [
+  { binding: 3, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { hasDynamicOffset: true } },
   ]
 });
 
@@ -502,6 +598,10 @@ function createVFBindGroupTerrain() {
 			{
 				binding: 7,
 				resource: scene.heightMapView
+			},
+			{
+				binding: 8,
+				resource: filteredSampler()
 			}
 			]
 		});
@@ -532,27 +632,91 @@ const terrainDepthPipeline = device.createRenderPipeline({
 	},
 });
 
-const terrainPipeline = device.createRenderPipeline({
-  label: "terrain VF pipeline",
-  layout: device.createPipelineLayout({
+// the land near the camera, with the relief in its depth (fragmentMain), and the land further off without (fragmentMainFar)
+// The land is only ever seen from above, so the side of a hill facing away from the camera is never seen: it is left out
+//		(back face culling), which is less for the GPU to set up and, for the near chunks, to shade. Not the skirts: they
+//		hang under the edges both ways round, and have to be seen from whichever side a crack shows them. They are drawn
+//		after the rest with terrainSkirtPipeline (see terrainPass)
+const TERRAIN_CULL = 'back';
+function createTerrainPipeline(label, fragmentEntryPoint, cullMode = TERRAIN_CULL) {
+	return device.createRenderPipeline({
+	  label: label,
+	  layout: terrainVFPipelineLayout,
+		vertex: {
+			module: terrainShaderModule,
+			entryPoint: "vertexMain",
+			buffers: [scene.vertexBufferLayout]		// same 8 floats as every other model: position, 2 spare (uv), normal
+		},
+		fragment: {
+			module: terrainShaderModule,
+			entryPoint: fragmentEntryPoint,
+			targets: [{
+			format: canvasFormat
+			}]
+		},
+		primitive: {
+			topology: 'triangle-list',
+			cullMode: cullMode,
+		},
+		depthStencil: {
+			depthWriteEnabled: true,
+			depthCompare: 'less',
+			format: 'depth24plus',
+		},
+	});
+}
+const terrainVFPipelineLayout = device.createPipelineLayout({
 	label: "terrain VF Pipeline Layout",
 	bindGroupLayouts: [ bindGroupVFLayout ],
-  }),
+});
+const terrainPipeline = createTerrainPipeline("terrain VF pipeline", "fragmentMain");
+const terrainFarPipeline = createTerrainPipeline("terrain VF pipeline, far off", "fragmentMainFar");
+const terrainSkirtPipeline = createTerrainPipeline("terrain VF pipeline, the skirts", "fragmentMainFar", 'none');
+
+// where the skirt starts in the list of triangles of a chunk (see chunkIndices in terrainGenerator.js: the grid comes first)
+const CHUNK_GRID_INDICES = CHUNK_CELLS * CHUNK_CELLS * 6;
+const CHUNK_SKIRT_INDICES = chunkIndexData.length - CHUNK_GRID_INDICES;
+
+/*
+	THE BAKE
+	Far off, a chunk is drawn from a picture of what its ground is made of, taken once from straight above, instead of working
+	the material out again for every pixel of every frame. All the noise of the rock, the veins, the sand and the turf goes into
+	the picture; the light (sun, shadows, sky, moon, fog) is still worked out live from it, so it moves with the time of day.
+
+	The picture is two textures as wide as the Far Land Bake setting says (128 or 256 texels), with their smaller copies:
+		color	rgb: the albedo, a: how much sky light gets to the ground (less in the crevices of bare rock)
+		shape	rg: which way the surface faces (x and z: it always faces up, so y follows), b: how much is snow, a: wet sand
+	The small shapes fade out at the size of a texel instead of a pixel, so the far land is a little softer than if it were
+	worked out live. 256 keeps more of it, at four times the memory.
+
+	A chunk is baked the first time it is drawn far enough off (BAKE_DISTANCE), a few chunks a frame, nearest first. Until
+	then it is drawn the live way. When something the picture depends on changes (a setting of the ground, snow falling,
+	the grass turning to hay) every bake is out of date: each is still drawn until its new one is made.
+
+	Kept in GPU memory only, and only while there is room (MAX_BAKES): the land comes from the seed, so a bake thrown away
+	is made again the same the next time it is needed.
+	It is taken from straight above, so on a face steeper than about 60 degrees the texels are stretched down the slope.
+	(The steeper a chunk, the further off it is still drawn finer, which makes up for most of that)
+*/
+const terrainBakedPipeline = device.createRenderPipeline({
+	label: "terrain VF pipeline, from the bake",
+	layout: device.createPipelineLayout({
+		label: "terrain baked Pipeline Layout",
+		bindGroupLayouts: [ bindGroupVFLayout, bindGroupBakedLayout ],
+	}),
 	vertex: {
 		module: terrainShaderModule,
 		entryPoint: "vertexMain",
-		buffers: [scene.vertexBufferLayout]		// same 8 floats as every other model: position, 2 spare (uv), normal
+		buffers: [scene.vertexBufferLayout]
 	},
 	fragment: {
 		module: terrainShaderModule,
-		entryPoint: "fragmentMain",
-		targets: [{
-		format: canvasFormat
-		}]
+		entryPoint: "fragmentMainBaked",
+		targets: [{ format: canvasFormat }]
 	},
 	primitive: {
 		topology: 'triangle-list',
-		cullMode: 'none',
+		cullMode: TERRAIN_CULL,
 	},
 	depthStencil: {
 		depthWriteEnabled: true,
@@ -560,6 +724,189 @@ const terrainPipeline = device.createRenderPipeline({
 		format: 'depth24plus',
 	},
 });
+
+const BAKE_FORMATS = ['rgba8unorm-srgb', 'rgba8unorm'];	// color (stored as sRGB, for more steps in the darks), shape
+const bakePipeline = device.createRenderPipeline({
+	label: "terrain bake pipeline",
+	layout: device.createPipelineLayout({
+		label: "terrain bake Pipeline Layout",
+		bindGroupLayouts: [ bindGroupVFLayout, bindGroupBakeLayout ],
+	}),
+	vertex: {
+		module: terrainShaderModule,
+		entryPoint: "vertexBake",
+		buffers: [scene.vertexBufferLayout]
+	},
+	fragment: {
+		module: terrainShaderModule,
+		entryPoint: "fragmentBake",
+		targets: BAKE_FORMATS.map((format) => ({ format: format })),
+	},
+	primitive: {
+		topology: 'triangle-list',
+		cullMode: 'none',
+	},
+});
+
+const bakeMipPipeline = device.createRenderPipeline({
+	label: "terrain bake mip pipeline",
+	layout: 'auto',
+	vertex: {
+		module: device.createShaderModule({ label: "vf_terrainBakeMips", code: vf_terrainBakeMips }),
+		entryPoint: "vertexMain",
+	},
+	fragment: {
+		module: device.createShaderModule({ label: "vf_terrainBakeMips", code: vf_terrainBakeMips }),
+		entryPoint: "fragmentMain",
+		targets: BAKE_FORMATS.map((format) => ({ format: format })),
+	},
+	primitive: {
+		topology: 'triangle-list',
+	},
+});
+
+const BAKE_SLOT = 256;			// bytes between the uniforms of two chunks baked in the same frame (the least a dynamic offset can step)
+const bakeSlots = Math.ceil(BAKE_TEXELS_PER_FRAME / (128 * 128));
+const bakeUniformBuffer = device.createBuffer({
+	label: "terrain bake uniforms",
+	size: BAKE_SLOT * bakeSlots,
+	usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+});
+const bakeUniformBindGroup = device.createBindGroup({
+	label: "terrain bake bind group",
+	layout: bindGroupBakeLayout,
+	entries: [{ binding: 3, resource: { buffer: bakeUniformBuffer, size: 16 } }],
+});
+const bakeMipSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
+
+let bakeQueue = [];			// chunks drawn last frame that want a bake, nearest first (see terrainPass)
+let bakeVersion = "";		// everything a bake depends on, as it is now. A bake made under another is out of date
+let bakeSize = 0;			// the size the bakes there are were made at
+let bakeCount = 0;
+
+// what the picture of the ground depends on. The snow and the hay change slowly and go in steps, so the bakes are made again
+//		now and then while they change, not every frame
+function currentBakeVersion() {
+	return JSON.stringify([settings.terrainRockDetail, settings.terrainRockVeins, settings.terrainGroundDetail, settings.terrainBeachHeight,
+		settings.terrainBankHeight, settings.terrainSnowLine, settings.waterWorldPosY, Math.round(weatherNow.snowCover * 25), Math.round(seasonNow.hay * 25)]);
+}
+
+function destroyBake(chunk) {
+	if (!chunk.bake) {
+		return;
+	}
+	chunk.bake.color.destroy();
+	chunk.bake.shape.destroy();
+	chunk.bake.area.destroy();
+	chunk.bake = null;
+	bakeCount--;
+}
+
+// Takes the picture of one chunk (see THE BAKE), into the bake it has or a new one. slot: which of this frame's uniform slots to use
+function bakeChunk(aEncoder, vfBindGroup, chunk, slot) {
+	const size = bakeSize;
+	if (!chunk.bake) {
+		const texture = (format) => device.createTexture({
+			label: "terrain chunk bake",
+			size: [size, size],
+			format: format,
+			mipLevelCount: mipLevelsFor(size, size),
+			usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+		});
+		const color = texture(BAKE_FORMATS[0]), shape = texture(BAKE_FORMATS[1]);
+		const area = device.createBuffer({ label: "terrain chunk bake area", size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+		device.queue.writeBuffer(area, 0, new Float32Array([chunk.x0, chunk.z0, chunk.size, 0]));
+		chunk.bake = {
+			color: color, shape: shape, area: area, version: "", lastDrawn: chunkFrame,
+			bindGroup: device.createBindGroup({
+				label: "terrain baked chunk bind group",
+				layout: bindGroupBakedLayout,
+				entries: [
+					{ binding: 0, resource: { buffer: area } },
+					{ binding: 1, resource: color.createView() },
+					{ binding: 2, resource: shape.createView() },
+				],
+			}),
+		};
+		bakeCount++;
+	}
+	const bake = chunk.bake;
+	const level = (texture, mip) => texture.createView({ baseMipLevel: mip, mipLevelCount: 1 });
+
+	// the picture: the chunk's own square, one texel to size / texels of ground
+	device.queue.writeBuffer(bakeUniformBuffer, slot * BAKE_SLOT, new Float32Array([chunk.x0, chunk.z0, chunk.size, chunk.size / size]));
+	const pass = aEncoder.beginRenderPass({
+		colorAttachments: [bake.color, bake.shape].map((texture) => ({ view: level(texture, 0), loadOp: "clear", clearValue: { r: 0, g: 0, b: 0, a: 0 }, storeOp: "store" })),
+		timestampWrites: profiler.timestamps('Bake', 'vf_terrain fragmentBake'),
+	});
+	pass.setPipeline(bakePipeline);
+	pass.setBindGroup(0, vfBindGroup);
+	pass.setBindGroup(1, bakeUniformBindGroup, [slot * BAKE_SLOT]);
+	pass.setVertexBuffer(0, chunk.vertexBuffer);
+	pass.setIndexBuffer(chunkIndexBuffer, 'uint16');
+	pass.drawIndexed(chunkIndexData.length, 1, 0, 0, 0);
+	pass.end();
+
+	// and its smaller copies, each from the one before
+	const levels = mipLevelsFor(size, size);
+	for (let mip = 1; mip < levels; mip++) {
+		const mipPass = aEncoder.beginRenderPass({
+			colorAttachments: [bake.color, bake.shape].map((texture) => ({ view: level(texture, mip), loadOp: "clear", clearValue: { r: 0, g: 0, b: 0, a: 0 }, storeOp: "store" })),
+			timestampWrites: profiler.timestamps('Smaller Copies', 'vf_terrainBakeMips'),
+		});
+		mipPass.setPipeline(bakeMipPipeline);
+		mipPass.setBindGroup(0, device.createBindGroup({
+			label: "terrain bake mip bind group",
+			layout: bakeMipPipeline.getBindGroupLayout(0),
+			entries: [
+				{ binding: 0, resource: level(bake.color, mip - 1) },
+				{ binding: 1, resource: level(bake.shape, mip - 1) },
+				{ binding: 2, resource: bakeMipSampler },
+			],
+		}));
+		mipPass.draw(3);
+		mipPass.end();
+	}
+	bake.version = bakeVersion;
+}
+
+// Once a frame, after the uniforms are written: bakes the chunks the last frame asked for, as many as the frame allows,
+//		and throws away the bakes drawn longest ago if there are too many
+function bakeWantedChunks() {
+	const size = settings.enableTerrain ? Number(settings.terrainFarBake) || 0 : 0;
+	if (size !== bakeSize) {
+		// another size (or off): every bake there is goes
+		for (const chunk of chunks.values()) destroyBake(chunk);
+		bakeSize = size;
+		bakeQueue = [];
+	}
+	bakeVersion = currentBakeVersion();
+	terrainStats.bakedThisFrame = 0;
+	if (bakeSize == 0 || bakeQueue.length == 0) {
+		terrainStats.bakes = bakeCount;
+		return;
+	}
+
+	const encoder = device.createCommandEncoder({ label: "terrain bake encoder" });
+	const vfBindGroup = createVFBindGroupTerrain();
+	const most = Math.max(1, Math.floor(BAKE_TEXELS_PER_FRAME / (bakeSize * bakeSize)));
+	profiler.section('Terrain Bake', () => {
+		for (const chunk of bakeQueue.slice(0, most)) {
+			if (chunks.get(chunkName(chunk.x0, chunk.z0, chunk.size)) !== chunk) continue;	// (thrown away since it was asked for)
+			bakeChunk(encoder, vfBindGroup, chunk, terrainStats.bakedThisFrame);
+			terrainStats.bakedThisFrame++;
+		}
+	});
+	device.queue.submit([encoder.finish()]);
+	bakeQueue = [];
+
+	if (bakeCount > MAX_BAKES) {
+		const baked = [...chunks.values()].filter((chunk) => chunk.bake && chunk.bake.lastDrawn < chunkFrame - 1);
+		baked.sort((a, b) => a.bake.lastDrawn - b.bake.lastDrawn);
+		for (const chunk of baked.slice(0, bakeCount - MAX_BAKES)) destroyBake(chunk);
+	}
+	terrainStats.bakes = bakeCount;
+}
 
 // Per frame
 //-------------------------------------------------
@@ -583,6 +930,7 @@ export function terrainUpdate() {
 	terrainStats.chunks = chunks.size;
 
 	terrainUniformBufferUpdates();
+	bakeWantedChunks();		//(after the uniforms: the bake reads them)
 }
 
 function drawChunk(pass, chunk) {
@@ -609,21 +957,59 @@ export function terrainHeightMapPass(pass) {
 // inside the main pass
 export function terrainPass(pass) {
 	if (!settings.enableTerrain) return;
-	pass.setPipeline(terrainPipeline);
 	pass.setBindGroup(0, createVFBindGroupTerrain());
 	pass.setIndexBuffer(chunkIndexBuffer, 'uint16');
 
 	// only the chunks the camera can see any of: a chunk is out of view if its whole box is on the outer side of one of the 6 planes
 	//		(tested with the corner of the box that is furthest along the way the plane faces: if even that is outside, all of it is)
 	const planes = transformations.getFrustumPlanes();
-	terrainStats.triangles = 0;
+	const inView = [];
 	for (const chunk of chosenChunks) {
 		const outside = planes.some((plane) =>
 			plane[0] * (plane[0] > 0 ? chunk.x0 + chunk.size : chunk.x0) +
 			plane[1] * (plane[1] > 0 ? chunk.maxY : chunk.minY) +
 			plane[2] * (plane[2] > 0 ? chunk.z0 + chunk.size : chunk.z0) + plane[3] < 0);
 		if (outside) continue;
-		drawChunk(pass, chunk);
-		terrainStats.triangles += chunkIndexData.length / 3;
+		inView.push({ chunk: chunk, distance: distanceToChunk(chunk) });
+	}
+
+	// Nearest first. Then a pixel of land behind a hill fails the depth test before its shader is run, as the hill is already
+	//		in the depth. Only the far pipeline gets that: a shader that writes its own depth (the near one) is always run.
+	//		So the relief goes into the depth only near the camera, where it is big enough on screen to be found in it
+	//		Far off, a chunk with a bake is drawn from it (see THE BAKE), and one without asks for one
+	inView.sort((a, b) => a.distance - b.distance);
+	terrainStats.triangles = 0;
+	terrainStats.nearChunks = 0;
+	terrainStats.bakedChunks = 0;
+	bakeQueue = [];
+	let pipeline = null;
+	for (const { chunk, distance } of inView) {
+		let wanted = distance < RELIEF_DEPTH_DISTANCE ? terrainPipeline : terrainFarPipeline;
+		if (bakeSize > 0 && distance >= BAKE_DISTANCE) {
+			if (!chunk.bake || chunk.bake.version !== bakeVersion) bakeQueue.push(chunk);
+			if (chunk.bake) wanted = terrainBakedPipeline;		// (one out of date is still drawn until its new one is made)
+		}
+		if (wanted !== pipeline) {
+			pipeline = wanted;
+			pass.setPipeline(pipeline);
+		}
+		if (pipeline === terrainPipeline) terrainStats.nearChunks++;
+		if (pipeline === terrainBakedPipeline) {
+			pass.setBindGroup(1, chunk.bake.bindGroup);
+			chunk.bake.lastDrawn = chunkFrame;
+			terrainStats.bakedChunks++;
+		}
+		pass.setVertexBuffer(0, chunk.vertexBuffer);
+		pass.drawIndexed(CHUNK_GRID_INDICES, 1, 0, 0, 0);		// the ground, without its skirt
+		terrainStats.triangles += CHUNK_GRID_INDICES / 3;
+	}
+
+	// and the skirts, both sides, in the same order. After the ground, so that most of them are already hidden behind it.
+	//		Worked out live, even under a baked chunk: there is too little of them showing for it to matter
+	pass.setPipeline(terrainSkirtPipeline);
+	for (const { chunk } of inView) {
+		pass.setVertexBuffer(0, chunk.vertexBuffer);
+		pass.drawIndexed(CHUNK_SKIRT_INDICES, 1, CHUNK_GRID_INDICES, 0, 0);
+		terrainStats.triangles += CHUNK_SKIRT_INDICES / 3;
 	}
 }

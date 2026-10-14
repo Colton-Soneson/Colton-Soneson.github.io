@@ -1,6 +1,7 @@
 import {device} from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
+import * as profiler from './profiler.js'
 
 import { settings } from './settings.js';
 
@@ -277,6 +278,7 @@ export function grassPass(aEncoder, mainpassDepthTexture) {
 			depthLoadOp: 'load',
 			depthStoreOp: 'store',
 		},
+		timestampWrites: profiler.timestamps('Blades', 'vf_grass'),
 	});
 
 	pass.setPipeline(grassPipeline);

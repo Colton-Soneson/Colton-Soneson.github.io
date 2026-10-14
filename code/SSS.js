@@ -1,5 +1,7 @@
 import {device} from './deviceSelection.js'
 import {canvas} from './deviceSelection.js'
+import {onRenderResize} from './deviceSelection.js'
+import * as profiler from './profiler.js'
 
 import { settings } from './settings.js';
 
@@ -22,13 +24,21 @@ const sssShaderModule = device.createShaderModule({
 });
 
 // 1.0 lit, 0.0 shadowed. It is cleared to lit every frame (which is why it can be drawn to), then the compute shader writes the pixels it visits
-export const screenShadowTexture = device.createTexture({
-	label: "screen space shadow",
-	size: [canvas.width, canvas.height],
-	format: 'r32float',
-	usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
-});
-const screenShadowView = screenShadowTexture.createView();
+//		(at the canvas's size, and made again when that changes: see display.js)
+export let screenShadowTexture;
+let screenShadowView;
+function makeScreenShadowTexture() {
+	if (screenShadowTexture) screenShadowTexture.destroy();
+	screenShadowTexture = device.createTexture({
+		label: "screen space shadow",
+		size: [canvas.width, canvas.height],
+		format: 'r32float',
+		usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
+	});
+	screenShadowView = screenShadowTexture.createView();
+}
+makeScreenShadowTexture();
+onRenderResize(makeScreenShadowTexture);
 
 // one block of uniforms for each dispatch (they only differ in where their wavefronts start), picked out with a dynamic offset
 const MAX_DISPATCHES = 8;
@@ -217,6 +227,7 @@ export function screenShadowPass(aEncoder, depthTexture, lightDirection) {
 			clearValue: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
 			storeOp: "store",
 		}],
+		timestampWrites: profiler.timestamps('Shadow Clear', null),
 	});
 	clearPass.end();
 
@@ -262,7 +273,7 @@ export function screenShadowPass(aEncoder, depthTexture, lightDirection) {
 		],
 	});
 
-	const computePass = aEncoder.beginComputePass();
+	const computePass = aEncoder.beginComputePass({ timestampWrites: profiler.timestamps('Screen Shadows', 'c_SSS') });
 	computePass.setPipeline(sssPipeline);
 	list.dispatches.slice(0, MAX_DISPATCHES).forEach((disp, i) => {
 		computePass.setBindGroup(0, bindGroup, [i * DISPATCH_STRIDE]);

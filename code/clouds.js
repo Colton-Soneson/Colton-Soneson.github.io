@@ -1,7 +1,9 @@
 import {device} from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvas} from './deviceSelection.js'
+import {onRenderResize} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
+import * as profiler from './profiler.js'
 
 import { settings } from './settings.js';
 
@@ -194,16 +196,24 @@ export const cloudCoverageTexture = device.createTexture({
 });
 export const cloudCoverageView = cloudCoverageTexture.createView();
 
-const halfSize = [Math.max(Math.ceil(canvas.width / 2), 1), Math.max(Math.ceil(canvas.height / 2), 1)];
-// the march. rgb: the light the clouds send to the eye, a: how much of what is behind them shows through
-const cloudTexture = device.createTexture({
-	label: "cloud march",
-	size: halfSize,
-	format: 'rgba16float',
-	usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-});
-const cloudView = cloudTexture.createView();
-export const cloudMarchView = cloudView;	// for the shafts of light, which need to know where the sky is open (lightShafts.js)
+// the march. rgb: the light the clouds send to the eye, a: how much of what is behind them shows through. At half the canvas's size,
+//		and made again when that changes (see display.js)
+let halfSize, cloudTexture, cloudView;
+export let cloudMarchView;	// for the shafts of light, which need to know where the sky is open (lightShafts.js)
+function makeCloudTexture() {
+	if (cloudTexture) cloudTexture.destroy();
+	halfSize = [Math.max(Math.ceil(canvas.width / 2), 1), Math.max(Math.ceil(canvas.height / 2), 1)];
+	cloudTexture = device.createTexture({
+		label: "cloud march",
+		size: halfSize,
+		format: 'rgba16float',
+		usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+	});
+	cloudView = cloudTexture.createView();
+	cloudMarchView = cloudView;
+}
+makeCloudTexture();
+onRenderResize(makeCloudTexture);
 
 const cloudUniformBuffer = device.createBuffer({
   label: "cloud Uniform",
@@ -511,12 +521,13 @@ export function cloudUpdate(aEncoder) {
 				clearValue: { r: 1.0, g: 0.0, b: 0.0, a: 1.0 },
 				storeOp: "store",
 			}],
+			timestampWrites: profiler.timestamps('Clear (clouds off)', null),
 		});
 		clearPass.end();
 		return;
 	}
 
-	const computePass = aEncoder.beginComputePass();
+	const computePass = aEncoder.beginComputePass({ timestampWrites: profiler.timestamps('Coverage', 'c_cloudCoverage') });
 	computePass.setPipeline(coveragePipeline);
 	computePass.setBindGroup(0, device.createBindGroup({
 		label: "cloud coverage bind group",
@@ -547,6 +558,7 @@ export function cloudPass(mainpassDepthTexture) {
 			clearValue: { r: 0.0, g: 0.0, b: 0.0, a: 1.0 },
 			storeOp: "store",
 		}],
+		timestampWrites: profiler.timestamps('March', 'vf_cloudMarch'),
 	});
 	marchPass.setPipeline(marchPipeline);
 	marchPass.setBindGroup(0, device.createBindGroup({
@@ -568,6 +580,7 @@ export function cloudPass(mainpassDepthTexture) {
 			loadOp: "load",
 			storeOp: "store",
 		}],
+		timestampWrites: profiler.timestamps('Over the Frame', 'vf_cloudComposite'),
 	});
 	compositePass.setPipeline(compositePipeline);
 	compositePass.setBindGroup(0, device.createBindGroup({

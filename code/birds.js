@@ -1,6 +1,7 @@
 import {device} from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
+import * as profiler from './profiler.js'
 
 import { settings } from './settings.js';
 
@@ -495,6 +496,7 @@ export function birdPass(aEncoder, mainpassDepthTexture) {
 			depthLoadOp: 'load',
 			depthStoreOp: 'store',
 		},
+		timestampWrites: profiler.timestamps('Hawks', 'vf_birds'),
 	});
 	pass.setPipeline(birdPipeline);
 	pass.setBindGroup(0, device.createBindGroup({

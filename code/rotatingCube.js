@@ -2,6 +2,8 @@ import {device} from './deviceSelection.js'
 import {canvas} from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
+import {onRenderResize, setRenderSize} from './deviceSelection.js'
+import {settledRenderSize, dynamicResolution} from './display.js'
 
 import { mat4, vec3 } from 'https://wgpu-matrix.org/dist/3.x/wgpu-matrix.module.js';
 
@@ -38,6 +40,7 @@ import * as birds from './birds.js'
 import * as cameraControls from './cameraControls.js'
 import { settings } from './settings.js';
 import * as userInterface from './imguiLoader.js';
+import * as profiler from './profiler.js';
 
 import { vf_p_generic3D } from '../shaders/js/vf_p_generic.js'
 
@@ -96,8 +99,8 @@ code: vf_p_generic3D
 
 //-------------------UBO--------------------------------
 const uboOffset = 256;	//this is a defaulted max for UBO, nothing I wrote equals up to 256, its a limiter
-const singleObjectUniformArraySpacesSize = 192; //(4 * 4 * 4) + (4 * 4 * 4) + (4 x 4 x 4) 4x4 matrix for MVP + iMV + normal
-const totalUniformArraySpacesSize = (uboOffset * (scene.entityModels.length - 1)) + (singleObjectUniformArraySpacesSize * (scene.entityModels.length));	// !!!!! Check this !!!!!
+const singleObjectUniformArraySpacesSize = 208; //(4 * 4 * 4) + (4 * 4 * 4) + (4 x 4 x 4) 4x4 matrix for MVP + iMV + normal, then a vec4 for the haze (see SpacesUniforms in vf_p_generic.js)
+const totalUniformArraySpacesSize = uboOffset * scene.entityModels.length;	//one 256 byte slot for every model
 const uniformBufferSpaces = device.createBuffer({
   label: "3D Space Transformations Uniform Buffer",
   size: totalUniformArraySpacesSize,
@@ -112,10 +115,16 @@ export const uniformBufferLights = device.createBuffer({
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,	//this makes it another GPUBuffer Object but this time uniform
 });
 
-const depthTexture = device.createTexture({
+// (made again when the size the frame is drawn at changes, see display.js)
+const makeDepthTexture = () => device.createTexture({
   size: [canvas.width, canvas.height],
   format: 'depth24plus',
   usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,	//read back by the screen space effects, and copied for the water's reflections
+});
+let depthTexture = makeDepthTexture();
+onRenderResize(() => {
+	depthTexture.destroy();
+	depthTexture = makeDepthTexture();
 });
 
 //GPUBindGroup, bind groups connect uniform in the shader
@@ -172,8 +181,20 @@ const bindGroupLayout = device.createBindGroupLayout({
 		type: 'comparison',		//check if this needs to be chagned
 	},
 	//resource: { type: 'sampler' }
+  },
+  {
+    binding: 6,		//the sky view LUT: the haze the models fade into far off is the color of the sky on the horizon (see vf_p_generic.js)
+    visibility: GPUShaderStage.FRAGMENT,
+    texture: {},
+  },
+  {
+    binding: 7,
+    visibility: GPUShaderStage.FRAGMENT,
+    sampler: {},
   }]
 });
+
+const skySampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
 
 //multi bind group
 function createGenericBindGroups(numModels){
@@ -210,6 +231,14 @@ function createGenericBindGroups(numModels){
 				{
 				binding: 5,
 				resource: shadowMapping.shadowMapSampler
+				},
+				{
+				binding: 6,
+				resource: atmosphere.skyViewLUTtexture.createView()
+				},
+				{
+				binding: 7,
+				resource: skySampler
 				}],
 			}));
 			
@@ -276,8 +305,10 @@ function genericUniformBufferUpdates(models) {
 								spaceTrans.buffer,
 								spaceTrans.byteOffset,
 								spaceTrans.byteLength);
+		// and the haze, after the three matrices: how far off it is about two thirds over the color, and whether the atmosphere is on
+		device.queue.writeBuffer(uniformBufferSpaces, i * uboOffset + 192, new Float32Array([settings.waterHorizonFogDistance, settings.enableAtmosphere ? 1 : 0, 0, 0]));
 	}
-	
+
 	const lights = getLightsInfo();
 	device.queue.writeBuffer(uniformBufferLights, 
 								0, 
@@ -296,11 +327,18 @@ function updateSkyboxPosition(skyboxEntity)
 
 // Move all of our rendering code into a function
 export function updateRotatingCubePass() {
-	
+
+	profiler.beginFrame();		//the Performance window: every pass from here to endFrame is timed while it is on
 	const encoder = device.createCommandEncoder();
 	
 	// ImGUI setting updates
 	userInterface.refreshControlsUI();
+
+	// the window, the Resolution setting or dynamic resolution changed size: before anything is drawn, everything drawn at the canvas's size is made again (see display.js)
+	const newSize = settledRenderSize(canvas, settings.renderResolution * dynamicResolution.scale, performance.now());
+	if (newSize) {
+		setRenderSize(newSize[0], newSize[1]);
+	}
 
 	// fly camera: after the controls have written their values (so the Pos sliders still work), before anything reads the camera
 	cameraControls.updateCamera();
@@ -320,7 +358,7 @@ export function updateRotatingCubePass() {
 	particles.particleUpdate();		//what the leaves, the spray and the rain all need to know this frame
 	birds.birdUpdate();				//the hawks fly on
 	lightning.lightningUpdate();	//a strike that is going on flickers and dies, and now and then a new one starts
-	clouds.cloudUpdate(encoder);	//the weather moves on, and the picture of the clouds from above is taken: their shadows are read from it all through the frame
+	profiler.section('Cloud Map', () => clouds.cloudUpdate(encoder));	//the weather moves on, and the picture of the clouds from above is taken: their shadows are read from it all through the frame
 
 	genericUniformBufferUpdates(scene.entityModels);
 	if (bindGroupsFiltering !== textureFiltering.filteringLevel()) {
@@ -342,6 +380,7 @@ export function updateRotatingCubePass() {
 			depthLoadOp: 'clear',
 			depthClearValue: 1.0,
 		},
+		timestampWrites: profiler.section('Shadow Map', () => profiler.timestamps('Scene Models', 'v_shadowMapDepth')),
 	});
 	
 	shadowPass.setPipeline(shadowMapping.shadowMapPipeline);
@@ -365,7 +404,8 @@ export function updateRotatingCubePass() {
 	//update the heightmap
 	scene.heightMapUniformBufferUpdates(scene.entityModels);
 	
-	const heightPass = encoder.beginRenderPass({
+	//(while the Performance window is timing, the models and the land get a pass each: see renderPassParts in profiler.js)
+	const heightPassParts = profiler.section('Height Map', () => profiler.renderPassParts(encoder, {
 		colorAttachments: [],
 		depthStencilAttachment: {
 			view: scene.heightMapView,
@@ -373,8 +413,9 @@ export function updateRotatingCubePass() {
 			depthLoadOp: 'clear',
 			depthClearValue: 1.0,
 		},
-	});
-	
+	}));
+
+	let heightPass = heightPassParts.next('Scene Models', 'v_heightMapDepth');
 	heightPass.setPipeline(scene.heightMapPipeline);
 	
 	heightPass.setVertexBuffer(0, scene.vertexBuffer);
@@ -388,13 +429,14 @@ export function updateRotatingCubePass() {
 	}
 	prevModCombo = 0;
 	
+	heightPass = heightPassParts.next('Terrain', 'v_terrainDepth');
 	terrain.terrainHeightMapPass(heightPass);	//this is how the water gets to know where the land and the sea bed are
 
-	heightPass.end();
-	
-	
+	heightPassParts.end();
+
+
 	//-------------MAIN PASS------------------
-	const pass = encoder.beginRenderPass({
+	const mainPassParts = profiler.section('Main Pass', () => profiler.renderPassParts(encoder, {
 		colorAttachments: [{
 		view: context.getCurrentTexture().createView(),
 		loadOp: "clear",
@@ -403,13 +445,14 @@ export function updateRotatingCubePass() {
 		}],
 		depthStencilAttachment: {
 			view: depthTexture.createView(),
-		
+
 			depthClearValue: 1.0,
 			depthLoadOp: 'clear',
 			depthStoreOp: 'store',
 		},
-	});
+	}));
 
+	let pass = mainPassParts.next('Scene Models', 'vf_p_generic3D');
 	pass.setPipeline(genericPipeline);			// shaders used, layout of vertex data, other relevant state data
 	
 	//generic shader pass
@@ -425,63 +468,67 @@ export function updateRotatingCubePass() {
 	}
 	prevModCombo = 0;
 
+	pass = mainPassParts.next('Terrain', 'vf_terrain');
 	terrain.terrainPass(pass);
+	pass = mainPassParts.next('Boulders', 'vf_boulders');
 	boulders.boulderPass(pass);
 
-	pass.end();
-	
+	mainPassParts.end();
+
 	//post effect section
 	//(the screen space effects run further down, once the grass and the trees are in the frame as well)
-	
+
 	if(settings.enableGrass)
 	{
-		grassPass(encoder, depthTexture);
+		profiler.section('Grass', () => grassPass(encoder, depthTexture));
 	}
 
 	if(settings.enableForest)
 	{
-		forestPass(encoder, depthTexture);
+		profiler.section('Forest', () => forestPass(encoder, depthTexture));
 	}
 
 	//leaves blowing off the trees: solid, so they go in with the rest and get shaded with it
-	particles.leafPass(encoder, depthTexture);
+	profiler.section('Leaves', () => particles.leafPass(encoder, depthTexture));
 
 	//and the hawks
-	birds.birdPass(encoder, depthTexture);
+	profiler.section('Birds', () => birds.birdPass(encoder, depthTexture));
 
 	//screen space shadows and ambient occlusion over everything solid, and the copies of the frame the water finds its reflections in.
 	//		Before the water and the sky are drawn
-	screenEffectsPass(encoder, context.getCurrentTexture(), depthTexture);
-	
+	profiler.section('Screen Space', () => screenEffectsPass(encoder, context.getCurrentTexture(), depthTexture));
+
 	device.queue.submit([encoder.finish()]);
-	
+
 	if(settings.enableWater)
 	{
-		waterPass(depthTexture);
+		profiler.section('Water', () => waterPass(depthTexture));
 	}
-	
+
 	if(settings.enableAtmosphere)
 	{
-		atmospherePass(depthTexture);
+		profiler.section('Atmosphere', () => atmospherePass(depthTexture));
 	}
 
 	//the clouds go over everything, the sky included
-	clouds.cloudPass(depthTexture);
+	profiler.section('Clouds', () => clouds.cloudPass(depthTexture));
 
 	//a bolt of lightning, if there is one at this moment
-	lightning.lightningPass(depthTexture);
+	profiler.section('Lightning', () => lightning.lightningPass(depthTexture));
 
 	//the shafts of sun between the clouds, the flash of the lightning, and with the camera under the sea, the water it is looking through
-	lightShafts.lightShaftPass(context.getCurrentTexture(), depthTexture);
+	profiler.section('Light Shafts', () => lightShafts.lightShaftPass(context.getCurrentTexture(), depthTexture));
 
 	//spray off the waves and rain: see-through, so last, over everything that is behind them
-	particles.weatherParticlePass(depthTexture);
-	
+	profiler.section('Spray, Rain and Snow', () => particles.weatherParticlePass(depthTexture));
+
 	const encoderDebug = device.createCommandEncoder();
 
 	//anti-aliasing over the finished frame: whichever of the two the setting names. The debug views go on after it, and are left as they are
-	fxaaPass(encoderDebug, context.getCurrentTexture());
-	smaaPass(encoderDebug, context.getCurrentTexture());
+	profiler.section('Anti-Aliasing', () => {
+		fxaaPass(encoderDebug, context.getCurrentTexture());
+		smaaPass(encoderDebug, context.getCurrentTexture());
+	});
 
 	if(settings.displayHeightMap)
 	{
@@ -551,4 +598,8 @@ export function updateRotatingCubePass() {
 	}
 
 	device.queue.submit([encoderDebug.finish()]);
+
+	profiler.endFrame();	//after the last submit: the times are copied out, and come back to the window a frame or two later
+	userInterface.refreshPerformanceWindow();
+	userInterface.updateGraphicsPresets();	//the frame rate check that picks the graphics preset (see graphicsPresets.js)
 }

@@ -1,6 +1,8 @@
 import {device} from './deviceSelection.js'
 import {canvas} from './deviceSelection.js'
+import {onRenderResize} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
+import * as profiler from './profiler.js'
 
 import { settings } from './settings.js';
 
@@ -42,13 +44,20 @@ const causticUniformBuffer = device.createBuffer({
 });
 
 // the copy of the frame the shader reads
-const frameCopyTexture = device.createTexture({
-	label: "light shaft copy of the frame",
-	size: [canvas.width, canvas.height],
-	format: canvasFormat,
-	usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
-});
-const frameCopyView = frameCopyTexture.createView();
+//		(at the canvas's size, and made again when that changes: see display.js)
+let frameCopyTexture, frameCopyView;
+function makeFrameCopy() {
+	if (frameCopyTexture) frameCopyTexture.destroy();
+	frameCopyTexture = device.createTexture({
+		label: "light shaft copy of the frame",
+		size: [canvas.width, canvas.height],
+		format: canvasFormat,
+		usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+	});
+	frameCopyView = frameCopyTexture.createView();
+}
+makeFrameCopy();
+onRenderResize(makeFrameCopy);
 
 // how sharply the water's surface curves, over one tile of waves (see vf_causticMap)
 const causticTexture = device.createTexture({
@@ -157,6 +166,7 @@ export function lightShaftPass(canvasTexture, mainpassDepthTexture) {
 				clearValue: { r: 0, g: 0, b: 0, a: 1 },
 				storeOp: "store",
 			}],
+			timestampWrites: profiler.timestamps('Caustic Map', 'vf_causticMap'),
 		});
 		causticPass.setPipeline(causticPipeline);
 		causticPass.setBindGroup(0, device.createBindGroup({
@@ -180,6 +190,7 @@ export function lightShaftPass(canvasTexture, mainpassDepthTexture) {
 			loadOp: "load",
 			storeOp: "store",
 		}],
+		timestampWrites: profiler.timestamps('Shafts', 'vf_lightShafts'),
 	});
 	pass.setPipeline(shaftPipeline);
 	pass.setBindGroup(0, device.createBindGroup({

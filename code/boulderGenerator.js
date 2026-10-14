@@ -120,6 +120,10 @@ export function placeBoulders(land, params) {
 	const boulders = [];
 
 	const add = (x, z, size, tall) => {
+		// not on the ground kept clear round the buildings (placeBuildings in terrain.js)
+		for (const clearing of land.clearings ?? []) {
+			if ((x - clearing.x) ** 2 + (z - clearing.z) ** 2 < (clearing.radius + size) ** 2) return;
+		}
 		const squash = [0.8 + 0.5 * random(), (0.6 + 0.5 * random()) * tall, 0.8 + 0.5 * random()];
 		// sunk in a little: nothing that has lain on a hillside for a few thousand years is still sitting on top of it.
 		//		And further on a slope, by about what the ground falls away across the width of it, or its downhill side would hang in the air

@@ -37,6 +37,7 @@ export const settings = {
     shadowMapSize: 2048,
 	shadowMapPCFKernelSize: 1,
 	shadowMapAcneBias: 0.005,
+	shadowMapCenter: [0.0, 0.0, 0.0],	//where the shadow map's box is centered: on the buildings, wherever the land generation put them (placeBuildings in terrain.js). Read only
 	//-----------------POST EFFECTS----------------
 	enablePostEffects: true,			//everything in this block: effects worked out from the finished frame instead of the scene. See screenEffects.js
 	enableScreenShadows: true,			//the sun's shadows, found in the frame's own depth (Bend Studio's method from Days Gone, see c_SSS.js)
@@ -51,6 +52,9 @@ export const settings = {
 	ssrDistance: 1500.0,				//water further from the camera than this only reflects the sky
 	displayScreenShading: false,		//shows the shadows and the ambient occlusion on their own
 	//-------------------DISPLAY-------------------
+	renderResolution: 1080,				//how many pixels the picture is drawn with across the short side of the window: 2160 (4K), 1440, 1080, 900, 720, 540 or 480. The canvas fills the page whatever this is, see display.js
+	dynamicResolution: false,			//draw at less than renderResolution while the frame rate is under the target, back up when there is room (see DYNAMIC RESOLUTION in display.js). On in the Low and Very Low presets
+	dynamicResolutionTarget: 30,		//the frame rate dynamic resolution keeps to, 0 to 60
 	antiAliasing: "smaa",				//smooths the stair steps along edges, working from the finished frame. "smaa" (see vf_smaa.js), "fxaa" (vf_fxaa.js) or "off"
 	smaaEdgeThreshold: 0.1,				//SMAA: how much the brightness has to change between two pixels to count as an edge. Lower finds fainter edges and costs more
 	fxaaSubpixel: 0.75,					//FXAA: how much anything smaller than a pixel (a far blade of grass) is softened into what is round it. 0 = edges only
@@ -60,8 +64,9 @@ export const settings = {
 	enableTerrain: true,
 	terrainSeed: 11,					//which world. The same seed always makes the same islands
 	terrainWorldSize: 8192.0,			//width of the square of world that gets land, centered on the origin
-	terrainResolution: 4096,			//how fine the mesh is next to the camera: what the world would be across at that fineness. 1024 (1k), 2048, 4096 or 8192 (8k, a vertex every 1 unit)
-	terrainDetailDistance: 2.0,			//how far the fine mesh reaches: a chunk of land is drawn at half the fineness once it is this many times its own width away
+	terrainResolution: 4096,			//how fine the mesh is next to the camera: what the world would be across at that fineness. 256, 512, 1024 (1k), 2048, 4096 or 8192 (8k, a vertex every 1 unit). (Only these: the chunks halve in size, so anything in between draws the same as the next one down. At 256 they never halve at all, a vertex every 32 units)
+	terrainFarBake: 128,				//how far off land is drawn: from a picture of each chunk this many texels wide, taken once (0 = worked out live). 256 is sharper and takes four times the memory, see THE BAKE in terrain.js
+	terrainDetailDistance: 1.25,		//how far the fine mesh reaches: a chunk of land is drawn at half the fineness once it is this many times its own width away. (2.0 drew more triangles than there are pixels, and the GPU shades pixels in 2x2 blocks, so much of that shading was wasted: 1.25 looks the same and the terrain pass takes about a fifth less)
 	terrainLandScale: 4200.0,			//size of the biggest shapes in the coastline. Bigger = fewer and larger land masses
 	terrainSeaFloorDepth: 160.0,		//how deep the drop-off at the edge of the shallows goes, before the sea bed settles to its steady grade
 	terrainSeaBedGrade: 0.42,			//how steeply the sea bed keeps going down from the drop-off out to the edge of the land: 0.42 is 42 down for every 100 out. 0 = a flat sea floor
@@ -113,6 +118,7 @@ export const settings = {
 	forestTreeCount: 0,					//trees standing, living and dead. Read only
 	forestDetailDistance: 60.0,			//closer than this a full grown tree is drawn in full: every branch, every piece of foliage
 	forestMidDistance: 180.0,			//and closer than this with its thicker branches and half its foliage. Smaller trees drop detail sooner
+	forestThinnedRings: 2,				//0 to 2: rings between the mid distance and the billboards where the trees are drawn thinned, fewer and bigger pieces of foliage on coarser wood (see the levels of detail at the top of forest.js)
 	forestBillboardDistance: 420.0,		//further off than this a tree is a billboard: 2 flat cards with its picture on
 	forestDrawDistance: 5000.0,			//how far off trees are drawn at all
 	forestWindStrength: 1.0,			//how far the wind bends the trees

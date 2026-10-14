@@ -2,6 +2,7 @@ import {device} from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvas} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
+import * as profiler from './profiler.js'
 
 import { mat4, vec3 } from 'https://wgpu-matrix.org/dist/3.x/wgpu-matrix.module.js';
 
@@ -316,7 +317,7 @@ export function atmospherePass(mainpassDepthTexture)
     // Only needs to run once, or when atmosphere constants change.
     // Pull it out of the frame loop once it's working.
     if (settings.atmosphereNeedsTransmittanceRebuild) {
-        const transmitPass = encoder.beginComputePass({ label: 'transmittance LUT pass' });
+        const transmitPass = encoder.beginComputePass({ label: 'transmittance LUT pass', timestampWrites: profiler.timestamps('Transmittance LUT', 'c_transmittance_LUT') });
         transmitPass.setPipeline(transmittancePipeline);
         transmitPass.setBindGroup(0, transmittanceBindGroup);
         transmitPass.dispatchWorkgroups(
@@ -329,7 +330,7 @@ export function atmospherePass(mainpassDepthTexture)
     }
 
     // Rebuild whenever sun direction changes.
-    const skyViewPass = encoder.beginComputePass({ label: 'sky View pass' });
+    const skyViewPass = encoder.beginComputePass({ label: 'sky View pass', timestampWrites: profiler.timestamps('Sky View LUT', 'c_skyView_LUT') });
     skyViewPass.setPipeline(skyViewPipeline);
     skyViewPass.setBindGroup(0, skyViewBindGroup);
     skyViewPass.dispatchWorkgroups(
@@ -353,6 +354,7 @@ export function atmospherePass(mainpassDepthTexture)
 			depthLoadOp:  'load',
 			depthStoreOp: 'store',
 		},
+		timestampWrites: profiler.timestamps('Sky', 'v_sky + f_sky'),
 	});
     renderPass.setPipeline(skyRenderPipeline);
     renderPass.setBindGroup(0, skyVFBindGroup);

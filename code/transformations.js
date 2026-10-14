@@ -2,12 +2,28 @@ import { mat4, vec3 } from 'https://wgpu-matrix.org/dist/3.x/wgpu-matrix.module.
 
 import {canvas} from './deviceSelection.js'
 import {context} from './deviceSelection.js'
+import {onRenderResize} from './deviceSelection.js'
 
 import * as renderMath from './renderMath.js'
 import { settings } from './settings.js';
 
-const aspect = canvas.width / canvas.height;
-export const projectionMatrix = mat4.perspective((2 * Math.PI) / 5, aspect, settings.camNearPlane, settings.camFarPlane);
+// The view is 72 degrees from top to bottom, and as wide as the canvas's shape makes it. On a screen taller than it is wide (a phone
+//		held upright) that would leave only a narrow slice of the world across it, so there it is 72 degrees from side to side
+//		instead, and as tall as that makes it. Made again when the window changes shape (see display.js)
+const VIEW_ANGLE = (2 * Math.PI) / 5;
+export let verticalViewAngle = VIEW_ANGLE;
+function makeProjection() {
+	const aspect = canvas.width / canvas.height;
+	verticalViewAngle = aspect >= 1 ? VIEW_ANGLE : 2 * Math.atan(Math.tan(VIEW_ANGLE / 2) / aspect);
+	return mat4.perspective(verticalViewAngle, aspect, settings.camNearPlane, settings.camFarPlane);
+}
+export let projectionMatrix = makeProjection();
+onRenderResize(() => { projectionMatrix = makeProjection(); });
+
+// how big one pixel is, as distance across per distance away from the camera (for the shaders that fade detail out at pixel size)
+export function pixelSize() {
+	return 2 * Math.tan(verticalViewAngle / 2) / canvas.height;
+}
 
 // Fly camera direction. Yaw is the compass turn (0 looks down -z, a positive turn swings right, towards +x),
 //		pitch is the tilt above (+) or below (-) level. Both in radians
@@ -102,8 +118,11 @@ export function getLightViewProjectionMat() {
 		upDir = [0,0,1];
     }
 	
-	const lightViewMatrix = mat4.lookAt([settings.sunPosX, settings.sunPosY, settings.sunPosZ], 
-								[0,0,0], 	//this is origin, not sure how to do this for omnidirectional lights
+	// looking from the sun's side at the buildings (settings.shadowMapCenter, set where terrain.js puts them): they are all the
+	//		shadow map has in it, so its box goes where they are
+	const center = settings.shadowMapCenter;
+	const lightViewMatrix = mat4.lookAt([center[0] + settings.sunPosX, center[1] + settings.sunPosY, center[2] + settings.sunPosZ],
+								center,
 								upDir);
 	
 	//this is an orthographic projection

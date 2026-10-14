@@ -1,6 +1,7 @@
 import {device} from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
+import * as profiler from './profiler.js'
 
 import { settings } from './settings.js';
 
@@ -54,7 +55,10 @@ import {uniformBufferLights} from './rotatingCube.js'
 		0	every branch and every piece of foliage, the wood finely tessellated
 		1	the thicker branches, half the foliage (drawn bigger to cover the same), coarse tubes
 		2	the trunk and limbs as a few flat sided tubes, a fifth of the foliage
-		3	a billboard: 2 flat cards with a picture of the tree on them
+		3	thinned: the same wood on fewer rings, a twelfth of the foliage in big pieces
+		4	thinned further: the trunk and main limbs only, a thirtieth of the foliage. The step before the billboard
+		5	a billboard: 2 flat cards with a picture of the tree on them
+	3 and 4 are the thinned rings (forestThinnedRings): with fewer of them, the last one used runs on to the billboard distance.
 	A level's parts are always the first so many of the level before it, so one turns into the next smoothly: over the last
 	stretch of its distance the parts about to be left out shrink away (see towardsNextLevel in vf_forest.js).
 	A billboard is nothing like a mesh though, so that swap is a dissolve: pixel by pixel the one is drawn less and the other more.
@@ -72,7 +76,8 @@ import {uniformBufferLights} from './rotatingCube.js'
 */
 
 const VARIANTS = 3;			// different shapes of each species
-const LEVELS = 3;			// levels of detail that are meshes. The billboards come after them
+const LEVELS = 5;			// levels of detail that are meshes. The billboards come after them
+const THINNED_LEVELS = 2;	// the last of them, which are only used as far as forestThinnedRings says
 
 // A tree is drawn from the parts list of the STAGE of life it is in: only the parts that exist at some time during that stage.
 //		A sapling is a handful of parts, and there is no point running the vertex shader over the thousands it will have one day.
@@ -90,9 +95,11 @@ const TESSELLATION = [
 	{ thick: [12, 6], thin: [5, 3] },
 	{ thick: [6, 3],  thin: [4, 1] },
 	{ thick: [4, 2],  thin: null },
+	{ thick: [4, 1],  thin: null },
+	{ thick: [3, 1],  thin: null },
 ];
 // and for the foliage: the share of the pieces that is drawn, and how much bigger each one is drawn to make up for the rest
-const FOLIAGE_DETAIL = [[1.0, 1.0], [0.5, 1.4], [0.2, 2.1]];
+const FOLIAGE_DETAIL = [[1.0, 1.0], [0.5, 1.4], [0.2, 2.1], [0.08, 3.2], [0.035, 4.8]];
 
 const FADE_BAND = 0.25;				// the last part of a level's distance, over which it turns into the next (see towardsNextLevel in vf_forest.js)
 const REFERENCE_HEIGHT = 22;		// metres. The level of detail distances are for a tree this tall, smaller trees drop detail sooner
@@ -119,7 +126,7 @@ const SETTLE_YEARS = 12;			// the forest lives this long before it is first show
 const REBASE_YEARS = 2000;			// see rebaseClock
 
 const TREE_FLOATS = 16;				// see the Tree struct in vf_forest.js
-const MAX_DRAWS = 512;
+const MAX_DRAWS = 1024;		// (5 levels of detail x 4 stages x every archetype, up to 3 draw calls each: rarely more than a few hundred are in view)
 const DRAW_STRIDE = 256;			// bytes between one draw call's uniforms and the next (uniform buffer offsets have to be multiples of 256)
 
 //time, for the wind
@@ -159,7 +166,7 @@ let yearsPerSecond = 0;				// how fast the clock has been running lately
 let lastAdvance = performance.now();
 let treeData = new Float32Array(0);	// every tree's GPU record, kept here too so one can be changed and sent on its own
 let changedTrees = [];				// the trees whose record has to be sent again this frame
-export const forestStats = { trees: 0, drawn: [0, 0, 0, 0], drawCalls: 0, triangles: 0 };	// what the last frame drew (trees per level of detail, billboards last), for anyone who wants to show it
+export const forestStats = { trees: 0, drawn: new Array(LEVELS + 1).fill(0), drawCalls: 0, triangles: 0 };	// what the last frame drew (trees per level of detail, billboards last), for anyone who wants to show it
 let cells = [];						// the squares of ground with trees in them, for skipping whole squares that are out of view
 let cellsByKey = new Map();
 
@@ -231,6 +238,7 @@ function sectionRadiusAt(sections, i, age, fullGrownAge, twig) {
 	stage, thickest first. So for every stage there is:
 		sectionStart, foliageStart		where its parts start in the two big buffers
 		thick							how many of its sections count as thick wood (they get the fine tessellation)
+		thickAt[level]					how many of the thick ones that level draws (all of them, but for the last level: the trunk and main limbs)
 		sections[level]					how many sections that level of detail draws (always the first so many: the thickest)
 		foliage[level]					and how many pieces of foliage
 */
@@ -262,11 +270,13 @@ function buildArchetypes() {
 				const thickest = picked.length > 0 ? picked[0][1] : 0;
 				const countAbove = (radius) => picked.filter((section) => section[1] >= radius).length;
 				const thick = countAbove(thickest * 0.22);
+				const limbs = Math.min(Math.max(countAbove(thickest * 0.5), 1), thick);	// the trunk and main limbs
 
 				const info = {
 					sectionStart: allSections.length / SECTION_FLOATS,
 					thick: thick,
-					sections: [picked.length, Math.max(countAbove(Math.max(thickest * 0.05, 0.016 * params.unitsPerMetre)), thick), thick],
+					thickAt: [thick, thick, thick, thick, limbs],
+					sections: [picked.length, Math.max(countAbove(Math.max(thickest * 0.05, 0.016 * params.unitsPerMetre)), thick), thick, thick, limbs],
 					foliageStart: allFoliage.length / FOLIAGE_FLOATS,
 					foliage: [],
 				};
@@ -1074,10 +1084,20 @@ function sortTreesIntoDraws() {
 	const planes = transformations.getFrustumPlanes();
 	const camX = settings.camPosX, camY = settings.camPosY, camZ = settings.camPosZ;
 
-	// the distances each level of detail ends at. They are distances for a tree of REFERENCE_HEIGHT, see detailDistance in vf_forest.js
-	const ends = [settings.forestDetailDistance, Math.max(settings.forestMidDistance, settings.forestDetailDistance), Math.max(settings.forestBillboardDistance, settings.forestMidDistance)];
+	// the distances each level of detail ends at. They are distances for a tree of REFERENCE_HEIGHT, see detailDistance in vf_forest.js.
+	//		The thinned rings share out the stretch from the mid distance to the billboard distance, each the same many times
+	//		further than the last. A level that is not used ends where the last one used does, so nothing ever falls in it
+	const rings = Math.min(Math.max(Math.round(settings.forestThinnedRings), 0), THINNED_LEVELS);
+	const lastLevel = LEVELS - 1 - THINNED_LEVELS + rings;
+	const detailEnd = settings.forestDetailDistance;
+	const midEnd = Math.max(settings.forestMidDistance, detailEnd);
+	const meshEnd = Math.max(settings.forestBillboardDistance, midEnd);
+	const ends = [detailEnd, midEnd];
+	for (let level = 2; level < LEVELS; level++) {
+		ends.push(level <= lastLevel ? midEnd * Math.pow(meshEnd / midEnd, (level - 1) / (lastLevel - 1)) : meshEnd);
+	}
 	// billboards start a bit before the last mesh level ends, the two dissolve into each other over that stretch
-	const billboardStart = ends[LEVELS - 1] * (1 - FADE_BAND), billboardEnd = Math.max(settings.forestDrawDistance, ends[LEVELS - 1]);
+	const billboardStart = meshEnd * (1 - FADE_BAND), billboardEnd = Math.max(settings.forestDrawDistance, meshEnd);
 	billboards.length = 0;
 
 	const listCount = archetypes.length * STAGES * LEVELS;
@@ -1086,7 +1106,7 @@ function sortTreesIntoDraws() {
 		else lists[i] = [];
 	}
 
-	forestStats.drawn = [0, 0, 0, 0];
+	forestStats.drawn = new Array(LEVELS + 1).fill(0);
 	for (const cell of cells) {
 		// the whole cell behind the camera, off to one side, or too far away to draw anything of (a small tree's detail distance is up to 4x its real one)
 		if (planes.some((plane) => plane[0] * cell.x + plane[1] * cell.y + plane[2] * cell.z + plane[3] < -cell.radius)) continue;
@@ -1114,11 +1134,11 @@ function sortTreesIntoDraws() {
 	// kept: how many of the parts the next level of detail still draws. The rest shrink away over the last part of this level's distance
 	const addDraw = (into, partStart, partCount, kept, sides, rings, level, vertices, treeCount) => {
 		if (partCount <= 0 || slot >= MAX_DRAWS) return;
-		const last = level == LEVELS - 1;
+		const last = level == lastLevel;
 		// fade. x to y: where it turns into the next level. z to w: where it dissolves away (into the billboard), which only the last level does
 		const fade = [ends[level] * (1 - FADE_BAND), ends[level], last ? billboardStart : 1e8, last ? ends[level] : 2e8];
 		writeDraw(drawData, slot, listStart, partStart, partCount, sides, rings, last ? partCount : Math.min(Math.max(kept, 0), partCount),
-					FOLIAGE_DETAIL[level][1], FOLIAGE_DETAIL[Math.min(level + 1, LEVELS - 1)][1], fade);
+					FOLIAGE_DETAIL[level][1], FOLIAGE_DETAIL[Math.min(level + 1, lastLevel)][1], fade);
 		into.push({ slot: slot, vertices: vertices, instances: treeCount * partCount });
 		forestStats.triangles += vertices / 3 * treeCount * partCount;
 		slot++;
@@ -1131,8 +1151,8 @@ function sortTreesIntoDraws() {
 		const stage = archetypes[Math.floor(list / (STAGES * LEVELS))].stages[Math.floor(list / LEVELS) % STAGES];
 		visibleData.set(members, listStart);
 
-		const tessellation = TESSELLATION[level], next = Math.min(level + 1, LEVELS - 1);
-		addDraw(draws.wood, stage.sectionStart, stage.thick, stage.thick, tessellation.thick[0], tessellation.thick[1], level, tessellation.thick[0] * tessellation.thick[1] * 6, members.length);
+		const tessellation = TESSELLATION[level], next = Math.min(level + 1, lastLevel);
+		addDraw(draws.wood, stage.sectionStart, stage.thickAt[level], stage.thickAt[next], tessellation.thick[0], tessellation.thick[1], level, tessellation.thick[0] * tessellation.thick[1] * 6, members.length);
 		if (tessellation.thin) {
 			addDraw(draws.wood, stage.sectionStart + stage.thick, stage.sections[level] - stage.thick, stage.sections[next] - stage.thick, tessellation.thin[0], tessellation.thin[1], level, tessellation.thin[0] * tessellation.thin[1] * 6, members.length);
 		}
@@ -1145,7 +1165,7 @@ function sortTreesIntoDraws() {
 	if (billboards.length > 0 && slot < MAX_DRAWS) {
 		visibleData.set(billboards, listStart);
 		// fade. x to y: where it dissolves in (as the last mesh level dissolves out). z to w: where it dissolves away at the draw distance
-		writeDraw(drawData, slot, listStart, 0, 1, 0, 0, 1, 1, 1, [billboardStart, ends[LEVELS - 1], billboardEnd * 0.9, billboardEnd]);
+		writeDraw(drawData, slot, listStart, 0, 1, 0, 0, 1, 1, 1, [billboardStart, meshEnd, billboardEnd * 0.9, billboardEnd]);
 		draws.billboards.push({ slot: slot, vertices: BILLBOARD_VERTICES, instances: billboards.length });
 		forestStats.triangles += BILLBOARD_VERTICES / 3 * billboards.length;
 		listStart += billboards.length;
@@ -1177,7 +1197,8 @@ export function forestPass(aEncoder, mainpassDepthTexture) {
 		forestBindGroupFiltering = filteringLevel();
 	}
 
-	const pass = aEncoder.beginRenderPass({
+	//(one pass, or while the Performance window is timing, one for each of the three shaders: see renderPassParts in profiler.js)
+	const parts = profiler.renderPassParts(aEncoder, {
 		colorAttachments: [{
 		view: context.getCurrentTexture().createView(),
 		loadOp: "load",
@@ -1191,25 +1212,29 @@ export function forestPass(aEncoder, mainpassDepthTexture) {
 		},
 	});
 
+	let pass = parts.next('Wood', 'vf_forestWood');
 	pass.setBindGroup(0, forestBindGroup);
-
 	pass.setPipeline(woodPipeline);
 	for (const draw of draws.wood) {
 		pass.setBindGroup(1, drawBindGroup, [draw.slot * DRAW_STRIDE]);
 		pass.draw(draw.vertices, draw.instances, 0, 0);		// draw(vertexCount, instanceCount, firstVertex, firstInstance)
 	}
 
+	pass = parts.next('Foliage', 'vf_forestFoliage');
+	pass.setBindGroup(0, forestBindGroup);
 	pass.setPipeline(foliagePipeline);
 	for (const draw of draws.foliage) {
 		pass.setBindGroup(1, drawBindGroup, [draw.slot * DRAW_STRIDE]);
 		pass.draw(draw.vertices, draw.instances, 0, 0);
 	}
 
+	pass = parts.next('Billboards', 'vf_forestBillboard');
+	pass.setBindGroup(0, forestBindGroup);
 	pass.setPipeline(billboardPipeline);
 	for (const draw of draws.billboards) {
 		pass.setBindGroup(1, drawBindGroup, [draw.slot * DRAW_STRIDE]);
 		pass.draw(draw.vertices, draw.instances, 0, 0);
 	}
 
-	pass.end();
+	parts.end();
 }

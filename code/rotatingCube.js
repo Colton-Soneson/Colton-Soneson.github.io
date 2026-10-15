@@ -37,7 +37,12 @@ import * as particles from './particles.js'
 import * as lightShafts from './lightShafts.js'
 import * as lightning from './lightning.js'
 import * as birds from './birds.js'
+import * as geese from './geese.js'
+import * as deer from './deer.js'
 import * as cameraControls from './cameraControls.js'
+import * as hunting from './hunting.js'
+import * as rifle from './rifle.js'
+import * as ballistics from './ballistics.js'
 import { settings } from './settings.js';
 import * as userInterface from './imguiLoader.js';
 import * as profiler from './profiler.js';
@@ -344,6 +349,9 @@ export function updateRotatingCubePass() {
 
 	// fly camera: after the controls have written their values (so the Pos sliders still work), before anything reads the camera
 	cameraControls.updateCamera();
+	hunting.updateHunter();		//on foot instead, in the Hunting game mode
+	rifle.rifleUpdate();		//and the rifle in the hunter's hands
+	ballistics.bulletUpdate();	//the rounds in the air
 	wind.windUpdate();		//the air moves on, before anything reads it
 	userInterface.refreshEntityFolder();
 	
@@ -362,6 +370,8 @@ export function updateRotatingCubePass() {
 	boulders.boulderUpdate();	//and the boulders laid out again
 	particles.particleUpdate();		//what the leaves, the spray and the rain all need to know this frame
 	birds.birdUpdate();				//the hawks fly on
+	geese.geeseUpdate();			//and the geese
+	deer.deerUpdate();				//and the deer
 	lightning.lightningUpdate();	//a strike that is going on flickers and dies, and now and then a new one starts
 	profiler.cpuMark('Cloud Map');
 	profiler.section('Cloud Map', () => clouds.cloudUpdate(encoder));	//the weather moves on, and the picture of the clouds from above is taken: their shadows are read from it all through the frame
@@ -502,8 +512,12 @@ export function updateRotatingCubePass() {
 	profiler.cpuMark('Leaves and Birds');
 	profiler.section('Leaves', () => particles.leafPass(encoder, depthTexture));
 
-	//and the hawks
-	profiler.section('Birds', () => birds.birdPass(encoder, depthTexture));
+	//and the animals: the hawks, the geese and the deer
+	profiler.section('Animal Life', () => {
+		birds.birdPass(encoder, depthTexture);
+		geese.geesePass(encoder, depthTexture);
+		deer.deerPass(encoder, depthTexture);
+	});
 
 	//screen space shadows and ambient occlusion over everything solid, and the copies of the frame the water finds its reflections in.
 	//		Before the water and the sky are drawn
@@ -536,6 +550,12 @@ export function updateRotatingCubePass() {
 
 	//spray off the waves and rain: see-through, so last, over everything that is behind them
 	profiler.section('Spray, Rain and Snow', () => particles.weatherParticlePass(depthTexture));
+
+	//the wisps the bullets leave, and the rifle in front of everything (in the Hunting game mode)
+	profiler.section('Hunting', () => {
+		ballistics.trailPass(depthTexture);
+		rifle.riflePass();
+	});
 
 	profiler.cpuMark('Anti-Aliasing, Debug Views');
 	const encoderDebug = device.createCommandEncoder();

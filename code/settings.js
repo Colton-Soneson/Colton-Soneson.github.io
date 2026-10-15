@@ -3,7 +3,8 @@ import { mat4, vec3, vec2 } from 'https://wgpu-matrix.org/dist/3.x/wgpu-matrix.m
 export const settings = {
 	//--------------------TIME---------------------
     step: 0,
-	timeCycleMultiplier: 1.0,			//how fast the days go by. Scales the speed of the sun, and with it everything that keeps time by the sun (the forest, the weather)
+	dayLengthSeconds: 300,				//how long a day is, in seconds: one round of the sun. Everything that keeps time keeps it by the sun (atmosphere.js): the seasons, the weather, the forest, the deer
+	timeCycleMultiplier: 1.0,			//how fast the days go by. Scales the speed of the sun, and with it everything that keeps time by the sun (the forest, the weather, the animals)
 	sunCycleCount: 0,					//days so far. Read only: counted in atmosphere.js as the sun goes round
 	//---------------------TRS---------------------
     camPosX: 0.0,
@@ -11,6 +12,10 @@ export const settings = {
     camPosZ: 150.0,
     camFarPlane: 12000.0,	//far enough to see the other land masses
     camNearPlane: 1.0,
+    gameMode: 'Observe',			//Observe: fly round (cameraControls.js). Hunting: on foot, first person (hunting.js)
+    huntingWalkSpeed: 3.0,			//metres a second on foot. Shift runs 1.8x
+    huntingJumpHeight: 0.5,			//metres
+    huntingLookSensitivity: 1.0,	//how far the view turns for the mouse moved
     cameraFlyMode: true,		//WASD + right mouse drag, see cameraControls.js. Off = the camera always looks at the origin
     cameraFlySpeed: 120.0,		//units per second. Shift goes 4x, the mouse wheel changes it
     camYaw: 0.0,				//fly camera direction in radians, set from the starting position so it begins looking at the origin
@@ -114,7 +119,7 @@ export const settings = {
 	forestConiferShare: 0.5,			//0 all broadleaf, 1 all conifer. The land still shifts it: conifers take the high and steep ground
 	forestMaxTrees: 60000,				//planting stops here however much forest there is left to fill, and no seed comes up while there are this many
 	forestLifeCycle: true,				//the trees grow, die, fall and seed as the days go by. Off = the forest stays as it is
-	forestYearsPerSunCycle: 4.0,		//years a tree ages in one day. Real trees take 45 (birch) to 100 (oak) years to grow up, so at 4 that is 11 to 25 days
+	forestYearsPerSunCycle: 150.0,		//years a tree ages in one day. Real trees take 45 (birch) to 100 (oak) years to grow up, so at 150 a tree is grown in under a day (5 minutes, see dayLengthSeconds)
 	forestYear: 0,						//the forest's clock. Read only
 	forestTreeCount: 0,					//trees standing, living and dead. Read only
 	forestDetailDistance: 60.0,			//closer than this a full grown tree is drawn in full: every branch, every piece of foliage
@@ -126,7 +131,7 @@ export const settings = {
 	//-------------------SEASONS-------------------
 	seasonMode: "auto",					//"auto": the seasons go round with the days (see weather.js). Or hold it at "spring", "summer", "fall" or "winter"
 	seasonStart: "summer",				//which season the first day is in
-	seasonLength: 8,					//days in a season
+	seasonLength: 1,					//days in a season: at 1 a year is four days (20 minutes, see dayLengthSeconds)
 	seasonNow: "summer",				//what the season is. Read only
 	snowbuildTriggers: 0,				//counts presses of the Trigger Snowbuild control: each one sets snow building on the ground, whatever the season
 	snowCover: 0,						//how much snow is lying, 0 to 1. Read only
@@ -150,6 +155,12 @@ export const settings = {
 	cloudDrawDistance: 36000.0,			//how far off clouds are drawn. They fade into the haze over the last part of it
 	displayCloudCoverage: false,
 	//--------------------BIRDS--------------------
+	enableDeer: true,					//small groups of deer living in the forest, going down to the water to drink three times a day. See deer.js
+	deerGroups: 4,						//how many groups, 0 to 4. Each is 1 to 3 deer
+	deerSize: 1.0,						//1 = life size
+	enableGeese: true,					//one skein of geese, high up in a V most of the time, now and then down on a lake or a marsh. See geese.js
+	geeseCount: 7,						//how many geese in it, 0 to 12
+	geeseSize: 8.0,						//from wing tip to wing tip, world units (about two and a half times life size, or they would be specks that high up)
 	enableBirds: true,					//hawks: small groups that soar over the grassland by day and roost in the forest by night. See birds.js
 	birdGroups: 3,						//how many groups, 0 to 3. Each is 1 to 5 birds
 	birdSize: 6.0,						//from wing tip to wing tip, world units (twice life size: a real one would be a speck from the ground)

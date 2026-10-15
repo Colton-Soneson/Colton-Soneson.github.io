@@ -70,8 +70,11 @@ window.addEventListener('blur', () => {
 	releaseMouse();
 });
 
+// (in Hunting the mouse is hunting.js's)
+const observing = () => settings.gameMode != 'Hunting';
+
 canvas.addEventListener('mousedown', (event) => {
-	if (event.button == 2) {
+	if (event.button == 2 && observing()) {
 		looking = true;
 		if (document.activeElement) {
 			document.activeElement.blur();	// take the keyboard away from whichever control had it
@@ -81,13 +84,13 @@ canvas.addEventListener('mousedown', (event) => {
 });
 // on the window, not the canvas, so the drag carries on if the mouse wanders off the canvas or over the controls
 window.addEventListener('mouseup', (event) => {
-	if (event.button == 2) {
+	if (event.button == 2 && looking) {
 		looking = false;
 		releaseMouse();
 	}
 });
 window.addEventListener('mousemove', (event) => {
-	if (looking && settings.cameraFlyMode) {
+	if (looking && settings.cameraFlyMode && observing()) {
 		settings.camYaw += event.movementX * lookSensitivity;
 		settings.camPitch = Math.min(Math.max(settings.camPitch - event.movementY * lookSensitivity, -maxPitch), maxPitch);
 	}
@@ -100,7 +103,7 @@ canvas.addEventListener('contextmenu', (event) => event.preventDefault());
 //		their own value over settings.cameraFlySpeed at the start of every frame and a change made out here would be lost
 let wheelNotches = 0;
 canvas.addEventListener('wheel', (event) => {
-	if (settings.cameraFlyMode) {
+	if (settings.cameraFlyMode && observing()) {
 		wheelNotches += (event.deltaY < 0) ? 1 : -1;
 		event.preventDefault();		// dont scroll the page
 	}
@@ -136,7 +139,7 @@ canvas.addEventListener('pointerdown', (event) => {
 
 canvas.addEventListener('pointermove', (event) => {
 	const last = touches.get(event.pointerId);
-	if (!last || !settings.cameraFlyMode) return;
+	if (!last || !(settings.cameraFlyMode || !observing())) return;
 	const dx = event.clientX - last.x, dy = event.clientY - last.y;
 	last.x = event.clientX;
 	last.y = event.clientY;
@@ -181,8 +184,9 @@ export function updateCamera() {
 		pointCameraAtOrigin();
 	}
 	wasFlyMode = settings.cameraFlyMode;
-	if (!settings.cameraFlyMode) {
+	if (!settings.cameraFlyMode || !observing()) {
 		wheelNotches = 0;
+		touchMove = { forward: 0, right: 0, up: 0 };	// (in Hunting one finger still looks round, but two do not fly: hunting.js moves the camera)
 		return;
 	}
 

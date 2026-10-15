@@ -410,6 +410,34 @@ function addToCell(index) {
 	cell.radius = Math.hypot(CELL_SIZE * 0.5 + tallest, cell.top - cell.y, CELL_SIZE * 0.5 + tallest);
 }
 
+/*
+	The trunks standing round a place, for anything that walks into them (hunting.js). Calls each(x, z, radius, bottom, top) for
+	every tree standing within reach of (x, z), in world units: where its trunk is, how thick it is at the ground, and how far up
+	it goes (the bottom half of the tree: anything higher is out of reach). Looks only in the cells round the place.
+	Left out: a seedling too thin to bump into (under MIN_TRUNK), and a dead tree once it has started to fall.
+*/
+const MIN_TRUNK = 0.04;		// metres of trunk radius
+export function trunksNear(x, z, reach, each) {
+	const metre = settings.forestUnitsPerMetre;
+	for (let cx = Math.floor((x - reach) / CELL_SIZE); cx <= Math.floor((x + reach) / CELL_SIZE); cx++) {
+		for (let cz = Math.floor((z - reach) / CELL_SIZE); cz <= Math.floor((z + reach) / CELL_SIZE); cz++) {
+			const cell = cellsByKey.get(cx + "," + cz);
+			if (!cell) continue;
+			for (const i of cell.trees) {
+				const tree = trees[i];
+				if (!tree || !tree.height || (tree.dead && clock >= tree.fallStart)) continue;
+				if (Math.abs(tree.x - x) > reach || Math.abs(tree.z - z) > reach) continue;
+				const archetype = archetypes[tree.archetype];
+				if (!archetype) continue;
+				// (a young tree's trunk is as much thinner as it is shorter)
+				const radius = archetype.trunkRadius * tree.height / archetype.height;
+				if (radius < MIN_TRUNK * metre) continue;
+				each(tree.x, tree.z, radius, tree.y, tree.y + tree.height * 0.5);
+			}
+		}
+	}
+}
+
 function removeFromCell(index, tree) {
 	const members = tree.cell.trees;
 	const at = members.indexOf(index);

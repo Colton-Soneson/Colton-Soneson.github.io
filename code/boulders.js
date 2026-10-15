@@ -53,6 +53,26 @@ let boulders = new Float32Array(0);		// see placeBoulders
 export function boulderPlaces() {
 	return boulders;
 }
+/*
+	The boulders lying round a place, for anything that walks into them (hunting.js). Calls each(x, z, half, bottom, top) for every
+	boulder within reach of (x, z), in world units: a box standing round it, half wide each way, from its foot to its top.
+	The box is a little inside the widest the rock goes: the rock is round, and a box as wide as it would stop a walker well
+	short of it at the corners. Looks only in the cells round the place.
+*/
+const BOX_WIDTH = 0.42;		// of the boulder's own width, each side of the middle (0.5 would be all of it)
+const BOX_HEIGHT = 0.72;	// of its height: about where the top of the shape is (see buildBoulderMesh)
+export function bouldersNear(x, z, reach, each) {
+	for (const cell of cells) {
+		if (Math.abs(cell.x - x) > CELL_SIZE * 0.5 + reach + 2 * cell.biggest || Math.abs(cell.z - z) > CELL_SIZE * 0.5 + reach + 2 * cell.biggest) continue;
+		for (const at of cell.at) {
+			const bx = boulders[at], bz = boulders[at + 2], size = boulders[at + 3];
+			if (Math.abs(bx - x) > reach + size || Math.abs(bz - z) > reach + size) continue;
+			const half = BOX_WIDTH * size * Math.max(boulders[at + 8], boulders[at + 10]);
+			each(bx, bz, half, boulders[at + 1], boulders[at + 1] + BOX_HEIGHT * size * boulders[at + 9]);
+		}
+	}
+}
+
 let instanceBuffer;
 let instanceData = new Float32Array(0);
 let laidParams = "";					// the params the boulders were laid out from

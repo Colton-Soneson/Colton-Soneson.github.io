@@ -282,8 +282,11 @@ const skyVFBindGroup = device.createBindGroup({
 });
 
 // How many times the sun has gone round since the page loaded: the world's clock, in days.
-//		Anything that keeps time (the forest) reads this, so it all speeds up, slows down and stops together with the sun
+//		Anything that keeps time reads this (the seasons and the weather, the forest, the deer), so it all speeds up, slows down
+//		and stops together with the sun. A day is settings.dayLengthSeconds of real time (divided by the Time Multiplier),
+//		whatever the frame rate
 export let sunCycles = 0;
+let sunLastTime = performance.now();
 
 export function sunCycle(cycleSpeed)
 {
@@ -306,8 +309,11 @@ export function sunCycle(cycleSpeed)
 
 export function atmospherePass(mainpassDepthTexture)
 {	
+	const now = performance.now();
+	const seconds = Math.min((now - sunLastTime) / 1000, 0.1);		// (a long pause, the page hidden, is not caught up on)
+	sunLastTime = now;
 	if(settings.atmosphereSunRotationDemo) {
-		sunCycle(0.01 / 0.75 * settings.timeCycleMultiplier)	//(a day takes three quarters of the frames it used to: about 470 of them)
+		sunCycle(2 * Math.PI * seconds * settings.timeCycleMultiplier / Math.max(settings.dayLengthSeconds, 1));
 	}
 
 	updateSkyUniforms();

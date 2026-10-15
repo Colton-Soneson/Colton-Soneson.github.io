@@ -17,6 +17,10 @@ export const imguiParams = {
     camPosZ: settings.camPosZ,
     camFarPlane: settings.camFarPlane,
     camNearPlane: settings.camNearPlane,
+    gameMode: settings.gameMode,
+    huntingWalkSpeed: settings.huntingWalkSpeed,
+    huntingJumpHeight: settings.huntingJumpHeight,
+    huntingLookSensitivity: settings.huntingLookSensitivity,
     cameraFlyMode: settings.cameraFlyMode,
     cameraFlySpeed: settings.cameraFlySpeed,
     // Sun
@@ -25,6 +29,7 @@ export const imguiParams = {
     sunPosZ: settings.sunPosZ,
     sunIntensity: settings.sunIntensity,
     sunCycleAngle: settings.sunCycleAngle,
+    dayLengthSeconds: settings.dayLengthSeconds,
     timeCycleMultiplier: settings.timeCycleMultiplier,
     sunCycleCount: settings.sunCycleCount,
     // Moon
@@ -175,6 +180,12 @@ export const imguiParams = {
     // Birds
     enableBirds: settings.enableBirds,
     birdGroups: settings.birdGroups,
+    enableDeer: settings.enableDeer,
+    deerGroups: settings.deerGroups,
+    deerSize: settings.deerSize,
+    enableGeese: settings.enableGeese,
+    geeseCount: settings.geeseCount,
+    geeseSize: settings.geeseSize,
     birdSize: settings.birdSize,
     birdSpeed: settings.birdSpeed,
     // Light shafts and under water
@@ -304,6 +315,14 @@ const statusController = gui.add(presetState, 'status').name('Auto Check').disab
 // at the top too: the sun going round is what moves the days on, and with them the seasons, the weather and the forest
 gui.add(imguiParams, 'atmosphereSunRotationDemo').name('Sun Cycle (days and seasons)');
 
+// how the scene is seen: Observe flies round it (see the Camera folder), Hunting walks it on foot (hunting.js)
+const modeFolder = gui.addFolder('Game Modes');
+modeFolder.add(imguiParams, 'gameMode', ['Observe', 'Hunting']).name('Mode');
+const huntingFolder = modeFolder.addFolder('Hunting');	//click the picture to look round, WASD walk, Shift run, Space jump, hold Tab or Esc for the menus
+huntingFolder.add(imguiParams, 'huntingWalkSpeed', 1, 8, 0.1).name('Walk Speed (m/s)');
+huntingFolder.add(imguiParams, 'huntingJumpHeight', 0.1, 2, 0.05).name('Jump Height (m)');
+huntingFolder.add(imguiParams, 'huntingLookSensitivity', 0.2, 3, 0.05).name('Mouse Sensitivity');
+
 const camFolder = gui.addFolder('Camera');
 camFolder.add(imguiParams, 'camPosX', -2000, 2000).name('Pos X');
 camFolder.add(imguiParams, 'camPosY', -2000, 2000).name('Pos Y');
@@ -319,6 +338,7 @@ sunFolder.add(imguiParams, 'sunPosY', -2000, 2000).name('Pos Y');
 sunFolder.add(imguiParams, 'sunPosZ', -2000, 2000).name('Pos Z');
 sunFolder.add(imguiParams, 'sunIntensity', 0, 500000).name('Intensity');
 sunFolder.add(imguiParams, 'sunCycleAngle', 0, 6.2832).name('Cycle Angle (2 pi)');
+sunFolder.add(imguiParams, 'dayLengthSeconds', 10, 1800, 5).name('Day Length (s)');	//the one clock everything keeps time by (atmosphere.js)
 sunFolder.add(imguiParams, 'timeCycleMultiplier', 0, 100, 0.1).name('Time Multiplier');
 sunFolder.add(imguiParams, 'sunCycleCount').name('Sun Cycles (days)').disable();
 
@@ -408,7 +428,7 @@ forestFolder.add(imguiParams, 'forestTreeSpacing', 5, 30, 0.5).name('Tree Spacin
 forestFolder.add(imguiParams, 'forestMaxSlope', 0.05, 0.8, 0.01).name('Max Slope');
 forestFolder.add(imguiParams, 'forestConiferShare', 0, 1, 0.01).name('Conifer Share');
 forestFolder.add(imguiParams, 'forestLifeCycle').name('Life Cycle');
-forestFolder.add(imguiParams, 'forestYearsPerSunCycle', 0.25, 50, 0.25).name('Years per Sun Cycle');
+forestFolder.add(imguiParams, 'forestYearsPerSunCycle', 1, 400, 1).name('Years per Day');
 forestFolder.add(imguiParams, 'forestYear').name('Forest Year').disable();
 forestFolder.add(imguiParams, 'forestTreeCount').name('Trees').disable();
 forestFolder.add(imguiParams, 'forestDetailDistance', 10, 300, 5).name('Full Detail Distance');
@@ -445,11 +465,20 @@ cloudFolder.add(imguiParams, 'cloudSteps', 16, 128, 1).name('Quality (steps)');
 cloudFolder.add(imguiParams, 'cloudResolution', { 'half': 2, 'third': 3, 'quarter': 4 }).name('Resolution (of the frame)');
 cloudFolder.add(imguiParams, 'cloudDrawDistance', 8000, 80000, 500).name('Draw Distance');
 
-const birdFolder = gui.addFolder('Birds');	//see birds.js
+const animalFolder = gui.addFolder('Animal Life');
+const birdFolder = animalFolder.addFolder('Hawks');	//see birds.js
 birdFolder.add(imguiParams, 'enableBirds').name('Enable');
 birdFolder.add(imguiParams, 'birdGroups', 0, 3, 1).name('Groups');
 birdFolder.add(imguiParams, 'birdSize', 1, 30, 0.5).name('Wingspan');
 birdFolder.add(imguiParams, 'birdSpeed', 0.2, 3, 0.05).name('Speed');
+const geeseFolder = animalFolder.addFolder('Geese');	//see geese.js
+geeseFolder.add(imguiParams, 'enableGeese').name('Enable');
+geeseFolder.add(imguiParams, 'geeseCount', 0, 12, 1).name('Flock Size');
+geeseFolder.add(imguiParams, 'geeseSize', 2, 30, 0.5).name('Wingspan');
+const deerFolder = animalFolder.addFolder('Deer');	//see deer.js
+deerFolder.add(imguiParams, 'enableDeer').name('Enable');
+deerFolder.add(imguiParams, 'deerGroups', 0, 4, 1).name('Groups');
+deerFolder.add(imguiParams, 'deerSize', 0.5, 3, 0.05).name('Size');
 
 const shaftFolder = gui.addFolder('Light Shafts and Underwater');	//see lightShafts.js
 shaftFolder.add(imguiParams, 'enableLightShafts').name('Light Shafts');

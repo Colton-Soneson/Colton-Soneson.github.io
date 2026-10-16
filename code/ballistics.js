@@ -26,8 +26,10 @@ import * as boulders from './boulders.js'
 		the water		its surface, where the ground under it is lower
 		tree trunks		upright cylinders (forest.trunksNear), only the ones round the line
 		boulders		boxes (boulders.bouldersNear), the same as the walker bumps into
-		anything else	that has asked to be shot at (addTarget: the animals)
+		anything else	that has asked to be shot at (addTarget: the animals, the other players)
 	A bullet that has hit nothing after MAX_SECONDS, or gone below the world, is dropped.
+	In a game with others (net.js) their shots are flown here too (remote), for their trails: they stop at what they hit,
+	but do nothing to it. What they hit is theirs to say. The shots fired here are passed on (onLocalFire).
 
 	THE TRAIL: a point is left every TRAIL_SPACING along the flight, for the first TRAIL_SECONDS of it. Each piece between two
 	points is drawn as a soft strip turned to face the eye (vf_trail.js), which widens, drifts up a little and fades away
@@ -48,9 +50,10 @@ export const ballisticStats = { fired: 0, flying: 0, hits: {} , lastHit: null };
 
 const bullets = [];
 const targets = [];			// see addTarget
+const fireListeners = [];	// see onLocalFire
 
 /*
-	Something else that can be hit. test(ax, ay, az, bx, by, bz) is asked about each step of a bullet's flight: the straight line
+	Something else that can be hit. test(ax, ay, az, bx, by, bz, bullet) is asked about each step of a bullet's flight: the straight line
 	from a to b. It answers null, or { t, hit } for the first thing on that line it is hit by: t from 0 at a to 1 at b, and hit(
 	velocity) what to do about it (called if it is the nearest thing the line crosses). The animals add themselves
 */
@@ -58,17 +61,24 @@ export function addTarget(test) {
 	targets.push(test);
 }
 
-// Fires a round: from (world units) along a direction (any length), at the muzzle velocity
-export function fire(from, direction) {
+// told of every round fired here (not the ones that are someone else's): fn(from, direction)
+export function onLocalFire(fn) {
+	fireListeners.push(fn);
+}
+
+// Fires a round: from (world units) along a direction (any length), at the muzzle velocity. remote: someone else's (net.js),
+//		flown for its trail only. shooter: who fired it, so it does not hit them
+export function fire(from, direction, { remote = false, shooter = null } = {}) {
 	const metre = settings.forestUnitsPerMetre;
 	const length = Math.hypot(...direction);
 	const speed = MUZZLE_VELOCITY * metre;
 	bullets.push({
 		x: from[0], y: from[1], z: from[2],
 		vx: direction[0] / length * speed, vy: direction[1] / length * speed, vz: direction[2] / length * speed,
-		age: 0, trailFrom: [from[0], from[1], from[2]], trailAge: seconds, gone: false,
+		age: 0, trailFrom: [from[0], from[1], from[2]], trailAge: seconds, gone: false, remote, shooter,
 	});
 	ballisticStats.fired++;
+	if (!remote) for (const fn of fireListeners) fn([...from], [...direction]);
 }
 
 // The trail
@@ -114,7 +124,7 @@ function crossBox(ax, ay, az, bx, by, bz, min, max) {
 }
 
 // the nearest thing the line from a to b crosses: { t, what, hit } or null
-function firstHit(ax, ay, az, bx, by, bz) {
+function firstHit(ax, ay, az, bx, by, bz, bullet) {
 	const land = terrain.land;
 	const metre = settings.forestUnitsPerMetre;
 	let best = null;
@@ -148,7 +158,7 @@ function firstHit(ax, ay, az, bx, by, bz) {
 	}
 	// and anything else that can be shot
 	for (const test of targets) {
-		const found = test(ax, ay, az, bx, by, bz);
+		const found = test(ax, ay, az, bx, by, bz, bullet);
 		if (found) take(found.t, found.what ?? 'target', found.hit);
 	}
 	return best;
@@ -186,7 +196,7 @@ function moveBullets(elapsed) {
 			bullet.vy = bullet.vy * slow - GRAVITY * metre * dt;
 			const bx = bullet.x + bullet.vx * dt, by = bullet.y + bullet.vy * dt, bz = bullet.z + bullet.vz * dt;
 
-			const hit = firstHit(bullet.x, bullet.y, bullet.z, bx, by, bz);
+			const hit = firstHit(bullet.x, bullet.y, bullet.z, bx, by, bz, bullet);
 			const t = hit ? hit.t : 1;
 			const ex = bullet.x + (bx - bullet.x) * t, ey = bullet.y + (by - bullet.y) * t, ez = bullet.z + (bz - bullet.z) * t;
 			bullet.age += dt * t;
@@ -204,7 +214,7 @@ function moveBullets(elapsed) {
 				bullet.gone = true;
 				ballisticStats.hits[hit.what] = (ballisticStats.hits[hit.what] ?? 0) + 1;
 				ballisticStats.lastHit = { what: hit.what, x: ex, y: ey, z: ez, metres: null, seconds: bullet.age, speed: Math.hypot(bullet.vx, bullet.vy, bullet.vz) / metre };
-				if (hit.hit) hit.hit([bullet.vx, bullet.vy, bullet.vz]);
+				if (hit.hit && !bullet.remote) hit.hit([bullet.vx, bullet.vy, bullet.vz]);
 			} else if (bullet.age > MAX_SECONDS || bullet.y < settings.waterWorldPosY - 500) {
 				bullet.gone = true;
 			}

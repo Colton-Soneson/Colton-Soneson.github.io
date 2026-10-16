@@ -171,6 +171,10 @@ function gooseSpheres(goose) {
 ballistics.addTarget((ax, ay, az, bx, by, bz) => {
 	if (!settings.enableGeese) return null;
 	const size = settings.geeseSize;
+	if (followed) {
+		const found = ballistics.crossAnimals(ax, ay, az, bx, by, bz, followed.filter((one) => one.alive), gooseSpheres, (goose) => [goose.x, goose.y, goose.z, 0.6 * size]);
+		return found && { t: found.t, what: 'goose', hit: (velocity) => gooseShot.report?.(found.animal.id, velocity) };
+	}
 	const found = ballistics.crossAnimals(ax, ay, az, bx, by, bz, geese, gooseSpheres, (goose) => [goose.x, goose.y, goose.z, 0.6 * size]);
 	return found && { t: found.t, what: 'goose', hit: (velocity) => killGoose(found.animal, velocity) };
 });
@@ -185,6 +189,35 @@ function killGoose(goose, velocity) {
 }
 
 // a new goose, come to join the skein from far behind it while it is up high (or, with none left, a new skein of one)
+
+// Multiplayer (net.js). The host's geese are everyone's: the host sends them as they are (ANIMAL_RECORD floats each, see
+//		gooseShare), and a joiner draws those instead of its own, which stop (gooseFollow). A joiner's shot that hits one is
+//		reported to the host (gooseShot), who has it fall, and everyone sees it fall
+export const gooseShot = { report: null };
+let followed = null;		// joiner: the host's, as they are now
+// host: [id, x, y, z, heading, nose, bank, beat, beating, folded, own, alive] for each, the fallen ones too
+export function geeseShare() {
+	const out = [];
+	const add = (bird, alive) => out.push(bird.id ?? 0, bird.x, bird.y, bird.z, bird.heading, bird.nose, bird.bank, bird.beat, bird.beating, bird.folded, bird.own, alive);
+	for (const bird of geese) add(bird, 1);
+	for (const one of fallenGeese) add(one.bird, 0);
+	return new Float32Array(out);
+}
+// joiner: the host's, as gooseShare's records, or null to go back to its own
+export function geeseFollow(records) {
+	if (!records) { followed = null; return; }
+	followed = [];
+	for (let at = 0; at < records.length; at += 12) {
+		followed.push({ id: records[at], x: records[at + 1], y: records[at + 2], z: records[at + 3], heading: records[at + 4], nose: records[at + 5], bank: records[at + 6],
+			beat: records[at + 7], beating: records[at + 8], folded: records[at + 9], own: records[at + 10], alive: records[at + 11] > 0.5 });
+	}
+}
+// host: one the others shot
+export function killGooseById(id, velocity) {
+	const goose = geese.find((one) => one.id === id);
+	if (goose) killGoose(goose, velocity);
+}
+
 function respawnGoose() {
 	if (geese.length > 0 && skein.state != 'cruise') return false;
 	const leader = geese[0];
@@ -205,8 +238,10 @@ function respawnGoose() {
 	return true;
 }
 
+let nextGooseId = 1;
 function makeGoose(x, y, z, heading) {
 	return {
+		id: nextGooseId++,
 		x: x, y: y, z: z, vx: Math.sin(heading) * PACE, vy: 0, vz: Math.cos(heading) * PACE,
 		heading: heading, nose: 0, bank: 0, beat: Math.random() * 6.28, beating: 1, folded: 0, own: Math.random(),
 		landed: false, home: null, wanderTimer: 0,
@@ -332,6 +367,7 @@ export function simulateGeese(total) {
 
 function advanceGeese(elapsed) {
 	seconds += elapsed;
+	if (followed) return;		// (a joiner's geese are the host's)
 
 	if (!settings.enableGeese || !terrain.land) {
 		return;
@@ -491,7 +527,7 @@ export function skeinState() {
 
 // The geese drawn, with the solid things
 export function geesePass(aEncoder, mainpassDepthTexture) {
-	const drawn = [...geese, ...fallenGeese.map((one) => one.bird)].slice(0, MAX_GEESE * 2);
+	const drawn = (followed ?? [...geese, ...fallenGeese.map((one) => one.bird)]).slice(0, MAX_GEESE * 2);
 	if (!settings.enableGeese || drawn.length == 0) {
 		return;
 	}

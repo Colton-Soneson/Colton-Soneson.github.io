@@ -7,7 +7,7 @@ import { settings } from './settings.js';
 
 import { TREE_SPECIES, generateTree, heightFraction, ageAtGrowth, SECTION_FLOATS, FOLIAGE_FLOATS, NEVER } from './treeGenerator.js'
 import { plantForest, createSite, makeTree, treeRoom } from './forestGenerator.js'
-import { ForestLife } from './forestLife.js'
+import { ForestLife, TreeGrid } from './forestLife.js'
 import { seededRandom } from './terrainGenerator.js'
 
 import { vf_forestWood } from '../shaders/js/vf_forest.js'
@@ -475,9 +475,9 @@ function plantTrees() {
 		wind: [settings.windDirection[0], settings.windDirection[1]],
 		makeTree: makeTree, treeRoom: treeRoom,
 		random: seededRandom(params.seed * 7919 + 577),
-		added: (index) => { if (listening) { ageTree(trees[index]); addToCell(index); changedTrees.push(index); noteMoved(trees[index]); } },
-		changed: (index) => { if (listening) { const stage = trees[index].stage; ageTree(trees[index], life.ageAt(trees[index], clock)); changedTrees.push(index); if (trees[index].stage !== stage) noteMoved(trees[index]); } },	//(only a new stage puts it in another list. Its size is caught up with by DRAWS_REFRESH)
-		removed: (index, tree) => { if (listening) { removeFromCell(index, tree); noteMoved(tree); } },
+		added: (index) => { if (listening) { ageTree(trees[index]); addToCell(index); changedTrees.push(index); noteMoved(trees[index]); noteShared(index); } },
+		changed: (index) => { if (listening) { const stage = trees[index].stage; ageTree(trees[index], life.ageAt(trees[index], clock)); changedTrees.push(index); if (trees[index].stage !== stage) noteMoved(trees[index]); if (trees[index].dead) noteShared(index); } },	//(only a new stage puts it in another list. Its size is caught up with by DRAWS_REFRESH)
+		removed: (index, tree) => { if (listening) { removeFromCell(index, tree); noteMoved(tree); noteShared(index); } },
 	});
 	if (settings.forestLifeCycle) {
 		life.settle(SETTLE_YEARS);
@@ -500,6 +500,8 @@ function plantTrees() {
 
 	plantedParams = JSON.stringify(params);
 	plantedLand = terrain.land;
+	plantings++;
+	if (sharing) sharing.clear();
 	forestStats.trees = life.count;
 	console.log("Forest planted: ", life.count, " trees in ", cells.length, " cells");
 }
@@ -538,24 +540,237 @@ export function advanceForest(years) {
 	life.goneYears = Math.min(Math.max(yearsPerSecond * GONE_SECONDS, 0.0001), GONE_YEARS_MOST);
 	life.wind = [settings.windDirection[0], settings.windDirection[1]];
 
-	life.advance(clock, years);
+	if (!following) life.advance(clock, years);	// (a joiner's trees are the host's: see MULTIPLAYER)
+	else followGrowth(years);
 
-	// send on the records of the trees that changed. One by one if there are a few, the whole lot in one go if there are many
+	// send on the records of the trees that changed
 	if (clock - clockBase > REBASE_YEARS) {
 		rebaseClock();
-	} else if (changedTrees.length > 0) {
-		for (const index of changedTrees) {
-			if (trees[index]) packTree(trees[index], treeData, index);
-		}
-		if (changedTrees.length > 200) {
-			device.queue.writeBuffer(treeBuffer, 0, treeData, 0, trees.length * TREE_FLOATS);
-		} else {
-			for (const index of changedTrees) {
-				device.queue.writeBuffer(treeBuffer, index * TREE_FLOATS * 4, treeData, index * TREE_FLOATS, TREE_FLOATS);
-			}
-		}
-		changedTrees = [];
+	} else {
+		sendChangedTrees();
 	}
+	forestStats.trees = life.count;
+}
+
+//-------------------------------MULTIPLAYER-------------------------------
+/*
+	In a game with others (net.js) the host's forest is the forest. The life cycle draws on one stream of random numbers as the
+	frames come, so two machines can never be made to live it the same way: the joiners' forests stop living (following),
+	and take the host's trees.
+		on joining			the host's whole forest (forestSnapshot, forestAdopt): every tree, SHARE_FIELDS each, and its clock
+		as it goes on		every quarter of a second, the trees that came up, died (with how they will fall) or went, in full
+							(forestChanges, forestApplyChanges). And a few at a time, round and round the whole forest, how
+							old each living tree is and how fast it is growing (GROWTH_RECORD): a joiner's trees keep growing
+							at the pace they were last sent, and this catches them up with the host's
+		the clock			sent with the day's (setForestClock)
+	The hitboxes (trunksNear) are made from the trees, so they follow.
+	plantings counts the times the forest has been planted here: a forest planted again (its settings changed) has to be sent
+	again.
+	A joiner that leaves goes on living from the trees it has (forestFollow(false)).
+*/
+const SHARE_FIELDS = ['x', 'y', 'z', 'yaw', 'species', 'variant', 'age', 'ageTime', 'rate', 'scale', 'leanX', 'leanZ', 'seed', 'density',
+	'dead', 'dryStart', 'dryYears', 'fallStart', 'fallDirection', 'fallAngle'];
+export const SHARE_RECORD = SHARE_FIELDS.length + 2;	// its number in the list, whether there is a tree there, and the fields
+export const GROWTH_RECORD = 4;						// its number, age, ageTime, rate
+let sharing = null;			// host: the numbers of the trees that came, died or went since they were last sent
+let following = false;		// joiner: the trees are the host's
+let sweep = 0;				// host: where the round of growth has got to
+export let plantings = 0;
+
+// host: start (or stop) noting what happens to the trees for the others
+export function forestShare(on) {
+	sharing = on ? new Set() : null;
+	sweep = 0;
+}
+function noteShared(index) {
+	if (!sharing) return;
+	const tree = trees[index];
+	if (!tree || tree.dead) {
+		if (tree && tree.deathShared) return;
+		if (tree) tree.deathShared = true;
+	}
+	sharing.add(index);
+}
+function recordOf(index, into, at) {
+	const tree = trees[index];
+	into[at] = index;
+	into[at + 1] = tree ? 1 : 0;
+	if (!tree) return;
+	SHARE_FIELDS.forEach((field, k) => {
+		const value = tree[field];
+		into[at + 2 + k] = typeof value == 'boolean' ? (value ? 1 : 0) : (value ?? 0);
+	});
+}
+// host: the whole forest, [clock, then SHARE_RECORD for every place in the list]
+export function forestSnapshot() {
+	const data = new Float32Array(1 + trees.length * SHARE_RECORD);
+	data[0] = clock;
+	for (let index = 0; index < trees.length; index++) recordOf(index, data, 1 + index * SHARE_RECORD);
+	return data;
+}
+// host: what has happened since last time, and the growth of the next growthCount living trees round the forest
+export function forestChanges(growthCount) {
+	if (!sharing || !life || trees.length == 0) return null;
+	const changed = [...sharing];
+	sharing.clear();
+	const records = new Float32Array(changed.length * SHARE_RECORD);
+	changed.forEach((index, k) => recordOf(index, records, k * SHARE_RECORD));
+	const growth = new Float32Array(growthCount * GROWTH_RECORD);
+	let count = 0;
+	for (let tries = 0; tries < trees.length && count < growthCount; tries++) {
+		sweep = (sweep + 1) % trees.length;
+		const tree = trees[sweep];
+		if (!tree || tree.dead) continue;
+		growth.set([sweep, tree.age, tree.ageTime, tree.rate], count * GROWTH_RECORD);
+		count++;
+	}
+	return { clock, records, growth: growth.subarray(0, count * GROWTH_RECORD) };
+}
+
+// joiner: its trees measured again as they grow, at the pace the host's life visits them, from the pace each was last sent
+//		(only that: no dying, no seeding. Without it a tree's size, and its trunk's hitbox, would only change when its growth comes in)
+let followOwed = 0, followTurn = 0;
+function followGrowth(years) {
+	if (trees.length == 0) return;
+	followOwed += trees.length * years / 2.5;
+	const visits = Math.min(Math.floor(followOwed), trees.length);
+	followOwed -= visits;
+	for (let k = 0; k < visits; k++) {
+		followTurn = (followTurn + 1) % trees.length;
+		const tree = trees[followTurn];
+		if (!tree || tree.dead) continue;
+		tree.age = life.ageAt(tree, clock);
+		tree.ageTime = clock;
+		life.measure(tree);
+		ageTree(tree, tree.age);
+		changedTrees.push(followTurn);
+	}
+}
+// joiner: whether the forest is planted with the settings it has now (the host's): ready to take the host's trees
+export function forestReady() {
+	const params = JSON.stringify(getArchetypeParams()) + JSON.stringify(getPlantingParams());
+	return !!life && params == builtArchetypeParams + plantedParams && terrain.land === plantedLand;
+}
+// joiner: the trees are the host's from now on (true), or its own again (false)
+export function forestFollow(on) {
+	if (on == following) return;
+	following = on;
+	if (!on && life) {
+		// living on its own again, from the trees as they are: the life's own lists made again from them
+		life.trees = trees;
+		life.grid = new TreeGrid(24);
+		life.holes = [];
+		life.count = 0;
+		trees.forEach((tree, index) => {
+			if (!tree) { life.holes.push(index); return; }
+			life.grid.add(index, tree.x, tree.z);
+			tree.visited = clock - Math.random() * 2.5;
+			life.count++;
+		});
+		life.turn = 0;
+		life.owed = 0;
+	}
+}
+// joiner: the host's forest clock
+export function setForestClock(hostClock) {
+	clock = hostClock;
+	if (Math.abs(clock - clockBase) > REBASE_YEARS && treeBuffer) rebaseClock();
+}
+// one tree as the host has it, at data[at] (SHARE_RECORD)
+function applyRecord(data, at) {
+	const index = data[at], present = data[at + 1] > 0.5;
+	const old = trees[index];
+	if (!present) {
+		if (old) {
+			removeFromCell(index, old);
+			trees[index] = undefined;
+			life.count--;
+			noteMoved(old);
+		}
+		return;
+	}
+	const same = old && old.x === data[at + 2] && old.z === data[at + 4];
+	const tree = same ? old : {};
+	if (old && !same) removeFromCell(index, old);
+	SHARE_FIELDS.forEach((field, k) => { tree[field] = data[at + 2 + k]; });
+	tree.dead = tree.dead > 0.5;
+	tree.archetype = tree.species * VARIANTS + tree.variant;
+	life.measure(tree);
+	ageTree(tree, life.ageAt(tree, clock));
+	trees[index] = tree;
+	if (!old) life.count++;
+	if (!same) addToCell(index);
+	changedTrees.push(index);
+	noteMoved(tree);
+}
+// room on the GPU for as many places in the list as there are now
+function makeRoom() {
+	if (trees.length * TREE_FLOATS <= treeData.length) return;
+	const capacity = Math.ceil(trees.length * 1.25);
+	const data = new Float32Array(capacity * TREE_FLOATS);
+	data.set(treeData);
+	treeData = data;
+	treeBuffer = createStorageBuffer("forest trees", treeData, treeBuffer);
+	visibleData = new Uint32Array(capacity * 2);
+	visibleBuffer = createStorageBuffer("forest visible trees", visibleData, visibleBuffer);
+	forestBindGroup = undefined;
+}
+// the records of the trees that changed, to the GPU: one by one if there are a few, the whole lot in one go if there are many
+function sendChangedTrees() {
+	if (changedTrees.length == 0) return;
+	for (const index of changedTrees) {
+		if (trees[index]) packTree(trees[index], treeData, index);
+	}
+	if (changedTrees.length > 200) {
+		device.queue.writeBuffer(treeBuffer, 0, treeData, 0, trees.length * TREE_FLOATS);
+	} else {
+		for (const index of changedTrees) {
+			device.queue.writeBuffer(treeBuffer, index * TREE_FLOATS * 4, treeData, index * TREE_FLOATS, TREE_FLOATS);
+		}
+	}
+	changedTrees = [];
+}
+// joiner: the host's whole forest, in place of its own
+export function forestAdopt(data) {
+	if (!life) return false;
+	const count = (data.length - 1) / SHARE_RECORD;
+	clock = data[0];
+	clockBase = clock;
+	trees = new Array(count).fill(undefined);	// (no holes in the array: an empty place is undefined, as the life leaves them)
+	life.trees = trees;
+	life.count = 0;
+	cells = [];
+	cellsByKey = new Map();
+	changedTrees = [];
+	for (let index = 0; index < count; index++) applyRecord(data, 1 + index * SHARE_RECORD);
+	changedTrees = [];
+	const capacity = Math.max(getPlantingParams().maxTrees, trees.length, 1);
+	treeData = new Float32Array(capacity * TREE_FLOATS);
+	trees.forEach((tree, index) => { if (tree) packTree(tree, treeData, index); });
+	treeBuffer = createStorageBuffer("forest trees", treeData, treeBuffer);
+	visibleData = new Uint32Array(capacity * 2);
+	visibleBuffer = createStorageBuffer("forest visible trees", visibleData, visibleBuffer);
+	forestBindGroup = undefined;
+	treesMoved = true;
+	forestStats.trees = life.count;
+	return true;
+}
+// joiner: what has happened to the host's trees (see forestChanges)
+export function forestApplyChanges(records, growth) {
+	if (!life || !following) return;
+	for (let at = 0; at < records.length; at += SHARE_RECORD) applyRecord(records, at);
+	for (let at = 0; at < growth.length; at += GROWTH_RECORD) {
+		const tree = trees[growth[at]];
+		if (!tree || tree.dead) continue;
+		tree.age = growth[at + 1];
+		tree.ageTime = growth[at + 2];
+		tree.rate = growth[at + 3];
+		life.measure(tree);
+		ageTree(tree, life.ageAt(tree, clock));
+		changedTrees.push(growth[at]);
+	}
+	makeRoom();
+	sendChangedTrees();
 	forestStats.trees = life.count;
 }
 

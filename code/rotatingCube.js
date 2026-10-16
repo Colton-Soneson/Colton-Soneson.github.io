@@ -43,6 +43,8 @@ import * as cameraControls from './cameraControls.js'
 import * as hunting from './hunting.js'
 import * as rifle from './rifle.js'
 import * as ballistics from './ballistics.js'
+import * as net from './net.js'
+import * as players from './players.js'
 import { settings } from './settings.js';
 import * as userInterface from './imguiLoader.js';
 import * as profiler from './profiler.js';
@@ -351,6 +353,8 @@ export function updateRotatingCubePass() {
 	cameraControls.updateCamera();
 	hunting.updateHunter();		//on foot instead, in the Hunting game mode
 	rifle.rifleUpdate();		//and the rifle in the hunter's hands
+	net.netUpdate();			//in a game with others: what this player is doing goes out, the host's world and clock come in
+	players.playersUpdate();	//and the others move on
 	ballistics.bulletUpdate();	//the rounds in the air
 	wind.windUpdate();		//the air moves on, before anything reads it
 	userInterface.refreshEntityFolder();
@@ -517,6 +521,7 @@ export function updateRotatingCubePass() {
 		birds.birdPass(encoder, depthTexture);
 		geese.geesePass(encoder, depthTexture);
 		deer.deerPass(encoder, depthTexture);
+		players.playersPass(encoder, depthTexture);	//(and the other players, in a game with others)
 	});
 
 	//screen space shadows and ambient occlusion over everything solid, and the copies of the frame the water finds its reflections in.

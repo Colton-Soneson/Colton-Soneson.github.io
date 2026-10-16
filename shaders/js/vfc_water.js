@@ -5,6 +5,7 @@ export const FFT_WORKGROUP_SIZE = [8, 8, 1];
 export const PRECOMP_WORKGROUP_SIZE = [1, 8, 1];
 export const SHORE_FIELD_DOWNSCALE = 8;		// one shore distance field texel covers this many top down height map texels (per axis)
 export const SHORE_SEARCH_RADIUS = 64;		// in shore field texels. The furthest distance from land the field can hold, further than this is open ocean
+export const WAVE_SCALE_RESOLUTION = 512;	// what the IFFT's sum is divided by (c_Shift). A fixed number, not the tile resolution: see c_Shift
 
 
 /*
@@ -503,6 +504,10 @@ fn waterVertex(ix: u32, iz: u32) -> WaterVertex {
 	The raw IFFT output is centered around frequency zero in the corner, which gives a discontinuous-looking wave pattern
 	The shift pass applies a checkerboard sign flip which mathematically moves the zero-frequency component to the center making the wave pattern tile seamlessly.
 	(gIndex.x + gIndex.y) % 2u alternates between 0 and 1 in a checkerboard pattern across the grid
+	The sum is then divided by WAVE_SCALE_RESOLUTION, the same at every tile resolution. The waves are the same size whatever the
+	resolution: the wave numbers step by 2 pi / oceanPlanePhysicalSize, so a finer tile only adds shorter waves, and the long ones,
+	which carry nearly all the height, are the same. It was divided by the resolution, which halved every wave each time the
+	resolution doubled (measured: rms height 4.4 at 128, 2.3 at 256, 1.1 at 512). 512 keeps the waves as they were at 512
 */
 
 export const c_Shift =
@@ -533,7 +538,7 @@ export const c_Shift =
 	) {
 		var gIndex = GlobalInvocationID;
 		var val = textureLoad(inTexture, gIndex.xy);
-		let N2 = WU.resolution;																		// THIS HAS TO BE POWER OF TWO REPLACE ONCE DONE TESTING!!!!!!!!
+		let N2 = f32(${WAVE_SCALE_RESOLUTION});		// (not WU.resolution: see above)
 		
 		//permute and scale
 		var permute = val * (1.0 - 2.0 * f32((gIndex.x + gIndex.y) % 2u));

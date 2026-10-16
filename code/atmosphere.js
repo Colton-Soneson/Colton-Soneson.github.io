@@ -307,6 +307,14 @@ export function sunCycle(cycleSpeed)
 	settings.moonPosY = (-Math.sin(settings.sunCycleAngle) * 50.0) + 25.0;
 }
 
+// for multiplayer (net.js): a joiner takes the host's clock, in days, and the sun's angle with it
+export function setSunClock(cycles, angle)
+{
+	sunCycles = cycles;
+	settings.sunCycleAngle = angle;
+	sunCycle(0);
+}
+
 export function atmospherePass(mainpassDepthTexture)
 {	
 	const now = performance.now();

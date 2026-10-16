@@ -287,7 +287,7 @@ export function rifleUpdate() {
 }
 
 function advanceRifle(elapsed) {
-	if (!active()) {
+	if (!active() || !hunting.hunterLife.alive) {
 		triggerAsked = middleAsked = false;
 		wheelPixels = loadsAsked = 0;
 		rifle.aimed = 0;
@@ -480,6 +480,14 @@ function roundsNow() {
 	return [A, B, C, D, spin];
 }
 
+// a full rifle, the bolt closed on a round: a hunter up again after being shot (players.js)
+export function resetRifle() {
+	Object.assign(rifle, { state: 'ready', timer: 0, aimed: 0, kick: 0, trigger: 0, roll: 0, drop: 0, tilt: 0, magazine: MAGAZINE - 1, chamber: 'live',
+		lift: 0, liftWanted: 0, back: 0, backWanted: 0, stripped: false, loading: -1, queued: 0, sinceLoad: 99, shown: 0, eject: null });
+	triggerAsked = middleAsked = false;
+	wheelPixels = loadsAsked = 0;
+}
+
 // for testing: the trigger pulled, the sights up or down, the middle button, the wheel turned (pixels, down positive), R pressed, and the rifle moved on by a number of seconds
 export function testRifle({ fire = false, aim = null, middle = false, wheel = 0, load = 0, seconds = 0 } = {}) {
 	if (fire) triggerAsked = true;
@@ -523,7 +531,7 @@ function nextStep() {
 }
 
 function showAmmo() {
-	const on = active() && hunting.hunterPlace().active;
+	const on = active() && hunting.hunterPlace().active && hunting.hunterLife.alive;
 	ammo.style.display = on ? '' : 'none';
 	if (!on) return;
 	const r = rifle;
@@ -571,7 +579,7 @@ onRenderResize(() => { rifleDepth.destroy(); rifleDepth = makeDepth(); });
 
 // over the finished frame, in front of everything
 export function riflePass() {
-	if (!active() || !hunting.hunterPlace().active) {
+	if (!active() || !hunting.hunterPlace().active || !hunting.hunterLife.alive) {
 		return;
 	}
 	const projection = mat4.perspective(transformations.verticalViewAngle, canvas.width / canvas.height, 0.01, 10);

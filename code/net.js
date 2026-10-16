@@ -1,0 +1,904 @@
+import { canvas } from './deviceSelection.js'
+import { settings } from './settings.js';
+import { imguiParams, gui } from './imguiLoader.js';
+import * as atmosphere from './atmosphere.js'
+import * as hunting from './hunting.js'
+import * as ballistics from './ballistics.js'
+import * as transformations from './transformations.js'
+import * as players from './players.js'
+import * as forest from './forest.js'
+import * as deer from './deer.js'
+import * as birds from './birds.js'
+import * as geese from './geese.js'
+import { PRESETS } from './graphicsPresets.js';
+
+/*
+	MULTIPLAYER, for the Hunting game mode: one player hosts, the others join. The site is only files (GitHub Pages), with no
+	server of its own, so the players' browsers talk to each other directly (WebRTC). The host is the middle: every joiner
+	is connected to the host alone, and the host passes on what each one says to the others.
+
+	HOW THEY FIND EACH OTHER. Two browsers need a go-between to find each other before they can talk. Either way works, and a
+	host takes both at once:
+		a room code			the host gets a short code (ROOM_CODE_LENGTH letters) and the others type it in. PeerJS's free
+							public server introduces them (PEERJS_SCRIPT, loaded only when it is used), and after that the
+							game goes straight between the browsers
+		invite codes		no one in between at all. The host makes an invite code for each player and sends it to them
+							(a chat, an email), they paste it in and get a reply code, send that back, and the host pastes it in.
+							The codes carry what WebRTC needs to connect (SDP and its ICE candidates), compressed
+	Either way the browsers find a way through to each other with the help of a STUN server (ICE_SERVERS). Some networks
+	(strict company ones, some mobile carriers) let nothing through without a relay (TURN), which this does not have.
+
+	WHAT GOES BETWEEN THEM (as JSON, t: what it is)
+		joiner to host		hello (its name), st (its state), shot, hit (it hit someone), up (it is up again after being shot)
+		host to joiners		welcome (its id, who is there, the world, the clock, the scores), join, leave, world, clock,
+							sts (everyone's states), shot, hp (someone's health), down (someone was shot dead), score
+	A state is [x, y, z (its feet), heading, pitch, speed, alive, out hunting], STATE_RATE times a second, on the fast
+	channel (no waiting for what was lost: the next one is newer anyway). Everything else on the game channel, in order.
+
+	THE HOST KEEPS:
+		the world		every setting but how well each one draws (WORLD_KEYS: everything but LOCAL_KEYS: the seeds of the
+						land, the forest and the weather, the length of a day, the season, the animals, the look of the
+						water and the grass...). A joiner takes the host's and keeps them, and its controls for them are
+						greyed out until it leaves (lockControls). Its graphics settings stay its own
+		the clock		the world's day (sunCycles in atmosphere.js), sent every CLOCK_SECONDS. A joiner more than
+						CLOCK_SLACK days out is put right. The weather and the seasons are drawn from the day, so they follow
+		the forest		its trees (see MULTIPLAYER in forest.js): a joiner asks for the whole forest once its own is planted with
+						the host's settings (forest?), and gets it in pieces (big: BIG_PIECE characters each, a few at a time
+						so the channel's buffer never holds more than BIG_BUFFER). From then on, every TREES_SECONDS, the trees
+						that came, died or went, and the growth of TREES_GROWTH more round the forest (trees). Each lot is
+						numbered, and the whole forest says the last it has in it: the joiner keeps the lots from when it asks
+						and uses the later ones once the forest is in (some come before its first piece). Planted again on
+						either side (its settings changed): asked for again
+		the animals	the deer, the hawks and the geese live on the host alone. ANIMAL_RATE times a second it sends each
+						joiner where they are and what they are doing (animals: ANIMAL_RECORD floats each, the ones within
+						ANIMAL_NEAR of the joiner every time, the rest one time in ANIMAL_FAR_EVERY), and the joiner draws them
+						ANIMAL_DELAY behind, in between (its own stop: deerFollow, hawkFollow, geeseFollow). A joiner's shot
+						that hits one tells the host (animal), and the host has it fall
+		health			everyone's: a bullet that hits someone is seen by whoever fired it (players.js: they see where the
+						others are, and it is their shot), who tells the host the part it hit. The host takes DAMAGE off and
+						says what is left. At 0 that player is down, and the host counts the kill
+*/
+const ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }];
+const PEERJS_SCRIPT = 'https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js';
+const ROOM_PREFIX = 'webgpu-life-hunt-';		// (the public server is shared with everyone who uses PeerJS: the room codes are kept to ours)
+const ROOM_CODE_LENGTH = 5;
+const ROOM_LETTERS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';	// (no 0 and O, 1 and I)
+const INVITE_PREFIX = 'HUNT-INVITE-', REPLY_PREFIX = 'HUNT-REPLY-';
+const GATHER_SECONDS = 4;			// the most to wait for the ICE candidates before the code is made
+const STATE_RATE = 20;				// a second
+const CLOCK_SECONDS = 1;
+const CLOCK_SLACK = 0.002;			// days: 0.6 seconds of a 5 minute day
+const MAX_PLAYERS = 8;
+const TREES_SECONDS = 0.25;
+const TREES_GROWTH = 400;			// trees' growth sent every TREES_SECONDS: 1600 a second, round a forest of 30 thousand in 20 seconds
+const BIG_PIECE = 60000;			// characters
+const ANIMAL_RATE = 10;				// a second
+const ANIMAL_RECORD = 12;			// floats: id, x, y, z, heading, six of the animal's own, alive (see deerShare in deer.js, hawkShare in birds.js)
+const ANIMAL_NEAR = 600;				// metres
+const ANIMAL_FAR_EVERY = 10;
+const ANIMAL_DELAY = 0.2;			// seconds
+const TREES_PER_MESSAGE = 1000;		// trees in full in one message: about 120 thousand characters, under what one message can hold
+const BIG_BUFFER = 1000000;			// bytes
+export const DAMAGE = { head: 100, chest: 70, belly: 55, leg: 30 };
+// The settings a joiner keeps its own: how well it draws (everything a graphics preset sets, and the rest of the same kind),
+//		where it looks from, the debug views, and what each machine works out for itself (read only). Every other setting is
+//		the host's (see THE HOST KEEPS)
+const LOCAL_KEYS = new Set([
+	...Object.values(PRESETS).flatMap((preset) => Object.keys(preset)),
+	'step', 'sunCycleCount', 'forestYear', 'forestTreeCount', 'seasonNow', 'snowCover', 'weatherNow', 'shadowMapCenter',
+	'camPosX', 'camPosY', 'camPosZ', 'camFarPlane', 'camNearPlane', 'gameMode', 'huntingLookSensitivity', 'cameraFlyMode', 'cameraFlySpeed', 'camYaw', 'camPitch',
+	'heightMapResolution', 'topDownCameraHeight', 'shadowMapSize', 'shadowMapPCFKernelSize', 'shadowMapAcneBias',
+	'enablePostEffects', 'enableScreenShadows', 'screenShadowStrength', 'screenShadowThickness', 'screenShadowContrast', 'enableSSAO', 'ssaoRadius',
+	'ssaoStrength', 'enableSSR', 'ssrStrength', 'ssrDistance', 'displayScreenShading',
+	'renderResolution', 'dynamicResolution', 'dynamicResolutionTarget', 'antiAliasing', 'smaaEdgeThreshold', 'fxaaSubpixel', 'fxaaEdgeThreshold', 'anisotropicFiltering',
+	'terrainResolution', 'terrainFarBake', 'terrainDetailDistance', 'terrainRockVeins', 'terrainGroundDetail', 'terrainDepthBias', 'terrainRockDetail',
+	'enableGrass', 'grassTotalBladeCount', 'grassTotalHARDLIMIT', 'grassDrawDistance', 'grassLodRings', 'grassLodNearDistance', 'grassLodFarBlades',
+	'landOcclusion', 'boulderDrawDistance',
+	'forestDetailDistance', 'forestMidDistance', 'forestThinnedRings', 'forestBillboardDistance', 'forestDrawDistance',
+	'cloudSteps', 'cloudResolution', 'cloudDrawDistance', 'displayCloudCoverage',
+	'enableLightShafts', 'lightShaftStrength', 'enableUnderwater', 'causticStrength',
+	'enableLeaves', 'leavesAllYear', 'leafAmount', 'leafSize', 'leafWeight', 'enableSeaSpray', 'sprayAmount', 'enableRain', 'rainAmount', 'rainDistance', 'enableSnow', 'snowAmount',
+	'waterTileResolution', 'waterTileInstanceCount',
+	'atmosphereNeedsTransmittanceRebuild', 'atmosphereViewLUTTextureSizeX', 'atmosphereViewLUTTextureSizeY', 'atmosphereTransmittanceTextureSizeX', 'atmosphereTransmittanceTextureSizeY',
+	'showDebug', 'showDebugIcons', 'activateSkybox', 'displayHeightMap', 'displayDepthMapDebugRange', 'displayShadowMapDepth', 'displayOceanSpectrum',
+	'displayWaterInitialHeight', 'displayWaveHeightRealization', 'displayWaterPreComp', 'displayWaterFFT', 'displayWaterShifted',
+	'displayWaterDisplacementSpectrum', 'displayWaterDisplacement', 'displayShoreDistance', 'displayShoreDistanceDebugRange',
+	'displaySkyViewLUTtexture', 'displayTransmittanceLUTtexture', 'displayWindTexture', 'displayLightingMode', 'debugTextureRescaleSize',
+]);
+// where the sun and the moon are: worked out from the clock while the sun goes round, the host's own settings while it stands still
+const SUN_KEYS = ['sunPosX', 'sunPosY', 'sunPosZ', 'moonPosX', 'moonPosY', 'moonPosZ', 'sunCycleAngle'];
+// the host's: every setting there is (as settings.js makes them), but those
+const WORLD_KEYS = Object.keys(settings).filter((key) => !LOCAL_KEYS.has(key) && !SUN_KEYS.includes(key));
+
+export const netStats = { role: 'off', id: 0, players: 0, roomCode: '', status: '', sent: 0, received: 0, statesHeard: 0 };	// for anyone who wants to show it
+
+// Links: one other player, whichever way it was made
+//-------------------------------------------------
+// { open, sendGame(message), sendFast(message), close(), onMessage, onOpen, onClose }
+function makeLink() {
+	return { open: false, onMessage: () => {}, onOpen: () => {}, onClose: () => {}, closed: false };
+}
+function send(channel, message) {
+	if (channel && channel.readyState === 'open') {
+		channel.send(JSON.stringify(message));
+		netStats.sent++;
+	}
+}
+// a link over a WebRTC connection of our own, with a game channel (reliable, in order) and a fast one (neither)
+function rtcLink(pc, game, fast) {
+	const link = makeLink();
+	link.pc = pc;
+	const wire = (channel) => {
+		channel.onmessage = (event) => { netStats.received++; try { link.onMessage(JSON.parse(event.data)); } catch (error) { console.warn('net: a message that could not be read', error); } };
+		channel.onclose = () => lose();
+	};
+	const lose = () => { if (link.closed) return; link.closed = true; link.open = false; link.onClose(); };
+	const ready = () => {
+		if (!link.open && link.game?.readyState === 'open' && link.fast?.readyState === 'open') { link.open = true; link.onOpen(); }
+	};
+	const take = (channel) => {
+		if (channel.label == 'game') link.game = channel; else link.fast = channel;
+		wire(channel);
+		channel.onopen = ready;
+		ready();
+	};
+	if (game) take(game);
+	if (fast) take(fast);
+	pc.ondatachannel = (event) => take(event.channel);
+	pc.onconnectionstatechange = () => { if (pc.connectionState == 'failed' || pc.connectionState == 'closed') lose(); };
+	link.sendGame = (message) => send(link.game, message);
+	link.sendFast = (message) => send(link.fast, message);
+	link.buffered = () => link.game?.bufferedAmount ?? 0;
+	link.close = () => { try { pc.close(); } catch (error) {} lose(); };
+	return link;
+}
+// a link over a PeerJS connection: one channel, reliable, for everything
+function peerLink(connection) {
+	const link = makeLink();
+	const lose = () => { if (link.closed) return; link.closed = true; link.open = false; link.onClose(); };
+	connection.on('open', () => { link.open = true; link.onOpen(); });
+	connection.on('data', (data) => { netStats.received++; try { link.onMessage(typeof data == 'string' ? JSON.parse(data) : data); } catch (error) { console.warn('net: a message that could not be read', error); } });
+	connection.on('close', lose);
+	connection.on('error', lose);
+	const sendIt = (message) => { if (link.open) { connection.send(JSON.stringify(message)); netStats.sent++; } };
+	link.sendGame = sendIt;
+	link.sendFast = sendIt;
+	link.buffered = () => (connection.dataChannel?.bufferedAmount ?? 0) + (connection.bufferSize ?? 0) * BIG_PIECE;
+	link.close = () => { try { connection.close(); } catch (error) {} lose(); };
+	return link;
+}
+
+// Invite codes
+//-------------------------------------------------
+async function packCode(prefix, object) {
+	const bytes = new TextEncoder().encode(JSON.stringify(object));
+	const zipped = new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate-raw'))).arrayBuffer());
+	let text = '';
+	for (const byte of zipped) text += String.fromCharCode(byte);
+	return prefix + btoa(text).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+async function unpackCode(prefix, code) {
+	code = (code || '').replace(/\s+/g, '');
+	if (!code.startsWith(prefix)) throw new Error(prefix == INVITE_PREFIX ? 'That is not an invite code (it starts ' + INVITE_PREFIX + ')' : 'That is not a reply code (it starts ' + REPLY_PREFIX + ')');
+	const text = atob(code.slice(prefix.length).replace(/-/g, '+').replace(/_/g, '/'));
+	const bytes = Uint8Array.from(text, (c) => c.charCodeAt(0));
+	const unzipped = await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer();
+	return JSON.parse(new TextDecoder().decode(unzipped));
+}
+// bytes as text and back, and squeezed and back
+function bytesToText(bytes) {
+	let text = '';
+	for (let at = 0; at < bytes.length; at += 0x8000) text += String.fromCharCode.apply(null, bytes.subarray(at, at + 0x8000));
+	return btoa(text);
+}
+function textToBytes(text) {
+	const raw = atob(text), bytes = new Uint8Array(raw.length);
+	for (let k = 0; k < raw.length; k++) bytes[k] = raw.charCodeAt(k);
+	return bytes;
+}
+const floatsToText = (floats) => bytesToText(new Uint8Array(floats.buffer, floats.byteOffset, floats.byteLength));
+const textToFloats = (text) => { const bytes = textToBytes(text); return new Float32Array(bytes.buffer, 0, bytes.byteLength / 4); };
+const squeeze = async (bytes, how) => new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(how == 'in' ? new CompressionStream('deflate-raw') : new DecompressionStream('deflate-raw'))).arrayBuffer());
+
+// something too big for one message (the forest), in pieces, waiting while the channel is full
+async function sendBig(link, kind, meta, floats) {
+	const text = bytesToText(await squeeze(new Uint8Array(floats.buffer, floats.byteOffset, floats.byteLength), 'in'));
+	const pieces = Math.ceil(text.length / BIG_PIECE);
+	for (let k = 0; k < pieces; k++) {
+		while (link.open && link.buffered() > BIG_BUFFER) await new Promise((done) => setTimeout(done, 20));
+		if (!link.open) return;
+		link.sendGame({ t: 'big', kind, meta, n: pieces, k, d: text.slice(k * BIG_PIECE, (k + 1) * BIG_PIECE) });
+	}
+}
+let bigParts = null;		// joiner: the pieces of a big one on its way
+async function bigPiece(message) {
+	if (!bigParts || bigParts.kind != message.kind || bigParts.n != message.n) bigParts = { kind: message.kind, n: message.n, parts: [], got: 0 };
+	if (bigParts.parts[message.k] === undefined) { bigParts.parts[message.k] = message.d; bigParts.got++; }
+	netStats.status = 'Getting the ' + message.kind + '… ' + Math.round(bigParts.got / bigParts.n * 100) + '%';
+	if (bigParts.got < bigParts.n) return null;
+	const done = bigParts;
+	bigParts = null;
+	const bytes = await squeeze(textToBytes(done.parts.join('')), 'out');
+	return new Float32Array(bytes.buffer, 0, bytes.byteLength / 4);
+}
+
+// waits until the connection has found its ways in (ICE candidates), or GATHER_SECONDS: the code carries them all
+function gathered(pc) {
+	return new Promise((done) => {
+		if (pc.iceGatheringState == 'complete') return done();
+		pc.addEventListener('icegatheringstatechange', () => { if (pc.iceGatheringState == 'complete') done(); });
+		setTimeout(done, GATHER_SECONDS * 1000);
+	});
+}
+
+// PeerJS
+//-------------------------------------------------
+let peerjsLoading = null;
+function loadPeerJS() {
+	if (window.Peer) return Promise.resolve(window.Peer);
+	peerjsLoading ??= new Promise((done, fail) => {
+		const script = document.createElement('script');
+		script.src = PEERJS_SCRIPT;
+		script.onload = () => window.Peer ? done(window.Peer) : fail(new Error('PeerJS did not load'));
+		script.onerror = () => { peerjsLoading = null; fail(new Error('Could not load PeerJS')); };
+		document.head.appendChild(script);
+	});
+	return peerjsLoading;
+}
+function roomCode() {
+	let code = '';
+	for (let k = 0; k < ROOM_CODE_LENGTH; k++) code += ROOM_LETTERS[Math.floor(Math.random() * ROOM_LETTERS.length)];
+	return code;
+}
+
+// The animals (see THE HOST KEEPS)
+//-------------------------------------------------
+const ANIMALS = [
+	{ kind: 'deer', share: deer.deerShare, follow: deer.deerFollow, kill: deer.killDeerById, shot: deer.deerShot, angles: [4] },
+	{ kind: 'hawk', share: birds.hawkShare, follow: birds.hawkFollow, kill: birds.killHawkById, shot: birds.hawkShot, angles: [4, 6] },
+	{ kind: 'goose', share: geese.geeseShare, follow: geese.geeseFollow, kill: geese.killGooseById, shot: geese.gooseShot, angles: [4, 6] },
+];
+const tracks = new Map(ANIMALS.map((animal) => [animal.kind, new Map()]));	// joiner: kind -> id -> the last few records heard, [{ at, r }]
+let animalTick = 0, lastAnimals = 0;
+
+// a joiner's shot that hits one of the host's animals goes to the host
+for (const animal of ANIMALS) {
+	animal.shot.report = (id, velocity) => { if (role == 'joined') hostLink.sendGame({ t: 'animal', kind: animal.kind, id, v: velocity }); };
+}
+// host: every animal, to each joiner. The ones within ANIMAL_NEAR of it every time, the rest every ANIMAL_FAR_EVERY-th time
+function sendAnimals() {
+	animalTick++;
+	const full = animalTick % ANIMAL_FAR_EVERY == 0;
+	const near = ANIMAL_NEAR * settings.forestUnitsPerMetre;
+	const shares = ANIMALS.map((animal) => animal.share());
+	for (const joiner of joiners.values()) {
+		if (!joiner.link.open) continue;
+		const at = joiner.state;
+		const d = {};
+		ANIMALS.forEach((animal, k) => {
+			let records = shares[k];
+			if (!full && at) {
+				const kept = [];
+				for (let i = 0; i < records.length; i += ANIMAL_RECORD) {
+					if (Math.hypot(records[i + 1] - at[0], records[i + 3] - at[2]) < near) kept.push(...records.subarray(i, i + ANIMAL_RECORD));
+				}
+				records = new Float32Array(kept);
+			}
+			d[animal.kind] = floatsToText(records);
+		});
+		joiner.link.sendFast({ t: 'animals', full, d });
+	}
+}
+// joiner: what the host says its animals are doing
+function heardAnimals(message) {
+	const at = performance.now() / 1000;
+	for (const animal of ANIMALS) {
+		const text = message.d[animal.kind];
+		if (text === undefined) continue;
+		const records = textToFloats(text), track = tracks.get(animal.kind), seen = new Set();
+		for (let i = 0; i < records.length; i += ANIMAL_RECORD) {
+			const id = records[i];
+			seen.add(id);
+			let samples = track.get(id);
+			if (!samples) track.set(id, samples = []);
+			samples.push({ at, r: records.slice(i, i + ANIMAL_RECORD) });
+			if (samples.length > 4) samples.shift();
+		}
+		// (only a full list says which are gone)
+		if (message.full) for (const id of [...track.keys()]) if (!seen.has(id)) track.delete(id);
+	}
+}
+// joiner: each animal where it was ANIMAL_DELAY ago, in between the two records either side of then
+function followAnimals() {
+	const now = performance.now() / 1000 - ANIMAL_DELAY;
+	for (const animal of ANIMALS) {
+		const out = [];
+		for (const samples of tracks.get(animal.kind).values()) {
+			let a = samples[0], b = samples[samples.length - 1];
+			for (let k = 0; k < samples.length - 1; k++) {
+				if (samples[k].at <= now && samples[k + 1].at >= now) { a = samples[k]; b = samples[k + 1]; break; }
+			}
+			const f = b.at > a.at ? Math.min(Math.max((now - a.at) / (b.at - a.at), 0), 1) : 1;
+			for (let i = 0; i < ANIMAL_RECORD; i++) {
+				let change = b.r[i] - a.r[i];
+				if (animal.angles.includes(i)) change -= Math.PI * 2 * Math.round(change / (Math.PI * 2));
+				out.push(i == 0 || i == ANIMAL_RECORD - 1 ? b.r[i] : a.r[i] + change * f);
+			}
+		}
+		animal.follow(new Float32Array(out));
+	}
+}
+function stopFollowingAnimals() {
+	for (const animal of ANIMALS) {
+		animal.follow(null);
+		tracks.get(animal.kind).clear();
+	}
+}
+
+// The game
+//-------------------------------------------------
+let role = 'off';				// 'off', 'host', 'joining', 'joined'
+let myId = 0;
+let myName = loadName();
+let nextId = 1;
+const joiners = new Map();		// host: id -> { id, name, link, state }
+const invites = new Map();		// host: invite -> { pc, link }
+let hostLink = null;			// joiner: its link to the host
+let peer = null;				// this player's PeerJS peer, if it has one
+let worldFromHost = null;		// joiner: the host's WORLD_KEYS
+let worldSent = '';				// host: the last world it sent
+const names = new Map();		// id -> name, everyone's, this player too
+const health = new Map();		// host: id -> health
+const scores = new Map();		// id -> { kills, deaths }
+let lastState = 0, lastClock = 0, lastWorldCheck = 0, lastTrees = 0;
+let treesSent = 0;		// host: the number of the last lot of trees sent. The whole forest says which it already has in it
+// joiner: the forest (see the forest above). asked: waiting for it. have: it has the host's, from the host's planting
+//		hostPlanting, while its own was planted localPlanting. queue: changes that came while the forest was on its way
+const forestSync = { need: false, asked: false, have: false, hostPlanting: -1, localPlanting: -1, queue: [] };
+
+function loadName() {
+	try { return localStorage.getItem('huntName') || 'Hunter ' + Math.floor(10 + Math.random() * 90); } catch (error) { return 'Hunter ' + Math.floor(10 + Math.random() * 90); }
+}
+export function setName(name) {
+	myName = String(name || '').trim().slice(0, 20) || myName;
+	try { localStorage.setItem('huntName', myName); } catch (error) {}
+	names.set(myId, myName);
+}
+const nameOf = (id) => names.get(id) ?? 'someone';
+const say = (status) => { netStats.status = status; refreshPanel(); };
+
+function worldNow() {
+	const world = {};
+	const keys = settings.atmosphereSunRotationDemo ? WORLD_KEYS : [...WORLD_KEYS, ...SUN_KEYS];
+	for (const key of keys) world[key] = ArrayBuffer.isView(settings[key]) ? Array.from(settings[key]) : settings[key];
+	return world;
+}
+function scoreList() {
+	return [...names.entries()].map(([id, name]) => [id, name, scores.get(id)?.kills ?? 0, scores.get(id)?.deaths ?? 0]);
+}
+function everyone() {
+	return [...names.entries()].map(([id, name]) => ({ id, name }));
+}
+function toAll(message, except = -1) {
+	for (const joiner of joiners.values()) if (joiner.id !== except && joiner.link.open) joiner.link.sendGame(message);
+}
+
+function beginGame() {
+	names.clear();
+	names.set(myId, myName);
+	scores.clear();
+	health.clear();
+	health.set(myId, players.HEALTH);
+	players.setInGame(true);
+	if (settings.gameMode != 'Hunting') { settings.gameMode = 'Hunting'; imguiParams.gameMode = 'Hunting'; }
+	players.respawn();
+}
+
+// Hosting
+//-------------------------------------------------
+export function hostGame() {
+	if (role != 'off') leaveGame();
+	role = 'host';
+	myId = 0;
+	nextId = 1;
+	beginGame();
+	forest.forestShare(true);
+	say('Hosting');
+	openRoom();
+}
+// the room code, through PeerJS. Hosting goes on without it if it cannot be had
+async function openRoom() {
+	try {
+		const Peer = await loadPeerJS();
+		if (role != 'host') return;
+		const code = roomCode();
+		peer = new Peer(ROOM_PREFIX + code, { config: { iceServers: ICE_SERVERS } });
+		peer.on('open', () => { netStats.roomCode = code; refreshPanel(); });
+		peer.on('connection', (connection) => {
+			if (role != 'host' || joiners.size >= MAX_PLAYERS - 1) { connection.on('open', () => connection.close()); return; }
+			takeJoiner(peerLink(connection));
+		});
+		peer.on('error', (error) => {
+			if (error.type == 'unavailable-id' && role == 'host') { peer.destroy(); peer = null; openRoom(); return; }
+			console.warn('net: PeerJS', error);
+			if (!netStats.roomCode) say('Hosting. Room codes are not available (' + (error.type || error.message) + '): use invite codes');
+		});
+		peer.on('disconnected', () => { if (role == 'host' && peer && !peer.destroyed) peer.reconnect(); });
+	} catch (error) {
+		say('Hosting. Room codes are not available (' + error.message + '): use invite codes');
+	}
+}
+// an invite code for one more player
+export async function makeInvite() {
+	if (role != 'host') throw new Error('Not hosting');
+	const invite = Math.random().toString(36).slice(2, 8);
+	const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+	const game = pc.createDataChannel('game', { ordered: true });
+	const fast = pc.createDataChannel('fast', { ordered: false, maxRetransmits: 0 });
+	const link = rtcLink(pc, game, fast);
+	invites.set(invite, { pc, link });
+	link.onClose = () => invites.delete(invite);
+	takeJoiner(link, invite);
+	await pc.setLocalDescription(await pc.createOffer());
+	await gathered(pc);
+	return packCode(INVITE_PREFIX, { v: 1, i: invite, sdp: pc.localDescription.sdp });
+}
+// the reply code a player sent back
+export async function acceptReply(code) {
+	const reply = await unpackCode(REPLY_PREFIX, code);
+	const invite = invites.get(reply.i);
+	if (!invite) throw new Error('That reply is for an invite this game did not make (or it has been used)');
+	await invite.pc.setRemoteDescription({ type: 'answer', sdp: reply.sdp });
+	say('Connecting a player…');
+}
+// a joiner on its way in: it says hello once its link is open, and then it is in the game
+function takeJoiner(link, invite = null) {
+	link.onMessage = (message) => {
+		if (message.t == 'hello' && !link.joiner) {
+			if (invite) invites.delete(invite);
+			const id = nextId++;
+			const joiner = { id, name: String(message.name || 'Hunter').slice(0, 20), link, state: null };
+			link.joiner = joiner;
+			joiners.set(id, joiner);
+			names.set(id, joiner.name);
+			health.set(id, players.HEALTH);
+			players.addOther(id, joiner.name);
+			link.sendGame({ t: 'welcome', id, players: everyone(), world: worldNow(), clock: [atmosphere.sunCycles, settings.sunCycleAngle], scores: scoreList() });
+			toAll({ t: 'join', id, name: joiner.name }, id);
+			players.addFeed(joiner.name + ' joined');
+			say('Hosting');
+			return;
+		}
+		if (link.joiner) fromJoiner(link.joiner, message);
+	};
+	link.onClose = () => {
+		if (invite) invites.delete(invite);
+		const joiner = link.joiner;
+		if (!joiner || !joiners.has(joiner.id)) return;
+		joiners.delete(joiner.id);
+		names.delete(joiner.id);
+		health.delete(joiner.id);
+		players.removeOther(joiner.id);
+		toAll({ t: 'leave', id: joiner.id });
+		players.addFeed(joiner.name + ' left');
+		refreshPanel();
+	};
+}
+function fromJoiner(joiner, message) {
+	if (message.t == 'st') {
+		joiner.state = message.s;
+		players.otherState(joiner.id, message.s);
+		netStats.statesHeard++;
+	} else if (message.t == 'shot') {
+		ballistics.fire(message.from, message.dir, { remote: true, shooter: joiner.id });
+		toAll({ t: 'shot', id: joiner.id, from: message.from, dir: message.dir }, joiner.id);
+	} else if (message.t == 'hit') {
+		applyHit(joiner.id, message.target, message.part);
+	} else if (message.t == 'up') {
+		setHealth(joiner.id, players.HEALTH, joiner.id, '');
+	} else if (message.t == 'animal') {
+		ANIMALS.find((animal) => animal.kind == message.kind)?.kill(message.id, message.v);
+	} else if (message.t == 'forest?') {
+		sendBig(joiner.link, 'forest', { p: forest.plantings, s: treesSent }, forest.forestSnapshot());
+	}
+}
+// the host's word on a hit: DAMAGE off the target's health, and at 0 it is down
+function applyHit(shooter, target, part) {
+	const before = health.get(target);
+	if (before === undefined || before <= 0 || !(part in DAMAGE) || shooter === target) return;
+	const after = Math.max(before - DAMAGE[part], 0);
+	setHealth(target, after, shooter, part);
+	if (after <= 0) {
+		const killer = scores.get(shooter) ?? { kills: 0, deaths: 0 };
+		killer.kills++;
+		scores.set(shooter, killer);
+		const victim = scores.get(target) ?? { kills: 0, deaths: 0 };
+		victim.deaths++;
+		scores.set(target, victim);
+		const down = { t: 'down', id: target, by: shooter, part };
+		toAll(down);
+		heard(down);
+		const score = { t: 'score', list: scoreList() };
+		toAll(score);
+		heard(score);
+	}
+}
+function setHealth(id, value, by, part) {
+	health.set(id, value);
+	const message = { t: 'hp', id, hp: value, by, part };
+	toAll(message);
+	heard(message);
+}
+
+// Joining
+//-------------------------------------------------
+function beginJoining() {
+	if (role != 'off') leaveGame();
+	role = 'joining';
+}
+// with a room code (PeerJS)
+export async function joinRoom(code) {
+	code = String(code || '').trim().toUpperCase();
+	if (code.length != ROOM_CODE_LENGTH) throw new Error('A room code is ' + ROOM_CODE_LENGTH + ' letters');
+	beginJoining();
+	say('Finding the room…');
+	const Peer = await loadPeerJS();
+	peer = new Peer({ config: { iceServers: ICE_SERVERS } });
+	peer.on('error', (error) => {
+		if (role != 'joining') return;
+		say(error.type == 'peer-unavailable' ? 'There is no game with that room code' : 'Could not join (' + (error.type || error.message) + ')');
+		leaveGame(false);
+	});
+	peer.on('open', () => {
+		if (role != 'joining') return;
+		say('Connecting…');
+		joinWith(peerLink(peer.connect(ROOM_PREFIX + code, { reliable: true, serialization: 'raw' })));
+	});
+}
+// with an invite code: gives back the reply code to send to the host
+export async function joinInvite(code) {
+	const offer = await unpackCode(INVITE_PREFIX, code);
+	beginJoining();
+	const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+	joinWith(rtcLink(pc, null, null));
+	await pc.setRemoteDescription({ type: 'offer', sdp: offer.sdp });
+	await pc.setLocalDescription(await pc.createAnswer());
+	await gathered(pc);
+	say('Send the reply code to the host, then wait for them to paste it in');
+	return packCode(REPLY_PREFIX, { v: 1, i: offer.i, sdp: pc.localDescription.sdp });
+}
+function joinWith(link) {
+	hostLink = link;
+	link.onOpen = () => link.sendGame({ t: 'hello', name: myName });
+	link.onMessage = heard;
+	link.onClose = () => {
+		if (role == 'off') return;
+		const was = role;
+		leaveGame(false);
+		say(was == 'joined' ? 'The host has gone' : 'Could not connect');
+	};
+}
+
+// what the host says (and the host says it to itself as well, for the ones it handles the same way)
+function heard(message) {
+	switch (message.t) {
+		case 'welcome':
+			role = 'joined';
+			myId = message.id;
+			beginGame();
+			for (const { id, name } of message.players) {
+				names.set(id, name);
+				if (id !== myId) players.addOther(id, name);
+			}
+			names.set(myId, myName);
+			worldFromHost = message.world;
+			applyWorld();
+			if (settings.atmosphereSunRotationDemo) atmosphere.setSunClock(message.clock[0], message.clock[1]);
+			forest.forestFollow(true);
+			for (const track of tracks.values()) track.clear();
+			Object.assign(forestSync, { need: true, asked: false, have: false, hostPlanting: -1, localPlanting: -1, queue: [] });
+			setScores(message.scores);
+			say('In the game');
+			break;
+		case 'join':
+			names.set(message.id, message.name);
+			players.addOther(message.id, message.name);
+			players.addFeed(message.name + ' joined');
+			refreshPanel();
+			break;
+		case 'leave':
+			players.addFeed(nameOf(message.id) + ' left');
+			names.delete(message.id);
+			players.removeOther(message.id);
+			refreshPanel();
+			break;
+		case 'world':
+			worldFromHost = message.world;
+			break;
+		case 'clock':
+			if (settings.atmosphereSunRotationDemo && Math.abs(atmosphere.sunCycles - message.clock[0]) > CLOCK_SLACK) atmosphere.setSunClock(message.clock[0], message.clock[1]);
+			if (forestSync.have) {
+				if (Math.abs(forest.clock - message.forest[0]) > 0.05) forest.setForestClock(message.forest[0]);
+				// planted again, there or here: the forest again
+				if (message.forest[1] != forestSync.hostPlanting || forest.plantings != forestSync.localPlanting) Object.assign(forestSync, { need: true, asked: false, have: false, queue: [] });
+			}
+			break;
+		case 'big':
+			bigPiece(message).then((floats) => {
+				if (!floats || message.kind != 'forest' || role != 'joined') return;
+				if (!forest.forestAdopt(floats)) { Object.assign(forestSync, { need: true, asked: false }); return; }
+				Object.assign(forestSync, { need: false, asked: false, have: true, hostPlanting: message.meta.p, localPlanting: forest.plantings });
+				// what happened while it was on its way: the lots sent after it was taken
+				for (const queued of forestSync.queue) if (queued.s > message.meta.s) forest.forestApplyChanges(textToFloats(queued.r), textToFloats(queued.g));
+				forestSync.queue = [];
+				say('In the game');
+			});
+			break;
+		case 'animals':
+			heardAnimals(message);
+			break;
+		case 'trees':
+			if (forestSync.have) forest.forestApplyChanges(textToFloats(message.r), textToFloats(message.g));
+			else if (forestSync.asked) forestSync.queue.push(message);	// (kept from the moment it asked: some can come before the forest's first piece)
+			break;
+		case 'sts':
+			for (const [id, ...s] of message.l) if (id !== myId) { players.otherState(id, s); netStats.statesHeard++; }
+			break;
+		case 'shot':
+			if (message.id !== myId) ballistics.fire(message.from, message.dir, { remote: true, shooter: message.id });
+			break;
+		case 'hp':
+			if (message.id === myId) players.setLocalHealth(message.hp, message.by === myId ? '' : nameOf(message.by));
+			else if (message.part) players.otherHit(message.id);
+			break;
+		case 'down':
+			players.addFeed(nameOf(message.by) + ' shot ' + nameOf(message.id) + (message.part == 'head' ? ' (head)' : ''));
+			break;
+		case 'score':
+			setScores(message.list);
+			break;
+	}
+}
+function setScores(list) {
+	scores.clear();
+	for (const [id, name, kills, deaths] of list) scores.set(id, { kills, deaths });
+	refreshPanel();
+}
+// a joiner keeps the host's world, whatever its own controls say
+function applyWorld() {
+	if (!worldFromHost) return;
+	for (const [key, value] of Object.entries(worldFromHost)) {
+		if (LOCAL_KEYS.has(key)) continue;
+		for (const holder of [settings, imguiParams]) {
+			if (holder === imguiParams && !(key in imguiParams)) continue;
+			if (ArrayBuffer.isView(holder[key]) && Array.isArray(value)) holder[key].set(value);
+			else holder[key] = value;
+		}
+	}
+	if (lockedControls.length == 0) lockControls(true);
+}
+// a joiner's controls for the host's settings, greyed out while it is in the game (and the buttons that change the world)
+let lockedControls = [];
+function lockControls(on) {
+	if (!on) {
+		for (const control of lockedControls) control.enable();
+		lockedControls = [];
+		return;
+	}
+	const hosts = new Set(Object.keys(worldFromHost ?? {}));
+	for (const control of gui.controllersRecursive()) {
+		const theirs = (control.object === imguiParams && hosts.has(control.property)) || control.property == 'trigger';
+		if (theirs && !control._disabled) {
+			control.disable();
+			lockedControls.push(control);
+		}
+	}
+}
+
+// Leaving
+//-------------------------------------------------
+export function leaveGame(quietly = true) {
+	const wasHost = role == 'host';
+	role = 'off';
+	for (const joiner of joiners.values()) joiner.link.close();
+	joiners.clear();
+	for (const invite of invites.values()) invite.link.close();
+	invites.clear();
+	if (hostLink) { const link = hostLink; hostLink = null; link.close(); }
+	if (peer) { try { peer.destroy(); } catch (error) {} peer = null; }
+	worldFromHost = null;
+	lockControls(false);
+	netStats.roomCode = '';
+	forest.forestShare(false);
+	forest.forestFollow(false);
+	stopFollowingAnimals();
+	bigParts = null;
+	forestSync.have = forestSync.need = forestSync.asked = false;
+	names.clear();
+	scores.clear();
+	health.clear();
+	myId = 0;
+	players.setInGame(false);
+	if (quietly) say(wasHost ? 'Stopped hosting' : '');
+	refreshPanel();
+}
+
+// What is sent of this player's own doings
+//-------------------------------------------------
+function myState() {
+	const place = hunting.hunterPlace();
+	const forward = transformations.getCameraForward();
+	const metre = settings.forestUnitsPerMetre;
+	return [place.x, place.y, place.z, Math.atan2(forward[0], forward[2]), settings.camPitch, Math.hypot(place.vx ?? 0, place.vz ?? 0) / metre,
+		hunting.hunterLife.alive ? 1 : 0, place.active ? 1 : 0].map((v) => Math.round(v * 1000) / 1000);
+}
+ballistics.onLocalFire((from, direction) => {
+	if (role == 'host') toAll({ t: 'shot', id: myId, from, dir: direction });
+	else if (role == 'joined') hostLink.sendGame({ t: 'shot', from, dir: direction });
+});
+players.onShot((target, part) => {
+	if (role == 'host') applyHit(myId, target, part);
+	else if (role == 'joined') hostLink.sendGame({ t: 'hit', target, part });
+});
+players.onRespawn(() => {
+	if (role == 'host') setHealth(myId, players.HEALTH, myId, '');
+	else if (role == 'joined') hostLink.sendGame({ t: 'up' });
+});
+
+// Per frame: after the hunter has moved and the rifle has fired
+export function netUpdate() {
+	if (!buttonAdded) addButton();
+	if (role == 'joined') applyWorld();
+	if (role != 'host' && role != 'joined') { netStats.role = role; return; }
+	const now = performance.now() / 1000;
+
+	if (now - lastState >= 1 / STATE_RATE) {
+		lastState = now;
+		const mine = myState();
+		if (role == 'joined') {
+			hostLink.sendFast({ t: 'st', s: mine });
+		} else {
+			const all = [[myId, ...mine]];
+			for (const joiner of joiners.values()) if (joiner.state) all.push([joiner.id, ...joiner.state]);
+			for (const joiner of joiners.values()) if (joiner.link.open) joiner.link.sendFast({ t: 'sts', l: all.filter((row) => row[0] !== joiner.id) });
+		}
+	}
+	if (role == 'joined') followAnimals();
+	if (role == 'host' && joiners.size > 0 && now - lastAnimals >= 1 / ANIMAL_RATE) {
+		lastAnimals = now;
+		sendAnimals();
+	}
+	if (role == 'joined' && forestSync.need && !forestSync.asked && forest.forestReady()) {
+		forestSync.asked = true;
+		hostLink.sendGame({ t: 'forest?' });
+	}
+	if (role == 'host') {
+		if (now - lastClock >= CLOCK_SECONDS) {
+			lastClock = now;
+			toAll({ t: 'clock', clock: [atmosphere.sunCycles, settings.sunCycleAngle], forest: [forest.clock, forest.plantings] });
+		}
+		if (now - lastTrees >= TREES_SECONDS) {
+			lastTrees = now;
+			const changes = forest.forestChanges(TREES_GROWTH);	// (taken whether anyone is there or not, so they never pile up)
+			if (changes) treesSent++;
+			if (changes && joiners.size > 0) {
+				const step = TREES_PER_MESSAGE * forest.SHARE_RECORD;
+				for (let at = 0; at < changes.records.length || at == 0; at += step) {
+					const records = changes.records.subarray(at, at + step), growth = at == 0 ? changes.growth : new Float32Array(0);
+					if (records.length || growth.length) toAll({ t: 'trees', s: treesSent, r: floatsToText(records), g: floatsToText(growth) });
+				}
+			}
+		}
+		if (now - lastWorldCheck >= 1) {
+			lastWorldCheck = now;
+			const world = worldNow(), text = JSON.stringify(world);
+			if (text != worldSent) { worldSent = text; toAll({ t: 'world', world }); }
+		}
+	}
+	netStats.role = role;
+	netStats.id = myId;
+	netStats.players = names.size;
+}
+
+// for testing
+export function netStatus() {
+	return { role, id: myId, name: myName, names: Object.fromEntries(names), health: Object.fromEntries(health), scores: Object.fromEntries(scores), roomCode: netStats.roomCode, status: netStats.status, others: players.otherList(), forest: { ...forestSync, queue: forestSync.queue.length },
+		animals: Object.fromEntries(ANIMALS.map((animal) => [animal.kind, [...tracks.get(animal.kind).entries()].map(([id, samples]) => { const r = samples[samples.length - 1].r; return { id, x: r[1], y: r[2], z: r[3], alive: r[11] > 0.5 }; })])) };
+}
+
+// The Multiplayer window
+//-------------------------------------------------
+const panel = document.createElement('div');
+panel.style.cssText = 'position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 30; width: min(440px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow-y: auto; box-sizing: border-box; padding: 16px 18px; border-radius: 8px; background: #15181f; color: #e4e6ea; font: 13px/1.45 system-ui, sans-serif; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6); display: none;';
+document.body.appendChild(panel);
+const panelState = { view: 'start', invite: '', reply: '', error: '' };
+const styles = {
+	button: 'padding: 7px 12px; border: 0; border-radius: 5px; background: #3a6ff0; color: #fff; font: inherit; cursor: pointer;',
+	quiet: 'padding: 7px 12px; border: 1px solid #3a3f4a; border-radius: 5px; background: transparent; color: #e4e6ea; font: inherit; cursor: pointer;',
+	input: 'width: 100%; box-sizing: border-box; padding: 7px 9px; border: 1px solid #3a3f4a; border-radius: 5px; background: #0e1015; color: #e4e6ea; font: inherit;',
+	code: 'width: 100%; box-sizing: border-box; height: 64px; padding: 7px 9px; border: 1px solid #3a3f4a; border-radius: 5px; background: #0e1015; color: #cfd3da; font: 11px/1.3 ui-monospace, monospace; resize: vertical; word-break: break-all;',
+	label: 'margin: 12px 0 5px; font-size: 11px; letter-spacing: 0.06em; color: #9aa1ad; text-transform: uppercase;',
+	room: 'font: 600 26px/1 ui-monospace, monospace; letter-spacing: 0.15em;',
+};
+const html = (text) => String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+export function openPanel() {
+	if (document.pointerLockElement) document.exitPointerLock();
+	panel.style.display = '';
+	refreshPanel();
+}
+function closePanel() {
+	panel.style.display = 'none';
+}
+function refreshPanel() {
+	if (panel.style.display == 'none') return;
+	const s = panelState;
+	let body = '';
+	const header = `<div style="display: flex; justify-content: space-between; align-items: center;"><div style="font-size: 16px; font-weight: 600;">Multiplayer</div><button data-do="close" style="${styles.quiet} padding: 2px 9px;">×</button></div>`;
+	const status = netStats.status ? `<div style="margin-top: 8px; color: #9fc3ff;">${html(netStats.status)}</div>` : '';
+	const error = s.error ? `<div style="margin-top: 8px; color: #ff9b8a;">${html(s.error)}</div>` : '';
+	const playerList = () => `<div style="${styles.label}">Players</div>` + scoreList().map(([id, name, kills, deaths]) =>
+		`<div style="display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px solid #23272f;"><span><span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 7px; background: hsl(${Math.round(players.hueOf(id) * 360)}, 70%, 55%);"></span>${html(name)}${id === myId ? ' (you)' : ''}${id === 0 ? ' · host' : ''}</span><span style="color: #9aa1ad;">${kills} kills · ${deaths} deaths</span></div>`).join('');
+
+	if (role == 'off' || (role == 'joining' && s.view == 'start')) {
+		body = `<div style="${styles.label}">Your name</div><input data-field="name" style="${styles.input}" maxlength="20" value="${html(myName)}">`
+			+ `<div style="${styles.label}">Host</div><button data-do="host" style="${styles.button}">Host a game</button>`
+			+ `<div style="${styles.label}">Join with a room code</div><div style="display: flex; gap: 8px;"><input data-field="room" style="${styles.input} text-transform: uppercase; font-family: ui-monospace, monospace; letter-spacing: 0.1em;" maxlength="${ROOM_CODE_LENGTH}" placeholder="ABCDE"><button data-do="joinRoom" style="${styles.button}">Join</button></div>`
+			+ `<div style="${styles.label}">Or join with an invite code</div><textarea data-field="invite" style="${styles.code}" placeholder="${INVITE_PREFIX}…"></textarea><div style="margin-top: 8px;"><button data-do="joinInvite" style="${styles.quiet}">Next</button></div>`;
+	} else if (role == 'joining') {
+		body = s.reply
+			? `<div style="${styles.label}">Send this reply code back to the host</div><textarea readonly style="${styles.code}">${html(s.reply)}</textarea><div style="margin-top: 8px; display: flex; gap: 8px;"><button data-do="copyReply" style="${styles.button}">Copy</button><button data-do="leave" style="${styles.quiet}">Cancel</button></div>`
+			: `<div style="margin-top: 12px;"><button data-do="leave" style="${styles.quiet}">Cancel</button></div>`;
+	} else if (role == 'host') {
+		body = `<div style="${styles.label}">Room code</div>`
+			+ (netStats.roomCode ? `<div style="display: flex; align-items: center; gap: 12px;"><span style="${styles.room}">${netStats.roomCode}</span><button data-do="copyRoom" style="${styles.quiet}">Copy</button></div><div style="margin-top: 4px; color: #9aa1ad;">Friends type this in to join (through PeerJS).</div>` : `<div style="color: #9aa1ad;">Getting one…</div>`)
+			+ `<div style="${styles.label}">Or invite with codes (no one in between)</div>`
+			+ (s.invite
+				? `<div style="color: #9aa1ad;">1. Send them this invite code.</div><textarea readonly style="${styles.code}">${html(s.invite)}</textarea><div style="margin: 6px 0 8px;"><button data-do="copyInvite" style="${styles.quiet}">Copy</button></div><div style="color: #9aa1ad;">2. Paste the reply code they send back.</div><textarea data-field="reply" style="${styles.code}" placeholder="${REPLY_PREFIX}…"></textarea><div style="margin-top: 8px; display: flex; gap: 8px;"><button data-do="acceptReply" style="${styles.button}">Connect</button><button data-do="newInvite" style="${styles.quiet}">Another invite</button></div>`
+				: `<button data-do="newInvite" style="${styles.quiet}">Make an invite code</button>`)
+			+ playerList() + `<div style="margin-top: 14px;"><button data-do="leave" style="${styles.quiet}">Stop hosting</button></div>`;
+	} else if (role == 'joined') {
+		body = playerList() + `<div style="margin-top: 14px;"><button data-do="leave" style="${styles.quiet}">Leave the game</button></div>`;
+	}
+	// (what is being typed is kept over the redraw)
+	const kept = {};
+	for (const field of panel.querySelectorAll('[data-field]')) kept[field.dataset.field] = field.value;
+	panel.innerHTML = header + status + error + body;
+	for (const field of panel.querySelectorAll('[data-field]')) if (kept[field.dataset.field] !== undefined && field.dataset.field != 'name') field.value = kept[field.dataset.field];
+}
+panel.addEventListener('click', async (event) => {
+	const action = event.target?.dataset?.do;
+	if (!action) return;
+	const field = (name) => panel.querySelector(`[data-field="${name}"]`)?.value ?? '';
+	const s = panelState;
+	s.error = '';
+	const copy = (text) => { try { navigator.clipboard.writeText(text); } catch (error) {} };
+	try {
+		if (action == 'close') return closePanel();
+		if (field('name')) setName(field('name'));
+		if (action == 'host') { s.invite = ''; hostGame(); }
+		else if (action == 'joinRoom') { s.view = 'joining'; s.reply = ''; await joinRoom(field('room')); }
+		else if (action == 'joinInvite') { s.view = 'joining'; s.reply = ''; refreshPanel(); s.reply = await joinInvite(field('invite')); }
+		else if (action == 'newInvite') { s.invite = ''; say('Making an invite code…'); s.invite = await makeInvite(); say('Hosting'); }
+		else if (action == 'acceptReply') { await acceptReply(field('reply')); s.invite = ''; }
+		else if (action == 'copyInvite') copy(s.invite);
+		else if (action == 'copyReply') copy(s.reply);
+		else if (action == 'copyRoom') copy(netStats.roomCode);
+		else if (action == 'leave') { s.view = 'start'; s.reply = ''; s.invite = ''; leaveGame(); }
+	} catch (error) {
+		s.error = error.message || String(error);
+		if (role == 'joining' && !hostLink?.open) { s.view = 'start'; }
+	}
+	refreshPanel();
+});
+// keys typed in the window are for it, not the walker
+panel.addEventListener('keydown', (event) => event.stopPropagation());
+
+// the button that opens it, with the game modes. Added on the first frame: the controls are not made yet when this file is
+//		first run (imguiLoader.js is still on its way in)
+let buttonAdded = false;
+function addButton() {
+	buttonAdded = true;
+	const modes = gui.foldersRecursive().find((folder) => folder._title == 'Game Modes') ?? gui;
+	modes.add({ open: openPanel }, 'open').name('Multiplayer…');
+}

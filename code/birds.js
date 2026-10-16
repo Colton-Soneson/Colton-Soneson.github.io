@@ -194,6 +194,10 @@ let fallenBirdsList = [];		// shot, on their way into the ground (fallenBirds.js
 const hawkSpheres = (bird) => birdSpheres(bird, BIRD_SPHERES, settings.birdSize, bird.nose + 1.05 * bird.folded);
 ballistics.addTarget((ax, ay, az, bx, by, bz) => {
 	if (!settings.enableBirds) return null;
+	if (followed) {
+		const found = ballistics.crossAnimals(ax, ay, az, bx, by, bz, followed.filter((one) => one.alive), hawkSpheres, (one) => [one.x, one.y, one.z, 0.6 * settings.birdSize]);
+		return found && { t: found.t, what: 'hawk', hit: (velocity) => hawkShot.report?.(found.animal.id, velocity) };
+	}
 	const living = groups.flatMap((group) => group.birds.map((bird) => ({ bird, group })));
 	const found = ballistics.crossAnimals(ax, ay, az, bx, by, bz, living, (one) => hawkSpheres(one.bird), (one) => [one.bird.x, one.bird.y, one.bird.z, 0.6 * settings.birdSize]);
 	return found && { t: found.t, what: 'hawk', hit: (velocity) => killHawk(found.animal.bird, found.animal.group, velocity) };
@@ -206,6 +210,37 @@ function killHawk(bird, group, velocity) {
 	fallenBirdsList.push(fallen(bird, velocity));
 	(group.respawns ??= []).push(seconds + RESPAWN_SECONDS);
 	birdStats.killed++;
+}
+
+
+// Multiplayer (net.js). The host's hawks are everyone's: the host sends them as they are (ANIMAL_RECORD floats each, see
+//		hawkShare), and a joiner draws those instead of its own, which stop (hawkFollow). A joiner's shot that hits one is
+//		reported to the host (hawkShot), who has it fall, and everyone sees it fall
+export const hawkShot = { report: null };
+let followed = null;		// joiner: the host's, as they are now
+// host: [id, x, y, z, heading, nose, bank, beat, beating, folded, own, alive] for each, the fallen ones too
+export function hawkShare() {
+	const out = [];
+	const add = (bird, alive) => out.push(bird.id ?? 0, bird.x, bird.y, bird.z, bird.heading, bird.nose, bird.bank, bird.beat, bird.beating, bird.folded, bird.own, alive);
+	for (const bird of groups.flatMap((group) => group.birds)) add(bird, 1);
+	for (const one of fallenBirdsList) add(one.bird, 0);
+	return new Float32Array(out);
+}
+// joiner: the host's, as hawkShare's records, or null to go back to its own
+export function hawkFollow(records) {
+	if (!records) { followed = null; return; }
+	followed = [];
+	for (let at = 0; at < records.length; at += 12) {
+		followed.push({ id: records[at], x: records[at + 1], y: records[at + 2], z: records[at + 3], heading: records[at + 4], nose: records[at + 5], bank: records[at + 6],
+			beat: records[at + 7], beating: records[at + 8], folded: records[at + 9], own: records[at + 10], alive: records[at + 11] > 0.5 });
+	}
+}
+// host: one the others shot
+export function killHawkById(id, velocity) {
+	for (const group of groups) {
+		const bird = group.birds.find((one) => one.id === id);
+		if (bird) { killHawk(bird, group, velocity); return; }
+	}
 }
 
 // a new hawk for a group: in the air, near the rest of it but well away from the camera. With none left, over open ground
@@ -234,8 +269,10 @@ function respawnHawk(group) {
 	return false;
 }
 
+let nextBirdId = 1;
 function makeBird(x, z, bearing) {
 	return {
+		id: nextBirdId++,
 		x: x, y: groundAt(x, z) + 90 + 40 * Math.random(), z: z,
 		vx: -Math.sin(bearing) * 24, vy: 0, vz: Math.cos(bearing) * 24,
 		heading: 0, nose: 0, bank: 0, beat: Math.random() * 6.28, beating: 0.2, folded: 0,
@@ -413,6 +450,7 @@ export function simulateBirds(total) {
 
 function advanceBirds(elapsed) {
 	seconds += elapsed;
+	if (followed) return;		// (a joiner's hawks are the host's)
 
 	if (!settings.enableBirds || !terrain.land) {
 		return;
@@ -550,11 +588,11 @@ export function birdPlaces() {
 
 // The birds drawn, with the solid things
 export function birdPass(aEncoder, mainpassDepthTexture) {
-	if (!settings.enableBirds || groups.length == 0) {
+	if (!settings.enableBirds || (!followed && groups.length == 0)) {
 		return;
 	}
 	let count = 0;
-	const drawn = [...groups.flatMap((group) => group.birds), ...fallenBirdsList.map((one) => one.bird)].slice(0, MAX_BIRDS * 2);
+	const drawn = (followed ?? [...groups.flatMap((group) => group.birds), ...fallenBirdsList.map((one) => one.bird)]).slice(0, MAX_BIRDS * 2);
 	for (const bird of drawn) {
 		instanceData.set([bird.x, bird.y, bird.z, settings.birdSize, bird.heading, bird.nose, bird.bank, bird.beat, bird.beating, bird.folded, bird.own, 0], count * BIRD_FLOATS);
 		count++;

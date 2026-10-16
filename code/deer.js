@@ -197,6 +197,10 @@ function deerAround(deer) {
 }
 ballistics.addTarget((ax, ay, az, bx, by, bz) => {
 	if (!settings.enableDeer) return null;
+	if (followed) {
+		const found = ballistics.crossAnimals(ax, ay, az, bx, by, bz, followed.filter((one) => one.alive), deerSpheres, deerAround);
+		return found && { t: found.t, what: 'deer', hit: (velocity) => deerShot.report?.(found.animal.id, velocity) };
+	}
 	const living = groups.flatMap((group) => group.deer.map((deer) => ({ deer, group })));
 	const found = ballistics.crossAnimals(ax, ay, az, bx, by, bz, living, (one) => deerSpheres(one.deer), (one) => deerAround(one.deer));
 	return found && { t: found.t, what: 'deer', hit: (velocity) => killDeer(found.animal.deer, found.animal.group, velocity) };
@@ -211,6 +215,39 @@ function killDeer(deer, group, velocity) {
 	corpses.push({ deer: deer, t: 0, side: side });
 	group.respawns.push(herdSeconds + RESPAWN_SECONDS);
 	deerStats.killed++;
+}
+
+// Multiplayer (net.js). The host's deer are everyone's: the host sends them as they are (deerShare), and a joiner draws those
+//		instead of its own, which stop (deerFollow). A joiner's shot that hits one is reported to the host (deerShot), who has it
+//		fall, and everyone sees it fall
+export const deerShot = { report: null };
+let followed = null;		// joiner: the host's deer, as they are now
+// host: [id, x, y, z, heading, stride, head down, walking, own, slope, roll, alive] for each deer, the shot ones too
+export function deerShare() {
+	const size = settings.forestUnitsPerMetre * settings.deerSize;
+	const out = [];
+	for (const group of groups) for (const deer of group.deer) out.push(deer.id, deer.x, deer.y, deer.z, deer.heading, deer.stride, deer.headDown, deer.walking, deer.own, deer.slope, 0, 1);
+	for (const corpse of corpses) {
+		const deer = corpse.deer;
+		out.push(deer.id, deer.x, deer.y - (corpse.sink ?? 0) * size, deer.z, deer.heading, deer.stride, deer.headDown, 0, deer.own, deer.slope, corpse.roll ?? 0, 0);
+	}
+	return new Float32Array(out);
+}
+// joiner: the host's deer, as deerShare's records, or null to go back to its own
+export function deerFollow(records) {
+	if (!records) { followed = null; return; }
+	followed = [];
+	for (let at = 0; at < records.length; at += 12) {
+		followed.push({ id: records[at], x: records[at + 1], y: records[at + 2], z: records[at + 3], heading: records[at + 4], stride: records[at + 5], headDown: records[at + 6],
+			walking: records[at + 7], own: records[at + 8], slope: records[at + 9], roll: records[at + 10], alive: records[at + 11] > 0.5 });
+	}
+}
+// host: a deer one of the others shot
+export function killDeerById(id, velocity) {
+	for (const group of groups) {
+		const deer = group.deer.find((one) => one.id === id);
+		if (deer) { killDeer(deer, group, velocity); return; }
+	}
 }
 
 // a new deer for a group, at its home or somewhere in the forest round it, well away from the camera. false if nowhere will do just now
@@ -232,8 +269,9 @@ function respawnDeer(group) {
 	return true;
 }
 
+let nextDeerId = 1;
 function newDeer(x, z) {
-	return { x: x, z: z, y: 0, heading: Math.random() * Math.PI * 2, stride: Math.random() * 6.28, walking: 0, headDown: 0, headWanted: 0, alertTimer: 0, own: Math.random(), slope: 0, ground: null, place: null };
+	return { id: nextDeerId++, x: x, z: z, y: 0, heading: Math.random() * Math.PI * 2, stride: Math.random() * 6.28, walking: 0, headDown: 0, headWanted: 0, alertTimer: 0, own: Math.random(), slope: 0, ground: null, place: null };
 }
 const between = ([low, high]) => low + (high - low) * Math.random();
 const metre = () => settings.forestUnitsPerMetre;
@@ -400,6 +438,10 @@ export function simulateDeer(total) {
 
 function advanceDeer(elapsed) {
 	dayClock = sunCycles + testDays;
+	if (followed) {		// (a joiner's deer are the host's)
+		deerStats.deer = followed.filter((one) => one.alive).length;
+		return;
+	}
 
 	if (!settings.enableDeer || !terrain.land) {
 		return;
@@ -568,12 +610,13 @@ export function deerDay() {
 
 // The deer drawn, with the solid things
 export function deerPass(aEncoder, mainpassDepthTexture) {
-	if (!settings.enableDeer || groups.length == 0) {
+	if (!settings.enableDeer || (!followed && groups.length == 0)) {
 		return;
 	}
 	let count = 0;
 	const size = settings.forestUnitsPerMetre * settings.deerSize;
-	const drawn = [...groups.flatMap((group) => group.deer.map((deer) => [deer, 0, 0])), ...corpses.map((corpse) => [corpse.deer, corpse.roll ?? 0, corpse.sink ?? 0])];
+	const drawn = followed ? followed.map((one) => [one, one.roll, 0])
+		: [...groups.flatMap((group) => group.deer.map((deer) => [deer, 0, 0])), ...corpses.map((corpse) => [corpse.deer, corpse.roll ?? 0, corpse.sink ?? 0])];
 	for (const [deer, roll, sink] of drawn.slice(0, MAX_DRAWN)) {
 		instanceData.set([deer.x, deer.y - sink * settings.forestUnitsPerMetre * settings.deerSize, deer.z, size, deer.heading, deer.stride, deer.headDown, clamp(deer.walking, 0, 1), deer.own, deer.slope, roll, 0], count * DEER_FLOATS);
 		count++;

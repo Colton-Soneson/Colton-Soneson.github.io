@@ -51,6 +51,7 @@ const MAX_STEP_SECONDS = 1 / 60;	// a long frame is moved through in steps no lo
 const LOOK_PITCH = Math.PI * 0.5 - 0.02;
 
 export const crosshair = { hidden: false };	// the rifle hides the dot while its sights are up (rifle.js)
+export const hunterLife = { alive: true };	// shot dead in a game with others (players.js): it cannot move until it is up again
 export const hunterStats = { boxes: 0, gathers: 0, cornerReads: 0, grounded: false, swimming: false };	// for anyone who wants to show it
 
 const hunter = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, grounded: false, swimming: false };
@@ -251,7 +252,7 @@ export function updateHunter() {
 		jumpPressed = false;
 		return;
 	}
-	dot.style.display = locked() && !crosshair.hidden ? '' : 'none';
+	dot.style.display = locked() && !crosshair.hidden && hunterLife.alive ? '' : 'none';
 	hint.style.display = locked() ? 'none' : '';
 
 	const metre = settings.forestUnitsPerMetre;
@@ -263,6 +264,7 @@ export function updateHunter() {
 	const right = transformations.getCameraRight();
 	const forward = [right[2], -right[0]];		// (level forward, as x and z: the right turned a quarter)
 	let ahead = 0, side = 0;
+	if (!hunterLife.alive) { keysDown.clear(); jumpPressed = false; }
 	if (keysDown.has('KeyW')) ahead += 1;
 	if (keysDown.has('KeyS')) ahead -= 1;
 	if (keysDown.has('KeyD')) side += 1;

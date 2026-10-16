@@ -477,7 +477,7 @@ geeseFolder.add(imguiParams, 'geeseCount', 0, 12, 1).name('Flock Size');
 geeseFolder.add(imguiParams, 'geeseSize', 2, 30, 0.5).name('Wingspan');
 const deerFolder = animalFolder.addFolder('Deer');	//see deer.js
 deerFolder.add(imguiParams, 'enableDeer').name('Enable');
-deerFolder.add(imguiParams, 'deerGroups', 0, 4, 1).name('Groups');
+deerFolder.add(imguiParams, 'deerGroups', 0, 200, 1).name('Groups');
 deerFolder.add(imguiParams, 'deerSize', 0.5, 3, 0.05).name('Size');
 
 const shaftFolder = gui.addFolder('Light Shafts and Underwater');	//see lightShafts.js

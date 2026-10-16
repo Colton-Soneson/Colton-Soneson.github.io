@@ -19,7 +19,7 @@ import {sunCycles} from './atmosphere.js'
 import {uniformBufferLights} from './rotatingCube.js'
 
 /*
-	Deer. A few small groups (settings.deerGroups, 4 to start with, of 1 to 3 each), living in the forest and going down to
+	Deer. Small groups (settings.deerGroups, 4 to start with and up to MAX_GROUPS, of 1 to 3 each), living in the forest and going down to
 	the water to drink.
 
 	THE DEER (DEER_MESH)
@@ -28,7 +28,9 @@ import {uniformBufferLights} from './rotatingCube.js'
 		(vf_deer.js), which only needs to know where each deer is in its stride and how far down its head is.
 
 	THE GROUPS
-		Each has a home: a stretch of forest near a marsh (the wet ground round a lake). Most of the time they wander
+		Each has a home: a stretch of forest near a marsh (the wet ground round a lake), the nearest first. The homes are
+		kept HOME_SPACINGS[0] apart, and only when that leaves too few for the groups asked for do the rest come closer, down
+		to the last of HOME_SPACINGS: the forest has room for about 40 at the widest, 200 at the closest. Most of the time they wander
 		round it, a little way at a time, and stop to graze. Three times a day (THE DEER'S DAY) they go down to the water,
 		to the marsh nearest where they are, drink a while at the edge, and go back up into the forest.
 		The first of a group leads. The others follow, each in its own place a little behind and to the side, keeping
@@ -52,9 +54,12 @@ import {uniformBufferLights} from './rotatingCube.js'
 	cheap data grid height (land.heightAt) is added to it.
 */
 
-const MAX_GROUPS = 4;
+const MAX_GROUPS = 200;
 const MAX_IN_GROUP = 3;
 const MAX_DEER = MAX_GROUPS * MAX_IN_GROUP;
+const MAX_DRAWN = MAX_DEER * 2;		// the living and the shot ones still going into the ground
+const HOME_SPACINGS = [250, 180, 120];	// world units between homes: the widest first, closer only when they do not all fit
+const REHERD_SECONDS = 0.4;		// a new number of groups is made once it has held this long (a dragged slider goes through every number)
 const DEER_FLOATS = 12;				// one deer as the shader gets it: place (4), pose (4), state (4)
 const TRIPS_A_DAY = 3;
 const TRIP_SPARE = 25;				// seconds more than a trip should take, when working out whether the day is running out on them
@@ -127,7 +132,7 @@ export const deerStats = { deer: 0, groups: 0, day: 0, triangles: DEER_TRIANGLE_
 const deerShaderModule = device.createShaderModule({ label: "vf_deer", code: vf_deer });
 const meshBuffer = device.createBuffer({ label: "deer mesh", size: DEER_MESH.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
 device.queue.writeBuffer(meshBuffer, 0, DEER_MESH);
-const instanceData = new Float32Array(MAX_DEER * DEER_FLOATS);
+const instanceData = new Float32Array(MAX_DRAWN * DEER_FLOATS);
 const instanceBuffer = device.createBuffer({ label: "deer instances", size: instanceData.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
 const deerUniformBuffer = device.createBuffer({ label: "deer Uniform", size: 96, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 const linSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
@@ -159,6 +164,7 @@ const deerPipeline = device.createRenderPipeline({
 //-------------------------------------------------
 let groups = [];
 let herdLand = null, herdGroups = -1;	// the land and the number of groups the herd was made for
+let groupsAsked = -1, askedSeconds = 0;	// a new number of groups, and how long it has been asked for (see REHERD_SECONDS)
 let shoreSpots = [];		// where they drink: { x, z, facing } on the marsh, facing the water
 let dayClock = 0;			// the world's day (see THE DEER'S DAY), in days
 let testDays = 0;			// days a test has moved the deer on by, on top of the sun's (see simulateDeer)
@@ -279,14 +285,19 @@ function makeHerd() {
 		}
 		if (best && walkable(best.x, best.z) && shoreSpots.every((s) => Math.hypot(s.x - best.x, s.z - best.z) > 25)) shoreSpots.push({ x: best.x, z: best.z, facing: best.facing });
 	}
-	// homes: stretches of forest, the ones nearest to somewhere to drink first, well apart from each other
-	const forestSpots = land.findSpawnPoints(terrain.ZONE_FOREST, 60, { seed: 53, minSpacing: 200, maxSlope: 0.4 }).filter((spot) => walkable(spot.x, spot.z));
+	// homes: stretches of forest, the ones nearest to somewhere to drink first, well apart from each other. More than fit at the
+	//		widest spacing: more places to choose from, closer together (see THE GROUPS at the top)
+	const wanted = clamp(Math.round(settings.deerGroups), 0, MAX_GROUPS);
+	const many = wanted > 40;
+	const forestSpots = land.findSpawnPoints(terrain.ZONE_FOREST, many ? wanted * 5 : 60, { seed: 53, minSpacing: many ? 100 : 200, maxSlope: 0.4 }).filter((spot) => walkable(spot.x, spot.z));
 	const nearestShore = (x, z) => shoreSpots.reduce((best, s) => Math.min(best, Math.hypot(s.x - x, s.z - z)), Infinity);
 	forestSpots.sort((a, b) => nearestShore(a.x, a.z) - nearestShore(b.x, b.z));
 	const homes = [];
-	for (const spot of forestSpots) {
-		if (homes.length >= clamp(Math.round(settings.deerGroups), 0, MAX_GROUPS)) break;
-		if (homes.every((home) => Math.hypot(home.x - spot.x, home.z - spot.z) > 250)) homes.push(spot);
+	for (const spacing of HOME_SPACINGS) {
+		for (const spot of forestSpots) {
+			if (homes.length >= wanted) break;
+			if (homes.every((home) => Math.hypot(home.x - spot.x, home.z - spot.z) > spacing)) homes.push(spot);
+		}
 	}
 
 	groups = [];
@@ -393,8 +404,14 @@ function advanceDeer(elapsed) {
 	if (!settings.enableDeer || !terrain.land) {
 		return;
 	}
-	// (made again for a new land, or when the number of groups is changed. There may be fewer than asked for: see makeHerd)
-	if (terrain.land !== herdLand || settings.deerGroups !== herdGroups) {
+	// (made again for a new land, or when the number of groups is changed and has held for REHERD_SECONDS. There may be fewer
+	//		than asked for: see makeHerd)
+	if (settings.deerGroups !== groupsAsked) {
+		groupsAsked = settings.deerGroups;
+		askedSeconds = 0;
+	}
+	askedSeconds += elapsed;
+	if (terrain.land !== herdLand || (settings.deerGroups !== herdGroups && askedSeconds >= REHERD_SECONDS)) {
 		makeHerd();
 		herdGroups = settings.deerGroups;
 	}
@@ -557,7 +574,7 @@ export function deerPass(aEncoder, mainpassDepthTexture) {
 	let count = 0;
 	const size = settings.forestUnitsPerMetre * settings.deerSize;
 	const drawn = [...groups.flatMap((group) => group.deer.map((deer) => [deer, 0, 0])), ...corpses.map((corpse) => [corpse.deer, corpse.roll ?? 0, corpse.sink ?? 0])];
-	for (const [deer, roll, sink] of drawn.slice(0, MAX_DEER)) {
+	for (const [deer, roll, sink] of drawn.slice(0, MAX_DRAWN)) {
 		instanceData.set([deer.x, deer.y - sink * settings.forestUnitsPerMetre * settings.deerSize, deer.z, size, deer.heading, deer.stride, deer.headDown, clamp(deer.walking, 0, 1), deer.own, deer.slope, roll, 0], count * DEER_FLOATS);
 		count++;
 	}

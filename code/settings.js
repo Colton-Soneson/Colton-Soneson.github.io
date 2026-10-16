@@ -156,7 +156,7 @@ export const settings = {
 	displayCloudCoverage: false,
 	//--------------------BIRDS--------------------
 	enableDeer: true,					//small groups of deer living in the forest, going down to the water to drink three times a day. See deer.js
-	deerGroups: 4,						//how many groups, 0 to 4. Each is 1 to 3 deer
+	deerGroups: 4,						//how many groups, 0 to 200. Each is 1 to 3 deer. Past about 40 the homes are closer together (see THE GROUPS in deer.js)
 	deerSize: 1.0,						//1 = life size
 	enableGeese: true,					//one skein of geese, high up in a V most of the time, now and then down on a lake or a marsh. See geese.js
 	geeseCount: 7,						//how many geese in it, 0 to 12

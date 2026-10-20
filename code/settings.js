@@ -12,7 +12,9 @@ export const settings = {
     camPosZ: 150.0,
     camFarPlane: 12000.0,	//far enough to see the other land masses
     camNearPlane: 1.0,
-    gameMode: 'Observe',			//Observe: fly round (cameraControls.js). Hunting: on foot, first person (hunting.js)
+    gameMode: 'Observe',			//Observe: fly round (cameraControls.js). Hunting: on foot, first person (hunting.js). Sailing: the same, with a sailing dinghy offshore to sail (boat.js)
+    sailingVessel: 'Schooner',		//what is sailed in the Sailing mode: Dinghy (an RS Quest, more or less) or Schooner (a naval topsail schooner, about 1800). See vessels.js
+    sailingBoatRecalls: 0,			//counts presses of the Bring the Boat Back control: each one puts the boat offshore again, near the player, with the player at the helm
     huntingWalkSpeed: 3.0,			//metres a second on foot. Shift runs 1.8x
     huntingJumpHeight: 0.5,			//metres
     huntingLookSensitivity: 1.0,	//how far the view turns for the mouse moved
@@ -194,11 +196,13 @@ export const settings = {
 	windDirection: vec2.create(1.0,1.0),
 	waterWaveSteepness: 0.1,	//0 - 1
 	waterWaveLength: 10.0,
-	waterTileResolution: 512.0,
+	waterTileResolution: 512.0,			//cells along a side of the mesh of the tile under the camera. Each ring of tiles further out has half as many
+	waterCascadeResolution: 256,		//texels along a side of each of the 3 cascades of waves, the size of their FFTs: 128, 256 or 512. See the cascades in water.js
 	waterTileInstanceCount: 5,
 	waterWorldPosY: -16,
-	waterOceanPlanePhysicalSize: 256.0,
-	waterWindSpeed: 5.0,
+	waterWindSpeed: 5.0,				//the wind over the land, metres per second: the grass, the trees, the clouds. See wind.js
+	waterOceanWindSpeed: 11.0,			//the wind over the open sea, metres per second: it blows harder there, with nothing in its way. The wind sea grows with it (JONSWAP): 5 is a gentle breeze, 11 white horses everywhere, 20 a gale. The weather adds to it as it does over the land
+	waterFetch: 300.0,					//kilometres of open water the wind has blown over. Past a few hundred the waves are as big as the wind can make them
 	waterGridSize: 1024.0,
 	waterHorizonFogDistance: 4000.0,	//distance where the water is about two thirds faded into the horizon colour
 	waterClarityDepth: 2.0,				//depth of water where the sea bed has faded to about a third, fully hidden by 2x this. 0 = opaque water
@@ -206,23 +210,17 @@ export const settings = {
 	waterShallowRippleScale: 0.02,		//height of the spikey ripples that replace the waves in shallow water
 	//chop and foam
 	waterChoppiness: 1.25,				//lambda in the tessendorf paper. Around 1.0 is where crests start folding over themselves
-	waterFoamThreshold: 0.4,			//foam starts where the jacobian (how squeezed the surface is, 1 = not at all) drops below this
+	waterFoamThreshold: 0.5,			//foam starts where the jacobian (how squeezed the surface is, 1 = not at all) drops below this
 	waterFoamFade: 0.4,					//how far below the threshold until the foam is fully white
 	//shore waves
-	waterShoreZone: 70.0,				//distance from land where the ocean waves hand over to the shore waves. The shore field only reaches 150
-	waterShoreWaveHeight: 2.4,			//crest height at the break line
-	waterShoreBreakDistance: 12.0,		//distance from land where the shore waves are tallest
-	waterShoreSteepness: 2.2,			//how far the crests lean and sharpen as they come in. Too high folds the mesh
-	waterShoreWaveLength1: 30.0,		//wavelengths of the two shore wave trains. Keep them several mesh cells (about 4 units each) long
-	waterShoreWaveLength2: 21.5,
-	waterShoreWaveSpeed: 1.0,			//1.0 keeps pace with the dominant open ocean waves
+	enableBoulderWater: true,			//the sea round boulders standing in it: pushed round them, piled up against them, white water and spray where the waves hit
+	waterShallowRideHigh: true,			//waves over shallow water ride high: troughs lifted towards the still water, crests taller, instead of dipping under it before they run in
 	//deep sea swell
-	waterDeepSeaDepth: 219.0,			//water at least this deep (or with no sea bed at all) is deep sea and gets the full swell
-	waterSwellHeight: 60.0,				//height of the biggest swell crests. 0 turns the swell off
-	waterSwellLength: 320.0,			//wavelength of the main swell
-	waterSwellSteepness: 0.8,			//0 = smooth sine rollers, 1 = full trochoid with peaked crests and flat troughs
-	waterSwellSpeed: 1.0,				//1.0 is the natural speed for the wavelength
-	waterSwellShoreDistance: 150.0,		//distance from land where the swell is back to full size. The shore field only reaches 150
+	waterDeepSeaDepth: 219.0,			//the depth of the open sea, for its spectrum: waves long enough to feel the bottom are a little smaller and slower
+	waterSwellHeight: 20.0,				//significant wave height of the swell (the average of the highest third of its waves, trough to crest), world units. The odd wave is near twice this. 0 turns the swell off
+	waterSwellLength: 500.0,			//wavelength of the swell's peak, world units. 500 (250m) is a swell with about 13 seconds between crests
+	waterSwellSpread: 0.75,				//0 = crests as short and broken as the wind sea's, 1 = long straight swell lines
+	waterSwellDirection: 25.0,			//degrees off the wind the swell runs. It comes from storms far away, so it doesnt have to follow the local wind
 	//------------ATMOSPHERIC SCATTERING-----------
 	enableAtmosphere: true,
 	atmosphereScaleToScene: 1.0,

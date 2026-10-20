@@ -1,4 +1,5 @@
 import { moonShapes } from './f_moon.js';
+import { skyLookupShapes } from './vfc_atmosphere.js';
 
 /*
 	The birds drawn. See birds.js for the bird itself (its 18 flat triangles) and how it flies.
@@ -95,16 +96,7 @@ export const vf_birds =
 	const HORIZON_LIFT: f32 = 0.016;	// see f_water
 
 	// The color the sky pass puts on screen for a world direction, the same lookup as everything else that fades into the horizon uses
-	fn skyColorAt(direction: vec3f) -> vec3f {
-		let rd = normalize(direction + vec3f(0.0, 0.00001, 0.0));
-		let azimuth   = atan2(-rd.z, -rd.x);
-		let elevation = asin(clamp(rd.y, -1.0, 1.0));
-		let uv = vec2f(azimuth / (2.0 * PI) + 0.5, elevation / PI + 0.5);
-		let color = textureSampleLevel(skyLUT, skySampler, uv, 0.0).rgb;
-
-		let exposed = 1.0 - exp(-color * 10.0);
-		return pow(exposed, vec3f(1.0 / 2.2));
-	}
+	${skyLookupShapes}
 
 	${moonShapes}
 
@@ -145,7 +137,7 @@ export const vf_birds =
 
 		// and the same fade into the horizon
 		if (BU.look.y > 0.5) {
-			let horizonColor = skyColorAt(vec3f(toBird.x, HORIZON_LIFT * length(toBird.xz), toBird.z));
+			let horizonColor = fogColorAt(toBird);
 			let fog = 1.0 - exp(-pow(away / BU.look.x, 2.0));
 			color = mix(color, horizonColor, fog);
 		}

@@ -32,6 +32,9 @@ export function getCameraForward() {
 	return [Math.sin(settings.camYaw) * level, Math.sin(settings.camPitch), -Math.cos(settings.camYaw) * level];
 }
 
+// which way is up for the camera: straight up, unless something leans it (a boat rolling under the player, see hunting.js)
+export const viewUp = [0, 1, 0];
+
 // straight out to the camera's right, always level
 export function getCameraRight() {
 	return [Math.cos(settings.camYaw), 0, Math.sin(settings.camYaw)];
@@ -44,7 +47,7 @@ export function getViewMatrix() {
 		const forward = getCameraForward();
 		return mat4.lookAt([settings.camPosX, settings.camPosY, settings.camPosZ],
 					   [settings.camPosX + forward[0], settings.camPosY + forward[1], settings.camPosZ + forward[2]],
-					   [0,		 1,		  0]);
+					   viewUp);
 	}
 
 	// otherwise the camera always looks at the origin

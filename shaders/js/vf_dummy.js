@@ -1,4 +1,5 @@
 import { moonShapes } from './f_moon.js';
+import { skyLookupShapes } from './vfc_atmosphere.js';
 
 /*
 	The other players drawn, as crash test dummies (players.js: the mesh, 90 triangles in metres, and the rifle they carry, 12).
@@ -105,16 +106,7 @@ export const vf_dummy =
 	const PI: f32 = 3.14159265;
 	const HORIZON_LIFT: f32 = 0.016;	// see f_water
 
-	fn skyColorAt(direction: vec3f) -> vec3f {
-		let rd = normalize(direction + vec3f(0.0, 0.00001, 0.0));
-		let azimuth   = atan2(-rd.z, -rd.x);
-		let elevation = asin(clamp(rd.y, -1.0, 1.0));
-		let uv = vec2f(azimuth / (2.0 * PI) + 0.5, elevation / PI + 0.5);
-		let color = textureSampleLevel(skyLUT, skySampler, uv, 0.0).rgb;
-
-		let exposed = 1.0 - exp(-color * 10.0);
-		return pow(exposed, vec3f(1.0 / 2.2));
-	}
+	${skyLookupShapes}
 
 	${moonShapes}
 
@@ -176,7 +168,7 @@ export const vf_dummy =
 		color = mix(color, vec3f(0.9, 0.05, 0.03), 0.7 * input.state.y);
 
 		if (DU.look.y > 0.5) {
-			let horizonColor = skyColorAt(vec3f(toDummy.x, HORIZON_LIFT * length(toDummy.xz), toDummy.z));
+			let horizonColor = fogColorAt(toDummy);
 			let fog = 1.0 - exp(-pow(away / DU.look.x, 2.0));
 			color = mix(color, horizonColor, fog);
 		}

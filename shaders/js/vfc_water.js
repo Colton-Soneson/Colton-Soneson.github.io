@@ -1,16 +1,63 @@
 import { settings } from '../../code/settings.js';
+import { skyLookupShapes } from './vfc_atmosphere.js';
 
 export const WATER_WORKGROUP_SIZE = [32, 1, 1];
 export const FFT_WORKGROUP_SIZE = [8, 8, 1];
 export const PRECOMP_WORKGROUP_SIZE = [1, 8, 1];
 export const SHORE_FIELD_DOWNSCALE = 8;		// one shore distance field texel covers this many top down height map texels (per axis)
 export const SHORE_SEARCH_RADIUS = 64;		// in shore field texels. The furthest distance from land the field can hold, further than this is open ocean
-export const WAVE_SCALE_RESOLUTION = 512;	// what the IFFT's sum is divided by (c_Shift). A fixed number, not the tile resolution: see c_Shift
+export const CASCADE_UNIFORM_FLOATS = 24;
+export const ROCKS_MOST = 32;			// the most boulders in the sea the water is told about at once, the nearest the camera	// floats in CascadeUniforms below, in the order water.js writes them (writeCascadeUniforms)
+
+// The settings of one cascade of the open ocean waves, shared by the passes that make and run the cascades (see the cascades in water.js)
+const CASCADE_UNIFORMS = `
+	struct CascadeUniforms {
+		resolution: f32,		// texels along a side, the size of the FFT
+		size: f32,				// world size of one tile of this cascade
+		kLow: f32,				// the band of wave numbers this cascade carries, radians per world unit: from kLow up to (not including) kHigh
+		kHigh: f32,
+		unitsPerMetre: f32,		// the spectrum works in metres and seconds, the world in its own units
+		depth: f32,				// depth of the open sea in metres. Waves long enough to feel the bottom are smaller (TMA) and slower
+		time: f32,				// seconds, wrapped round at repeatTime
+		repeatTime: f32,		// every wave's speed is rounded so that the whole sea comes back to where it started after this long
+		windDirection: vec2f,	// the way the wind blows, 1 long
+		windSpeed: f32,			// metres per second
+		windAlpha: f32,			// how much energy the wind sea has (JONSWAP's alpha), 0 when there is no wind
+		windPeak: f32,			// angular frequency of the wind sea's biggest waves, radians per second
+		swellAlpha: f32,		// the same for the swell, 0 when there is none
+		swellPeak: f32,
+		swellSpread: f32,		// 0 to 1: from crests as short as the wind sea's to long, straight swell lines
+		swellDirection: vec2f,	// the way the swell runs, 1 long
+		cascade: f32,			// which cascade this is, 0 for the longest waves
+		choppiness: f32,		// lambda in the tessendorf paper, as the mesh pass uses it: for the foam (c_waveMaps)
+		foamThreshold: f32,		// foam starts where this cascade alone squeezes the surface (its jacobian) below this
+		foamFade: f32,			// how far below the threshold until its fully white
+		foamKeep: f32,			// how much of the foam is left a frame later: it lingers, and trails off behind the crests as they move on
+		_padding0: f32,
+	};
+	@group(0) @binding(0) var<uniform> CU: CascadeUniforms;
+
+	const G = 9.81;				// metres per second squared
+	const PI = 3.14159265;
+
+	// The wave vector a texel of the spectrum stands for, radians per world unit. The middle texel is k = 0.
+	//		It is minus the usual one: the butterfly passes (c_IFFT_2D) do a forward transform, e^(-ikx), and run on k negated
+	//		that is the inverse transform, e^(ikx), that turns the spectrum into the sea
+	fn waveVector(texel: vec2u) -> vec2f {
+		return -(vec2f(texel) - vec2f(CU.resolution * 0.5)) * (2.0 * PI / CU.size);
+	}
+
+	// how fast a wave of wave number k (radians per metre) turns, radians per second: w^2 = g k tanh(k depth).
+	//		Deep water (tanh of 1) for anything shorter than about twice the depth, slower in shallower water
+	fn angularFrequency(k: f32) -> f32 {
+		return sqrt(G * k * tanh(min(k * CU.depth, 20.0)));	// (tanh is 1 to float precision long before 20)
+	}
+`;
 
 
 /*
 	This pass builds the actual geometry
-	Each thread handles one vertex of the ocean grid: it reads wave height from the FFT output texture, projects the vertex's world position 
+	Each thread handles one vertex of the ocean grid: it reads the waves out of the three cascades' maps at its world position (c_waveMaps), projects the vertex's world position
 	into the top-down depth camera to sample terrain depth underneath, then attenuates the wave height based on water depth (full waves in deep water, smaller ripples near shore)
 	
 	It also writes index buffer data to form triangles between adjacent grid vertices for the render pipeline
@@ -48,23 +95,24 @@ export const c_water =
 		@location(15) choppiness: f32,			//lambda in the tessendorf paper. Around 1.0 is where crests start folding over themselves
 		@location(16) foamThreshold: f32,		//foam starts where the jacobian drops below this
 		@location(17) foamFade: f32,			//how far below the threshold until its fully white
-		@location(18) shoreZone: f32,			//world distance from land where the ocean waves hand over to the shore waves
-		@location(19) shoreWaveHeight: f32,		//crest height at the break line, world units
-		@location(20) shoreBreakDistance: f32,	//distance from land where the shore waves are tallest, they die off from there in to the land
-		@location(21) shoreSteepness: f32,		//how far the crests lean and sharpen as they come in. Too high folds the mesh
-		@location(22) shoreWaveLength1: f32,	//wavelengths of the two shore wave trains, world units. Keep them several mesh cells long
-		@location(23) shoreWaveLength2: f32,
-		@location(24) shoreWaveSpeed: f32,		//1.0 keeps pace with the dominant open ocean waves
-		@location(25) fullDepth: f32,			//water deeper than this gets the full open ocean waves
-		@location(26) shallowRippleScale: f32,	//height of the spikey ripples that replace the waves in shallow water
-		@location(27) deepSeaDepth: f32,		//water at least this deep is deep sea and gets the full swell
-		@location(28) swellHeight: f32,			//height of the biggest swell crests, world units. 0 turns the swell off
-		@location(29) swellLength: f32,			//wavelength of the main swell, world units
-		@location(30) swellSteepness: f32,		//0 = smooth sine rollers, 1 = full trochoid with peaked crests and flat troughs
-		@location(31) swellSpeed: f32,			//1.0 is the natural speed for the wavelength
-		@location(32) swellShoreDistance: f32,	//distance from land where the swell is back to full size
-		@location(33) terrainHalfSize: f32,		//half the width of the terrain, 0 when there is no terrain
-		@location(34) terrainCellSize: f32,		//size of one terrain grid cell
+		@location(18) rideHigh: f32,			//1.0 to have waves over shallow water ride high: their troughs lifted towards the still water, their crests taller
+		@location(19) unitsPerMetre: f32,		//the scale of the world, for the speed of waves in water of some depth
+		@location(20) fullDepth: f32,			//water deeper than this gets the full open ocean waves
+		@location(21) shallowRippleScale: f32,	//height of the spikey ripples that replace the waves in shallow water
+		@location(22) terrainHalfSize: f32,		//half the width of the terrain, 0 when there is no terrain
+		@location(23) terrainCellSize: f32,		//size of one terrain grid cell
+		@location(24) cascadeSize0: f32,		//world size of one tile of each cascade of waves, longest waves first (see the cascades in water.js)
+		@location(25) cascadeSize1: f32,
+		@location(26) cascadeSize2: f32,
+		@location(27) fineFadeStart: f32,		//distance from the camera where the shortest waves (cascade 2) start to fade out. Gone by fineFadeEnd
+		@location(28) fineFadeEnd: f32,
+		@location(29) swellDirX: f32,			//the way the swell runs out in the open sea (the refraction map turns it in the shallows)
+		@location(30) swellDirZ: f32,
+		@location(31) swellPeak: f32,			//angular frequency of the swell's biggest waves, radians a second
+		@location(32) chopK1: f32,				//a typical wave number of cascades 1 and 2, radians per world unit: how soon they feel the bottom
+		@location(33) chopK2: f32,
+		@location(34) swellHs: f32,				//significant wave height of the swell out at sea, and of the wind sea, world units
+		@location(35) windHs: f32,
 	};
 	@group(0) @binding(1) var<uniform> WU: WaterUniforms;
 
@@ -80,10 +128,43 @@ export const c_water =
 	@group(0) @binding(2) var<storage, read_write> waterVertexData: array<f32>;
 	@group(0) @binding(3) var<storage, read_write> waterIndexData: array<u32>;
 	
-	@group(0) @binding(4) var finalWaveHeightTexture : texture_storage_2d<rgba32float, read>;
+	@group(0) @binding(4) var waveSampler : sampler;		//bilinear, and wrapping round: the cascades repeat
 	@group(0) @binding(5) var topDownHeightmapTexture : texture_depth_2d;
-	
-	@group(0) @binding(6) var finalDisplacementTexture : texture_storage_2d<rgba32float, read>;	//x: Dx, y: Dz
+
+	// the open ocean waves: two maps for each cascade (c_waveMaps), read wherever in the world a vertex is
+	@group(0) @binding(6) var waveTexture0 : texture_2d<f32>;		//x: Dx, y: height, z: Dz, w: dDx/dz
+	@group(0) @binding(9) var slopeTexture0 : texture_2d<f32>;		//x: dh/dx, y: dh/dz, z: dDx/dx, w: dDz/dz
+	@group(0) @binding(10) var waveTexture1 : texture_2d<f32>;
+	@group(0) @binding(11) var slopeTexture1 : texture_2d<f32>;
+	@group(0) @binding(12) var waveTexture2 : texture_2d<f32>;
+	@group(0) @binding(13) var slopeTexture2 : texture_2d<f32>;
+	@group(0) @binding(14) var foamTexture1 : texture_2d<f32>;		//x: the foam the wind waves have made and left, cascades 1 and 2 (c_waveMaps)
+	@group(0) @binding(15) var foamTexture2 : texture_2d<f32>;
+	@group(0) @binding(16) var refractionTexture : texture_2d<f32>;	//the swell turned by the shallows (see waveRefraction.js). x: delay, yz: gradient of the arrival time, w: depth
+
+	// the boulders standing in the sea near the camera (see gatherRocks in water.js): two vec4 each,
+	//		x, z of its middle, its radius at the water line, how far its top stands over the still water; the way the waves run at it (x, z)
+	struct RockUniforms {
+		at: array<vec4f, ${ROCKS_MOST * 2}>,
+		count: vec4f,	// x: how many there are
+	};
+	@group(0) @binding(17) var<uniform> Rocks: RockUniforms;
+
+	// the foam map of a cascade at a place on it (0 to 1 across one tile of it, wrapping round), bilinear by hand: the maps are
+	//		r32float, which a sampler cant filter
+	fn foamAt(foamMap: texture_2d<f32>, uv: vec2f) -> f32 {
+		let size = vec2i(textureDimensions(foamMap));
+		let place = uv * vec2f(size) - vec2f(0.5, 0.5);
+		let corner = vec2i(floor(place));
+		let f = place - floor(place);
+		let t00 = (corner % size + size) % size;
+		let t11 = (t00 + vec2i(1, 1)) % size;
+		let a = textureLoad(foamMap, t00, 0).x;
+		let b = textureLoad(foamMap, vec2i(t11.x, t00.y), 0).x;
+		let c = textureLoad(foamMap, vec2i(t00.x, t11.y), 0).x;
+		let d = textureLoad(foamMap, t11, 0).x;
+		return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+	}
 	@group(0) @binding(7) var shoreDistanceTexture : texture_storage_2d<r32float, read>;		//x: world distance to the nearest land
 	@group(0) @binding(8) var terrainWaterTexture : texture_2d<f32>;	//the whole world's land, one texel per terrain grid point. x: height of the ground, y: distance to the nearest land, z: 1.0 where the water is a lake
 
@@ -145,20 +226,158 @@ fn getHeightmapWorldPos(globalInvoc : vec2u) -> vec3f {
 struct WaterVertex {
 	position: vec3f,
 	normal: vec3f,
-	foam: f32,
+	foam: f32,		// the foam of the crests breaking now: the spray comes off this (particles.js)
+	keptFoam: f32,	// and the foam still lying on the water from a little while ago
+	crest: f32,		// how peaked the water is here, 0 to 1: where the surface is squeezed into a crest. The light shines through these (f_water)
 	depth: f32,
 };
+
+// One cascade read at a place, in the world's frame: its height, how far it pushes the surface sideways, its slope (dh/dx, dh/dz),
+//		and how the push squeezes the surface (x: dDx/dx, y: dDz/dz, z: dDx/dz)
+struct WaveSample {
+	height: f32,
+	push: vec2f,
+	slope: vec2f,
+	squeeze: vec3f,
+};
+
+fn outerProduct(a: vec2f, b: vec2f) -> mat2x2f {
+	return mat2x2f(a * b.x, a * b.y);
+}
+
+// A cascade's maps (wave: x Dx, y height, z Dz, w dDx/dz, slope: x dh/dx, y dh/dz, z dDx/dx, w dDz/dz) read at a place got from the world
+//		position through toMap (a step across the world is toMap times it across the maps), and the directions in the maps turned
+//		back into the world's by toWorld. The slopes and the squeeze follow by the chain rule
+fn waveFromMaps(wave: vec4f, slope: vec4f, toMap: mat2x2f, toWorld: mat2x2f) -> WaveSample {
+	let squeeze = toWorld * mat2x2f(vec2f(slope.z, wave.w), vec2f(wave.w, slope.w)) * toMap;
+	return WaveSample(wave.y, toWorld * wave.xz, transpose(toMap) * slope.xy, vec3f(squeeze[0].x, squeeze[1].y, 0.5 * (squeeze[1].x + squeeze[0].y)));
+}
+
+fn scaleWave(w: WaveSample, s: f32) -> WaveSample {
+	return WaveSample(w.height * s, w.push * s, w.slope * s, w.squeeze * s);
+}
+
+fn addWave(a: WaveSample, b: WaveSample) -> WaveSample {
+	return WaveSample(a.height + b.height, a.push + b.push, a.slope + b.slope, a.squeeze + b.squeeze);
+}
+
+// The refraction map (waveRefraction.js) at a world position, bilinear by hand (it is rgba32float). Off the land's grid it is the open
+//		sea: the edges of the grid are, and they carry on. x: delay, yz: gradient of the arrival time, w: depth
+fn refractionAt(xz: vec2f) -> vec4f {
+	if (WU.terrainHalfSize <= 0.0) {
+		return vec4f(0.0, normalize(vec2f(WU.swellDirX, WU.swellDirZ)), 1000.0);
+	}
+	let points = vec2i(textureDimensions(refractionTexture));
+	let cellSize = 2.0 * WU.terrainHalfSize / f32(points.x - 1);
+	let grid = clamp((xz + vec2f(WU.terrainHalfSize, WU.terrainHalfSize)) / cellSize, vec2f(0.0, 0.0), vec2f(points - vec2i(1, 1)) - vec2f(0.001, 0.001));
+	let corner = vec2i(floor(grid));
+	let f = grid - floor(grid);
+	let a = textureLoad(refractionTexture, corner, 0);
+	let b = textureLoad(refractionTexture, corner + vec2i(1, 0), 0);
+	let c = textureLoad(refractionTexture, corner + vec2i(0, 1), 0);
+	let d = textureLoad(refractionTexture, corner + vec2i(1, 1), 0);
+	return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+// the wave number, per metre, for angular frequency omega in water depth metres deep: w^2 = g k tanh(k d), by Newton's method (as waveRefraction.js)
+fn waveNumberAt(omega: f32, depth: f32) -> f32 {
+	let deep = omega * omega / 9.81;
+	var k = deep / sqrt(tanh(deep * depth));
+	for (var i = 0; i < 3; i++) {
+		let t = tanh(k * depth);
+		k = max(k - (9.81 * k * t - omega * omega) / (9.81 * (t + k * depth * (1.0 - t * t))), deep);
+	}
+	return k;
+}
+
+// The swell at a world position, bent round by the shallows. The refraction map says how far behind a crest out at sea this one runs
+//		(the delay) and the gradient of its arrival time. Reading the swell's maps at the position moved back along its open sea heading by
+//		the delay makes the crests of the maps the crests of the refracted swell: they lie along the lines of equal arrival time, so they
+//		turn and crowd together as the real ones do, and still move at the right speed (their phase is w (T - t)). Then it stands taller in
+//		the shallows (Green's law, shoaling), and less tall the further it had to turn to get there: a beach in the lee of the swell only
+//		gets what wraps round to it
+struct SwellRead {
+	wave: WaveSample,
+	growth: f32,	// how much taller than out at sea it stands here: shoaling, less what it lost wrapping round
+};
+
+fn swellLookup(xz: vec2f, depthMetres: f32) -> SwellRead {
+	let refracted = refractionAt(xz);
+	let heading = normalize(vec2f(WU.swellDirX, WU.swellDirZ));
+	let across = vec2f(-heading.y, heading.x);
+	let gradient = refracted.yz;
+	let uv = (xz + heading * refracted.x) / WU.cascadeSize0;
+	let toMap = outerProduct(heading, gradient) + outerProduct(across, across);
+	let runs = normalize(gradient + vec2f(0.00001, 0.0));
+	let toWorld = outerProduct(runs, heading) + outerProduct(vec2f(-runs.y, runs.x), across);
+	let seen = waveFromMaps(textureSampleLevel(waveTexture0, waveSampler, uv, 0.0), textureSampleLevel(slopeTexture0, waveSampler, uv, 0.0), toMap, toWorld);
+
+	// Green's law: the waves carry their energy at the group speed, so they grow as it falls. 1 in the open sea
+	let omega = WU.swellPeak;
+	let depth = max(depthMetres, 0.05);
+	let k = waveNumberAt(omega, depth);
+	let kd = min(k * depth, 20.0);
+	let groupSpeed = 0.5 * omega / k * (1.0 + 2.0 * kd / sinh(2.0 * kd));
+	let shoaling = min(sqrt(0.5 * 9.81 / omega / groupSpeed), 2.2);
+	let wrapped = mix(0.35, 1.0, smoothstep(-0.866, 0.5, dot(runs, heading)));
+	return SwellRead(scaleWave(seen, shoaling * wrapped), shoaling * wrapped);
+}
+
+// turns a vector by angle radians (from x towards z)
+fn rotation(angle: f32) -> mat2x2f {
+	let c = cos(angle);
+	let s = sin(angle);
+	return mat2x2f(vec2f(c, s), vec2f(-s, c));
+}
+
+struct TurnedWave {
+	wave: WaveSample,
+	foam: f32,
+};
+
+// A wind cascade read turned round by turn radians: the same sea, its waves running that much further round. Turning the read about a
+//		point would tear the waves apart wherever the turn changes from place to place, so the maps are read whole at fixed turns, half a
+//		radian apart, and the two either side of the turn wanted are mixed (scaled up so the mix is as rough as either alone)
+//		uv: the world position over the cascade's size
+fn windLookup(cascade: i32, uv: vec2f, turn: f32) -> TurnedWave {
+	let apart = 0.5;
+	let lower = floor(turn / apart);
+	let between = turn / apart - lower;
+	var turned = TurnedWave(WaveSample(0.0, vec2f(0.0, 0.0), vec2f(0.0, 0.0), vec3f(0.0, 0.0, 0.0)), 0.0);
+	for (var side = 0; side < 2; side++) {
+		let weight = select(1.0 - between, between, side == 1);
+		if (weight < 0.001) {
+			continue;
+		}
+		let toWorld = rotation((lower + f32(side)) * apart);
+		let toMap = transpose(toWorld);
+		let at = toMap * uv;
+		var wave: vec4f;
+		var slope: vec4f;
+		var foam: f32;
+		if (cascade == 1) {
+			wave = textureSampleLevel(waveTexture1, waveSampler, at, 0.0);
+			slope = textureSampleLevel(slopeTexture1, waveSampler, at, 0.0);
+			foam = foamAt(foamTexture1, at);
+		} else {
+			wave = textureSampleLevel(waveTexture2, waveSampler, at, 0.0);
+			slope = textureSampleLevel(slopeTexture2, waveSampler, at, 0.0);
+			foam = foamAt(foamTexture2, at);
+		}
+		turned.wave = addWave(turned.wave, scaleWave(waveFromMaps(wave, slope, toMap, toWorld), weight));
+		turned.foam = max(turned.foam, foam * weight);
+	}
+	turned.wave = scaleWave(turned.wave, 1.0 / sqrt((1.0 - between) * (1.0 - between) + between * between));
+	return turned;
+}
 
 // Everything about one vertex of this tile's mesh, at grid index (ix, iz) of the tile
 fn waterVertex(ix: u32, iz: u32) -> WaterVertex {
 
 		//------------------------------FORM GRID-------------------------------
 
-		// the wave textures tile exactly once across a tile, whatever its level of detail.
-		//		a tile's mesh has tileCells cells per side, so it reads every texelStride-th texel: 1 under the camera, 2 for the next ring out, 4, 8...
-		let textureWidth = u32(WU.resolution);
+		// a tile's mesh has tileCells cells per side: the most under the camera, half as many for the next ring out, and so on
 		let tileCells = u32(WU.tileCells);
-		let texelStride = textureWidth / tileCells;
 
 		let gridIndexX = f32(ix);
 		let gridIndexZ = f32(iz);
@@ -168,15 +387,17 @@ fn waterVertex(ix: u32, iz: u32) -> WaterVertex {
 		let vertGridPosX = gridIndexX * cellSize;
 		let vertGridPosZ = gridIndexZ * cellSize;
 
-		//------------------[REALISTIC] FFT Oceanographic Waves-----------------
+		// World position of this water vertex
+        let worldX = (vertGridPosX - WU.gridSize.x * 0.5) + WU.tileOffsetX;
+		let worldZ = (vertGridPosZ - WU.gridSize.y * 0.5) + WU.tileOffsetZ;
+		return waterVertexAt(vec2f(worldX, worldZ));
+}
 
-		//just for now, only x as height
-		let texel = vec2u((ix * texelStride) % textureWidth, (iz * texelStride) % textureWidth);
-		var waveHeight = textureLoad(finalWaveHeightTexture, texel).x;
-		
-		// World position of this water vertex	!!! CHECK IF TILE OFFSET IS DONE CORRECTLY
-        let worldX = (vertGridPosX - WU.gridSize.x * 0.5) + WU.tileOffsetX; // + WU.cameraPosition.x; //!!!!Camera positions may need to be put in for MULTIPLE WATER TILES!!!!!!!!!!
-		let worldZ = (vertGridPosZ - WU.gridSize.y * 0.5) + WU.tileOffsetZ; // + WU.cameraPosition.z;
+// Everything about the water at a place in the world (x, z), as it is before the waves move it: a vertex of a tile's mesh, or a
+//		probe (probeMain)
+fn waterVertexAt(worldXZ: vec2f) -> WaterVertex {
+		let worldX = worldXZ.x;
+		let worldZ = worldXZ.y;
 
         // Project into top-down camera clip space
         let worldPos4 = vec4f(worldX, 0.0, worldZ, 1.0);
@@ -201,10 +422,10 @@ fn waterVertex(ix: u32, iz: u32) -> WaterVertex {
 		//		a far off coast is there, and roll straight over the land at full size
 		let boxEdge = min(min(texUV.x, 1.0 - texUV.x), min(texUV.y, 1.0 - texUV.y));	// negative outside the top down camera's box
 		let boxFade = saturate(boxEdge / 0.08);										// 1 well inside the box, 0 at its edge and beyond
-		let worldTerrain = worldTerrainAt(vec2f(worldX, worldZ));
+		let worldTerrain = worldTerrainAt(worldXZ);
         let waterDepth = mix(WU.planeYPos - worldTerrain.x, WU.planeYPos - terrainWorldPos.y, boxFade);
 		let fullDepthThreshold = max(WU.fullDepth, 0.001); // where anything beyond this is full depth for full waves
-		
+
 		//------------------Distance To Shore-----------------
 		// world distance to the nearest land, bilinear filtered out of the shore distance field (c_ShoreScan + c_ShoreDistance)
 		//		the field lines up texel for texel with the top down height map, just at a lower resolution, so it uses the same UV
@@ -231,13 +452,9 @@ fn waterVertex(ix: u32, iz: u32) -> WaterVertex {
 		let fieldAxisV = (Spaces.topDownInvViewProj * vec4f(0.0, -1.0, 0.0, 0.0)).xz;	// texture v runs opposite to ndc y
 		let shoreGradWorld = (shoreGradTexel.x * normalize(fieldAxisU) + shoreGradTexel.y * normalize(fieldAxisV)) * boxFade;
 
-		let shoreZone = clamp(WU.shoreZone, 0.001, shoreFieldRange);	// world distance from land where the ocean waves hand over to the shore waves. The field cant see further than its range
-
 		//Taking Depth into account
-		//		the depth keeps the open ocean waves from digging into the sea bed, the shore distance fades them out as they come in to land
-		let depthAttenuation = clamp(waterDepth / fullDepthThreshold, 0.0, 1.0); //0.0 to 1.0 from shallow to full depth
-		let shoreAttenuation = pow(smoothstep(0.0, shoreZone, shoreDistance), 1.5);
-		let attenuation = min(depthAttenuation, shoreAttenuation);
+		//		how far from deep the water is: only the spikey ripples of the shallows go by this now (the waves themselves are held to the depth, below)
+		let attenuation = clamp(waterDepth / fullDepthThreshold, 0.0, 1.0); //0.0 to 1.0 from shallow to full depth
 		//------------------Lakes-----------------
 		// A lake's waves are the sea's: the same settings, the same spectrum, faded by the depth and the shore in the same way.
 		//		What it does not have is what needs the open sea to make it: a swell, and surf (and with them, foam)
@@ -248,155 +465,153 @@ fn waterVertex(ix: u32, iz: u32) -> WaterVertex {
 								//		perhaps just tie this with attenutation for depth
 								//		ALSO MAKE AS A PASS IN OR CALC HERE DIFFERENT
 		let shallowFactor = 1.0 - attenuation;
-		let deepDisplacement = waveHeight * attenuation;
-		
-		// boost high freq detail by exaggerating deviation from local mean
-		// squaring preserves sign and amplifies peaks/troughs
-		let rippleDetail = sign(waveHeight) * (waveHeight * waveHeight) * shallowFactor * rippleScale;
+
 		// the waves flatten out with distance from the camera, so the furthest tiles end dead flat and meet the horizon plane with no seam.
 		//		out there a wave is far smaller than a pixel anyway, and a real horizon is a straight line
-		let cameraDistance = length(vec2f(worldX, worldZ) - WU.cameraPosition.xz);
+		let cameraDistance = length(worldXZ - WU.cameraPosition.xz);
 		let distanceFade = 1.0 - smoothstep(WU.waveFadeDistance * 0.45, WU.waveFadeDistance, cameraDistance);
 
-		var waveHeightAdj = (deepDisplacement + rippleDetail) * distanceFade + WU.planeYPos;
-				
+		//------------------[REALISTIC] FFT Oceanographic Waves-----------------
+		// the same sea simulated at three sizes (the cascades, see water.js), each read at this vertex's place in the world.
+		//		So they line up from tile to tile whatever size the tiles are, and between them only repeat every few kilometres
+		//	cascade 0: the swell (and the longest of the wind waves). Turned by the shallows: read through the refraction map (see swellLookup),
+		//		so its crests swing round to face the beaches, wrap round headlands and crowd together as the water shallows. And taller
+		//		as they come in (shoaling). No swell on a lake
+		//	cascade 1: the wind sea. Turned towards the shore too, but only as much as the waves feel the bottom (see windLookup)
+		//	cascade 2: the shortest waves. They fade out with distance before the coarser rings of tiles, whose cells are too big to carry them
+		//		(by distance, not by ring: two tiles have to agree on the vertices along the edge they share)
+		//	None of them is faded out by the depth any more: they come all the way in, and break where they get too tall for the water (below)
+		let swellWeight = (1.0 - lake) * distanceFade;
+		let windWeight = distanceFade;
+		let fineFade = 1.0 - smoothstep(WU.fineFadeStart, WU.fineFadeEnd, cameraDistance);
+		let depthMetres = max(waterDepth, 0.0) / WU.unitsPerMetre;
+
+		var swell = WaveSample(0.0, vec2f(0.0), vec2f(0.0), vec3f(0.0));
+		var swellGrowth = 0.0;
+		var wind = WaveSample(0.0, vec2f(0.0), vec2f(0.0), vec3f(0.0));
+		var keptFoam = 0.0;	// the foam the wind waves broke into a little while ago, still lying on the water
+		if (swellWeight > 0.0) {
+			let read = swellLookup(worldXZ, depthMetres);
+			swell = scaleWave(read.wave, swellWeight);
+			swellGrowth = read.growth * swellWeight;
+		}
+
+		// which way the shore is, and how far round towards it the wind waves turn: Snell's law. A wave turns as much as it feels the bottom,
+		//		1 - tanh(k depth): nothing in deep water, all the way round in the shallows, the long waves sooner than the short. And
+		//		only one coming in: chop the wind blows out to sea (out of a bay, off a beach) runs out to sea
+		let shoreGradLength = length(shoreGradWorld);
+		var towardsShore = vec2f(0.0, 0.0);
+		var turnTowardsShore = 0.0;
+		if (shoreGradLength > 0.0001) {
+			towardsShore = -shoreGradWorld / shoreGradLength;
+			let windHeading = normalize(WU.windDirection);
+			let comingIn = smoothstep(0.0, 0.35, dot(windHeading, towardsShore));
+			let steady = smoothstep(0.45, 0.85, shoreGradLength / max(shoreFieldTexelSize, 0.0001));	// (on a ridge of the distance it swings about)
+			turnTowardsShore = atan2(windHeading.x * towardsShore.y - windHeading.y * towardsShore.x, dot(windHeading, towardsShore)) * comingIn * steady;
+		}
+		if (distanceFade > 0.0) {
+			let turned = windLookup(1, worldXZ / WU.cascadeSize1, turnTowardsShore * (1.0 - tanh(WU.chopK1 * max(waterDepth, 0.0))));
+			wind = addWave(wind, turned.wave);
+			keptFoam = turned.foam;
+		}
+		if (distanceFade > 0.0 && fineFade > 0.0) {
+			let turned = windLookup(2, worldXZ / WU.cascadeSize2, turnTowardsShore * (1.0 - tanh(WU.chopK2 * max(waterDepth, 0.0))));
+			wind = addWave(wind, scaleWave(turned.wave, fineFade));
+			keptFoam = max(keptFoam, turned.foam * fineFade);
+		}
+		wind = scaleWave(wind, windWeight);
+
+		// Breaking. Waves can only stand so tall in water so deep: in a surf zone their significant height is held to about half the
+		//		depth, the rest of what they bring in lost as they break. So all of them are scaled down to that, from the height they
+		//		would have here otherwise (the swell's, grown by the shallows, and the wind sea's), which keeps their shape and only
+		//		makes them smaller. Far out the water is deep enough never to notice. What is breaking shows as white water on the crests
+		let expectedHeight = sqrt(WU.swellHs * swellGrowth * WU.swellHs * swellGrowth + WU.windHs * WU.windHs * windWeight * windWeight);
+		let surfHold = min(1.0, 0.5 * max(waterDepth, 0.0) / max(expectedHeight, 0.001));
+		swell = scaleWave(swell, surfHold);
+		wind = scaleWave(wind, surfHold);
+		// Waves over water shallow for their size ride high (an option, WU.rideHigh): a wave coming into the shallows has peaked crests and
+		//		long flat troughs that hardly dip under the still water, where a sine wave sinks as far as it rises. Over a shelf dropping
+		//		off, a big wave would otherwise look to suck down before it runs in. So the troughs are lifted towards the still water and the
+		//		crests stand taller, the more the shallower the water is next to the waves. Through the still water line smoothly (tanh),
+		//		so there is no crease. Out in deep water nothing changes
+		let evenHeight = swell.height + wind.height;
+		let shallowness = WU.rideHigh * saturate(1.5 * expectedHeight / max(waterDepth, 0.1) - 0.15);
+		let side = tanh(evenHeight / 0.3);
+		let rideHigh = 1.0 + 0.85 * shallowness * side;
+		let rawHeight = evenHeight * rideHigh;
+		let rideHighSlope = rideHigh + evenHeight * 0.85 * shallowness * (1.0 - side * side) / 0.3;	// d(rawHeight) / d(evenHeight)
+		//	and the odd wave still too tall for the water, its crest held under 0.55 times the depth and its trough above -0.4 times it,
+		//		softly (tanh), and as much as was cut off shows as foam
+		let crestRoom = max(0.55 * waterDepth, 0.02);
+		let troughRoom = max(0.4 * waterDepth, 0.02);
+		let room = select(troughRoom, crestRoom, rawHeight > 0.0);
+		let heldHeight = room * tanh(rawHeight / room);
+		let held = 1.0 - tanh(rawHeight / room) * tanh(rawHeight / room);	// d(heldHeight) / d(rawHeight)
+		let overTop = saturate((rawHeight - heldHeight) / (0.25 * crestRoom + 0.05));
+		let surfCrest = (1.0 - surfHold) * smoothstep(0.3, 0.75, heldHeight / crestRoom);	// the crests in a surf zone, as much as it is breaking
+		let breakFoam = saturate(max(overTop, 1.4 * surfCrest)) * (1.0 - lake);
+		// and nothing pushed sideways further than the water is deep, or the shallows would be shoved up onto the sand
+		let pushRoom = max(0.6 * waterDepth, 0.02);
+
+		// boost high freq detail by exaggerating deviation from local mean
+		// squaring preserves sign and amplifies peaks/troughs
+		let rippleDetail = sign(wind.height) * (wind.height * wind.height) * shallowFactor * rippleScale;
+		let rippleChain = 2.0 * abs(wind.height) * shallowFactor * rippleScale;	// d(rippleDetail) / d(height)
+
+		var waveHeightAdj = heldHeight + rippleDetail * distanceFade + WU.planeYPos;
+		let heightSlope = held * rideHighSlope * (swell.slope + wind.slope) + rippleChain * distanceFade * wind.slope;	// d(waveHeightAdj) / dx, dz
+
 		//------------------[REALISTIC] Choppy Displacement-----------------
 		// the horizontal displacement D pulls each vertex towards the nearest crest, which pinches the crests into peaks and flattens the troughs
-		//		fades out with depth the same way the height does
 		let choppiness = WU.choppiness;	// lambda in the tessendorf paper. Around 1.0 is where crests start folding over themselves
-		let chop = choppiness * attenuation * distanceFade;
-		let displacement = textureLoad(finalDisplacementTexture, texel).xy * chop;
+		let rawDisplacement = choppiness * (swell.push + wind.push);
+		let pushLength = length(rawDisplacement);
+		let pushHeld = select(1.0, pushRoom * tanh(pushLength / pushRoom) / pushLength, pushLength > 0.0001);
+		let displacement = rawDisplacement * pushHeld;
+		// and how the displacement changes across the surface. x: dDx/dx, y: dDz/dz, z: dDx/dz (which is dDz/dx)
+		let displacementChange = choppiness * pushHeld * (swell.squeeze + wind.squeeze);
 
-		//------------------Shore Waves-----------------
-		// inside the shore zone the open ocean waves fade out and wave trains that run straight at the nearest land take over
-		//		their phase is the distance to shore, so the crests follow the coastline and travel inwards as time goes on
-		//		same trochoid (gerstner) shape as the choppy ocean waves: the surface gets pushed along the travel direction towards each crest
-		var shoreHeight = 0.0;				// added to the height
-		var shorePush = vec2f(0.0, 0.0);	// added to the horizontal position
-		var shoreSlope = 0.0;				// d(shoreHeight) / d(shoreDistance)
-		var shoreSqueeze = 0.0;				// how hard the push bunches the surface up along the travel direction, 1.0 would fold it
-		var awayFromShore = vec2f(0.0, 0.0);
-		let shoreGradLength = length(shoreGradWorld);
-
-		if (shoreDistance < shoreZone && shoreGradLength > 0.0001) {
-			awayFromShore = shoreGradWorld / shoreGradLength;
-			let worldXZ = vec2f(worldX, worldZ);
-			let time = WU.step;
-
-			let shoreWaveHeight = WU.shoreWaveHeight;		// crest height at the break line, world units
-			let shoreBreakDistance = min(WU.shoreBreakDistance, shoreZone * 0.9);	// distance from land where the shore waves are tallest, always inside the zone
-			let shoreSteepness = WU.shoreSteepness;		// how far the crests lean and sharpen as they come in. Too high folds the mesh
-
-			// two trains of slightly different wavelength drift in and out of step, so the waves arrive in sets instead of an even pulse
-			let k1 = 6.2832 / max(WU.shoreWaveLength1, 1.0);	// wave numbers from the wavelengths in world units. keep them several mesh cells long
-			let k2 = 6.2832 / max(WU.shoreWaveLength2, 1.0);
-			let w1 = 1.9 * WU.shoreWaveSpeed;	// angular speed. At a speed setting of 1.0 its close to the dominant open ocean waves so nothing changes pace at the hand over
-			let w2 = 2.3 * WU.shoreWaveSpeed;
-
-			// slow variation along the coast in phase and in size, otherwise every crest is a perfect copy of the shoreline
-			let warp = 1.4 * sin(dot(worldXZ, vec2f(0.023, 0.017)) + 0.21 * time);
-			let sets = 0.8 + 0.2 * sin(dot(worldXZ, vec2f(-0.011, 0.019)) - 0.13 * time);
-			let theta1 = k1 * shoreDistance + w1 * time + warp;
-			let theta2 = k2 * shoreDistance + w2 * time - 1.7 * warp;
-
-			// coasts facing into the wind get the full waves, the sheltered side gets less
-			let windward = mix(0.6, 1.0, saturate(0.5 - 0.5 * dot(normalize(WU.windDirection), awayFromShore)));
-
-			// grows from nothing at the edge of the zone up to the break line, then runs out as it reaches land. Never taller than the water is deep
-			let envelope = smoothstep(0.0, shoreBreakDistance, shoreDistance) * (1.0 - smoothstep(shoreBreakDistance, shoreZone, shoreDistance));
-			let amplitude = min(shoreWaveHeight * envelope * sets * windward, 0.6 * max(waterDepth, 0.0)) * (1.0 - lake);	// (no surf on a lake)
-			// capped so the push can never bunch the surface up past the point of folding (squeeze of 1.0), whatever the settings above are
-			let steepness = min(mix(shoreSteepness, 1.0, saturate(shoreDistance / shoreZone)), 0.9 / max(amplitude * k2, 0.0001));
-
-			// a mesh cant carry a wave much shorter than a few of its cells, so on the coarser (level of detail) tiles
-			//		each train bows out as its wavelength gets down towards the cell size, instead of turning into jagged noise
-			let weight1 = 0.62 * smoothstep(2.5, 5.0, (6.2832 / k1) / cellSize);
-			let weight2 = 0.38 * smoothstep(2.5, 5.0, (6.2832 / k2) / cellSize);
-
-			shoreHeight = amplitude * (weight1 * cos(theta1) + weight2 * cos(theta2));
-			shoreSlope = -amplitude * (weight1 * k1 * sin(theta1) + weight2 * k2 * sin(theta2));
-			shorePush = -awayFromShore * steepness * amplitude * (weight1 * sin(theta1) + weight2 * sin(theta2));
-			shoreSqueeze = steepness * amplitude * (weight1 * k1 * cos(theta1) + weight2 * k2 * cos(theta2));
-		}
-
-		//------------------Deep Sea Swell-----------------
-		// big slow rollers for the open sea, underneath the wind waves from the FFT: a handful of long trochoid (gerstner) waves heading roughly down wind.
-		//		they come straight from the world position rather than a texture, so they can be far longer than a tile and never repeat from tile to tile
-		var swellHeight = 0.0;					// added to the height
-		var swellPush = vec2f(0.0, 0.0);		// added to the horizontal position
-		var swellTangentX = vec3f(0.0, 0.0, 0.0);	// how (push.x, height, push.z) change per unit moved along world x
-		var swellTangentZ = vec3f(0.0, 0.0, 0.0);	// and along world z
-
-		// deep sea only. It grows with the depth of the water up to the deep sea depth, and with the distance from land,
-		//		which is what keeps it smooth off coasts that drop straight to nothing (and stops it washing over the land)
-		//		(both are known everywhere: from the top down height map near the camera, from the terrain's own texture beyond it)
-		let swellShoreDistance = min(WU.swellShoreDistance, shoreFieldRange);
-		let swellDepthFactor = smoothstep(0.5 * WU.deepSeaDepth, max(WU.deepSeaDepth, 0.001), waterDepth);
-		let swellShoreFactor = smoothstep(0.35 * swellShoreDistance, max(swellShoreDistance, 0.001), shoreDistance);
-		let swellSize = WU.swellHeight * min(swellDepthFactor, swellShoreFactor) * distanceFade * (1.0 - lake);	// flattens with distance like everything else, to meet the horizon plane. And no swell on a lake
-
-		if (swellSize > 0.001) {
-			// the trains: wavelength (x the swell length), share of the height, heading (radians off the wind), and a starting phase so they dont all line up
-			var trainLength = array<f32, 5>(1.0, 0.72, 1.38, 0.55, 1.83);
-			var trainShare = array<f32, 5>(0.44, 0.20, 0.18, 0.10, 0.08);
-			var trainTurn = array<f32, 5>(0.0, 0.38, -0.31, -0.62, 0.21);
-			var trainPhase = array<f32, 5>(0.0, 1.7, 4.1, 2.6, 5.3);
-
-			let baseLength = max(WU.swellLength, 1.0);
-			let windAngle = atan2(WU.windDirection.y, WU.windDirection.x);
-			// the FFT waves are simulated on a small patch stretched up to the tile size. The same stretch on gravity keeps the swell moving in step with them
-			let gravity = 9.81 * (WU.gridSize.x / WU.oceanPlanePhysicalSize);
-
-			// how hard the crests get pinched: capped so that all the trains piled up together still cant fold the surface over
-			var totalSlope = 0.0;
-			for (var i = 0; i < 5; i++) {
-				totalSlope += (6.2832 / (baseLength * trainLength[i])) * swellSize * trainShare[i];
+		//------------------Boulders In The Sea-----------------
+		// The water round a boulder standing in the sea: it piles up against the side the waves come from, the more as a crest
+		//		runs into it, is pushed out round it, sinks a little in its lee, and breaks white on it (where the spray comes from too)
+		var rockHeight = 0.0;
+		var rockPush = vec2f(0.0, 0.0);
+		var rockSlope = vec2f(0.0, 0.0);
+		var rockFoam = 0.0;
+		let surge = saturate((waveHeightAdj - WU.planeYPos) / max(0.5 * expectedHeight, 0.5));	// how far up a crest the water is here
+		for (var r = 0; r < i32(Rocks.count.x); r++) {
+			let rock = Rocks.at[r * 2];
+			let rel = worldXZ - rock.xy;
+			let distance = length(rel);
+			let radius = rock.z;
+			let reach = 0.6 * radius + 1.5;					// how far out from its side the water feels it
+			let edge = max(distance - radius, 0.0);
+			if (edge > 5.0 * reach || distance < 0.0001) {
+				continue;
 			}
-			let lean = min(WU.swellSteepness, 0.9 / max(totalSlope, 0.0001));
-
-			for (var i = 0; i < 5; i++) {
-				let k = 6.2832 / (baseLength * trainLength[i]);		// wave number
-				let amplitude = swellSize * trainShare[i];
-				let heading = windAngle + trainTurn[i];
-				let direction = vec2f(cos(heading), sin(heading));
-				let speed = sqrt(gravity * k) * WU.swellSpeed;		// deep water waves: the longer the wave the faster it runs
-				let phase = k * dot(direction, vec2f(worldX, worldZ)) - speed * WU.step + trainPhase[i];
-
-				swellHeight += amplitude * cos(phase);
-				swellPush -= direction * (lean * amplitude * sin(phase));	// pushed towards each crest, same as the choppy displacement
-
-				// change in (push.x, height, push.z) per unit moved along the direction of travel, shared out onto x and z
-				let along = vec3f(-direction.x * lean * amplitude * k * cos(phase), -amplitude * k * sin(phase), -direction.y * lean * amplitude * k * cos(phase));
-				swellTangentX += along * direction.x;
-				swellTangentZ += along * direction.y;
-			}
+			let away = rel / distance;
+			let runs = Rocks.at[r * 2 + 1].xy;
+			let facing = dot(away, -runs);					// 1 on the side the waves come at
+			let near = exp(-edge / reach);
+			let standing = saturate((rock.w + 1.0) / 1.5);	// a boulder just under the surface still breaks the water, less so
+			let size = min(1.0 + 0.25 * radius, 3.0) * standing;
+			let piled = size * near * ((0.35 + 0.65 * saturate(facing)) * (0.4 + 0.6 * surge) - 0.3 * saturate(-facing));
+			rockHeight += piled;
+			rockSlope += -piled / reach * away;					// (along the way out from it: the share of its slope that matters)
+			rockPush += away * (0.6 * size * near);
+			rockFoam = max(rockFoam, near * near * (0.5 + 0.5 * saturate(facing)) * (0.4 + 0.6 * surge) * standing);
 		}
+		rockFoam *= (1.0 - lake);
 
-		var position = vec3f((vertGridPosX - WU.gridSize.x * 0.5) + WU.tileOffsetX + displacement.x + shorePush.x + swellPush.x,
-							 waveHeightAdj + shoreHeight + swellHeight,
-							 (vertGridPosZ - WU.gridSize.y * 0.5) + WU.tileOffsetZ + displacement.y + shorePush.y + swellPush.y);
+		var position = vec3f(worldX + displacement.x + rockPush.x,
+							 waveHeightAdj + rockHeight,
+							 worldZ + displacement.y + rockPush.y);
 
 		//------------------Normal and Crest Foam-----------------
-		// neighbouring texels one mesh cell either side (so further apart on the coarser tiles), wrapped around the texture
-		let texelXp = vec2u((texel.x + texelStride) % textureWidth, texel.y);
-		let texelXm = vec2u((texel.x + textureWidth - texelStride) % textureWidth, texel.y);
-		let texelZp = vec2u(texel.x, (texel.y + texelStride) % textureWidth);
-		let texelZm = vec2u(texel.x, (texel.y + textureWidth - texelStride) % textureWidth);
-
-		// central differences across two cells of the height and of the displacement
-		let chain = (attenuation + 2.0 * abs(waveHeight) * shallowFactor * rippleScale) * distanceFade;	// d(waveHeightAdj) / d(waveHeight)
-		let dHdx = (textureLoad(finalWaveHeightTexture, texelXp).x - textureLoad(finalWaveHeightTexture, texelXm).x) * chain;
-		let dHdz = (textureLoad(finalWaveHeightTexture, texelZp).x - textureLoad(finalWaveHeightTexture, texelZm).x) * chain;
-		let dDdx = (textureLoad(finalDisplacementTexture, texelXp).xy - textureLoad(finalDisplacementTexture, texelXm).xy) * chop;
-		let dDdz = (textureLoad(finalDisplacementTexture, texelZp).xy - textureLoad(finalDisplacementTexture, texelZm).xy) * chop;
-
-		// tangents of the displaced surface along the grid x and z, the normal is their cross product
-		let span = 2.0 * cellSize;
-		// the shore waves are analytic, so their share of each tangent comes from their derivatives along the away-from-shore direction
-		let shoreTangentX = vec3f(-awayFromShore.x * shoreSqueeze, shoreSlope, -awayFromShore.y * shoreSqueeze) * (awayFromShore.x * span);
-		let shoreTangentZ = vec3f(-awayFromShore.x * shoreSqueeze, shoreSlope, -awayFromShore.y * shoreSqueeze) * (awayFromShore.y * span);
-		let tangentX = vec3f(span + dDdx.x, dHdx, dDdx.y) + shoreTangentX + swellTangentX * span;
-		let tangentZ = vec3f(dDdz.x, dHdz, span + dDdz.y) + shoreTangentZ + swellTangentZ * span;
+		// tangents of the displaced surface along world x and z, per unit moved along them. The normal is their cross product
+		//		the waves' share comes straight out of the slope maps, no neighbours needed
+		let tangentX = vec3f(1.0 + displacementChange.x, heightSlope.x + rockSlope.x, displacementChange.z);
+		let tangentZ = vec3f(displacementChange.z, heightSlope.y + rockSlope.y, 1.0 + displacementChange.y);
 		var normal = normalize(cross(tangentZ, tangentX));
 		if (normal.y < 0.0) {
 			normal = -normal;	// surface has folded over itself here, keep the normal facing up
@@ -404,10 +619,10 @@ fn waterVertex(ix: u32, iz: u32) -> WaterVertex {
 
 		// Jacobian of the horizontal displacement: how much a patch of surface has been squeezed
 		//		1.0 is undisturbed, < 1.0 is squeezed together (crests), > 1.0 is stretched (troughs), < 0.0 has folded over (a breaking wave)
-		let jacobian = (tangentX.x * tangentZ.z - tangentX.z * tangentZ.x) / (span * span);
+		let jacobian = tangentX.x * tangentZ.z - tangentX.z * tangentZ.x;
 		let foamThreshold = WU.foamThreshold;		// foam starts where the jacobian drops below this
 		let foamFade = max(WU.foamFade, 0.001);		// how far below the threshold until its fully white
-		let foam = saturate((foamThreshold - jacobian) / foamFade);
+		let foam = max(max(saturate((foamThreshold - jacobian) / foamFade), breakFoam), rockFoam);	// (and the waves breaking in the shallows and on the boulders)
 
 		var vertex: WaterVertex;
 		vertex.position = position;
@@ -420,8 +635,12 @@ fn waterVertex(ix: u32, iz: u32) -> WaterVertex {
 		// the fragment shader has to know a lake from the sea as well, and there is no slot left to tell it in. But a lake
 		//		has no foam, so on a lake the foam slot carries "this is a lake" instead, as a number below 0
 		vertex.foam = select(foam, -lake, lake > 0.02);
+		vertex.keptFoam = keptFoam * windWeight * (1.0 - lake);
 		// depth of the (still) water here, for the see-through shallows. Open sea is far too deep to see through, so it stays opaque
 		vertex.depth = waterDepth;
+		// the crests: where the waves squeeze the surface together (the jacobian under 1), which is where it stands up thin. Not how high it
+		//		is: a whole swell standing high is no thinner for it
+		vertex.crest = saturate((1.0 - jacobian) * 2.2) * (1.0 - lake);
 		return vertex;
 }
 
@@ -432,7 +651,7 @@ fn waterVertex(ix: u32, iz: u32) -> WaterVertex {
 
 		var gIndex = GlobalIvocationID.x;
 
-		let fPerVertexData = u32(3 + 2 + 3);
+		let fPerVertexData = u32(3 + 2 + 3 + 1);
 
 		// this tile's mesh: tileCells cells per side, so one more vertex than that per side
 		let tileCells = u32(WU.tileCells);
@@ -465,7 +684,9 @@ fn waterVertex(ix: u32, iz: u32) -> WaterVertex {
 			vertex.position = (before.position + after.position) * 0.5;
 			vertex.normal = normalize(before.normal + after.normal);
 			vertex.foam = (before.foam + after.foam) * 0.5;
+			vertex.keptFoam = (before.keptFoam + after.keptFoam) * 0.5;
 			vertex.depth = (before.depth + after.depth) * 0.5;
+			vertex.crest = (before.crest + after.crest) * 0.5;
 		}
 
 		// uv isnt used by the water yet, so the foam factor and the water depth ride in that slot
@@ -474,9 +695,13 @@ fn waterVertex(ix: u32, iz: u32) -> WaterVertex {
 		waterVertexData[oVertInd + 2] = vertex.position.z;
 		waterVertexData[oVertInd + 3] = vertex.foam;
 		waterVertexData[oVertInd + 4] = vertex.depth;
-		waterVertexData[oVertInd + 5] = vertex.normal.x;
-		waterVertexData[oVertInd + 6] = vertex.normal.y;
-		waterVertexData[oVertInd + 7] = vertex.normal.z;
+		// the foam left lying on the water rides in the length of the normal (1 + it): there is no slot left for it, and everything
+		//		that reads the normal makes it 1 long again anyway. The spray (particles.js) only goes by the foam of the crests breaking now
+		let normalWithFoam = normalize(vertex.normal) * (1.0 + saturate(vertex.keptFoam));
+		waterVertexData[oVertInd + 5] = normalWithFoam.x;
+		waterVertexData[oVertInd + 6] = normalWithFoam.y;
+		waterVertexData[oVertInd + 7] = normalWithFoam.z;
+		waterVertexData[oVertInd + 8] = vertex.crest;
 		
 		
 		//--------------------FORM TRIANGLES IN INDEX BUFFER---------------------
@@ -498,61 +723,32 @@ fn waterVertex(ix: u32, iz: u32) -> WaterVertex {
 		}
 		
 	}
-`;
 
-/*
-	The raw IFFT output is centered around frequency zero in the corner, which gives a discontinuous-looking wave pattern
-	The shift pass applies a checkerboard sign flip which mathematically moves the zero-frequency component to the center making the wave pattern tile seamlessly.
-	(gIndex.x + gIndex.y) % 2u alternates between 0 and 1 in a checkerboard pattern across the grid
-	The sum is then divided by WAVE_SCALE_RESOLUTION, the same at every tile resolution. The waves are the same size whatever the
-	resolution: the wave numbers step by 2 pi / oceanPlanePhysicalSize, so a finer tile only adds shorter waves, and the long ones,
-	which carry nearly all the height, are the same. It was divided by the resolution, which halved every wave each time the
-	resolution doubled (measured: rms height 4.4 at 128, 2.3 at 256, 1.1 at 512). 512 keeps the waves as they were at 512
-*/
-
-export const c_Shift =
-`
-	struct WaterUniforms {
-		@location(0) cameraPosition: vec4f,
-		@location(1) windDirection: vec2f,
-		@location(2) resolution: f32,			//the resolution of the plane is fixed, however, converge closer to camera position
-		@location(3) waveSteepness: f32,	
-		@location(4) step: f32,					//to be used in place of time, but locked to frame rate i suppose
-		@location(5) planeYPos: f32,
-		@location(6) waveLength: f32,
-		@location(7) oceanPlanePhysicalSize: f32,
-		@location(8) windSpeed: f32,
-		@location(9) tileOffsetX: f32,
-		@location(10) tileOffsetZ: f32,
-		@location(11) gridSize: vec2f,
-	};
-	@group(0) @binding(0) var<uniform> WU: WaterUniforms;
-
-	@group(0) @binding(1) var inTexture : texture_storage_2d<rgba32float, read>;
-	@group(0) @binding(2) var outTexture : texture_storage_2d<rgba32float, write>;
-	
-
-	@compute @workgroup_size(${FFT_WORKGROUP_SIZE[0]}, ${FFT_WORKGROUP_SIZE[1]}, ${FFT_WORKGROUP_SIZE[2]})	
-    fn computeMain(
-		@builtin(global_invocation_id) GlobalInvocationID: vec3<u32>
-	) {
-		var gIndex = GlobalInvocationID;
-		var val = textureLoad(inTexture, gIndex.xy);
-		let N2 = f32(${WAVE_SCALE_RESOLUTION});		// (not WU.resolution: see above)
-		
-		//permute and scale
-		var permute = val * (1.0 - 2.0 * f32((gIndex.x + gIndex.y) % 2u));
-		
-		//checkerboard style
-		//var permute = vec4f(0.,0.,0.,0.);
-		//if ((gIndex.x + gIndex.y) % 2u == 0) {
-		//	permute = val;
-		//} else {
-		//	permute = -val;
-		//}
-		
-		textureStore(outTexture, gIndex.xy, vec4f(permute.x / N2, permute.y / N2, 0.0, 1.0));
+// The water's surface at a few places in the world, for things floating on it (see setWaterProbes in water.js): the very water the
+//		mesh is made of. Here waterVertexData holds the probes instead of a tile's mesh, 8 numbers each: x, z of the place asked
+//		about, and back: the height of the surface there, its normal (x, y, z), the depth of the still water, the foam.
+//		The waves move the surface sideways as well as up and down (the choppy displacement), so the water over a place is the
+//		water from a little way off it: found by stepping back by however far it missed, a few times over
+@compute @workgroup_size(${WATER_WORKGROUP_SIZE[0]}, 1, 1)
+fn probeMain(@builtin(global_invocation_id) id: vec3u) {
+	if (id.x >= arrayLength(&waterVertexData) / 8u) {
+		return;
 	}
+	let o = id.x * 8u;
+	let wanted = vec2f(waterVertexData[o], waterVertexData[o + 1u]);
+	var source = wanted;
+	var water = waterVertexAt(source);
+	for (var i = 0; i < 3; i++) {
+		source += wanted - water.position.xz;
+		water = waterVertexAt(source);
+	}
+	waterVertexData[o + 2u] = water.position.y;
+	waterVertexData[o + 3u] = water.normal.x;
+	waterVertexData[o + 4u] = water.normal.y;
+	waterVertexData[o + 5u] = water.normal.z;
+	waterVertexData[o + 6u] = water.depth;
+	waterVertexData[o + 7u] = max(water.foam, 0.0);
+}
 `;
 
 /*
@@ -622,107 +818,47 @@ export const c_IFFT_2D =
 		return vec2f(cos(a.y), sin(a.y)) * exp(a.x);
 	}
 
-	@compute @workgroup_size(${FFT_WORKGROUP_SIZE[0]}, ${FFT_WORKGROUP_SIZE[1]}, ${FFT_WORKGROUP_SIZE[2]})	
+	@compute @workgroup_size(${FFT_WORKGROUP_SIZE[0]}, ${FFT_WORKGROUP_SIZE[1]}, ${FFT_WORKGROUP_SIZE[2]})
     fn computeMain(
 		@builtin(global_invocation_id) GlobalInvocationID: vec3<u32>
 	) {
-		
+
 		var gIndex = GlobalInvocationID.xy;
-		
-		// Determine which direction to process (horizontal or vertical)
-		let direction = BU.direction;
 		let res = u32(WU.resolution);
-		
+		// every field of every cascade goes through at once, one layer of the buffers each (z)
+		let layerStart = GlobalInvocationID.z * res * res;
+
+		// the two elements this one is made from, along its row (horizontal) or its column (vertical), and their twiddle factor
+		var preCompData: vec4f;
+		var indexA: u32;
+		var indexB: u32;
 		if (BU.direction == 0.0) {
 			// Horizontal pass (IFFT along rows)
-			
-			let preCompData = textureLoad(preCompTexture, vec2u(u32(BU.stage), gIndex.x));
-			let inputIndices = vec2u(u32(preCompData.z), u32(preCompData.w));
-			
-			if(BU.pingPong == 0.0) {
-				// Load data from input texture (real and imaginary parts of h0k)
-				//let a = textureLoad(inTexture, vec2u(inputIndices.x, gIndex.y),0).xy;
-				//let b = textureLoad(inTexture, vec2u(inputIndices.y, gIndex.y),0).xy;
-				
-				let a = vec2f(pingPongA[(gIndex.y * res + inputIndices.x) * 2 + 0], pingPongA[(gIndex.y * res + inputIndices.x) * 2 + 1]);
-				let b = vec2f(pingPongA[(gIndex.y * res + inputIndices.y) * 2 + 0], pingPongA[(gIndex.y * res + inputIndices.y) * 2 + 1]);
-				
-				// Perform FFT butterfly operation (we could swap this depending on the FFT stage)		
-				let p = vec2f(a.x, a.y);
-				let q = vec2f(b.x, b.y);
-				let w = vec2f(preCompData.x, preCompData.y);
-				let result = complexAdd(p, complexMul(w,q));
-				
-				// Store the result back into the output texture
-				//textureStore(outTexture, gIndex.xy, vec4f(result.x, result.y, 0.0, 1.0));
-				pingPongB[(gIndex.y * res + gIndex.x) * 2 + 0] = result.x;
-				pingPongB[(gIndex.y * res + gIndex.x) * 2 + 1] = result.y;
-				
-			} else {
-				// Load data from input texture (real and imaginary parts of h0k)
-				//let a = textureLoad(inTexture, vec2u(inputIndices.x, gIndex.y),0).xy;
-				//let b = textureLoad(inTexture, vec2u(inputIndices.y, gIndex.y),0).xy;
-				
-				let a = vec2f(pingPongB[(gIndex.y * res + inputIndices.x) * 2 + 0], pingPongB[(gIndex.y * res + inputIndices.x) * 2 + 1]);
-				let b = vec2f(pingPongB[(gIndex.y * res + inputIndices.y) * 2 + 0], pingPongB[(gIndex.y * res + inputIndices.y) * 2 + 1]);
-				
-				// Perform FFT butterfly operation (we could swap this depending on the FFT stage)		
-				let p = vec2f(a.x, a.y);
-				let q = vec2f(b.x, b.y);
-				let w = vec2f(preCompData.x, preCompData.y);
-				let result = complexAdd(p, complexMul(w,q));
-				
-				// Store the result back into the output texture
-				//textureStore(outTexture, gIndex.xy, vec4f(result.x, result.y, 0.0, 1.0));
-				pingPongA[(gIndex.y * res + gIndex.x) * 2 + 0] = result.x;
-				pingPongA[(gIndex.y * res + gIndex.x) * 2 + 1] = result.y;
-				
-			}
-			
+			preCompData = textureLoad(preCompTexture, vec2u(u32(BU.stage), gIndex.x));
+			indexA = layerStart + gIndex.y * res + u32(preCompData.z);
+			indexB = layerStart + gIndex.y * res + u32(preCompData.w);
 		} else {
 			// Vertical pass (IFFT along columns)
-				
-			let preCompData = textureLoad(preCompTexture, vec2u(u32(BU.stage), gIndex.y));
-			let inputIndices = vec2u(u32(preCompData.z), u32(preCompData.w));
-			
-			if(BU.pingPong == 0.0) {
-				// Load data from input texture (real and imaginary parts of h0k)
-				//let a = textureLoad(inTexture, vec2u(gIndex.x, inputIndices.x),0).xy;
-				//let b = textureLoad(inTexture, vec2u(gIndex.x, inputIndices.y),0).xy;
-				
-				let a = vec2f(pingPongA[(inputIndices.x * res + gIndex.x) * 2 + 0], pingPongA[(inputIndices.x * res + gIndex.x) * 2 + 1]);
-				let b = vec2f(pingPongA[(inputIndices.y * res + gIndex.x) * 2 + 0], pingPongA[(inputIndices.y * res + gIndex.x) * 2 + 1]);
-	
-				// Perform FFT butterfly operation (we could swap this depending on the FFT stage)
-				let p = vec2f(a.x, a.y);
-				let q = vec2f(b.x, b.y);
-				let w = vec2f(preCompData.x, preCompData.y);
-				let result = complexAdd(p, complexMul(w,q));
-				
-				// Store the result back into the output texture
-				//textureStore(outTexture, gIndex.xy, vec4f(result.x, result.y, 0.0, 1.0));
-				pingPongB[(gIndex.y * res + gIndex.x) * 2 + 0] = result.x;
-				pingPongB[(gIndex.y * res + gIndex.x) * 2 + 1] = result.y;
-				
-			} else {
-				// Load data from input texture (real and imaginary parts of h0k)
-				//let a = textureLoad(inTexture, vec2u(gIndex.x, inputIndices.x),0).xy;
-				//let b = textureLoad(inTexture, vec2u(gIndex.x, inputIndices.y),0).xy;
-				
-				let a = vec2f(pingPongB[(inputIndices.x * res + gIndex.x) * 2 + 0], pingPongB[(inputIndices.x * res + gIndex.x) * 2 + 1]);
-				let b = vec2f(pingPongB[(inputIndices.y * res + gIndex.x) * 2 + 0], pingPongB[(inputIndices.y * res + gIndex.x) * 2 + 1]);
-	
-				// Perform FFT butterfly operation (we could swap this depending on the FFT stage)
-				let p = vec2f(a.x, a.y);
-				let q = vec2f(b.x, b.y);
-				let w = vec2f(preCompData.x, preCompData.y);
-				let result = complexAdd(p, complexMul(w,q));
-				
-				// Store the result back into the output texture
-				//textureStore(outTexture, gIndex.xy, vec4f(result.x, result.y, 0.0, 1.0));
-				pingPongA[(gIndex.y * res + gIndex.x) * 2 + 0] = result.x;
-				pingPongA[(gIndex.y * res + gIndex.x) * 2 + 1] = result.y;
-			}
+			preCompData = textureLoad(preCompTexture, vec2u(u32(BU.stage), gIndex.y));
+			indexA = layerStart + u32(preCompData.z) * res + gIndex.x;
+			indexB = layerStart + u32(preCompData.w) * res + gIndex.x;
+		}
+		let outIndex = layerStart + gIndex.y * res + gIndex.x;
+		let w = vec2f(preCompData.x, preCompData.y);
+
+		// Perform FFT butterfly operation, from one ping pong buffer into the other
+		if (BU.pingPong == 0.0) {
+			let a = vec2f(pingPongA[indexA * 2u], pingPongA[indexA * 2u + 1u]);
+			let b = vec2f(pingPongA[indexB * 2u], pingPongA[indexB * 2u + 1u]);
+			let result = complexAdd(a, complexMul(w, b));
+			pingPongB[outIndex * 2u] = result.x;
+			pingPongB[outIndex * 2u + 1u] = result.y;
+		} else {
+			let a = vec2f(pingPongB[indexA * 2u], pingPongB[indexA * 2u + 1u]);
+			let b = vec2f(pingPongB[indexB * 2u], pingPongB[indexB * 2u + 1u]);
+			let result = complexAdd(a, complexMul(w, b));
+			pingPongA[outIndex * 2u] = result.x;
+			pingPongA[outIndex * 2u + 1u] = result.y;
 		}
 	}
 `;
@@ -821,6 +957,8 @@ export const c_ShoreDistance =
 	@group(0) @binding(1) var shoreScanTexture : texture_storage_2d<r32float, read>;
 	@group(0) @binding(2) var shoreDistanceTexture : texture_storage_2d<r32float, write>;	//x: world distance to the nearest land
 
+	const SHORE_ROUNDING: f32 = 3.0;	// field texels: how far round the ridges of the distance are rounded off
+
 	@compute @workgroup_size(${FFT_WORKGROUP_SIZE[0]}, ${FFT_WORKGROUP_SIZE[1]}, ${FFT_WORKGROUP_SIZE[2]})
     fn computeMain(
 		@builtin(global_invocation_id) GlobalInvocationID: vec3<u32>
@@ -840,77 +978,26 @@ export const c_ShoreDistance =
 			let upDown = textureLoad(shoreScanTexture, vec2i(column, gIndex.y)).x;
 			nearestSquared = min(nearestSquared, f32(offset * offset) + upDown * upDown);
 		}
+		// A smooth minimum over the columns instead of the nearest alone: where two stretches of coast are as near as each other the
+		//		distance has a sharp ridge, and every shore wave, which follows the distance, came in as a V. The smooth minimum
+		//		rounds the ridges off. (it reads a little nearer than the nearest; taken back off, so a straight coast stays where it is)
+		let nearest = sqrt(nearestSquared);
+		var together = 0.0;
+		for (var offset = -${SHORE_SEARCH_RADIUS}; offset <= ${SHORE_SEARCH_RADIUS}; offset++) {
+			let column = gIndex.x + offset;
+			if (column < 0 || column >= fieldSize.x) {
+				continue;
+			}
+			let upDown = textureLoad(shoreScanTexture, vec2i(column, gIndex.y)).x;
+			together += exp(-(sqrt(f32(offset * offset) + upDown * upDown) - nearest) / SHORE_ROUNDING);
+		}
+		let straightCoast = sqrt(2.0 * 3.14159 * max(nearest, 1.0) * SHORE_ROUNDING);	// about what a straight coast adds up to
 
 		// texels to world units: the size of one field texel on the ground
 		let texelSize = length((Spaces.topDownInvViewProj * vec4f(2.0 / f32(fieldSize.x), 0.0, 0.0, 0.0)).xyz);
 
-		textureStore(shoreDistanceTexture, gIndex, vec4f(sqrt(nearestSquared) * texelSize, 0.0, 0.0, 1.0));
-	}
-`;
-
-export const c_ArrayToTexture =
-`
-	struct WaterUniforms {
-		@location(0) cameraPosition: vec4f,
-		@location(1) windDirection: vec2f,
-		@location(2) resolution: f32,			//the resolution of the plane is fixed, however, converge closer to camera position
-		@location(3) waveSteepness: f32,	
-		@location(4) step: f32,					//to be used in place of time, but locked to frame rate i suppose
-		@location(5) planeYPos: f32,
-		@location(6) waveLength: f32,
-		@location(7) oceanPlanePhysicalSize: f32,
-		@location(8) windSpeed: f32,
-		@location(9) tileOffsetX: f32,
-		@location(10) tileOffsetZ: f32,
-		@location(11) gridSize: vec2f,
-	};
-	@group(0) @binding(0) var<uniform> WU: WaterUniforms;
-	
-	@group(0) @binding(1) var<storage, read_write> inArray: array<f32>;
-	@group(0) @binding(2) var outTexture : texture_storage_2d<rgba32float, write>;
-
-	@compute @workgroup_size(${FFT_WORKGROUP_SIZE[0]}, ${FFT_WORKGROUP_SIZE[1]}, ${FFT_WORKGROUP_SIZE[2]})	
-    fn computeMain(
-		@builtin(global_invocation_id) GlobalInvocationID: vec3<u32>
-	) {
-		let gIndex = GlobalInvocationID.xy;	
-				
-		let singleDimensionIndex = gIndex.y * u32(WU.resolution) + gIndex.x;	//so this is going row by row, make sure the parsing matches in FFT
-		
-		textureStore(outTexture, gIndex.xy, vec4f(inArray[singleDimensionIndex * 2 + 0], inArray[singleDimensionIndex * 2 + 1], 0.0, 1.0));
-	}
-`;
-
-export const c_RealizationToArray =
-`
-	struct WaterUniforms {
-		@location(0) cameraPosition: vec4f,
-		@location(1) windDirection: vec2f,
-		@location(2) resolution: f32,			//the resolution of the plane is fixed, however, converge closer to camera position
-		@location(3) waveSteepness: f32,	
-		@location(4) step: f32,					//to be used in place of time, but locked to frame rate i suppose
-		@location(5) planeYPos: f32,
-		@location(6) waveLength: f32,
-		@location(7) oceanPlanePhysicalSize: f32,
-		@location(8) windSpeed: f32,
-	};
-	@group(0) @binding(0) var<uniform> WU: WaterUniforms;
-	
-	@group(0) @binding(1) var inTexture : texture_storage_2d<rgba32float, read>;
-	@group(0) @binding(2) var<storage, read_write> outArray: array<f32>;
-
-	@compute @workgroup_size(${FFT_WORKGROUP_SIZE[0]}, ${FFT_WORKGROUP_SIZE[1]}, ${FFT_WORKGROUP_SIZE[2]})	
-    fn computeMain(
-		@builtin(global_invocation_id) GlobalInvocationID: vec3<u32>
-	) {
-		let gIndex = GlobalInvocationID.xy;	
-		
-		let pull = textureLoad(inTexture, gIndex);
-		
-		let singleDimensionIndex = gIndex.y * u32(WU.resolution) + gIndex.x;	//so this is going row by row, make sure the parsing matches in FFT
-		
-		outArray[singleDimensionIndex * 2 + 0] = pull.x;	//real
-		outArray[singleDimensionIndex * 2 + 1] = pull.y;	//imaginary
+		let rounded = max(nearest - SHORE_ROUNDING * log(together / max(straightCoast, 1.0)), 0.0);
+		textureStore(shoreDistanceTexture, gIndex, vec4f(select(rounded, nearest, nearest >= ${SHORE_SEARCH_RADIUS}.0) * texelSize, 0.0, 0.0, 1.0));
 	}
 `;
 
@@ -1032,379 +1119,250 @@ export const c_PreComp =
 `;
 
 /*
-	runs every frame. 
-	It takes h0(k) and animates it forward in time using Euler's formula (e^iwt = cos(wt) + i·sin(wt)), where w (angular frequency) is derived from 
-	the dispersion relation w = sqrt(g * |k|) and gravity is determining how fast each wave frequency travels
-	The result h(k,t) is the animated frequency-domain ocean at the current time step, still as a complex texture
+	runs every frame, once for each cascade.
+	It takes h0(k) and animates it forward in time: each wave turns by e^(iwt), w from the dispersion relation w^2 = g k tanh(k depth),
+	so the longer the wave the faster it runs. Out of that come the two fields the butterfly passes turn into the sea: the height h(k,t),
+	and the horizontal displacement that sharpens the crests (choppy waves), Dx + i Dz. Both go straight into the butterfly passes' first buffer
 */
 
 export const c_hkt =
 `
-	struct WaterUniforms {
-		@location(0) cameraPosition: vec4f,
-		@location(1) windDirection: vec2f,
-		@location(2) resolution: f32,			//the resolution of the plane is fixed, however, converge closer to camera position
-		@location(3) waveSteepness: f32,	
-		@location(4) step: f32,					//to be used in place of time, but locked to frame rate i suppose
-		@location(5) planeYPos: f32,
-		@location(6) waveLength: f32,
-		@location(7) oceanPlanePhysicalSize: f32,
-		@location(8) windSpeed: f32,
-		@location(9) tileOffsetX: f32,
-		@location(10) tileOffsetZ: f32,
-		@location(11) gridSize: vec2f,
-	};
-	@group(0) @binding(0) var<uniform> WU: WaterUniforms;
-	
-	@group(0) @binding(1) var initialHeightField : texture_storage_2d<rgba32float, read>;
-	@group(0) @binding(2) var waveHeightRealization : texture_storage_2d<rgba32float, write>;
-	@group(0) @binding(3) var displacementRealization : texture_storage_2d<rgba32float, write>;
+	${CASCADE_UNIFORMS}
+	@group(0) @binding(1) var initialSpectrum : texture_storage_2d<rgba32float, read>;	// h0(k) and conj(h0(-k)), the cascades one above the other (c_spectrum)
+	@group(0) @binding(2) var<storage, read_write> fftInput: array<vec2f>;				// 2 layers a cascade: the height, then the displacement
 
-fn complexMul(a: vec2f, b: vec2f) -> vec2f {
-    return vec2f(
-        a.x * b.x - a.y * b.y,
-        a.x * b.y + a.y * b.x
-    );
-}
-
-fn complexConj(z: vec2f) -> vec2f {
-    return vec2f(z.x, -z.y);
-}
-
-
-@compute @workgroup_size(${FFT_WORKGROUP_SIZE[0]}, ${FFT_WORKGROUP_SIZE[1]}, ${FFT_WORKGROUP_SIZE[2]})	
-    fn computeMain(
-		@builtin(global_invocation_id) GlobalIvocationID: vec3<u32>
-	) {
-		
-		var gIndex = GlobalIvocationID.xy;
-		let gridWidth = u32(WU.resolution);
-		let vertGridPosX = gIndex.x;
-		let vertGridPosZ = gIndex.y;
-			
-		// vector fields with e^it
-		// https://www.youtube.com/watch?v=v0YEaeIClKY
-		// e : eulers number (2.7...)
-		// i : sqrt(-1), will take this 1D equation and create orthogonal vector of velocity, velocity WILL be 90deg of that position
-		// t : time
-		// e^it = cosx + isinx    this is how we remove the sin and cos that gerstners rely on
-		
-		//tessendorf paper
-		//	the test parameters are ones from section 3.5
-		//https://people.computing.clemson.edu/~jtessen/reports/papers_files/coursenotes2002.pdf
-		let e = f32(2.71828);		// eulers num, but the "exp(f32 x)" function does e^x 
-		let pi = f32(3.14159);		//PI
-		let g = f32(9.81);			//grav constant
-		
-		//"waveheight is a random variable of horizontal position and time, h(x,t)"
-		// wave number = grid point number
-		// Lx and Lz are the actually lengths in meters of the patch
-		// discrete sample points is the WU.resolution
-		
-		let oceanSizeL = WU.oceanPlanePhysicalSize;	//the size of the tile, what to scale the grid by
-		let deltaK = ((2.0 * pi) / oceanSizeL);
-		let kx = deltaK * (f32(vertGridPosX) - (WU.resolution / 2.0));
-		let ky = deltaK * (f32(vertGridPosZ) - (WU.resolution / 2.0));
-		let k = vec2f(kx, ky);	
-											
-		let D = 1.0;
-		
-		let w2 = g * length(k);				//frequency squared, infinite depth
-		
-		//THE BELOW IS FOR WAVE SPEED (FREQUENCY) NOT HEIGHT
-		//let w2 = g * length(k) * tan(length(k) * D);			//frequency squared, adjusted for depth
-		//let w2 = g * k * (1 + (k * k) * (LS * LS));		//frequency squared, but for small waves < 1cm
-		
-		let w = sqrt(w2);
-		
-		let h0Data = textureLoad(initialHeightField, vec2u(u32(vertGridPosX), u32(vertGridPosZ)));
-		let h0k = h0Data.xy;
-		let h0NegkConj = h0Data.zw;
-		
-		let t = WU.step;
-		let cos_wt = cos(w * t);
-		let sin_wt = sin(w * t);
-	
-		let exponent = vec2f(cos_wt, sin_wt);      // e^{iωt}
-		let exponent_inv = vec2f(cos_wt, -sin_wt);	//it is supposed to be the H0-k conjugate multiplied by inverse exp
-		
-		let term1 = complexMul(h0k, exponent);
-		let term2 = complexMul(h0NegkConj, exponent_inv);
-		
-		let hkt = term1 + term2;
-		
-		//DEBUG, visualizing hKt directly will show an inward collapse, this is how hKt is supposed to workgroup_size
-		//			the waveHeightRealization should actually be hXt.
-		
-		// horizontal (choppy) displacement spectrum: D(k,t) = -i * (k / |k|) * h(k,t)
-		//		Dx and Dz are packed into one complex number as Dx + i*Dz, so a single IFFT gives Dx in the real part and Dz in the imaginary part
-		//		-i*(kx/|k|)*h + i * (-i*(ky/|k|)*h) = ((ky - i*kx) / |k|) * h
-		//		this only works because h(k,t) is hermitian (see c_h0kConj), which is what makes Dx and Dz both real
-		let kMag = length(k);
-		var displacementSpectrum = vec2f(0.0, 0.0);
-		if (kMag > 0.0001 && gIndex.x > 0u && gIndex.y > 0u) {	// k = 0 has no direction, and the first row/column (nyquist) has no -k partner
-			displacementSpectrum = complexMul(vec2f(ky, -kx) / kMag, hkt);
-		}
-		textureStore(displacementRealization, gIndex, vec4f(displacementSpectrum.x, displacementSpectrum.y, 0.0, 1.0));
-
-		textureStore(waveHeightRealization, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4f(hkt.x, hkt.y,0.0,1.0));
-	}
-`;
-
-/*
-	The IFFT requires that the spectrum satisfies Hermitian symmetry
-		meaning h0(-k) = conjugate of h0(k)
-*/
-export const c_h0kConj =
-`
-	struct WaterUniforms {
-		@location(0) cameraPosition: vec4f,
-		@location(1) windDirection: vec2f,
-		@location(2) resolution: f32,			//the resolution of the plane is fixed, however, converge closer to camera position
-		@location(3) waveSteepness: f32,	
-		@location(4) step: f32,					//to be used in place of time, but locked to frame rate i suppose
-		@location(5) planeYPos: f32,
-		@location(6) waveLength: f32,
-		@location(7) oceanPlanePhysicalSize: f32,
-		@location(8) windSpeed: f32,
-		@location(9) tileOffsetX: f32,
-		@location(10) tileOffsetZ: f32,
-		@location(11) gridSize: vec2f,
-	};
-	@group(0) @binding(0) var<uniform> WU: WaterUniforms;
-	
-	@group(0) @binding(1) var inH0KTexture : texture_storage_2d<rgba32float, read>;
-	@group(0) @binding(2) var initialHeightField : texture_storage_2d<rgba32float, write>;
-
-	fn complexConj(z: vec2f) -> vec2f {
-		return vec2f(z.x, -z.y);
-	}
-
-@compute @workgroup_size(${FFT_WORKGROUP_SIZE[0]}, ${FFT_WORKGROUP_SIZE[1]}, ${FFT_WORKGROUP_SIZE[2]})	
-    fn computeMain(
-		@builtin(global_invocation_id) GlobalIvocationID: vec3<u32>
-	) {
-		
-		var gIndex = GlobalIvocationID.xy;
-		let res = u32(WU.resolution);
-		
-		// h0(-k) has to be the SAME random value that the texel for -k holds, not a separate random draw
-		//		k is centered at res/2, so the texel holding -k is the mirror of this one through the center
-		//		with this, h(k,t) is hermitian and the IFFT output is purely real (imaginary channel of the final height should read 0)
-		let negIndices = vec2u((res - gIndex.x) % res, (res - gIndex.y) % res);
-		let h0k = textureLoad(inH0KTexture, gIndex).xy;
-		let h0NegkConj = complexConj(textureLoad(inH0KTexture, negIndices).xy);
-		textureStore(initialHeightField, gIndex, vec4f(h0k.x, h0k.y, h0NegkConj.x, h0NegkConj.y));
-
-		//independent random draw for h0(-k) kept in the .zw of the same texel. NOT hermitian, the IFFT output ends up with an imaginary part
-		//let data = textureLoad(inH0KTexture, gIndex);
-		//let h0NegkConj = complexConj(data.zw);
-		//textureStore(initialHeightField, gIndex, vec4f(data.x, data.y, h0NegkConj.x, h0NegkConj.y));
-
-		
-		//debug CONJ SYM test, if we see blue, we fail
-		//let h0k = textureLoad(inH0KTexture, gIndex).xy;
-		//let h0Negk = textureLoad(inH0KTexture, vec2u((res - gIndex.x) % res, (res - gIndex.y) % res)).xy;
-		//let h0kConj = complexConj(h0k);
-		//
-		//let epsilon = 0.0001;
-		//let isEqual = abs(h0Negk.x - h0kConj.x) < epsilon && abs(h0Negk.y - h0kConj.y) < epsilon;
-		//let blue = select(1.0, 0.0, isEqual); // 1.0 = fail, 0.0 = pass
-		//textureStore(initialHeightField, gIndex, vec4f(0, 0, blue, 1));
-	}
-`;
-
-/*
-	For every point on a 2D frequency grid (the "wave number grid"), it computes how much energy a wave of that frequency and direction should have. 
-	The Phillips Spectrum formula weighs waves based on wind speed, wind direction alignment, and physical suppression of very small waves. It then multiplies 
-	that energy by a random Gaussian number; giving a statistically realistic but unique ocean each time. 
-	The output h0k is a texture where each texel is a complex number representing the initial amplitude of one wave component.
-*/
-export const c_h0k =
-`
-	struct WaterUniforms {
-		@location(0) cameraPosition: vec4f,
-		@location(1) windDirection: vec2f,
-		@location(2) resolution: f32,			//the resolution of the plane is fixed, however, converge closer to camera position
-		@location(3) waveSteepness: f32,	
-		@location(4) step: f32,					//to be used in place of time, but locked to frame rate i suppose
-		@location(5) planeYPos: f32,
-		@location(6) waveLength: f32,
-		@location(7) oceanPlanePhysicalSize: f32,
-		@location(8) windSpeed: f32,
-		@location(9) tileOffsetX: f32,
-		@location(10) tileOffsetZ: f32,
-		@location(11) gridSize: vec2f,
-	};
-	@group(0) @binding(0) var<uniform> WU: WaterUniforms;
-	
-	@group(0) @binding(1) var phillipsSpectrumOutTexture : texture_storage_2d<rgba32float, write>;
-	@group(0) @binding(2) var outH0KTexture : texture_storage_2d<rgba32float, write>;
-	
-	@group(0) @binding(3) var<storage, read_write> complexGaussArray: array<f32>;
-
-	fn complexAdd(a: vec2f, b: vec2f) -> vec2f {
-		return vec2f(a.x + b.x, a.y + b.y);
-	}
-	
 	fn complexMul(a: vec2f, b: vec2f) -> vec2f {
 		return vec2f(
 			a.x * b.x - a.y * b.y,
 			a.x * b.y + a.y * b.x
 		);
 	}
-	
-	fn complexConj(z: vec2f) -> vec2f {
-		return vec2f(z.x, -z.y);
-	}
-	
-// Describes how wave energy is distributed across different wave frequencies and directions in a fully developed ocean
-fn phillipsSpectrum(kx: f32, ky: f32) -> f32 {
-	let pi = f32(3.14159);		//PI
-	let g = f32(9.81);			//grav constant
-	
-	//"waveheight is a random variable of horizontal position and time, h(x,t)"
-	// wave number = grid point number
-	// Lx and Lz are the actually lengths in meters of the patch
-	// discrete sample points is the WU.resolution
-	
-	let K = vec2f(kx, ky);		//GRID OF WAVE VECTORS
-	
-	var kMag = length(K);			// italic k, magnitude
-	if(kMag < 0.0001) {		//avoid blowout
-		kMag = 0.0001;		//allowing the kMag at a minimum means the top row of the texture and left column will contain noise
-	}
-	
-	
 
-	//check for kx, kz, w
-	//let w2 = g * length(k);
-	//let w = sqrt(w2);
-	//textureStore(outH0KTexture, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4f(kx,ky,w,1.0));
-	
-	
-	//phillips spectrum
-	// These slides also help: https://www.cs.ubc.ca/~rbridson/courses/533d-winter-2005/cs533d-slides-mar9.pdf
-	
-	let V = WU.windSpeed; 			//wind speed, i made this up
-	let L = (V * V) / g;	//largest possible waves from a continuous wind
-	let Lmin = 0.01;			//minimum wavelength in meters
-	let kLmin2 = (kMag * Lmin) * (kMag * Lmin);
-	let A = 10.0;			//"a numeric constant" ???
-	
-	let kHat = normalize(K); //vec2f(K.x / kMag, K.y / kMag);		// hat k, unit vector
-	let wHat = normalize(WU.windDirection);			// hat w, wind direction, normalized input just incase
-	let kHwH = dot(kHat, wHat);						// hat k dot hat w 
-	let kHwHX = kHwH * kHwH; 						//RAISING THIS X TIMES INCREASES WIND INFLUENCE MORE
-	let kMagLSqr = (kMag * L) * (kMag * L);			
-	var kMagDenomX = kMag * kMag * kMag * kMag;		//4 is standard ill use 2
-	//kMag4 = max(kMag4, 0.1);
-	
-	var PhK = 0.0;
-	if(kMag != 0.0) {
-		//dont divide by 0
-		//PhK = A * (exp(-1.0 / kL2) * supression /  k4) * kw6;
-		//PhK = A * (1.0 / k4) * exp((-1.0 / kL2) - kLmin2) * (kw * kw);
-		
-		PhK = A * (exp(-1.0 / kMagLSqr) / kMagDenomX) * kHwHX;
-		PhK *= exp(-kLmin2);	//high freq supression (avoiding spikes)
-	}
-	
-	return PhK;
-}
-
-fn h0(vertGridPosX: u32, vertGridPosZ: u32) {
-	
-	//BEST PAGE for all of this
-	//https://barthpaleologue.github.io/Blog/posts/ocean-simulation-webgpu/#:~:text=Okay%2C%20so%20we%20need%20a,w%5E=%E2%88%A3w%E2%88%A3w
-	
-	let pi = f32(3.14159);
-	
-	let oceanSizeL = WU.oceanPlanePhysicalSize;	//the size of the tile, what to scale the grid by
-	let deltaK = ((2.0 * pi) / oceanSizeL);
-	let kx = deltaK * (f32(vertGridPosX) - (WU.resolution / 2.0));
-	let ky = deltaK * (f32(vertGridPosZ) - (WU.resolution / 2.0));
-	
-	var PhK = phillipsSpectrum(kx, ky);	
-	
-	//DEBUG
-	// PhK = (cos(kx * 2.0) * cos(kx * 2.0) - sin(ky * 2.0) * sin(ky * 2.0));
-	
-	
-	//THIS IS FOR DEBUG FOR NOW
-	// this is a check to see for spikes
-	let compressedDynamicRangePhk = sqrt(min(max(PhK, 0.01), 3000.0));
-	textureStore(phillipsSpectrumOutTexture, vec2u(vertGridPosX, vertGridPosZ), vec4<f32>(compressedDynamicRangePhk,compressedDynamicRangePhk,compressedDynamicRangePhk,1.0));
-	
-	let index = vertGridPosX + u32(WU.resolution) * vertGridPosZ;
-	let offset = index * 4u;
-	let gauss = vec2f(complexGaussArray[offset], complexGaussArray[offset + 1u]);
-	//let gauss = vec2f(1.0,1.0);
-	
-	//DEBUG NOISE
-	//let gauss = vec2f(1.0,1.0);
-	//var gcheck = length(gauss);
-	//if(gcheck > 3.0) {
-	//	textureStore(phillipsSpectrumOutTexture, vec2u(vertGridPosX, vertGridPosZ), vec4<f32>(1.,0.,0.,1.));
-	//} else if (gcheck < -0.0) {
-	//	textureStore(phillipsSpectrumOutTexture, vec2u(vertGridPosX, vertGridPosZ), vec4<f32>(0.,1.,0.,1.));
-	//} else {
-	//	textureStore(phillipsSpectrumOutTexture, vec2u(vertGridPosX, vertGridPosZ), vec4<f32>(length(gauss),length(gauss),length(gauss),1.0));
-	//}
-	
-	let minClampVal = 0.0001;			//if PhK returns 0, or is wayyy too low, find this (reduces the 0 line split effect)
-	let maxClampVal = 3000.0;
-	var clampedPhK = sqrt(min(max(PhK, minClampVal), maxClampVal));
-	let scale = (1.0 / sqrt(2.0));
-	let h0k = scale * (gauss * clampedPhK);				//max is used incase PhK is 0, which sqrt(0) would be NaN
-
-	//textureStore(outH0KTexture, vec2u(vertGridPosX, vertGridPosZ), vec4f(h0k.x, h0k.y,0.0,0.0));		// storing h0k
-	
-	//DEBUG check for random gauss
-	//textureStore(outH0KTexture, vec2u(u32(vertGridPosX), u32(vertGridPosZ)), vec4(length(gauss), length(gaussNegK), 0.0,1.0));
-	
-	//let h0Negk = complexConj(h0k);
-	//let negIndices = vec2u((u32(WU.resolution) - vertGridPosX ) % u32(WU.resolution), 
-	//						(u32(WU.resolution) - vertGridPosZ ) % u32(WU.resolution));
-	//
-	//if(vertGridPosX > u32(WU.resolution) / 2u || 
-	//	(vertGridPosX == u32(WU.resolution) / 2u && vertGridPosZ > u32(WU.resolution) / 2u)) {
-	//	return;
-	//}
-	//
-	//textureStore(outH0KTexture, negIndices, vec4f(h0Negk.x, h0Negk.y,0.0,0.0));
-	
-	//with Phillips -k
-	let gaussNeg = vec2f(complexGaussArray[offset + 2u], complexGaussArray[offset + 3u]);
-	//let gaussNeg = vec2f(1.0,1.0);
-	var PhNegK = phillipsSpectrum(-kx, -ky);	
-	var clampedPhNegK = sqrt(min(max(PhNegK, minClampVal), maxClampVal));
-	let h0Negk = scale * (gaussNeg * clampedPhNegK);				//max is used incase PhK is 0, which sqrt(0) would be NaN
-	textureStore(outH0KTexture, vec2u(vertGridPosX, vertGridPosZ), vec4f(h0k.x, h0k.y, h0Negk.x, h0Negk.y));
-	
-	
-	//Just h0k Output
-	//textureStore(outH0KTexture, vec2u(vertGridPosX, vertGridPosZ), vec4f(h0k.x, h0k.y,0.0,0.0));
-
-	
-}
-
-@compute @workgroup_size(${FFT_WORKGROUP_SIZE[0]}, ${FFT_WORKGROUP_SIZE[1]}, ${FFT_WORKGROUP_SIZE[2]})	
+@compute @workgroup_size(${FFT_WORKGROUP_SIZE[0]}, ${FFT_WORKGROUP_SIZE[1]}, ${FFT_WORKGROUP_SIZE[2]})
     fn computeMain(
-		@builtin(global_invocation_id) GlobalIvocationID: vec3<u32>
+		@builtin(global_invocation_id) GlobalInvocationID: vec3<u32>
 	) {
-		
-		var gIndex = GlobalIvocationID;
-		
-		//------------------------------FORM GRID-------------------------------
-		let gridWidth = u32(WU.resolution);
-		let vertGridPosX = gIndex.x;
-		let vertGridPosZ = gIndex.y;
-		
-		//-----------------------------------
-		h0(vertGridPosX, vertGridPosZ);
-		
-		
+		let res = u32(CU.resolution);
+		let texel = GlobalInvocationID.xy;
+		if (texel.x >= res || texel.y >= res) {
+			return;
+		}
+		let cascade = u32(CU.cascade);
+		let h0 = textureLoad(initialSpectrum, texel + vec2u(0u, cascade * res));
+
+		// the wave's speed is rounded down to a whole number of turns in repeatTime, so the sea repeats exactly after it
+		//		and the time can be kept small (after an hour, the phase of a short wave would have lost its precision in a float)
+		let k = waveVector(texel);
+		let kLength = length(k);
+		let slowestTurn = 2.0 * PI / CU.repeatTime;
+		let omega = floor(angularFrequency(kLength * CU.unitsPerMetre) / slowestTurn) * slowestTurn;
+		let turn = vec2f(cos(omega * CU.time), sin(omega * CU.time));
+
+		// h(k,t) = h0(k) e^(-iwt) + conj(h0(-k)) e^(iwt): the first runs along k, the second the opposite way
+		//		h0(-k) is the same draw as the texel holding -k makes (see c_spectrum), so h(-k,t) = conj(h(k,t)) and the sea comes out real
+		let h = complexMul(h0.xy, vec2f(turn.x, -turn.y)) + complexMul(h0.zw, turn);
+
+		// horizontal displacement, D(k,t) = i (k / |k|) h(k,t): every point pulled towards the nearest crest, which pinches the crests
+		//		into peaks and flattens the troughs. Dx and Dz both come out real, so they go through one transform together as Dx + i Dz
+		var displacement = vec2f(0.0, 0.0);
+		if (kLength > 0.0) {
+			let ih = vec2f(-h.y, h.x);
+			let dx = ih * (k.x / kLength);
+			let dz = ih * (k.y / kLength);
+			displacement = dx + vec2f(-dz.y, dz.x);
+		}
+
+		let layerSize = res * res;
+		let index = cascade * 2u * layerSize + texel.y * res + texel.x;
+		fftInput[index] = h;
+		fftInput[index + layerSize] = displacement;
+	}
+`;
+
+/*
+	The sea's spectrum: for every wave vector k on a cascade's grid, how much energy the waves running that way at that length have,
+	from two sources added together:
+		the wind sea	JONSWAP (Hasselmann et al. 1973): the waves the wind raises over the fetch, spread round the wind
+						direction with Mitsuyasu's spreading (narrowest at the peak)
+		the swell		JONSWAP again, narrower, come from storms far away: its own height, length and heading, and long crested
+						(Horvath 2015, "Empirical directional wave spectra for computer graphics")
+	both made smaller where the waves are long enough to feel the bottom (TMA, Bouws et al. 1985).
+	Each texel's energy is turned into an amplitude and multiplied by a complex gaussian random number, which gives a statistically
+	realistic but unique sea each time. Only made again when the settings change.
+	Each cascade only keeps the waves in its own band (kLow to kHigh), so nothing is counted twice when the cascades are added up.
+	The output is h0(k) and conj(h0(-k)) together, which is all c_hkt needs to animate it.
+*/
+
+export const c_spectrum =
+`
+	${CASCADE_UNIFORMS}
+	@group(0) @binding(1) var<storage, read> gaussNoise: array<vec2f>;						// a complex gaussian random number for each texel of each cascade
+	@group(0) @binding(2) var initialSpectrum : texture_storage_2d<rgba32float, write>;	// xy: h0(k), zw: conj(h0(-k)). The cascades one above the other
+	@group(0) @binding(3) var spectrumView : texture_storage_2d<rgba32float, write>;		// the amplitudes as a picture, for the debug view
+
+	// JONSWAP: the energy at each frequency, per radian per second. alpha and the peak come from the wind and the fetch, or from the swell's settings (water.js)
+	fn jonswap(omega: f32, alpha: f32, peak: f32, gamma: f32) -> f32 {
+		let sigma = select(0.09, 0.07, omega <= peak);
+		let peakSharpening = exp(-(omega - peak) * (omega - peak) / (2.0 * sigma * sigma * peak * peak));
+		let ratio = peak / omega;
+		return alpha * G * G / pow(omega, 5.0) * exp(-1.25 * ratio * ratio * ratio * ratio) * pow(gamma, peakSharpening);
+	}
+
+	// TMA: how much of its deep water energy a wave keeps in water CU.depth deep (Kitaigorodskii's approximation)
+	fn depthAttenuation(omega: f32) -> f32 {
+		let omegaH = omega * sqrt(CU.depth / G);
+		if (omegaH <= 1.0) {
+			return 0.5 * omegaH * omegaH;
+		}
+		if (omegaH < 2.0) {
+			return 1.0 - 0.5 * (2.0 - omegaH) * (2.0 - omegaH);
+		}
+		return 1.0;
+	}
+
+	// ln of the gamma function (Stirling's series, plenty for z of 1 and over)
+	fn lnGamma(z: f32) -> f32 {
+		return (z - 0.5) * log(z) - z + 0.9189385 + 1.0 / (12.0 * z) - 1.0 / (360.0 * z * z * z);
+	}
+
+	// how the energy at one frequency is shared out over the directions: cos(theta / 2)^2s round the way the sea runs, the higher s
+	//		the narrower. Scaled so it adds up to 1 over all directions. cosTheta: between the wave's heading and the sea's
+	fn spreading(cosTheta: f32, s: f32) -> f32 {
+		let normalise = (2.0 * s - 1.0) * log(2.0) - log(PI) + 2.0 * lnGamma(s + 1.0) - lnGamma(2.0 * s + 1.0);
+		return exp(normalise + s * log(max(0.5 + 0.5 * cosTheta, 1e-20)));
+	}
+
+	// the energy per (radian per metre)^2 of the waves with wave vector k (radians per world unit)
+	fn spectrum(k: vec2f) -> f32 {
+		let kLength = length(k);
+		if (kLength < CU.kLow || kLength >= CU.kHigh) {
+			return 0.0;
+		}
+		let kMetres = kLength * CU.unitsPerMetre;
+		let omega = angularFrequency(kMetres);
+		let heading = k / kLength;
+
+		var energy = 0.0;	// per radian per second of frequency, per radian of direction
+		if (CU.windAlpha > 0.0) {
+			// Mitsuyasu et al. 1975: narrowest at the peak, wider for the waves longer and shorter than it
+			let peakSpread = 11.5 * pow(G / (CU.windPeak * CU.windSpeed), 2.5);
+			let ratio = omega / CU.windPeak;
+			let s = min(select(peakSpread * pow(ratio, -2.5), peakSpread * pow(ratio, 5.0), omega <= CU.windPeak), 60.0);
+			energy += jonswap(omega, CU.windAlpha, CU.windPeak, 3.3) * spreading(dot(heading, CU.windDirection), s);
+		}
+		// the swell only in cascade 0, which the mesh pass keeps to the deep sea (no swell on a lake, or in the shallows). Its short
+		//		tail is left to the wind sea
+		if (CU.swellAlpha > 0.0 && CU.cascade == 0.0) {
+			// Horvath's swell: the crests made longer the nearer the wave is to the swell's peak
+			let s = 1.0 + 40.0 * CU.swellSpread * CU.swellSpread * tanh(CU.swellPeak / omega);
+			energy += jonswap(omega, CU.swellAlpha, CU.swellPeak, 5.0) * spreading(dot(heading, CU.swellDirection), s);
+		}
+
+		// from frequency and direction to the two components of k: E(k) = E(w, theta) (dw/dk) / k
+		let kDepth = min(kMetres * CU.depth, 20.0);
+		let sech = 1.0 / cosh(kDepth);
+		let dOmegadK = G * (tanh(kDepth) + kDepth * sech * sech) / (2.0 * omega);
+		return energy * depthAttenuation(omega) * dOmegadK / kMetres;
+	}
+
+@compute @workgroup_size(${FFT_WORKGROUP_SIZE[0]}, ${FFT_WORKGROUP_SIZE[1]}, ${FFT_WORKGROUP_SIZE[2]})
+    fn computeMain(
+		@builtin(global_invocation_id) GlobalInvocationID: vec3<u32>
+	) {
+		let res = u32(CU.resolution);
+		let texel = GlobalInvocationID.xy;
+		if (texel.x >= res || texel.y >= res) {
+			return;
+		}
+		let cascade = u32(CU.cascade);
+		let k = waveVector(texel);
+
+		// the first row and column are the nyquist frequency, which has no -k partner on the grid. They are left empty
+		var energy = spectrum(k);
+		var energyOpposite = spectrum(-k);
+		if (texel.x == 0u || texel.y == 0u) {
+			energy = 0.0;
+			energyOpposite = 0.0;
+		}
+
+		// amplitude: |h0(k)|^2 has to average E(k) dk^2 / 2 (the other half arrives as h0(-k), see c_hkt),
+		//		and the gaussian's square averages 2. Then metres to world units
+		let dk = 2.0 * PI / CU.size * CU.unitsPerMetre;
+		let scale = 0.5 * dk * CU.unitsPerMetre;
+		// h0(-k) is the same random draw that the texel holding -k makes for its own h0, so the sea comes out real (see c_hkt)
+		let mirror = vec2u((res - texel.x) % res, (res - texel.y) % res);
+		let layer = cascade * res * res;
+		let h0k = gaussNoise[layer + texel.y * res + texel.x] * (sqrt(energy) * scale);
+		let h0MinusK = gaussNoise[layer + mirror.y * res + mirror.x] * (sqrt(energyOpposite) * scale);
+
+		let stacked = texel + vec2u(0u, cascade * res);
+		textureStore(initialSpectrum, stacked, vec4f(h0k.x, h0k.y, h0MinusK.x, -h0MinusK.y));
+
+		// (the amplitude on a log scale: 1 for a world unit, 0 for a ten thousandth of one)
+		let shown = saturate(log(sqrt(energy) * scale + 1e-6) / log(10.0) * 0.25 + 1.0);
+		textureStore(spectrumView, stacked, vec4f(shown, shown, shown, 1.0));
+	}
+`;
+
+/*
+	runs every frame after the butterfly passes, once for each cascade.
+	Takes the sea out of the butterfly passes' buffer into two small textures the mesh pass reads with filtering, at any world position:
+	the displacement of the surface (Dx, height, Dz), and how it changes across the surface (its slopes, and how much the
+	displacement squeezes or stretches it). Worked out once here for each texel, so the mesh pass doesnt have to look at any neighbours
+*/
+
+export const c_waveMaps =
+`
+	${CASCADE_UNIFORMS}
+	@group(0) @binding(1) var<storage, read> fftOutput: array<vec2f>;						// the butterfly passes' result, 2 layers a cascade
+	@group(0) @binding(2) var waveTexture : texture_storage_2d<rgba16float, write>;		// x: Dx, y: height, z: Dz, w: dDx/dz (= dDz/dx)
+	@group(0) @binding(3) var slopeTexture : texture_storage_2d<rgba16float, write>;		// x: dh/dx, y: dh/dz, z: dDx/dx, w: dDz/dz
+	@group(0) @binding(4) var foamTexture : texture_storage_2d<r32float, read_write>;		// x: the foam this cascade has made, kept from frame to frame
+
+	// a field at a texel, wrapped round (the tile repeats). The spectrum has k = 0 in its middle, not its corner,
+	//		which multiplies the transform by -1 on every other texel: that is put right here
+	fn fieldAt(texel: vec2i, field: u32) -> vec2f {
+		let res = i32(CU.resolution);
+		let wrapped = (texel % res + res) % res;
+		let flip = 1.0 - 2.0 * f32((wrapped.x + wrapped.y) & 1);
+		let layerStart = (u32(CU.cascade) * 2u + field) * u32(res * res);
+		return fftOutput[layerStart + u32(wrapped.y * res + wrapped.x)] * flip;
+	}
+
+@compute @workgroup_size(${FFT_WORKGROUP_SIZE[0]}, ${FFT_WORKGROUP_SIZE[1]}, ${FFT_WORKGROUP_SIZE[2]})
+    fn computeMain(
+		@builtin(global_invocation_id) GlobalInvocationID: vec3<u32>
+	) {
+		let res = i32(CU.resolution);
+		let texel = vec2i(GlobalInvocationID.xy);
+		if (texel.x >= res || texel.y >= res) {
+			return;
+		}
+		let height = fieldAt(texel, 0u).x;
+		let displacement = fieldAt(texel, 1u);	// x: Dx, y: Dz
+
+		// central differences, one texel either side
+		let toX = vec2i(1, 0);
+		let toZ = vec2i(0, 1);
+		let perUnit = CU.resolution / (2.0 * CU.size);
+		let dHdx = (fieldAt(texel + toX, 0u).x - fieldAt(texel - toX, 0u).x) * perUnit;
+		let dHdz = (fieldAt(texel + toZ, 0u).x - fieldAt(texel - toZ, 0u).x) * perUnit;
+		let dDdx = (fieldAt(texel + toX, 1u) - fieldAt(texel - toX, 1u)) * perUnit;
+		let dDdz = (fieldAt(texel + toZ, 1u) - fieldAt(texel - toZ, 1u)) * perUnit;
+
+		textureStore(waveTexture, texel, vec4f(displacement.x, height, displacement.y, 0.5 * (dDdz.x + dDdx.y)));
+		textureStore(slopeTexture, texel, vec4f(dHdx, dHdz, dDdx.x, dDdz.y));
+
+		// Foam: where this cascade squeezes the surface together (its jacobian, as the mesh pass works it out for all of them) whitecaps
+		//		break. What was made before is kept and fades a little each frame: the map is fixed in the world and the crests run on
+		//		through it, so the foam stays where it broke and trails off behind them
+		let squeezeX = 1.0 + CU.choppiness * dDdx.x;
+		let squeezeZ = 1.0 + CU.choppiness * dDdz.y;
+		let shear = CU.choppiness * 0.5 * (dDdz.x + dDdx.y);
+		let jacobian = squeezeX * squeezeZ - shear * shear;
+		let breaking = saturate((CU.foamThreshold - jacobian) / max(CU.foamFade, 0.001));
+		let kept = textureLoad(foamTexture, texel).x * CU.foamKeep;
+		textureStore(foamTexture, texel, vec4f(max(breaking, kept), 0.0, 0.0, 0.0));
 	}
 `;
 
@@ -1443,6 +1401,7 @@ export const v_water =
 		@location(0) pos: vec3f,
 		@location(1) uv: vec2f,
 		@location(2) norm: vec3f,
+		@location(3) crest: f32,			// how peaked the water is (see c_water)
 	};
 	
 	struct VertexOutput {				//into frag
@@ -1450,6 +1409,7 @@ export const v_water =
 		@location(0) fragUV: vec2f,
 		@location(1) fragNormal: vec3f,
 		@location(2) worldPos: vec3f,
+		@location(3) crest: f32,
 	};
 	
 	@vertex
@@ -1465,6 +1425,7 @@ export const v_water =
     output.worldPos = input.pos;
 	output.fragNormal = input.norm;
     output.fragUV = input.uv;
+    output.crest = input.crest;
     
     return output;
 	}
@@ -1503,6 +1464,9 @@ export const f_water =
 		atmosphereEnabled : f32,	// 1.0 while the atmosphere pass is running and keeping the sky LUT up to date
 		horizonFogDistance : f32,	// distance from the camera where the water is about two thirds faded into the horizon
 		clarityDepth : f32,			// depth of water where the sea bed has faded to about a third. 0 turns the see-through off
+		seaLevel : f32,				// the height of the still sea
+		crestHeight : f32,			// how high over it a crest stands where the sun shines through it at its brightest
+		_padding1 : f32,
 		screen : vec4f,				// for the reflections found on the screen. xy: the two numbers that turn a depth into a distance, z: how strongly they show, w: how far out they are looked for
 		cloudMap : vec4f,			// where the cloud coverage map is: what cloudShadeAt takes (vfc_clouds.js)
 	}
@@ -1525,16 +1489,7 @@ export const f_water =
 
 	// The colour the sky pass puts on screen for a world direction.
 	//		same LUT lookup, exposure and gamma as f_sky in the atmosphere shaders, so the water can match the sky behind it exactly
-	fn skyColorAt(direction: vec3f) -> vec3f {
-		let rd = normalize(direction + vec3f(0.0, 0.00001, 0.0));	// never zero length
-		let azimuth   = atan2(-rd.z, -rd.x);
-		let elevation = asin(clamp(rd.y, -1.0, 1.0));
-		let uv = vec2f(azimuth / (2.0 * PI) + 0.5, elevation / PI + 0.5);
-		let color = textureSampleLevel(skyLUT, skySampler, uv, 0.0).rgb;
-
-		let exposed = 1.0 - exp(-color * 10.0);
-		return pow(exposed, vec3f(1.0 / 2.2));
-	}
+	${skyLookupShapes}
 
 	//same as vertexoutput without builtin bits
 	struct FragInput {
@@ -1542,11 +1497,41 @@ export const f_water =
 		@location(0) fragUV: vec2f,
 		@location(1) fragNormal: vec3f,
 		@location(2) worldPos: vec3f,
+		@location(3) crest: f32,
 	};
 
 	fn lerp(a: vec4<f32>, b: vec4<f32>, t: f32) -> vec4<f32> {
 		return a + t * (b - a);
 	}	
+
+	// A number from 0 to 1 for a whole-numbered place, the same every time (an integer hash: a sine of a big number
+	//		loses its precision kilometres out)
+	fn foamHash(cell: vec2f) -> f32 {
+		let c = vec2i(cell);
+		var h = (bitcast<u32>(c.x) * 1597334673u) ^ (bitcast<u32>(c.y) * 3812015801u);
+		h = (h ^ (h >> 16u)) * 2246822519u;
+		h = h ^ (h >> 13u);
+		return f32(h & 0xffffu) / 65535.0;
+	}
+
+	// smooth noise from those, 0 to 1
+	fn foamNoise(p: vec2f) -> f32 {
+		let cell = floor(p);
+		let f = p - cell;
+		let u = f * f * (3.0 - 2.0 * f);
+		let a = foamHash(cell);
+		let b = foamHash(cell + vec2f(1.0, 0.0));
+		let c = foamHash(cell + vec2f(0.0, 1.0));
+		let d = foamHash(cell + vec2f(1.0, 1.0));
+		return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+	}
+
+	// The look of foam, fixed in the world: patches, streaks and bubbles at three sizes. Thin foam only shows where this is low
+	//		(a lace with the water showing through), thick foam everywhere
+	fn foamLace(xz: vec2f) -> f32 {
+		let p = xz * 0.3;
+		return 0.5 * foamNoise(p) + 0.3 * foamNoise(p * 2.9 + vec2f(13.1, 7.7)) + 0.2 * foamNoise(p * 8.3 + vec2f(5.3, 21.9));
+	}
 
 	// interleaved gradient noise (Jimenez): a different number for every pixel, spread evenly
 	fn pixelNoise(pixel: vec2f) -> f32 {
@@ -1631,9 +1616,11 @@ export const f_water =
 		let F = 0.02 + 0.98 * pow(1.0 - saturate(dot(N, V)), 5.0);
 		
 		let NdotL = dot(N, L);
-		let deepBlue = vec3f(0.125, 0.125, 0.451);
-		let baseBlue = vec3f(0.486, 0.486, 0.788);
-		let body     = mix(deepBlue, baseBlue, saturate(NdotL));
+		// the water's own color: a deep green blue, lighter and greener where the sun is on it (the Sea of Thieves sea rather than navy)
+		//		(the planet seen from high up, in the sky view LUT, is given the same: GROUND_ALBEDO in vfc_atmosphere.js)
+		let deepColor = vec3f(0.02, 0.16, 0.21);
+		let litColor  = vec3f(0.05, 0.38, 0.42);
+		let body      = mix(deepColor, litColor, saturate(NdotL));
 		
 		// Reflection: whatever the sky pass draws in the mirrored direction. With the atmosphere off there is no sky to read, so a flat stand-in
 		var skyColor = vec3f(0.45, 0.62, 0.85);
@@ -1665,9 +1652,22 @@ export const f_water =
 
 		// Crest foam (whitecaps): jacobian based factor from the water compute pass, riding in uv.x
 		//     foam is rough so it gets plain diffuse light instead of the fresnel/reflection look
-		let foam = saturate(input.fragUV.x);
-		let foamColor = vec3f(0.95, 0.95, 0.95) * (0.55 + 0.45 * saturate(NdotL)) * waterLight;
-		color = mix(color, foamColor, foam);
+		//     broken up by a pattern fixed in the world (foamLace): thin foam is a lace of streaks and bubbles, thick foam is solid
+		let foamAmount = max(saturate(input.fragUV.x), saturate(length(input.fragNormal) - 1.0));	// breaking now, or left lying (in the length of the normal, see c_water)
+		let lace = foamLace(input.worldPos.xz);
+		let foam = smoothstep(lace * 0.75, lace * 0.75 + 0.25, foamAmount);
+		let foamColor = vec3f(0.80, 0.94, 0.88) * (0.55 + 0.45 * saturate(NdotL)) * waterLight;	// a seafoam white, a little green
+		color = mix(color, foamColor, 0.82 * foam);	// and never quite opaque: the water shows through it
+
+		// Light through the crests: where a wave stands up thin enough the sun shines through it, and it glows a bright green blue.
+		//		Most looking towards the sun, through the back of the wave, some from any side. Not on a lake: there is no swell to stand up
+		//		Where the water is peaked (the crests, from the mesh pass), not just where it stands high. And most of all where the
+		//		sun is behind the face of the wave: looking towards it through a surface leaning away from the eye
+		let crest = saturate(input.crest);
+		let throughFace = pow(saturate(dot(-V, normalize(L + 0.6 * N))), 3.0);
+		let towardsSun = pow(saturate(dot(-V, L)), 3.0);
+		let shineThrough = crest * sqrt(crest) * (0.25 + 0.45 * towardsSun + 0.6 * throughFace) * smoothstep(-0.05, 0.2, L.y) * (0.4 + 0.6 * clouded.r);
+		color += vec3f(0.08, 0.72, 0.58) * shineThrough * (1.0 - foam) * (1.0 - lake) * (1.0 - F);
 
 		// Specular sun glint, hidden under the foam
 		let shininess = 300.0;
@@ -1684,7 +1684,7 @@ export const f_water =
 		var fog = 0.0;
 		if (UBO.atmosphereEnabled > 0.5) {
 			let toWater = input.worldPos - Lights.camPos.xyz;
-			let horizonColor = skyColorAt(vec3f(toWater.x, HORIZON_LIFT * length(toWater.xz), toWater.z));
+			let horizonColor = fogColorAt(toWater);
 			fog = 1.0 - exp(-pow(length(toWater) / UBO.horizonFogDistance, 2.0));
 			color = mix(color, horizonColor, fog);
 		}

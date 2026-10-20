@@ -23,7 +23,8 @@ import { weatherNow } from './weather.js';
 
 	The wind itself is two settings the water already had: windDirection, and waterWindSpeed (metres per second).
 	The season and the weather blow harder on top of that (weatherNow.wind, see weather.js): a spring day more than a
-	summer one, a storm more than either. Only the air over the land feels that. The sea keeps to the setting.
+	summer one, a storm more than either. The sea has a wind of its own, harder (waterOceanWindSpeed, see water.js), and the
+	season and the weather add to it in the same way.
 */
 
 export const WIND_TEXTURE_SIZE = 256;

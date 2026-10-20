@@ -87,6 +87,8 @@ const atmosphereQuadVertexBuffer = device.createBuffer({
 });
 device.queue.writeBuffer(atmosphereQuadVertexBuffer, 0, scene.fullScreenQuad);
 
+const CLOUD_TOP = 6900.0;	// world units above the sea: the top of the highest layer of cloud at its deepest (HIGH_HEIGHT + HIGH_DEPTH in clouds.js)
+
 function updateSkyUniforms() {
 	const bufferResult = [];
 	
@@ -114,7 +116,11 @@ function updateSkyUniforms() {
 
 	bufferResult.push(settings.moonSize * Math.PI / 180);
 	//the weather: how much of the sky is taken up by cloud (none until it is most of it), and how dark that cloud is
-	const overcast = settings.enableClouds ? weatherNow.skyCover : 0;
+	//		(only from under it: climbing out through the top of the highest layer of cloud the sky clears, and from above it
+	//		the air is as clear as any other day. The clouds draw themselves under the camera then)
+	const cloudTop = CLOUD_TOP + settings.cloudHeight;
+	const aboveCloud = Math.min(Math.max((settings.camPosY - settings.waterWorldPosY - cloudTop) / (0.5 * cloudTop), 0), 1);
+	const overcast = settings.enableClouds ? weatherNow.skyCover * (1 - aboveCloud * aboveCloud * (3 - 2 * aboveCloud)) : 0;
 	bufferResult.push(overcast);
 	bufferResult.push(weatherNow.gloom);
 	bufferResult.push(settings.enableClouds ? 1 : 0);	//with clouds on, the moon's disc is drawn with them, behind them (vf_cloudComposite). Not here
@@ -191,6 +197,11 @@ const skyVFBindGroupLayout = device.createBindGroupLayout({
             binding: 2,
             visibility: GPUShaderStage.FRAGMENT,
             sampler: { type: 'filtering' },
+        },
+        {   // transmittance LUT, for the sun's disc
+            binding: 3,
+            visibility: GPUShaderStage.FRAGMENT,
+            texture: { sampleType: 'float', viewDimension: '2d' },
         },
     ],
 });
@@ -278,6 +289,7 @@ const skyVFBindGroup = device.createBindGroup({
         { binding: 0, resource: { buffer: atmosphereUniformBuffer } },
         { binding: 1, resource: skyViewView },
         { binding: 2, resource: lutSampler },
+        { binding: 3, resource: transmittanceView },
     ],
 });
 

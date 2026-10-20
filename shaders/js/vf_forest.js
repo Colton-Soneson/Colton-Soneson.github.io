@@ -1,4 +1,5 @@
 import { FOLIAGE_LEAVES, FOLIAGE_FROND, FOLIAGE_TUFT } from '../../code/treeGenerator.js';
+import { skyLookupShapes } from './vfc_atmosphere.js';
 
 export const FOLIAGE_VERTICES = 18;		// every piece of foliage is 3 flat cards, 2 triangles each
 export const BILLBOARD_VERTICES = 12;	// a billboard is 2 cards: the tree from the side and from above
@@ -320,16 +321,7 @@ const common =
 	const HORIZON_LIFT: f32 = 0.016;	// see f_water
 
 	// The color the sky pass puts on screen for a world direction, the same lookup as f_sky, f_water and the terrain use
-	fn skyColorAt(direction: vec3f) -> vec3f {
-		let rd = normalize(direction + vec3f(0.0, 0.00001, 0.0));
-		let azimuth   = atan2(-rd.z, -rd.x);
-		let elevation = asin(clamp(rd.y, -1.0, 1.0));
-		let uv = vec2f(azimuth / (2.0 * PI) + 0.5, elevation / PI + 0.5);
-		let color = textureSampleLevel(skyLUT, skySampler, uv, 0.0).rgb;
-
-		let exposed = 1.0 - exp(-color * 10.0);
-		return pow(exposed, vec3f(1.0 / 2.2));
-	}
+	${skyLookupShapes}
 
 	${moonShapes}
 
@@ -346,7 +338,7 @@ const common =
 		// and the same fade into the horizon
 		if (UBO.world.z > 0.5) {
 			let toTree = worldPos - Lights.camPos.xyz;
-			let horizonColor = skyColorAt(vec3f(toTree.x, HORIZON_LIFT * length(toTree.xz), toTree.z));
+			let horizonColor = fogColorAt(toTree);
 			let fog = 1.0 - exp(-pow(length(toTree) / UBO.world.y, 2.0));
 			color = mix(color, horizonColor, fog);
 		}

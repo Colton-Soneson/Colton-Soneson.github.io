@@ -1,6 +1,52 @@
 import { settings } from '../../code/settings.js';
 export const SKY_WORKGROUP_SIZE = [32, 1, 1];
 
+// Where a direction is in the sky view LUT (c_skyView_LUT), for every shader that reads it. They all name it skyLUT and
+//		have a skySampler and PI. Across: all the way round. Up: the horizon as it is seen from the camera's height, which dips
+//		under level the higher the camera goes, sits in the middle, and the rows bunch up towards it (by the square root):
+//		the edge of the planet is a sharp line at any height, and the air near it, where all the color changes are, gets most of
+//		the texels. Every texel of the LUT carries the horizon's angle in its alpha
+//	skyColorAt: the colour the sky pass puts on screen for a world direction (the same exposure and gamma as f_sky), so
+//		anything fading into the distance fades into exactly the sky, or the planet, behind it
+export const skyLUTUVShapes = `
+	fn skyLUTUV(direction: vec3f) -> vec2f {
+		let rd = normalize(direction + vec3f(0.0, 0.00001, 0.0));	// never zero length
+		let horizon = textureLoad(skyLUT, vec2i(0, 0), 0).a;			// elevation of the horizon, radians, 0 or below
+		let azimuth   = atan2(-rd.z, -rd.x);
+		let elevation = asin(clamp(rd.y, -1.0, 1.0));
+		var v = 0.5 + 0.5 * sqrt(max(elevation - horizon, 0.0) / (0.5 * PI - horizon));
+		if (elevation < horizon) {
+			v = 0.5 - 0.5 * sqrt((horizon - elevation) / (horizon + 0.5 * PI));
+		}
+		return vec2f(azimuth / (2.0 * PI) + 0.5, v);
+	}
+`;
+
+export const skyLookupShapes = `
+	${skyLUTUVShapes}
+
+	fn skyColorAt(direction: vec3f) -> vec3f {
+		let color = textureSampleLevel(skyLUT, skySampler, skyLUTUV(direction), 0.0).rgb;
+		let exposed = 1.0 - exp(-color * 10.0);
+		return pow(exposed, vec3f(1.0 / 2.2));
+	}
+
+	// The colour something far off fades into: the sky, or the planet, behind it. Near the ground the world is flat and the
+	//		LUT's planet is round: just under the LUT's horizon is sea a few kilometres off, not the haze over the far sea, so down
+	//		there the fade never reads lower than just over the horizon. Higher up (the horizon dipping away is how the LUT tells
+	//		the height: by 1.3km it starts, by 15km it is done) it goes over to the real direction, the planet seen through the
+	//		air under it, which is what makes the world fall away into a ball
+	fn fogColorAt(direction: vec3f) -> vec3f {
+		let rd = normalize(direction + vec3f(0.0, 0.00001, 0.0));
+		let horizon = textureLoad(skyLUT, vec2i(0, 0), 0).a;
+		let elevation = asin(clamp(rd.y, -1.0, 1.0));
+		let high = smoothstep(0.02, 0.07, -horizon);
+		let looked = mix(max(elevation, horizon + 0.004), elevation, high);
+		let across = normalize(rd.xz + vec2f(0.00001, 0.0));
+		return skyColorAt(vec3f(across.x * cos(looked), sin(looked), across.y * cos(looked)));
+	}
+`;
+
 /*
 	raymarching: stepping along a ray through the atmosphere in fixed increments and accumulating a value at each step.
 	
@@ -180,28 +226,42 @@ export const c_skyView_LUT =
 			* (1.0 + cosAngle * cosAngle) / pow(1.0 + g2 - 2.0*g*cosAngle, 1.5);
 	}
 	
-	// Maps a LUT texel UV to a world-space view direction
+	// what the planet's surface is seen as from above, through the air: the open sea. Light it sends back, as a fraction of what falls on it
+	const GROUND_ALBEDO: vec3f = vec3f(0.01, 0.05, 0.06);	// a deep green blue, as the water is seen up close (f_water)
+
+	// Maps a LUT texel UV to a world-space view direction (the inverse of skyLUTUV, see skyLookupShapes)
 	// 		U covers full azimuth [0, 2PI]
-	//		V covers elevation [-PI/2, PI/2]
-	fn uvToRd(uv: vec2f) -> vec3f {
+	//		V: the horizon in the middle, straight down at 0, straight up at 1, the rows bunched towards the horizon
+	fn uvToRd(uv: vec2f, horizon: f32) -> vec3f {
 		let azimuth   = uv.x * 2.0 * PI;
-		let elevation = (uv.y - 0.5) * PI;  // -PI/2..PI/2
+		var elevation = 0.0;
+		if (uv.y >= 0.5) {
+			let c = (uv.y - 0.5) * 2.0;
+			elevation = horizon + c * c * (0.5 * PI - horizon);
+		} else {
+			let c = (0.5 - uv.y) * 2.0;
+			elevation = horizon - c * c * (horizon + 0.5 * PI);
+		}
 		let cosEl = cos(elevation);
 		return vec3f(cosEl * cos(azimuth), sin(elevation), cosEl * sin(azimuth));
 	}
-	
+
 	@compute @workgroup_size(${SKY_WORKGROUP_SIZE[0]}, 1, 1)
 	fn computeMain(@builtin(global_invocation_id) gid: vec3<u32>) {
 		let dims = vec2u(SKY_W, SKY_H);
 		if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-	
+
+		// place ray origin at camera altitude above planet center (never under the sea, the air would be on the wrong side of it)
+		let altitude = max(SU.cameraPosition.y, 1.0);
+		let ro  = vec3f(0.0, PLANET_RADIUS + altitude, 0.0);
+		let sun = normalize(SU.sunDir.xyz);
+
+		// the horizon from up here: the line of sight that just grazes the planet, below level by acos(R / (R + altitude))
+		let horizon = -acos(clamp(PLANET_RADIUS / (PLANET_RADIUS + altitude), 0.0, 1.0));
+
 		// convert texel to view direction for this LUT entry
 		let uv  = (vec2f(gid.xy) + 0.5) / vec2f(dims);
-		let rd  = uvToRd(uv);
-		
-		// place ray origin at camera altitude above planet center
-		let ro  = vec3f(0.0, PLANET_RADIUS + SU.cameraPosition.y, 0.0);
-		let sun = normalize(SU.sunDir.xyz);
+		let rd  = uvToRd(uv, horizon);
 	
 		// Compute phase values once -> they only depend on the angle between view and sun, which is constant along the ray for a given LUT texel
 		let cosAngle = dot(rd, sun);
@@ -219,15 +279,17 @@ export const c_skyView_LUT =
 		let hitAtmos = raySphereIntersect(ro, rd, ATMOS_RADIUS);
 		let hitGround = raySphereIntersect(ro, rd, PLANET_RADIUS);
 	
-		// March to whichever is closer: atmosphere exit or ground hit
+		// March from where the ray is in the air (the camera, or where it comes in from space) to whichever is closer: atmosphere exit or ground hit
 		var tMax = hitAtmos.y;
-		if (hitGround.x > 0.0) { tMax = hitGround.x; }			// ground blocks the ray (check effect on water grid)
+		let hitsGround = hitGround.x > 0.0;
+		if (hitsGround) { tMax = hitGround.x; }			// ground blocks the ray
 		if (tMax < 0.0) {
-			textureStore(skyOut, vec2i(gid.xy), vec4f(0.0));	// Ray points away from atmosphere entirely so write black
+			textureStore(skyOut, vec2i(gid.xy), vec4f(0.0, 0.0, 0.0, horizon));	// Ray points away from atmosphere entirely: space, black
 			return;
 		}
-	
-		let dt = tMax / f32(STEPS);
+		let tMin = max(hitAtmos.x, 0.0);
+
+		let dt = (tMax - tMin) / f32(STEPS);
 		var scatterR = vec3f(0.0);		// accumulated Rayleigh scattered light
 		var moonScatterR = vec3f(0.0);	// and the same two for the light of the moon
 		var moonScatterM = vec3f(0.0);
@@ -235,7 +297,7 @@ export const c_skyView_LUT =
 		var throughput = vec3f(1.0); 	// how much light still survives along the view ray so far
 	
 		for (var i = 0u; i < STEPS; i++) {
-			let t   = (f32(i) + 0.5) * dt;			// sample at step midpoint to reduce errors
+			let t   = tMin + (f32(i) + 0.5) * dt;	// sample at step midpoint to reduce errors
 			let pos = ro + rd * t;
 			let h   = length(pos) - PLANET_RADIUS;	// altitude at this sample point
 			let alt = max(h, 0.0);					// Clamp underground samples to sea level		TODO MAKE THIS MATCH WATER PLANE HEIGHT ADJUSTMENT
@@ -270,6 +332,16 @@ export const c_skyView_LUT =
 		let moonLight = vec3f(0.8, 0.88, 1.0) * 0.035 * SU.moonDir.w;
 		var color = scatterR * phaseR + scatterM * phaseM + moonLight * (moonScatterR * moonPhaseR + moonScatterM * moonPhaseM);
 
+		// A ray that ends on the planet sees its surface as well, through all the air in between: the sea, lit by the sun (and the moon)
+		//		as much as it faces them and as much of their light as gets down through the air to it. Without this everything under
+		//		the horizon was the glow of the air alone, and from high up the planet was a black disc
+		if (hitsGround) {
+			let up = normalize(ro + rd * tMax);
+			let sunOnGround = sampleTransmittance(PLANET_RADIUS, dot(up, sun)) * max(dot(up, sun), 0.0);
+			let moonOnGround = sampleTransmittance(PLANET_RADIUS, dot(up, moon)) * max(dot(up, moon), 0.0) * moonLight;
+			color += throughput * GROUND_ALBEDO / PI * (sunOnGround + moonOnGround);
+		}
+
 		// Under a sky full of cloud there is no blue to see and less light altogether: the sky goes grey, and darker the heavier
 		//		the cloud. Everything that takes its color from this LUT follows: the haze far things fade into, what the water
 		//		mirrors, the light the clouds get from the sky
@@ -277,7 +349,8 @@ export const c_skyView_LUT =
 		color = mix(color, vec3f(grey, grey, grey * 1.04) * (0.6 - 0.35 * SU.moonLook.z), SU.moonLook.y);
 		// and the sickly green of the sky under the worst storms (a deep cloud lets the green of the light through best)
 		color *= mix(vec3f(1.0, 1.0, 1.0), vec3f(0.6, 1.08, 0.52), SU.tint.x);
-		textureStore(skyOut, vec2i(gid.xy), vec4f(color, 1.0));
+		// (alpha: the horizon's angle, for everything that reads the LUT to find its rows by: see skyLookupShapes)
+		textureStore(skyOut, vec2i(gid.xy), vec4f(color, horizon));
 }
 `;
 
@@ -322,15 +395,16 @@ export const f_sky =
 	@group(0) @binding(0) var<uniform> Sky: SkyUniforms;
 	@group(0) @binding(1) var skyLUT:    texture_2d<f32>;
 	@group(0) @binding(2) var skySampler: sampler;
-	
+	@group(0) @binding(3) var transmitLUT: texture_2d<f32>;	// how much light gets through the air, for the sun's disc
+
 	const PI: f32 = 3.14159265;
-	
-	fn rdToUV(rd: vec3f) -> vec2f {
-		let azimuth   = atan2(rd.z, rd.x);
-		let elevation = asin(clamp(rd.y, -1.0, 1.0));
-		return vec2f(azimuth / (2.0 * PI) + 0.5, elevation / PI + 0.5);
-	}
-	
+	const PLANET_RADIUS: f32 = 6371e3;
+	const ATMOS_RADIUS:  f32 = 6471e3;
+	const SUN_RADIUS: f32 = 0.008;			// radians from the middle of the sun's disc to its edge. A little under twice the real one, so it reads on a screen
+	const SUN_BRIGHTNESS: f32 = 1.5;		// next to the sky LUT's light: enough to burn out white at noon, and still show its colour low down
+
+	${skyLookupShapes}
+
 	@fragment
 	fn fragmentMain(input: FragInput) -> @location(0) vec4f {
 		// Reconstruct view ray from NDC position
@@ -340,17 +414,26 @@ export const f_sky =
 							1.0);
 		let worldH = Sky.invViewProj * ndc;
 		let rd     = normalize(worldH.xyz / worldH.w);// - Sky.cameraPosition.xyz);
-		
-		// TODO
-		// 	corrected rd (not sure if this whole thing should be flipped or if this space version is actually correct)
-		let rd_corrected = vec3f(-rd.x, rd.y, -rd.z);
-		
-		let uv    = rdToUV(rd_corrected);
-		let color = textureSample(skyLUT, skySampler, uv).rgb;
-	
-		// Exposure tone mapping
-		let exposed = 1.0 - exp(-color * 10.0);
-		var skyColor = pow(exposed, vec3f(1.0/2.2));
+
+		// the sky (or the planet) in this direction, exposure tone mapped (see skyLookupShapes)
+		var skyColor = skyColorAt(rd);
+
+		// The sun's disc: its light dimmed and reddened by the air between it and the camera, all of the air near the ground, none above it.
+		//		Gone where the planet stands in front of it
+		let sun = normalize(Sky.sunDir.xyz);
+		let fromSun = acos(clamp(dot(rd, sun), -1.0, 1.0));
+		let altitude = max(Sky.cameraPosition.y, 1.0);
+		let eye = vec3f(0.0, PLANET_RADIUS + altitude, 0.0);
+		let b = dot(eye, rd);
+		let behindPlanet = b < 0.0 && b * b - dot(eye, eye) + PLANET_RADIUS * PLANET_RADIUS > 0.0;
+		if (fromSun < SUN_RADIUS * 1.5 && !behindPlanet) {
+			let height = min(altitude / (ATMOS_RADIUS - PLANET_RADIUS), 1.0);
+			let throughAir = textureSampleLevel(transmitLUT, skySampler, vec2f(sun.y * 0.5 + 0.5, height), 0.0).rgb;
+			let edge = fromSun / SUN_RADIUS;
+			let disc = (1.0 - smoothstep(0.9, 1.0, edge)) * (0.6 + 0.4 * sqrt(max(1.0 - edge * edge, 0.0)));	// soft edge, a little darker towards it
+			let sunColor = pow(1.0 - exp(-throughAir * SUN_BRIGHTNESS * 10.0), vec3f(1.0 / 2.2));
+			skyColor = max(skyColor, sunColor * disc * (1.0 - Sky.moonLook.y));	// (not through an overcast sky)
+		}
 
 		// The moon: a plain white disc, wherever the view comes within its radius of the way to the moon.
 		//		In daylight it is a pale ghost of itself, and it is gone under the horizon

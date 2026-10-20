@@ -98,7 +98,7 @@ const LOCAL_KEYS = new Set([
 	'cloudSteps', 'cloudResolution', 'cloudDrawDistance', 'displayCloudCoverage',
 	'enableLightShafts', 'lightShaftStrength', 'enableUnderwater', 'causticStrength',
 	'enableLeaves', 'leavesAllYear', 'leafAmount', 'leafSize', 'leafWeight', 'enableSeaSpray', 'sprayAmount', 'enableRain', 'rainAmount', 'rainDistance', 'enableSnow', 'snowAmount',
-	'waterTileResolution', 'waterTileInstanceCount',
+	'waterTileResolution', 'waterCascadeResolution', 'waterTileInstanceCount',
 	'atmosphereNeedsTransmittanceRebuild', 'atmosphereViewLUTTextureSizeX', 'atmosphereViewLUTTextureSizeY', 'atmosphereTransmittanceTextureSizeX', 'atmosphereTransmittanceTextureSizeY',
 	'showDebug', 'showDebugIcons', 'activateSkybox', 'displayHeightMap', 'displayDepthMapDebugRange', 'displayShadowMapDepth', 'displayOceanSpectrum',
 	'displayWaterInitialHeight', 'displayWaveHeightRealization', 'displayWaterPreComp', 'displayWaterFFT', 'displayWaterShifted',

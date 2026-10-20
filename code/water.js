@@ -9,14 +9,11 @@ import { mat4, vec3 } from 'https://wgpu-matrix.org/dist/3.x/wgpu-matrix.module.
 import { settings } from './settings.js';
 
 import { c_water } from '../shaders/js/vfc_water.js'
-import { c_h0k } from '../shaders/js/vfc_water.js'
-import { c_h0kConj } from '../shaders/js/vfc_water.js'
+import { c_spectrum } from '../shaders/js/vfc_water.js'
 import { c_hkt } from '../shaders/js/vfc_water.js'
 import { c_IFFT_2D } from '../shaders/js/vfc_water.js'
 import { c_PreComp } from '../shaders/js/vfc_water.js'
-import { c_RealizationToArray } from '../shaders/js/vfc_water.js'
-import { c_ArrayToTexture } from '../shaders/js/vfc_water.js'
-import { c_Shift } from '../shaders/js/vfc_water.js'
+import { c_waveMaps } from '../shaders/js/vfc_water.js'
 import { c_ShoreScan } from '../shaders/js/vfc_water.js'
 import { c_ShoreDistance } from '../shaders/js/vfc_water.js'
 import { v_water } from '../shaders/js/vfc_water.js'
@@ -25,10 +22,13 @@ import { WATER_WORKGROUP_SIZE } from '../shaders/js/vfc_water.js'
 import { FFT_WORKGROUP_SIZE } from '../shaders/js/vfc_water.js'
 import { PRECOMP_WORKGROUP_SIZE } from '../shaders/js/vfc_water.js'
 import { SHORE_FIELD_DOWNSCALE } from '../shaders/js/vfc_water.js'
+import { CASCADE_UNIFORM_FLOATS } from '../shaders/js/vfc_water.js'
+import { ROCKS_MOST } from '../shaders/js/vfc_water.js'
 
 import * as transformations from './transformations.js'
 import * as scene from './scene.js'
 import * as terrain from './terrain.js'	//the water reads where the land is, everywhere in the world, from terrain.terrainWaterTexture
+import { refractSwell } from './waveRefraction.js'	//which way the swell runs over the shallows, from the depth of the water
 import * as primitives from '../models/primitives.js'
 
 //GET THE LIGHT CREATION OUT OF THE MAIN
@@ -38,6 +38,7 @@ import {uniformBufferLights} from './rotatingCube.js'
 import {skyViewLUTtexture} from './atmosphere.js'
 import * as screenEffects from './screenEffects.js'
 import * as clouds from './clouds.js'
+import { weatherNow } from './weather.js'	//storms blow harder over the sea too, and raise it
 
 // compute shaders and buffers
 //-------------------------------------------------
@@ -47,23 +48,18 @@ const waterComputeShaderModule = device.createShaderModule({
 });
 
 const waterSpectrumComputeShaderModule = device.createShaderModule({
-  label: "c_h0k",
-  code: c_h0k	
-});
-
-const waterConjComputeShaderModule = device.createShaderModule({
-  label: "c_h0kConj",
-  code: c_h0kConj	
+  label: "c_spectrum",
+  code: c_spectrum
 });
 
 const waterButterflyPassComputeShaderModule = device.createShaderModule({
   label: "c_IFFT_2D",
-  code: c_IFFT_2D	
+  code: c_IFFT_2D
 });
 
-const waterShiftPassComputeShaderModule = device.createShaderModule({
-  label: "c_Shift",
-  code: c_Shift	
+const waterWaveMapsComputeShaderModule = device.createShaderModule({
+  label: "c_waveMaps",
+  code: c_waveMaps
 });
 
 const waterShoreScanComputeShaderModule = device.createShaderModule({
@@ -79,16 +75,6 @@ const waterShoreDistanceComputeShaderModule = device.createShaderModule({
 const waterButterflyPassPreCompComputeShaderModule = device.createShaderModule({
   label: "c_PreComp",
   code: c_PreComp	
-});
-
-const waterRealizationToArrayComputeShaderModule = device.createShaderModule({
-  label: "c_RealizationToArray",
-  code: c_RealizationToArray	
-});
-
-const waterAtoTComputeShaderModule = device.createShaderModule({
-  label: "c_ArrayToTexture",
-  code: c_ArrayToTexture	
 });
 
 const waterWaveHeightRealizationComputeShaderModule = device.createShaderModule({
@@ -107,112 +93,20 @@ const waterVertexShaderModule = device.createShaderModule({
 });
 
 //anim
-let currentFrameTime = performance.now();
-let lastFrameTime = 0.0;
 let step = 0.0;
 
-//random for initial wave map
-function gaussianRandom(mean, standardDeviation) {
-	//BoxMuller transform
-	let a = Math.random();
-	let b = Math.random();
-	let z = Math.sqrt(-2.0 * Math.log(a)) * Math.cos(2.0 * Math.PI * b);
-	return z * standardDeviation + mean;
-}
-
-function gaussianClampedRandom(mean, standardDeviation) {
-	let a = Math.random();
-	let b = Math.random();
-	let z = Math.sqrt(-2.0 * Math.log(a)) * Math.cos(2.0 * Math.PI * b);
-	z = z * standardDeviation + mean;
-
-	// Normalize to [0, 1], the 3 is to get the majority of the generated numbers on the curve
-	const min = mean - 3 * standardDeviation;
-	const max = mean + 3 * standardDeviation;
-	return Math.min(1, Math.max(0, (z - min) / (max - min)));
-}
-
-function complexGaussianRandom(mean, standardDeviation, arrayLength) {
-	const result = [];
-	for(let i = 0; i < arrayLength; ++i) {
-		//TRUE GAUSSIAN, typically from ~-3 to 3 range
-		const rk = gaussianRandom(mean, standardDeviation);
-		const ik = gaussianRandom(mean, standardDeviation);
-		
-		////Gaussian clamped from 0 to 1, normalized distribution, for Phillips Spectrum dont use
-		//const r = gaussianClampedRandom(mean, standardDeviation);
-		//const i = gaussianClampedRandom(mean, standardDeviation);
-		
-		result.push(rk);
-		result.push(ik);
+//random for initial wave map: one complex number for each texel of each cascade, its real and imaginary parts
+//		independent standard normal draws (Box-Muller)
+function gaussianNoise(count) {
+	const noise = new Float32Array(count * 2);
+	for (let i = 0; i < count; i++) {
+		const radius = Math.sqrt(-2.0 * Math.log(Math.max(Math.random(), 1e-7)));
+		const angle = 2.0 * Math.PI * Math.random();
+		noise[i * 2 + 0] = radius * Math.cos(angle);
+		noise[i * 2 + 1] = radius * Math.sin(angle);
 	}
-	console.log("Water tile res sqrd: ", arrayLength);
-	return result;
+	return noise;
 }
-
-function generateHermitianSymmetricComplexGaussian(resolution) {
-	const size = resolution * resolution;
-	const data = new Float32Array(size * 2); // real + imag for each texel
-
-	const N = resolution;
-
-	for (let y = 0; y < N; y++) {
-		for (let x = 0; x < N; x++) {
-			const i = y * N + x;
-			const jx = (N - x) % N;
-			const jy = (N - y) % N;
-			const j = jy * N + jx;
-
-			if (i < j) {
-				const real = gaussianRandom(0, 1);
-				const imag = gaussianRandom(0, 1);
-
-				data[i * 2 + 0] = real;
-				data[i * 2 + 1] = imag;
-
-				data[j * 2 + 0] = real;
-				data[j * 2 + 1] = -imag;
-			}
-			else if (i === j) {
-				// Pure real (self-conjugate)
-				const real = gaussianRandom(0, 1);
-				data[i * 2 + 0] = real;
-				data[i * 2 + 1] = 0.0;
-			}
-			// else: already assigned in a previous iteration
-		}
-	}
-
-	return data;
-}
-
-function clamp(value, min, max) {
-	return Math.max(min, Math.min(max, value));
-}
-
-function complexGaussianRandomForH0(arrayLength) {
-	const result = [];
-	for(let i = 0; i < arrayLength; ++i) {
-		const u0 = 2.0 * Math.PI * clamp(Math.random(), 0.001, 1.0);
-		const v0 = Math.sqrt(-2.0 * Math.log(clamp(Math.random(), 0.001, 1.0)));
-		const u1 = 2.0 * Math.PI * clamp(Math.random(), 0.001, 1.0);	//this would be a different call to random
-		const v1 = Math.sqrt(-2.0 * Math.log(clamp(Math.random(), 0.001, 1.0)));
-		
-		
-		result.push(v0 * Math.cos(u0));	//gauss k real
-		result.push(v0 * Math.sin(u0));	//gauss k imag
-		result.push(v1 * Math.cos(u1));	//gauss -k real
-		result.push(v1 * Math.sin(u1));	//gause -k imag
-	}
-	return result;
-}
-
-
-//const complexGaussArray = new Float32Array(complexGaussianRandom(0.0, 1.0, 2.0 * settings.waterTileResolution * settings.waterTileResolution));	//4: kr, ki, -kr, -ki
-const complexGaussArray = new Float32Array(complexGaussianRandomForH0(settings.waterTileResolution * settings.waterTileResolution));	//4: kr, ki, -kr, -ki
-console.log("gauss array length: ", complexGaussArray.byteLength / 4);
-//const complexGaussArray = generateHermitianSymmetricComplexGaussian(settings.waterTileResolution);
-//console.log("Complex Gaussian Num Array: ", complexGaussArray);
 
 //bit reversed indices
 function reverseBits(x, bitSize = 32) {
@@ -236,11 +130,145 @@ function bitReversedIndicies(arrayLength) {
     }
 	return result;
 }
-const bitReversedIndicesArray = new Float32Array(bitReversedIndicies(settings.waterTileResolution));
-console.log("Bit Reversed Indices Array: ", bitReversedIndicesArray);
+
+// The cascades: the same sea simulated at three sizes, and added together where the mesh is built (c_water). The swell needs a tile
+//		kilometres across to hold enough waves round its peak to look like a sea rather than a few sine waves, and the shortest
+//		waves need texels a world unit or two across: one tile cant do both. Each cascade carries its own band of wavelengths
+//		(the longest in 0, see cascadeBands), so nothing is counted twice. The sizes dont divide into each other, so the sum
+//		of them only repeats every few kilometres, far past the edge of the tiles
+const CASCADE_SIZES = [7919, 1531, 397];		// world units, one tile of each cascade
+const CASCADE_COUNT = CASCADE_SIZES.length;
+const WAVE_REPEAT_TIME = 1000;					// the sea comes back to where it started after this long (see c_hkt), in step time
+const WAVE_SHORTEST_TEXELS = 4;				// the shortest wave a cascade carries, in its own texels. Bilinear filtering draws shorter ones badly
+const WAVE_SHORTEST_CELLS = 3;					// and none shorter than this many cells of the finest mesh, which couldnt carry them
+
+// the band of wave numbers (radians per world unit) each cascade carries, [from, to)
+function cascadeBands() {
+	const res = settings.waterCascadeResolution;
+	const bands = [];
+	let low = 0.5 * 2.0 * Math.PI / CASCADE_SIZES[0];	// everything but the k = 0 texel, which carries nothing
+	for (let c = 0; c < CASCADE_COUNT; c++) {
+		let high = 2.0 * Math.PI / (WAVE_SHORTEST_TEXELS * CASCADE_SIZES[c] / res);
+		if (c == CASCADE_COUNT - 1) {
+			high = Math.min(high, 2.0 * Math.PI / (WAVE_SHORTEST_CELLS * settings.waterGridSize / settings.waterTileResolution));
+		}
+		high = Math.max(high, low);
+		bands.push([low, high]);
+		low = high;
+	}
+	return bands;
+}
+
+// The sea's spectrum, from the settings (see c_spectrum). It works in metres and seconds
+const GRAVITY = 9.81;
+const SWELL_GAMMA = 5.0;		// how sharp the peak of the swell's spectrum is (JONSWAP's gamma), the same as in c_spectrum
+
+function jonswap(omega, alpha, peak, gamma) {
+	const sigma = omega <= peak ? 0.07 : 0.09;
+	const peakSharpening = Math.exp(-((omega - peak) ** 2) / (2.0 * sigma * sigma * peak * peak));
+	return alpha * GRAVITY * GRAVITY / omega ** 5 * Math.exp(-1.25 * (peak / omega) ** 4) * gamma ** peakSharpening;
+}
+
+// TMA, the same as in c_spectrum
+function depthAttenuation(omega, depth) {
+	const omegaH = omega * Math.sqrt(depth / GRAVITY);
+	if (omegaH <= 1.0) return 0.5 * omegaH * omegaH;
+	if (omegaH < 2.0) return 1.0 - 0.5 * (2.0 - omegaH) ** 2;
+	return 1.0;
+}
+
+function spectrumParameters() {
+	const unitsPerMetre = settings.forestUnitsPerMetre;		// the scale of the whole world (the trees are made in metres)
+	const depth = Math.max(settings.waterDeepSeaDepth / unitsPerMetre, 1.0);
+	const windLength = Math.hypot(settings.windDirection[0], settings.windDirection[1]) || 1;
+	const windDirection = [settings.windDirection[0] / windLength, settings.windDirection[1] / windLength];
+
+	// the wind sea: JONSWAP's fit to how far the wind has blown over open water (the fetch), up to a fully developed sea.
+	//		Past a dimensionless fetch of about 22000 the waves are as big as that wind can make them
+	const windSpeed = seaWindSpeed();
+	let windAlpha = 0.0;
+	let windPeak = 1.0;
+	if (windSpeed > 0.1) {
+		const fetch = Math.min(settings.waterFetch * 1000.0 * GRAVITY / (windSpeed * windSpeed), 22000.0);
+		windAlpha = 0.076 * Math.pow(fetch, -0.22);
+		windPeak = 22.0 * GRAVITY / windSpeed * Math.pow(fetch, -1.0 / 3.0);
+	}
+
+	// the swell: its peak from its wavelength, and its energy scaled so that its significant wave height (4 times its rms height) is the setting
+	const swellK = 2.0 * Math.PI / Math.max(settings.waterSwellLength / unitsPerMetre, 1.0);
+	const swellPeak = Math.sqrt(GRAVITY * swellK * Math.tanh(swellK * depth));
+	const swellHeight = settings.waterSwellHeight / unitsPerMetre;
+	let swellAlpha = 0.0;
+	if (swellHeight > 0.0) {
+		// of the swell's spectrum at an alpha of 1, by the trapezium rule over all the frequencies that matter: as far as the top
+		//		of cascade 0, which is the only one that has the swell (see c_spectrum)
+		const topK = cascadeBands()[0][1] * unitsPerMetre;
+		let energy = 0.0;
+		const from = 0.3 * swellPeak;
+		const to = Math.max(Math.min(6.0 * swellPeak, Math.sqrt(GRAVITY * topK * Math.tanh(topK * depth))), 1.1 * from);
+		const steps = 2000;
+		for (let i = 0; i <= steps; i++) {
+			const omega = from + (to - from) * i / steps;
+			energy += jonswap(omega, 1.0, swellPeak, SWELL_GAMMA) * depthAttenuation(omega, depth) * (i == 0 || i == steps ? 0.5 : 1.0);
+		}
+		energy *= (to - from) / steps;
+		swellAlpha = (swellHeight / 4.0) ** 2 / energy;
+	}
+	const swellAngle = Math.atan2(windDirection[1], windDirection[0]) + settings.waterSwellDirection * Math.PI / 180.0;
+
+	// how high the open sea's crests stand: a third of its significant wave height, the swell's and the wind sea's together
+	//		(the wind sea's from its JONSWAP energy, the gamma of 3.3 adding about half again). The light through the crests is
+	//		at its brightest there (f_water)
+	const windSeaHeight = windAlpha > 0.0 ? 4.0 * Math.sqrt(1.5 * windAlpha * GRAVITY * GRAVITY / (5.0 * windPeak ** 4)) : 0.0;
+	const crestHeight = 0.35 * Math.hypot(swellHeight, windSeaHeight) * unitsPerMetre;
+
+	return {
+		unitsPerMetre: unitsPerMetre,
+		depth: depth,
+		windDirection: windDirection,
+		windSpeed: windSpeed,
+		windAlpha: windAlpha,
+		windPeak: windPeak,
+		swellAlpha: swellAlpha,
+		swellPeak: swellPeak,
+		swellSpread: settings.waterSwellSpread,
+		swellDirection: [Math.cos(swellAngle), Math.sin(swellAngle)],
+		crestHeight: crestHeight,
+		windSeaHeight: windSeaHeight * unitsPerMetre,	// significant wave height of the wind sea, world units
+	};
+}
+
+// The wind over the open sea, metres per second: its own setting (it blows harder there than over the land: nothing in its way),
+//		times what the season and the weather add, the same as over the land (wind.js). So a storm raises the sea
+function seaWindSpeed() {
+	return settings.waterOceanWindSpeed * weatherNow.wind;
+}
+
+// everything the spectrum is made from: when any of it changes, the spectrum is made again (see waterPass)
+//		The wind over the sea changes all the time with the weather: it counts as changed once it has moved by 3%. Made again
+//		from the same random numbers, the waves only grow or calm, they dont jump
+function spectrumSettingsKey() {
+	return [Math.round(Math.log(Math.max(seaWindSpeed(), 0.05)) / Math.log(1.03)), settings.windDirection[0], settings.windDirection[1], settings.waterFetch,
+			settings.waterSwellHeight, settings.waterSwellLength, settings.waterSwellSpread, settings.waterSwellDirection,
+			settings.waterDeepSeaDepth, settings.forestUnitsPerMetre, settings.waterGridSize, settings.waterTileResolution, settings.waterCascadeResolution].join(',');
+}
+let spectrum = spectrumParameters();
+let lastSpectrumSettings = spectrumSettingsKey();
+let spectrumDirty = true;		// the spectrum (and the butterfly passes' twiddle factors) need making before the next frame
 
 //if settings change live, this will have to be changed out from constants													!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-let waterPlaneVertexStride = (3 + 2 + 3);
+let waterPlaneVertexStride = (3 + 2 + 3 + 1);	// position, the uv slot (foam and depth), normal, and how peaked the water is
+
+// the water's own vertex layout: the scene's, and one more number
+const waterVertexBufferLayout = {
+	arrayStride: waterPlaneVertexStride * Float32Array.BYTES_PER_ELEMENT,
+	attributes: [
+		{ format: "float32x3", offset: 0, shaderLocation: 0 },		// position
+		{ format: "float32x2", offset: 12, shaderLocation: 1 },		// uv slot: x the foam breaking now (below 0 on a lake), y the depth
+		{ format: "float32x3", offset: 20, shaderLocation: 2 },		// normal, as long as 1 + the foam left lying on the water
+		{ format: "float32", offset: 32, shaderLocation: 3 },		// how peaked the water is, for the light through the crests
+	],
+};
 let totalTileCount = settings.waterTileInstanceCount * settings.waterTileInstanceCount;
 
 // Level of detail. The tiles sit in square rings around the tile the camera is over, and every ring out halves the mesh resolution:
@@ -314,32 +342,15 @@ const uniformBufferComputeButterfly = device.createBuffer({
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,	//this makes it another GPUBuffer Object but this time uniform
 });
 
-let uniformBufferComplexGaussian = device.createBuffer({
-  label: "water Spectrum Compute Complex Gaussian Array Buffer",
-  size: complexGaussArray.byteLength,
-  usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,	//this makes it another GPUBuffer Object but this time uniform
-});
-device.queue.writeBuffer(uniformBufferComplexGaussian, /*bufferOffset=*/0, complexGaussArray); //copy vertex data to buffer
-
-let uniformBufferBitReversedIndices = device.createBuffer({
-  label: "water butterfly bit reversed indices Array Buffer",
-  size: bitReversedIndicesArray.byteLength,
-  usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,	//this makes it another GPUBuffer Object but this time uniform
-});
-device.queue.writeBuffer(uniformBufferBitReversedIndices, /*bufferOffset=*/0, bitReversedIndicesArray); //copy vertex data to buffer
-
-//conversion for texture to f32 array, makes the passing faster and easier to manage with RW capabilities
-const lengthOfTwoElementWaterTileArray = settings.waterTileResolution * settings.waterTileResolution * 2 * 4; // real and imaginary per vertex by float size
-let uniformBufferRtoA = device.createBuffer({
-  label: "water Realization to Array  Array Buffer",
-  size: lengthOfTwoElementWaterTileArray,
-  usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
-});
-let uniformBufferPingPong = device.createBuffer({
-  label: "water Ping Pong Array Buffer",
-  size: lengthOfTwoElementWaterTileArray,
-  usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
-});
+// Each cascade's settings (the CascadeUniforms of c_spectrum, c_hkt and c_waveMaps), written every frame for the time (writeCascadeUniforms)
+const cascadeUniformBuffers = [];
+for (let c = 0; c < CASCADE_COUNT; c++) {
+	cascadeUniformBuffers.push(device.createBuffer({
+		label: `water cascade ${c} uniform`,
+		size: 256,
+		usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+	}));
+}
 
 
 const waterVertexBuffers = [];
@@ -384,106 +395,165 @@ function waterHorizonPlaneUpdate(originX, originZ) {
 			verts.push(originX + signX * reach, settings.waterWorldPosY, originZ + signZ * reach);	//position
 			verts.push(0.0, 1000.0);	//uv slot: no foam, and bottomless so its never see-through
 			verts.push(0.0, 1.0, 0.0);	//normal straight up
+			verts.push(0.0);			//and no crests
 		}
 	}
 	device.queue.writeBuffer(waterHorizonVertexBuffer, 0, new Float32Array(verts));
 }
 
-//Phillips Spectrum
-export let phillipsSpectrumTexture = device.createTexture({
-  size: [settings.waterTileResolution, settings.waterTileResolution],
-  format: 'rgba32float',
-  usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
-});
+// The cascades' textures and buffers, all sized by the cascade resolution (made again when it changes, see recreateResolutionDependentResources)
+//		the spectrum ones hold every cascade one above the other, the maps the mesh pass reads are one texture each, so they can wrap round
+export let oceanSpectrumTexture;		// the spectrum's amplitudes as a picture, for the debug view (c_spectrum)
+export let initialSpectrumTexture;		// h0(k) and conj(h0(-k)), made when the settings change and animated from every frame (c_hkt)
+export let preCompTexture;				// the butterfly passes' twiddle factors and which elements to combine (c_PreComp)
+export const waveTextures = [];			// one a cascade, x: Dx, y: height, z: Dz, w: dDx/dz (c_waveMaps)
+export const slopeTextures = [];		// one a cascade, x: dh/dx, y: dh/dz, z: dDx/dx, w: dDz/dz
+export const foamTextures = [];			// one a cascade, x: the foam it has made, kept from frame to frame and fading (c_waveMaps)
+let waveNoiseBuffer;					// the complex gaussian random numbers the spectrum is multiplied by, one for each texel of each cascade
+let bitReversedIndicesBuffer;
+// the butterfly passes ping pong between these. 2 layers a cascade (the height, then the displacement), a complex number a texel.
+//		c_hkt writes into fftBufferA, and after an even number of stages the result is back in fftBufferA for c_waveMaps
+let fftBufferA;
+let fftBufferB;
 
-//h0k without conj
-export let h0k = device.createTexture({
-  size: [settings.waterTileResolution, settings.waterTileResolution],
-  format: 'rgba32float',
-  usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
-});
+function createWaveResources() {
+	const res = settings.waterCascadeResolution;
+	const storage = GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING;
 
-export let h0Minusk = device.createTexture({
-  size: [settings.waterTileResolution, settings.waterTileResolution],
-  format: 'rgba32float',
-  usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
-});
+	oceanSpectrumTexture = device.createTexture({ label: "water ocean spectrum Texture", size: [res, res * CASCADE_COUNT], format: 'rgba32float', usage: storage });
+	initialSpectrumTexture = device.createTexture({ label: "water initial spectrum h0(k) Texture", size: [res, res * CASCADE_COUNT], format: 'rgba32float', usage: storage });
+	preCompTexture = device.createTexture({ label: "water butterfly pre comp Texture", size: [Math.log2(res), res], format: 'rgba32float', usage: storage });
+	waveTextures.length = 0;
+	slopeTextures.length = 0;
+	foamTextures.length = 0;
+	for (let c = 0; c < CASCADE_COUNT; c++) {
+		waveTextures.push(device.createTexture({ label: `water wave cascade ${c} Texture`, size: [res, res], format: 'rgba16float', usage: storage | GPUTextureUsage.TEXTURE_BINDING }));
+		slopeTextures.push(device.createTexture({ label: `water wave slope cascade ${c} Texture`, size: [res, res], format: 'rgba16float', usage: storage | GPUTextureUsage.TEXTURE_BINDING }));
+		foamTextures.push(device.createTexture({ label: `water foam cascade ${c} Texture`, size: [res, res], format: 'r32float', usage: storage | GPUTextureUsage.TEXTURE_BINDING }));
+	}
 
-//inital Water Height map h0(k) and h0(-k)
-export let initialWaterHeightMap = device.createTexture({
-  size: [settings.waterTileResolution, settings.waterTileResolution],
-  format: 'rgba32float',
-  usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
-});
+	const noise = gaussianNoise(res * res * CASCADE_COUNT);
+	waveNoiseBuffer = device.createBuffer({ label: "water spectrum gaussian noise Buffer", size: noise.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+	device.queue.writeBuffer(waveNoiseBuffer, 0, noise);
 
-export let hkt = device.createTexture({
-  size: [settings.waterTileResolution, settings.waterTileResolution],
-  format: 'rgba32float',
-  usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
-});
+	const bitReversed = new Float32Array(bitReversedIndicies(res));
+	bitReversedIndicesBuffer = device.createBuffer({ label: "water butterfly bit reversed indices Array Buffer", size: bitReversed.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+	device.queue.writeBuffer(bitReversedIndicesBuffer, 0, bitReversed);
 
-export let waveHeightRealization = device.createTexture({
-  label: "wave Height Realization Texture",
-  size: [settings.waterTileResolution, settings.waterTileResolution],
-  format: 'rgba32float',
-  usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-});
+	const fftSize = res * res * CASCADE_COUNT * 2 * 2 * Float32Array.BYTES_PER_ELEMENT;
+	fftBufferA = device.createBuffer({ label: "water FFT ping pong Buffer A", size: fftSize, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+	fftBufferB = device.createBuffer({ label: "water FFT ping pong Buffer B", size: fftSize, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+}
 
-//frequency domain horizontal displacement, written alongside hkt
-export let displacementRealizationTexture = device.createTexture({
-  label: "water displacement realization Texture for choppy waves",
-  size: [settings.waterTileResolution, settings.waterTileResolution],
-  format: 'rgba32float',
-  usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-});
+function destroyWaveResources() {
+	for (const texture of [oceanSpectrumTexture, initialSpectrumTexture, preCompTexture, ...waveTextures, ...slopeTextures, ...foamTextures]) {
+		texture.destroy();
+	}
+	for (const buffer of [waveNoiseBuffer, bitReversedIndicesBuffer, fftBufferA, fftBufferB]) {
+		buffer.destroy();
+	}
+}
+createWaveResources();
 
-export let preCompTexture = device.createTexture({
-  size: [Math.log2(settings.waterTileResolution), settings.waterTileResolution],
-  format: 'rgba32float',
-  usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
-});
+// The swell, turned by the shallows (see waveRefraction.js): for every point of a coarse grid over the land, how far behind a crest
+//		out in the open sea it runs and which way. Made again when the land is a new one, or the swell runs another way or at another
+//		period, or the sea is at another level: a few tens of milliseconds, now and then. Kept in a texture for the mesh pass,
+//		which bends the swell's crests round by it. x: the delay, world units, yz: the gradient of the arrival time, w: the depth
+export let refraction = { points: 2, cellSize: 1, data: new Float32Array(16) };
+export let refractionTexture = null;
+let lastRefractionSettings = null;
+const landIds = new WeakMap();
+let nextLandId = 1;
 
-//wont be available for debug view as its an inbetween
-export let pingPongIFFTTexture = device.createTexture({
-  label: "ping pong IFFT Texture",
-  size: [settings.waterTileResolution, settings.waterTileResolution],
-  format: 'rgba32float',
-  usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-});
+function updateRefraction() {
+	const land = settings.enableTerrain ? terrain.land : null;
+	if (land && !landIds.has(land)) landIds.set(land, nextLandId++);
+	const key = [land ? landIds.get(land) : 0, spectrum.swellDirection[0], spectrum.swellDirection[1], spectrum.swellPeak,
+				 settings.waterWorldPosY, settings.forestUnitsPerMetre, settings.terrainWorldSize].join(',');
+	if (key === lastRefractionSettings && refractionTexture) {
+		return;
+	}
+	lastRefractionSettings = key;
 
-export let finalIFFTOutput = device.createTexture({
-  label: "final IFFT Texture",
-  size: [settings.waterTileResolution, settings.waterTileResolution],
-  format: 'rgba32float',
-  usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-});
+	if (land) {
+		refraction = refractSwell({
+			heights: land.heights, lakes: land.lakes, points: land.points, worldSize: settings.terrainWorldSize,
+			seaLevel: settings.waterWorldPosY, unitsPerMetre: settings.forestUnitsPerMetre,
+			direction: spectrum.swellDirection, omega: spectrum.swellPeak, every: Math.max(1, Math.round((land.points - 1) / 256)),
+		});
+	} else {
+		// no land: open sea everywhere, the swell runs straight on (2 x 2 points of it)
+		const open = new Float32Array(16);
+		for (let p = 0; p < 4; p++) open.set([0, spectrum.swellDirection[0], spectrum.swellDirection[1], 1000], p * 4);
+		refraction = { points: 2, cellSize: 1, data: open };
+	}
+	if (!refractionTexture || refractionTexture.width != refraction.points) {
+		if (refractionTexture) refractionTexture.destroy();
+		refractionTexture = device.createTexture({
+			label: "water swell refraction Texture",
+			size: [refraction.points, refraction.points],
+			format: 'rgba32float',
+			usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+		});
+	}
+	device.queue.writeTexture({ texture: refractionTexture }, refraction.data, { bytesPerRow: refraction.points * 16, rowsPerImage: refraction.points }, [refraction.points, refraction.points]);
+}
 
-let prePingPongIFFTTexture = device.createTexture({
-  label: "pre ping pong IFFT Texture",
-  size: [settings.waterTileResolution, settings.waterTileResolution],
-  format: 'rgba32float',
-  usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+// The boulders standing in the sea near the camera, for the water round them (see Boulders In The Sea in c_water). boulders.js
+//		hands over how to find them (setRockFinder, from rotatingCube.js: water.js cant import boulders.js, it would go round in a circle)
+let findRocks = null;
+export function setRockFinder(finder) {
+	findRocks = finder;
+}
+const ROCK_REACH = 700;		// how far from the camera they are looked for
+const rockBuffer = device.createBuffer({
+	label: "water boulders uniform",
+	size: (ROCKS_MOST * 2 + 1) * 16,
+	usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 });
+const rockData = new Float32Array((ROCKS_MOST * 2 + 1) * 4);
+export const rockStats = { found: 0, used: 0 };	// how many boulders stand in the sea near the camera, and how many the water was told about
 
-export let preShiftFinalWaveHeightTexture = device.createTexture({
-  size: [settings.waterTileResolution, settings.waterTileResolution],
-  format: 'rgba32float',
-  usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
-});
+// which way the swell runs at a place: the gradient of the refraction map (as the mesh pass reads it), or straight on off the map
+function swellHeadingAt(x, z) {
+	const half = settings.terrainWorldSize * 0.5;
+	if (refraction.points < 3 || Math.abs(x) >= half || Math.abs(z) >= half) {
+		return spectrum.swellDirection;
+	}
+	const i = Math.round((x + half) / refraction.cellSize), j = Math.round((z + half) / refraction.cellSize);
+	const p = (j * refraction.points + i) * 4;
+	const length = Math.hypot(refraction.data[p + 1], refraction.data[p + 2]) || 1;
+	return [refraction.data[p + 1] / length, refraction.data[p + 2] / length];
+}
 
+// every boulder near the camera whose foot is under the still water and whose top is at it or over it (or only just under), the nearest first
+function gatherRocks() {
+	const rocks = [];
+	if (settings.enableBoulderWater && settings.enableBoulders && findRocks) {
+		const sea = settings.waterWorldPosY;
+		findRocks(settings.camPosX, settings.camPosZ, ROCK_REACH, (x, z, half, bottom, top) => {
+			if (bottom < sea + 0.5 && top > sea - 1.0) {
+				rocks.push([x, z, half * 1.15, top - sea, Math.hypot(x - settings.camPosX, z - settings.camPosZ)]);
+			}
+		});
+		rocks.sort((a, b) => a[4] - b[4]);
+	}
+	const count = Math.min(rocks.length, ROCKS_MOST);
+	rockStats.found = rocks.length;
+	rockStats.used = count;
+	for (let r = 0; r < count; r++) {
+		const [x, z, radius, standing] = rocks[r];
+		const runs = swellHeadingAt(x, z);
+		rockData.set([x, z, radius, standing, runs[0], runs[1], 0, 0], r * 8);
+	}
+	rockData.set([count, 0, 0, 0], ROCKS_MOST * 8);
+	device.queue.writeBuffer(rockBuffer, 0, rockData);
+}
 
-export let finalWaveHeightTexture = device.createTexture({
-  size: [settings.waterTileResolution, settings.waterTileResolution],
-  format: 'rgba32float',
-  usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
-});
-
-//spatial horizontal displacement after its own IFFT, x: Dx, y: Dz
-export let finalDisplacementTexture = device.createTexture({
-  size: [settings.waterTileResolution, settings.waterTileResolution],
-  format: 'rgba32float',
-  usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING,
-});
+// for the caustics under the sea (lightShafts.js): the finest cascade, and the world size of one tile of it
+export function causticWaves() {
+	return { texture: waveTextures[CASCADE_COUNT - 1], size: CASCADE_SIZES[CASCADE_COUNT - 1] };
+}
 
 //shore distance field, a low resolution companion to the top down height map. Sized off the height map, not the water tile, so it never needs rebuilding
 const shoreFieldResolution = settings.heightMapResolution / SHORE_FIELD_DOWNSCALE;
@@ -508,6 +578,15 @@ export let shoreDistanceTexture = device.createTexture({
 const linSampler = device.createSampler({
   magFilter: 'linear',
   minFilter: 'linear',
+});
+
+//the cascades' maps: linear, and wrapping round, as each cascade repeats
+export const waveSampler = device.createSampler({
+  label: "water wave cascade sampler",
+  magFilter: 'linear',
+  minFilter: 'linear',
+  addressModeU: 'repeat',
+  addressModeV: 'repeat',
 });
 
 // tile snapping. Infinite ocean needs tiles to spawn and lock according to camera position
@@ -548,12 +627,12 @@ function getwaterComputeInfo(tileOffsetX = 0, tileOffsetZ = 0, tile = null) {
 	waterCompBuffer.push(settings.windDirection[0]);
 	waterCompBuffer.push(settings.windDirection[1]);
 	
-	waterCompBuffer.push(settings.waterTileResolution);
+	waterCompBuffer.push(settings.waterCascadeResolution);	//the size of the FFT, for the butterfly passes
 	waterCompBuffer.push(settings.waterWaveSteepness);
 	waterCompBuffer.push(step);	
 	waterCompBuffer.push(settings.waterWorldPosY);
 	waterCompBuffer.push(settings.waterWaveLength);
-	waterCompBuffer.push(settings.waterOceanPlanePhysicalSize);
+	waterCompBuffer.push(0);	//oceanPlanePhysicalSize: nothing reads it now, each cascade has its own size (CASCADE_SIZES)
 	waterCompBuffer.push(settings.waterWindSpeed);
 	
 	waterCompBuffer.push(tileOffsetX);
@@ -576,25 +655,28 @@ function getwaterComputeInfo(tileOffsetX = 0, tileOffsetZ = 0, tile = null) {
 	waterCompBuffer.push(settings.waterChoppiness);
 	waterCompBuffer.push(settings.waterFoamThreshold);
 	waterCompBuffer.push(settings.waterFoamFade);
-	waterCompBuffer.push(settings.waterShoreZone);
-	waterCompBuffer.push(settings.waterShoreWaveHeight);
-	waterCompBuffer.push(settings.waterShoreBreakDistance);
-	waterCompBuffer.push(settings.waterShoreSteepness);
-	waterCompBuffer.push(settings.waterShoreWaveLength1);
-	waterCompBuffer.push(settings.waterShoreWaveLength2);
-	waterCompBuffer.push(settings.waterShoreWaveSpeed);
+	waterCompBuffer.push(settings.waterShallowRideHigh ? 1 : 0);
+	waterCompBuffer.push(settings.forestUnitsPerMetre);	//unitsPerMetre: the scale of the world, for the speed of the shore waves
 	waterCompBuffer.push(settings.waterFullDepth);
 	waterCompBuffer.push(settings.waterShallowRippleScale);
-	waterCompBuffer.push(settings.waterDeepSeaDepth);
-	waterCompBuffer.push(settings.waterSwellHeight);
-	waterCompBuffer.push(settings.waterSwellLength);
-	waterCompBuffer.push(settings.waterSwellSteepness);
-	waterCompBuffer.push(settings.waterSwellSpeed);
-	waterCompBuffer.push(settings.waterSwellShoreDistance);
 
 	// the terrain grid, so the mesh pass can look a world position up in the terrain's texture. A size of 0 tells it there is no land
 	waterCompBuffer.push(settings.enableTerrain ? settings.terrainWorldSize * 0.5 : 0);
 	waterCompBuffer.push(terrain.land.cellSize);
+
+	// the cascades, and where the shortest of their waves fade out: by a tile out from the camera, before the
+	//		coarser rings of tiles, whose cells are too big to carry them
+	waterCompBuffer.push(...CASCADE_SIZES);
+	waterCompBuffer.push(0.5 * settings.waterGridSize);
+	waterCompBuffer.push(1.0 * settings.waterGridSize);
+
+	// the swell, for the mesh pass to turn it by the refraction map, and how soon the wind cascades feel the bottom
+	//		(the middle of the band of wave numbers each carries)
+	waterCompBuffer.push(spectrum.swellDirection[0], spectrum.swellDirection[1], spectrum.swellPeak);
+	const bands = cascadeBands();
+	waterCompBuffer.push(Math.sqrt(bands[1][0] * bands[1][1]), Math.sqrt(bands[2][0] * bands[2][1]));
+	// and the heights of the swell and the wind sea out at sea, for the surf zone to hold them to the depth
+	waterCompBuffer.push(settings.waterSwellHeight, spectrum.windSeaHeight);
 	
 		
 	return new Float32Array(waterCompBuffer);
@@ -637,7 +719,8 @@ function waterMeshUniformBufferUpdates(numInstances, tileOffset) {
 		bufferResult.push(settings.waterHorizonFogDistance);
 		bufferResult.push(settings.waterClarityDepth);
 
-		bufferResult.push(0, 0, 0);	//(the vec4f after this has to start on a 16 byte boundary, and with these three in front of it it does)
+		//the still sea, and how high its crests stand, for the light through them
+		bufferResult.push(settings.waterWorldPosY, spectrum.crestHeight, 0);	//(the vec4f after this has to start on a 16 byte boundary, and with these three in front of it it does)
 
 		//and for the reflections it finds on the screen: the two numbers of the projection matrix that turn a depth back into a distance,
 		//		how strongly they show (not at all if there is no copy of the frame to find them in), and how far out they are looked for
@@ -666,6 +749,29 @@ function waterComputeBuffersUpdate(targetWaterComputeBuffer, tileX = 0, tileZ = 
 									gcInfo.buffer,
 									gcInfo.byteOffset,
 									gcInfo.byteLength);
+}
+
+// The foam a cascade makes on its own (c_waveMaps): one cascade alone squeezes the surface less than all of them together, so it
+//		breaks into foam a little sooner. And what it made is half gone after FOAM_HALF_LIFE of step time
+const CASCADE_FOAM_EASE = 0.45;
+const FOAM_HALF_LIFE = 2.0;
+const foamKeep = Math.pow(0.5, 0.025 / FOAM_HALF_LIFE);	// (step goes on by 0.025 a frame, see waterPass)
+
+// Each cascade's settings, in the order of CascadeUniforms (vfc_water.js)
+function writeCascadeUniforms() {
+	const bands = cascadeBands();
+	for (let c = 0; c < CASCADE_COUNT; c++) {
+		const values = new Float32Array(CASCADE_UNIFORM_FLOATS);	// (set throws if this list ever grows past the struct)
+		values.set([
+			settings.waterCascadeResolution, CASCADE_SIZES[c], bands[c][0], bands[c][1],
+			spectrum.unitsPerMetre, spectrum.depth, step % WAVE_REPEAT_TIME, WAVE_REPEAT_TIME,
+			spectrum.windDirection[0], spectrum.windDirection[1], spectrum.windSpeed, spectrum.windAlpha,
+			spectrum.windPeak, spectrum.swellAlpha, spectrum.swellPeak, spectrum.swellSpread,
+			spectrum.swellDirection[0], spectrum.swellDirection[1], c, settings.waterChoppiness,
+			settings.waterFoamThreshold + CASCADE_FOAM_EASE, settings.waterFoamFade, foamKeep, 0,
+		]);
+		device.queue.writeBuffer(cascadeUniformBuffers[c], 0, values);
+	}
 }
 
 // Writes the settings of every butterfly pass for this many stages into its slot: the horizontal passes, then the vertical,
@@ -786,14 +892,9 @@ const bindGroupCLayout = device.createBindGroupLayout({
 	}
   },
   {
-    binding: 4,								//inTexture for initial wave height map
+    binding: 4,								//the cascades' sampler
     visibility:  GPUShaderStage.COMPUTE,
-    storageTexture: {
-        format: "rgba32float",   // Format must match the swap chain texture
-		access: "read-only",
-		dimension: "2d",
-		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
-    }
+    sampler: {}
   },
   {
     binding: 5,
@@ -802,16 +903,30 @@ const bindGroupCLayout = device.createBindGroupLayout({
 		sampleType: 'depth',
 	},
   },
+  // the cascades' maps (c_waveMaps): 6, 10 and 12 the waves, 9, 11 and 13 their slopes
+  ...[6, 9, 10, 11, 12, 13].map((binding) => ({
+    binding: binding,
+    visibility: GPUShaderStage.COMPUTE,
+    texture: {}
+  })),
+  // the swell turned by the shallows (see waveRefraction.js)
   {
-    binding: 6,								//inTexture for final horizontal displacement
-    visibility:  GPUShaderStage.COMPUTE,
-    storageTexture: {
-        format: "rgba32float",
-		access: "read-only",
-		dimension: "2d",
-		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
-    }
+    binding: 16,
+    visibility: GPUShaderStage.COMPUTE,
+    texture: { sampleType: 'unfilterable-float' }
   },
+  // the boulders standing in the sea
+  {
+    binding: 17,
+    visibility: GPUShaderStage.COMPUTE,
+    buffer: {}
+  },
+  // and the foam the wind waves (cascades 1 and 2) have left
+  ...[14, 15].map((binding) => ({
+    binding: binding,
+    visibility: GPUShaderStage.COMPUTE,
+    texture: { sampleType: 'unfilterable-float' }
+  })),
   {
     binding: 7,								//inTexture for shore distance field
     visibility:  GPUShaderStage.COMPUTE,
@@ -897,66 +1012,32 @@ const bindGroupSpectrumCLayout = device.createBindGroupLayout({
   entries: [
   {
     binding: 0,
-    visibility: GPUShaderStage.COMPUTE,	//settings
-    buffer: {} 
+    visibility: GPUShaderStage.COMPUTE,	//this cascade's settings
+    buffer: {}
   },
   {
-    binding: 1,								//outTexture for PS
-    visibility:  GPUShaderStage.COMPUTE,
-    storageTexture: {
-        format: "rgba32float",   // Format must match the swap chain texture
-		access: "write-only",
-		dimension: "2d",
-		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
-    }
-  },
-  {
-    binding: 2,								//outTexture for PS
-    visibility:  GPUShaderStage.COMPUTE,
-    storageTexture: {
-        format: "rgba32float",   // Format must match the swap chain texture
-		access: "write-only",
-		dimension: "2d",
-		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
-    }
-  },
-  {
-	binding: 3,								
+	binding: 1,								//the gaussian random numbers
     visibility:  GPUShaderStage.COMPUTE,
     buffer: {
-		type: "storage",
-		access: "read-write",
+		type: "read-only-storage",
 	}
-  }
-  ]
-});
-
-const bindGroupConjCLayout = device.createBindGroupLayout({
-  label: "water Bind Group H0K Conjugate C Layout",
-  entries: [
-  {
-    binding: 0,
-    visibility: GPUShaderStage.COMPUTE,	//settings
-    buffer: {} 
   },
   {
-    binding: 1,								//in h0k
+    binding: 2,								//outTexture for h0(k) and conj(h0(-k)), every cascade
     visibility:  GPUShaderStage.COMPUTE,
     storageTexture: {
-        format: "rgba32float",   // Format must match the swap chain texture
-		access: "read-only",
+        format: "rgba32float",
+		access: "write-only",
 		dimension: "2d",
-		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
     }
   },
   {
-    binding: 2,								//outTexture for initialHeight
+    binding: 3,								//outTexture for the spectrum's picture
     visibility:  GPUShaderStage.COMPUTE,
     storageTexture: {
-        format: "rgba32float",   // Format must match the swap chain texture
+        format: "rgba32float",
 		access: "write-only",
 		dimension: "2d",
-		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
     }
   }
   ]
@@ -967,97 +1048,70 @@ const bindGroupRealizationCLayout = device.createBindGroupLayout({
   entries: [
   {
     binding: 0,
-    visibility: GPUShaderStage.COMPUTE,	//settings
-    buffer: {} 
+    visibility: GPUShaderStage.COMPUTE,	//this cascade's settings
+    buffer: {}
   },
   {
-    binding: 1,								//inTexture for initial Height
-    visibility:  GPUShaderStage.COMPUTE,
-    storageTexture: {
-        format: "rgba32float",   // Format must match the swap chain texture
-		access: "read-only",
-		dimension: "2d",
-		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
-    }
-  },
-  {
-    binding: 2,								//outTexture for waveHeightRealization
-    visibility:  GPUShaderStage.COMPUTE,
-    storageTexture: {
-        format: "rgba32float",   // Format must match the swap chain texture
-		access: "write-only",
-		dimension: "2d",
-		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
-    }
-  },
-  {
-    binding: 3,								//outTexture for water displacement realization
+    binding: 1,								//inTexture for h0(k) and conj(h0(-k))
     visibility:  GPUShaderStage.COMPUTE,
     storageTexture: {
         format: "rgba32float",
-		access: "write-only",
-		dimension: "2d",
-		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
-    }
-  }
-  ]
-});
-
-const bindGroupRtoACLayout = device.createBindGroupLayout({
-  label: "water Bind Group RtoA C Layout",
-  entries: [
-  {
-    binding: 0,
-    visibility: GPUShaderStage.COMPUTE,	//settings
-    buffer: {} 
-  },
-  {
-    binding: 1,								//outTexture for pingpong
-    visibility:  GPUShaderStage.COMPUTE,
-    storageTexture: {
-        format: "rgba32float",   // changed for high precisions
 		access: "read-only",
 		dimension: "2d",
-		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
     }
   },
   {
-	binding: 2,								
+	binding: 2,								//the butterfly passes' first buffer
     visibility:  GPUShaderStage.COMPUTE,
     buffer: {
 		type: "storage",
-		access: "read-write",
 	}
   }
   ]
 });
 
-const bindGroupAtoTCLayout = device.createBindGroupLayout({
-  label: "water Bind Group AtoT C Layout",
+const bindGroupWaveMapsCLayout = device.createBindGroupLayout({
+  label: "water Bind Group Wave Maps C Layout",
   entries: [
   {
     binding: 0,
-    visibility: GPUShaderStage.COMPUTE,	//settings
-    buffer: {} 
+    visibility: GPUShaderStage.COMPUTE,	//this cascade's settings
+    buffer: {}
   },
   {
-	binding: 1,								
+	binding: 1,								//the butterfly passes' result
     visibility:  GPUShaderStage.COMPUTE,
     buffer: {
-		type: "storage",
-		access: "read-write",
+		type: "read-only-storage",
 	}
   },
   {
-    binding: 2,
+    binding: 2,								//outTexture for the waves
     visibility:  GPUShaderStage.COMPUTE,
     storageTexture: {
-        format: "rgba32float",   // changed for high precisions
+        format: "rgba16float",
 		access: "write-only",
 		dimension: "2d",
-		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
     }
   },
+  {
+    binding: 3,								//outTexture for their slopes
+    visibility:  GPUShaderStage.COMPUTE,
+    storageTexture: {
+        format: "rgba16float",
+		access: "write-only",
+		dimension: "2d",
+    }
+  },
+  {
+    binding: 4,								//the foam, read and written back
+    visibility:  GPUShaderStage.COMPUTE,
+    storageTexture: {
+        format: "r32float",
+		access: "read-write",
+		dimension: "2d",
+    }
+  }
   ]
 });
 
@@ -1156,37 +1210,6 @@ const bindGroupButterflyCLayout = device.createBindGroupLayout({
   ]
 });
 
-const bindGroupShiftCLayout = device.createBindGroupLayout({
-  label: "water Bind Group Shift C Layout",
-  entries: [
-  {
-    binding: 0,
-    visibility: GPUShaderStage.COMPUTE,	//settings
-    buffer: {} 
-  },
-  {
-    binding: 1,								//inTexture for waveHeightRealization
-    visibility:  GPUShaderStage.COMPUTE,
-    storageTexture: {
-        format: "rgba32float",   // Format must match the swap chain texture
-		access: "read-only",
-		dimension: "2d",
-		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
-    }
-  },
-  {
-    binding: 2,								//outTexture for pingpong
-    visibility:  GPUShaderStage.COMPUTE,
-    storageTexture: {
-        format: "rgba32float",   // Format must match the swap chain texture
-		access: "write-only",
-		dimension: "2d",
-		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
-    }
-  }
-  ]
-});
-
 //multi bind group
 function makeVFBindGroupswater() {
 	return device.createBindGroup({
@@ -1256,16 +1279,21 @@ function makeCompBindGroupwater(vertexBuffer, indexBuffer, computeUniformBuffer)
 			},
 			{
 				binding: 4,
-				resource: finalWaveHeightTexture.createView()
+				resource: waveSampler
 			},
 			{
 				binding: 5,
 				resource: scene.heightMapView
 			},
-			{
-				binding: 6,
-				resource: finalDisplacementTexture.createView()
-			},
+			// the cascades' maps, each wave map then its slopes
+			...[[6, 9], [10, 11], [12, 13]].flatMap(([waveBinding, slopeBinding], c) => [
+				{ binding: waveBinding, resource: waveTextures[c].createView() },
+				{ binding: slopeBinding, resource: slopeTextures[c].createView() },
+			]),
+			{ binding: 14, resource: foamTextures[1].createView() },
+			{ binding: 15, resource: foamTextures[2].createView() },
+			{ binding: 16, resource: refractionTexture.createView() },
+			{ binding: 17, resource: { buffer: rockBuffer } },
 			{
 				binding: 7,
 				resource: shoreDistanceTexture.createView()
@@ -1331,128 +1359,84 @@ function makeCompBindGroupShoreDistanceWater() {
 	return result;
 }
 
-function makeCompBindGroupSpectrumWater() {
-	
-	const result = 
+function makeCompBindGroupSpectrumWater(c) {
+
+	const result =
 		device.createBindGroup({
-			label: "water Comp spectrum bind group",
+			label: `water Comp spectrum bind group cascade ${c}`,
 			layout: bindGroupSpectrumCLayout,
 			entries: [
 			{
 				binding: 0,
-				resource: { buffer: uniformBufferComputeWaterPreMesh }
+				resource: { buffer: cascadeUniformBuffers[c] }
 			},
 			{
 				binding: 1,
-				resource: phillipsSpectrumTexture.createView()
+				resource: { buffer: waveNoiseBuffer }
 			},
 			{
 				binding: 2,
-				resource: h0k.createView()
+				resource: initialSpectrumTexture.createView()
 			},
 			{
 				binding: 3,
-				resource: { buffer: uniformBufferComplexGaussian }
+				resource: oceanSpectrumTexture.createView()
 			}
 			]
 		});
 	return result;
 }
 
-function makeCompBindGroupConjWater() {
-	
-	const result = 
-		device.createBindGroup({
-			label: "water Comp Conj bind group",
-			layout: bindGroupConjCLayout,
-			entries: [
-			{
-				binding: 0,
-				resource: { buffer: uniformBufferComputeWaterPreMesh }
-			},
-			{
-				binding: 1,
-				resource: h0k.createView()
-			},
-			{
-				binding: 2,
-				resource: initialWaterHeightMap.createView()
-			}
-			]
-		});
-	return result;
-}
+function makeCompBindGroupRealizationWater(c) {
 
-function makeCompBindGroupRealizationWater() {
-	
-	const result = 
+	const result =
 		device.createBindGroup({
-			label: "water Comp Realization bind group",
+			label: `water Comp Realization bind group cascade ${c}`,
 			layout: bindGroupRealizationCLayout,
 			entries: [
 			{
 				binding: 0,
-				resource: { buffer: uniformBufferComputeWaterPreMesh }
+				resource: { buffer: cascadeUniformBuffers[c] }
 			},
 			{
 				binding: 1,
-				resource: initialWaterHeightMap.createView()
+				resource: initialSpectrumTexture.createView()
 			},
 			{
 				binding: 2,
-				resource: waveHeightRealization.createView()
-			},
-			{
-				binding: 3,
-				resource: displacementRealizationTexture.createView()
+				resource: { buffer: fftBufferA }
 			}
 			]
 		});
 	return result;
 }
 
-function makeCompBindGroupRtoAWater(inTexture) {
+function makeCompBindGroupWaveMapsWater(c) {
 
 	const result =
 		device.createBindGroup({
-			label: "water Comp RtoA bind group",
-			layout: bindGroupRtoACLayout,
+			label: `water Comp Wave Maps bind group cascade ${c}`,
+			layout: bindGroupWaveMapsCLayout,
 			entries: [
 			{
 				binding: 0,
-				resource: { buffer: uniformBufferComputeWaterPreMesh }
+				resource: { buffer: cascadeUniformBuffers[c] }
 			},
 			{
 				binding: 1,
-				resource: inTexture.createView()
+				resource: { buffer: fftBufferA }
 			},
 			{
 				binding: 2,
-				resource: { buffer: uniformBufferRtoA }
-			}
-			]
-		});
-	return result;
-}
-
-function makeCompBindGroupAtoTWater(inPingPong) {
-	
-	const result = 
-		device.createBindGroup({
-			label: "water Comp AtoT bind group",
-			layout: bindGroupAtoTCLayout,
-			entries: [
-			{
-				binding: 0,
-				resource: { buffer: uniformBufferComputeWaterPreMesh }
+				resource: waveTextures[c].createView()
 			},
 			{
-				binding: 1,
-				resource: { buffer: inPingPong }
+				binding: 3,
+				resource: slopeTextures[c].createView()
 			},
 			{
-				binding: 2,
-				resource: finalIFFTOutput.createView()
+				binding: 4,
+				resource: foamTextures[c].createView()
 			}
 			]
 		});
@@ -1460,8 +1444,8 @@ function makeCompBindGroupAtoTWater(inPingPong) {
 }
 
 function makeCompBindGroupButterflyPreCompWater() {
-	
-	const result = 
+
+	const result =
 		device.createBindGroup({
 			label: "water Comp Butterfly Pre Comp bind group",
 			layout: bindGroupButterflyPreCompCLayout,
@@ -1480,16 +1464,16 @@ function makeCompBindGroupButterflyPreCompWater() {
 			},
 			{
 				binding: 3,
-				resource: { buffer: uniformBufferBitReversedIndices }
+				resource: { buffer: bitReversedIndicesBuffer }
 			}
 			]
 		});
 	return result;
 }
 
-function makeCompBindGroupButterflyWater(/*inTexture, outTexture*/) {
-	
-	const result = 
+function makeCompBindGroupButterflyWater() {
+
+	const result =
 		device.createBindGroup({
 			label: "water Comp Butterfly bind group",
 			layout: bindGroupButterflyCLayout,
@@ -1498,23 +1482,13 @@ function makeCompBindGroupButterflyWater(/*inTexture, outTexture*/) {
 				binding: 0,
 				resource: { buffer: uniformBufferComputeWaterPreMesh }
 			},
-			/*
 			{
 				binding: 1,
-				resource: inTexture.createView()
+				resource: { buffer: fftBufferA }
 			},
 			{
 				binding: 2,
-				resource: outTexture.createView()
-			},
-			*/
-			{
-				binding: 1,
-				resource: { buffer: uniformBufferRtoA }
-			},
-			{
-				binding: 2,
-				resource: { buffer: uniformBufferPingPong }
+				resource: { buffer: fftBufferB }
 			},
 			{
 				binding: 3,
@@ -1523,30 +1497,6 @@ function makeCompBindGroupButterflyWater(/*inTexture, outTexture*/) {
 			{
 				binding: 4,
 				resource: preCompTexture.createView()
-			}
-			]
-		});
-	return result;
-}
-
-function makeCompBindGroupShiftWater(inTexture, outTexture) {
-	
-	const result = 
-		device.createBindGroup({
-			label: "water Comp Shift bind group",
-			layout: bindGroupShiftCLayout,
-			entries: [
-			{
-				binding: 0,
-				resource: { buffer: uniformBufferComputeWaterPreMesh }
-			},
-			{
-				binding: 1,
-				resource: inTexture.createView()
-			},
-			{
-				binding: 2,
-				resource: outTexture.createView()
 			}
 			]
 		});
@@ -1565,7 +1515,7 @@ function createVFBindGroupswater() {
 	return cachedBindGroup('vf', [skyViewLUTtexture, screenEffects.sceneColorTexture, screenEffects.sceneDepthTexture, clouds.cloudCoverageView], makeVFBindGroupswater);
 }
 function createCompBindGroupwater(vertexBuffer, indexBuffer, computeUniformBuffer) {
-	return cachedBindGroup('mesh' + idOf(computeUniformBuffer), [vertexBuffer, indexBuffer, computeUniformBuffer, finalWaveHeightTexture, scene.heightMapView, finalDisplacementTexture, shoreDistanceTexture, terrain.terrainWaterTexture],
+	return cachedBindGroup('mesh' + idOf(computeUniformBuffer), [vertexBuffer, indexBuffer, computeUniformBuffer, ...waveTextures, ...slopeTextures, ...foamTextures, refractionTexture, scene.heightMapView, shoreDistanceTexture, terrain.terrainWaterTexture],
 		() => makeCompBindGroupwater(vertexBuffer, indexBuffer, computeUniformBuffer));
 }
 function createCompBindGroupShoreScanWater() {
@@ -1574,29 +1524,20 @@ function createCompBindGroupShoreScanWater() {
 function createCompBindGroupShoreDistanceWater() {
 	return cachedBindGroup('shoreDistance', [shoreScanTexture, shoreDistanceTexture], makeCompBindGroupShoreDistanceWater);
 }
-function createCompBindGroupSpectrumWater() {
-	return cachedBindGroup('spectrum', [phillipsSpectrumTexture, h0k, uniformBufferComplexGaussian], makeCompBindGroupSpectrumWater);
+function createCompBindGroupSpectrumWater(c) {
+	return cachedBindGroup('spectrum' + c, [initialSpectrumTexture, oceanSpectrumTexture, waveNoiseBuffer], () => makeCompBindGroupSpectrumWater(c));
 }
-function createCompBindGroupConjWater() {
-	return cachedBindGroup('conj', [h0k, initialWaterHeightMap], makeCompBindGroupConjWater);
+function createCompBindGroupRealizationWater(c) {
+	return cachedBindGroup('realization' + c, [initialSpectrumTexture, fftBufferA], () => makeCompBindGroupRealizationWater(c));
 }
-function createCompBindGroupRealizationWater() {
-	return cachedBindGroup('realization', [initialWaterHeightMap, waveHeightRealization, displacementRealizationTexture], makeCompBindGroupRealizationWater);
-}
-function createCompBindGroupRtoAWater(inTexture) {
-	return cachedBindGroup('rtoa' + idOf(inTexture), [inTexture, uniformBufferRtoA], () => makeCompBindGroupRtoAWater(inTexture));
-}
-function createCompBindGroupAtoTWater(inPingPong) {
-	return cachedBindGroup('atot' + idOf(inPingPong), [inPingPong, finalIFFTOutput], () => makeCompBindGroupAtoTWater(inPingPong));
+function createCompBindGroupWaveMapsWater(c) {
+	return cachedBindGroup('waveMaps' + c, [fftBufferA, waveTextures[c], slopeTextures[c], foamTextures[c]], () => makeCompBindGroupWaveMapsWater(c));
 }
 function createCompBindGroupButterflyPreCompWater() {
-	return cachedBindGroup('precomp', [preCompTexture, uniformBufferBitReversedIndices], makeCompBindGroupButterflyPreCompWater);
+	return cachedBindGroup('precomp', [preCompTexture, bitReversedIndicesBuffer], makeCompBindGroupButterflyPreCompWater);
 }
 function createCompBindGroupButterflyWater() {
-	return cachedBindGroup('butterfly', [uniformBufferRtoA, uniformBufferPingPong, preCompTexture], makeCompBindGroupButterflyWater);
-}
-function createCompBindGroupShiftWater(inTexture, outTexture) {
-	return cachedBindGroup('shift' + idOf(inTexture) + ':' + idOf(outTexture), [inTexture, outTexture], () => makeCompBindGroupShiftWater(inTexture, outTexture));
+	return cachedBindGroup('butterfly', [fftBufferA, fftBufferB, preCompTexture], makeCompBindGroupButterflyWater);
 }
 
 const waterVFPipelineLayout = device.createPipelineLayout({
@@ -1620,13 +1561,8 @@ const waterShoreDistanceCompPipelineLayout = device.createPipelineLayout({
 });
 
 const waterSpectrumCompPipelineLayout = device.createPipelineLayout({
-  label: "water initial height map Pipeline Layout",
+  label: "water initial spectrum Pipeline Layout",
   bindGroupLayouts: [ bindGroupSpectrumCLayout ],
-});
-
-const waterConjCompPipelineLayout = device.createPipelineLayout({
-  label: "water h0k Conj add Pipeline Layout",
-  bindGroupLayouts: [ bindGroupConjCLayout ],
 });
 
 const waterRealizationCompPipelineLayout = device.createPipelineLayout({
@@ -1639,24 +1575,14 @@ const waterButterflyCompPreCompPipelineLayout = device.createPipelineLayout({
   bindGroupLayouts: [ bindGroupButterflyPreCompCLayout ],
 });
 
-const waterRtoACompPipelineLayout = device.createPipelineLayout({
-  label: "water RtoA Pipeline Layout",
-  bindGroupLayouts: [ bindGroupRtoACLayout ],
-});
-
-const waterAtoTCompPipelineLayout = device.createPipelineLayout({
-  label: "water AtoT Pipeline Layout",
-  bindGroupLayouts: [ bindGroupAtoTCLayout ],
-});
-
 const waterButterflyCompPipelineLayout = device.createPipelineLayout({
   label: "water 2D IFFT Pipeline Layout",
   bindGroupLayouts: [ bindGroupButterflyCLayout ],
 });
 
-const waterShiftCompPipelineLayout = device.createPipelineLayout({
-  label: "water Shift Pipeline Layout",
-  bindGroupLayouts: [ bindGroupShiftCLayout ],
+const waterWaveMapsCompPipelineLayout = device.createPipelineLayout({
+  label: "water Wave Maps Pipeline Layout",
+  bindGroupLayouts: [ bindGroupWaveMapsCLayout ],
 });
 
 
@@ -1679,7 +1605,7 @@ function recreateWaterPipeline(inputTopology) {
 	vertex: {							// vertex stage details
 		module: waterVertexShaderModule,	
 		entryPoint: "vertexMain",		// our name of function, as you can have multiple vertex/fragment functions in one shader module
-		buffers: [scene.vertexBufferLayout]	// GPUVertexBufferLayout that describe data packed into vertex buffers used
+		buffers: [waterVertexBufferLayout]	// GPUVertexBufferLayout that describe data packed into vertex buffers used
 	},
 	fragment: {							// fragment stage details
 		module: waterFragShaderModule,		
@@ -1748,15 +1674,6 @@ const waterSpectrumComputePipeline = device.createComputePipeline({
 	},
 });
 
-const waterConjComputePipeline = device.createComputePipeline({
-  label: "water Conj C pipeline",
-  layout: waterConjCompPipelineLayout,	//allows for use of same bind groups as the renderpipeline
-	compute: {
-		module: waterConjComputeShaderModule,
-		entryPoint: "computeMain",
-	},
-});
-
 const waterRealizationComputePipeline = device.createComputePipeline({
   label: "water Realization C pipeline",
   layout: waterRealizationCompPipelineLayout,	//allows for use of same bind groups as the renderpipeline
@@ -1775,24 +1692,6 @@ const waterButterflyPreCompComputePipeline = device.createComputePipeline({
 	},
 });
 
-const waterRtoAComputePipeline = device.createComputePipeline({
-  label: "water RtoA C pipeline",
-  layout: waterRtoACompPipelineLayout,	//allows for use of same bind groups as the renderpipeline
-	compute: {
-		module: waterRealizationToArrayComputeShaderModule,
-		entryPoint: "computeMain",
-	},
-});
-
-const waterAtoTComputePipeline = device.createComputePipeline({
-  label: "water AtoT C pipeline",
-  layout: waterAtoTCompPipelineLayout,	//allows for use of same bind groups as the renderpipeline
-	compute: {
-		module: waterAtoTComputeShaderModule,
-		entryPoint: "computeMain",
-	},
-});
-
 const waterButterflyComputePipeline = device.createComputePipeline({
   label: "water Butterfly C pipeline",
   layout: waterButterflyCompPipelineLayout,	//allows for use of same bind groups as the renderpipeline
@@ -1802,11 +1701,11 @@ const waterButterflyComputePipeline = device.createComputePipeline({
 	},
 });
 
-const waterShiftComputePipeline = device.createComputePipeline({
-  label: "water Shift C pipeline",
-  layout: waterShiftCompPipelineLayout,	//allows for use of same bind groups as the renderpipeline
+const waterWaveMapsComputePipeline = device.createComputePipeline({
+  label: "water Wave Maps C pipeline",
+  layout: waterWaveMapsCompPipelineLayout,
 	compute: {
-		module: waterShiftPassComputeShaderModule,
+		module: waterWaveMapsComputeShaderModule,
 		entryPoint: "computeMain",
 	},
 });
@@ -1817,8 +1716,69 @@ function redirectWindDirectionTemp() {
 	//settings.windDirection[1] = Math.sin(step * 0.00053);
 }
 
+// The surface at a few places, read back to this side for anything floating on it (boat.js). The GPU makes the waves, and only
+//		it knows where the surface is: so each frame the places asked for (setWaterProbes) go through the same sums as the mesh
+//		(probeMain in c_water) and come back a frame or two later (mapAsync, never waited for). waterProbes holds the last that came
+//		back, 8 numbers a place: x, z asked about, the height of the surface there, its normal (x, y, z), the depth of the still
+//		water, the foam. In world units
+export const PROBES_MOST = 64;
+const PROBE_FLOATS = 8;
+export const waterProbes = { count: 0, data: new Float32Array(PROBES_MOST * PROBE_FLOATS), at: 0, frames: 0 };
+const probeAsk = new Float32Array(PROBES_MOST * PROBE_FLOATS);
+let probeAskCount = 0;
+const probeBuffer = device.createBuffer({ label: "water probes", size: probeAsk.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
+const probeNoIndices = device.createBuffer({ label: "water probes (no index data)", size: 16, usage: GPUBufferUsage.STORAGE });
+const probeReadBuffers = [0, 1, 2].map((k) => ({ buffer: device.createBuffer({ label: `water probes read back ${k}`, size: probeAsk.byteLength, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ }), busy: false }));
+const waterProbePipeline = device.createComputePipeline({
+	label: "water probes C pipeline",
+	layout: waterCompPipelineLayout,
+	compute: { module: waterComputeShaderModule, entryPoint: "probeMain" },
+});
+
+// the places to read the surface at from now on: [[x, z], ...] (world units), up to PROBES_MOST. The results come back in the same order
+export function setWaterProbes(places) {
+	probeAskCount = Math.min(places.length, PROBES_MOST);
+	for (let i = 0; i < probeAskCount; i++) {
+		probeAsk[i * PROBE_FLOATS] = places[i][0];
+		probeAsk[i * PROBE_FLOATS + 1] = places[i][1];
+	}
+}
+
+// in waterPass, once the tiles are made: the probes, through the uniforms of the tile under the camera, and copied out to be read
+function probeWater(aEncoder, uniformBuffer) {
+	if (probeAskCount == 0) {
+		return null;
+	}
+	device.queue.writeBuffer(probeBuffer, 0, probeAsk, 0, probeAskCount * PROBE_FLOATS);
+	const probePass = aEncoder.beginComputePass({ timestampWrites: profiler.timestamps('Probes', 'c_water probeMain') });
+	probePass.setPipeline(waterProbePipeline);
+	probePass.setBindGroup(0, cachedBindGroup('probes', [uniformBuffer, ...waveTextures, ...slopeTextures, ...foamTextures, refractionTexture, scene.heightMapView, shoreDistanceTexture, terrain.terrainWaterTexture],
+		() => makeCompBindGroupwater(probeBuffer, probeNoIndices, uniformBuffer)));
+	probePass.dispatchWorkgroups(Math.ceil(probeAskCount / WATER_WORKGROUP_SIZE[0]));
+	probePass.end();
+	const read = probeReadBuffers.find((r) => !r.busy);
+	if (!read) {
+		return null;	// (all three still on their way back: this frame's is not read)
+	}
+	aEncoder.copyBufferToBuffer(probeBuffer, 0, read.buffer, 0, probeAskCount * PROBE_FLOATS * 4);
+	return { read, count: probeAskCount };
+}
+
+// after the submit: when it is back, it is the latest
+function readProbesBack(sent) {
+	sent.read.busy = true;
+	sent.read.buffer.mapAsync(GPUMapMode.READ, 0, sent.count * PROBE_FLOATS * 4).then(() => {
+		waterProbes.data.set(new Float32Array(sent.read.buffer.getMappedRange(0, sent.count * PROBE_FLOATS * 4)));
+		sent.read.buffer.unmap();
+		waterProbes.count = sent.count;
+		waterProbes.at = performance.now();
+		waterProbes.frames++;
+		sent.read.busy = false;
+	}, () => { sent.read.busy = false; });
+}
+
 // The mesh of the tile under the camera, as the water's compute pass last left it, for the spray to look for crests in (particles.js):
-//		8 numbers a vertex, the 4th of them the foam. Nothing while the tiles are being made again
+//		9 numbers a vertex, the 4th of them the foam. Nothing while the tiles are being made again
 export function waterCrestVertices() {
 	if (resolutionRebuildPending || waterVertexBuffers.length == 0 || waterVertexBuffers.length != waterTileLayout.length) {
 		return null;
@@ -1829,39 +1789,18 @@ export function waterCrestVertices() {
 
 let lastWaterTileResolution = settings.waterTileResolution;
 let lastWaterTileInstanceCount = settings.waterTileInstanceCount;
-let lastWaterOceanPlanePhysicalSize = settings.waterOceanPlanePhysicalSize;
 let lastWaterGridSize = settings.waterGridSize;
-let lastWaterWindSpeed = settings.waterWindSpeed;
-let lastWaterWaveLength = settings.waterWaveLength;
-let lastWindDirection = [settings.windDirection[0], settings.windDirection[1]];
+let lastWaterCascadeResolution = settings.waterCascadeResolution;
 let resolutionRebuildPending = false;
 
 async function recreateResolutionDependentResources() {
 	// wait for GPU to finish all submitted work before destroying anything
     await device.queue.onSubmittedWorkDone();
-	
-    // destroy old textures
-    phillipsSpectrumTexture.destroy();
-    h0k.destroy();
-    h0Minusk.destroy();
-    initialWaterHeightMap.destroy();
-    hkt.destroy();
-    waveHeightRealization.destroy();
-	displacementRealizationTexture.destroy();
-    preCompTexture.destroy();
-    pingPongIFFTTexture.destroy();
-    finalIFFTOutput.destroy();
-    prePingPongIFFTTexture.destroy();
-    preShiftFinalWaveHeightTexture.destroy();
-    finalWaveHeightTexture.destroy();
-    finalDisplacementTexture.destroy();
 
-    // destroy old buffers
-    uniformBufferRtoA.destroy();
-    uniformBufferPingPong.destroy();
-    uniformBufferBitReversedIndices.destroy();
-    uniformBufferComplexGaussian.destroy();
-	
+    // the cascades' textures and buffers, made again at the new resolution
+	destroyWaveResources();
+	createWaveResources();
+
 	// destroy old tile buffers
     for (let i = 0; i < waterVertexBuffers.length; i++) {
         waterVertexBuffers[i].destroy();
@@ -1869,47 +1808,14 @@ async function recreateResolutionDependentResources() {
     }
     waterVertexBuffers.length = 0;
     waterIndexBuffers.length = 0;
-	
+
 	for (let i = 0; i < waterComputeUniformBuffers.length; i++) {
 		waterComputeUniformBuffers[i].destroy();
 	}
 	waterComputeUniformBuffers.length = 0;
 
-    // recreate with new resolution
-    const res = settings.waterTileResolution;
-    const len2 = res * res * 2 * 4;
-    const stages = Math.log2(res);
-	
 	totalTileCount = settings.waterTileInstanceCount * settings.waterTileInstanceCount;
 	waterTileLayout = getTileLayout();
-
-    phillipsSpectrumTexture = device.createTexture({ size: [res, res], format: 'rgba32float', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING });
-    h0k                     = device.createTexture({ size: [res, res], format: 'rgba32float', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING });
-    h0Minusk                = device.createTexture({ size: [res, res], format: 'rgba32float', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING });
-    initialWaterHeightMap   = device.createTexture({ size: [res, res], format: 'rgba32float', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING });
-    hkt                     = device.createTexture({ size: [res, res], format: 'rgba32float', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING });
-    waveHeightRealization   = device.createTexture({ label: "wave Height Realization Texture", size: [res, res], format: 'rgba32float', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING });
-    displacementRealizationTexture = device.createTexture({ label: "water displacement realization Texture for choppy waves", size: [res, res], format: 'rgba32float', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING });
-    preCompTexture          = device.createTexture({ size: [stages, res], format: 'rgba32float', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING });
-    pingPongIFFTTexture     = device.createTexture({ label: "ping pong IFFT Texture", size: [res, res], format: 'rgba32float', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING });
-    finalIFFTOutput         = device.createTexture({ label: "final IFFT Texture", size: [res, res], format: 'rgba32float', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING });
-    prePingPongIFFTTexture  = device.createTexture({ label: "pre ping pong IFFT Texture", size: [res, res], format: 'rgba32float', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING });
-    preShiftFinalWaveHeightTexture = device.createTexture({ size: [res, res], format: 'rgba32float', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING });
-    finalWaveHeightTexture  = device.createTexture({ size: [res, res], format: 'rgba32float', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING });
-    finalDisplacementTexture = device.createTexture({ size: [res, res], format: 'rgba32float', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.STORAGE_BINDING });
-
-    // recreate buffers
-    const newComplexGauss = new Float32Array(complexGaussianRandomForH0(res * res));
-    const newBitReversed  = new Float32Array(bitReversedIndicies(res));
-
-    uniformBufferComplexGaussian = device.createBuffer({ label: "water Spectrum Compute Complex Gaussian Array Buffer", size: newComplexGauss.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-    device.queue.writeBuffer(uniformBufferComplexGaussian, 0, newComplexGauss);
-
-    uniformBufferBitReversedIndices = device.createBuffer({ label: "water butterfly bit reversed indices Array Buffer", size: newBitReversed.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-    device.queue.writeBuffer(uniformBufferBitReversedIndices, 0, newBitReversed);
-
-    uniformBufferRtoA    = device.createBuffer({ label: "water Realization to Array Buffer", size: len2, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
-    uniformBufferPingPong = device.createBuffer({ label: "water Ping Pong Array Buffer", size: len2, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
 
 	// recreate tile vertex/index buffers
     for (let i = 0; i < totalTileCount; i++) {
@@ -1930,25 +1836,17 @@ async function recreateResolutionDependentResources() {
         }));
     }
 
-    // reset step so h0k gets regenerated next frame
-    step = 0;
+    // the new textures have no spectrum in them yet
+	spectrumDirty = true;
 	resolutionRebuildPending = false;
 }
 
-// Runs the 2D IFFT on a frequency domain texture and returns the buffer holding the result (still needs the array to texture and shift passes)
-//		every IFFT shares the same two ping pong buffers, so a result has to be read out of them before the next IFFT starts
-function waterIFFT(aEncoder, spectrumTexture, stages) {
-	
-	//convert RGBA32Float to F32ARRAY for speed and RW access
-	const computeRtoAPass = aEncoder.beginComputePass({ timestampWrites: profiler.timestamps('To Array', 'c_RealizationToArray') });
-	computeRtoAPass.setPipeline(waterRtoAComputePipeline);
-	computeRtoAPass.setBindGroup(0, createCompBindGroupRtoAWater(spectrumTexture));
-	computeRtoAPass.dispatchWorkgroups(settings.waterTileResolution  / FFT_WORKGROUP_SIZE[0],
-											settings.waterTileResolution / FFT_WORKGROUP_SIZE[1]);
-	computeRtoAPass.end();
-	
-	// ping pong a buffer between the shader thats capable of both horizontal or vertical passes. Each stage is one dispatch
-	//		with its own settings (its slot, see writeButterflySlots); the GPU finishes one dispatch's writes before the next reads them
+// The 2D IFFT of every field of every cascade at once (2 layers of the buffers a cascade), out of fftBufferA and back into it
+//		ping pong a buffer between the shader thats capable of both horizontal or vertical passes. Each stage is one dispatch
+//		with its own settings (its slot, see writeButterflySlots); the GPU finishes one dispatch's writes before the next reads them
+//		(the result is in whichever buffer the last stage wrote: there are always an even number of them, so the one it started in)
+function waterIFFT(aEncoder, stages) {
+	const res = settings.waterCascadeResolution;
 	const bindButterflyCGroup = createCompBindGroupButterflyWater();
 	writeButterflySlots(stages);
 	for (let direction = 0; direction < 2; direction++) {
@@ -1956,180 +1854,104 @@ function waterIFFT(aEncoder, spectrumTexture, stages) {
 		computeIFFTPass.setPipeline(waterButterflyComputePipeline);
 		for (let stage = 0; stage < stages; stage++) {
 			computeIFFTPass.setBindGroup(0, bindButterflyCGroup, [butterflySlot(direction, stage)]);
-			computeIFFTPass.dispatchWorkgroups(settings.waterTileResolution / FFT_WORKGROUP_SIZE[0],
-												settings.waterTileResolution / FFT_WORKGROUP_SIZE[1]);
+			computeIFFTPass.dispatchWorkgroups(res / FFT_WORKGROUP_SIZE[0], res / FFT_WORKGROUP_SIZE[1], CASCADE_COUNT * 2);
 		}
 		computeIFFTPass.end();
 	}
-	
-	// the result is in whichever buffer the last stage wrote: there are always an even number of them (horizontal and vertical), so the one it started in
-	return uniformBufferRtoA;
 }
 
 export function waterPass(mainpassDepthTexture) {
-	
+
 	if (settings.waterTileResolution !== lastWaterTileResolution ||
 		settings.waterTileInstanceCount !== lastWaterTileInstanceCount ||
-		settings.waterGridSize !== lastWaterGridSize) {
-		
+		settings.waterGridSize !== lastWaterGridSize ||
+		settings.waterCascadeResolution !== lastWaterCascadeResolution) {
+
         lastWaterTileResolution = settings.waterTileResolution;
 		lastWaterTileInstanceCount = settings.waterTileInstanceCount;
 		lastWaterGridSize = settings.waterGridSize;
+		lastWaterCascadeResolution = settings.waterCascadeResolution;
 
         if (!resolutionRebuildPending) {
             resolutionRebuildPending = true;
             recreateResolutionDependentResources(); // fire async, don't await
         }
     }
-	
-	// force recalculate H0K due to phillips spectrum input change
-	if (settings.waterOceanPlanePhysicalSize !== lastWaterOceanPlanePhysicalSize ||
-		settings.waterWindSpeed !== lastWaterWindSpeed ||
-		settings.windDirection[0] !== lastWindDirection[0] || settings.windDirection[1] !== lastWindDirection[1] ||	//the waves run with the wind
-		settings.waterWaveLength !== lastWaterWaveLength) {
 
-		lastWindDirection = [settings.windDirection[0], settings.windDirection[1]];
-		
-		lastWaterOceanPlanePhysicalSize = settings.waterOceanPlanePhysicalSize;
-		lastWaterWindSpeed = settings.waterWindSpeed;
-		lastWaterWaveLength = settings.waterWaveLength;
-		step = 0;
+	// make the spectrum again when anything it is made from has changed. The time carries on: the waves change, the clock doesnt jump
+	const spectrumSettings = spectrumSettingsKey();
+	if (spectrumSettings !== lastSpectrumSettings) {
+		lastSpectrumSettings = spectrumSettings;
+		spectrum = spectrumParameters();
+		spectrumDirty = true;
 	}
-	
+
 	// skip the entire pass while rebuild is in flight
     if (resolutionRebuildPending) return;
-	
-	currentFrameTime = performance.now();
-	
+
+	updateRefraction();
+	gatherRocks();
+
 	//redirectWindDirectionTemp();	//just for testing wave redirection from CPU side
-	
+
 	if(waterPipelineUpdateFlag) {
 		recreateWaterPipeline(waterPipelineTopologyType)
 		waterPipelineUpdateFlag = false;
 	}
-	
+
 	// Start a compute pass place and animate the instances
-	waterComputeBuffersUpdate(uniformBufferComputeWaterPreMesh);	// !!!!!! for cascades pre mesh UBO will have to be updated on size
-	
+	waterComputeBuffersUpdate(uniformBufferComputeWaterPreMesh);
+
+	step += 0.025;
+	writeCascadeUniforms();
+
 	// everything the water does in a frame goes in this one encoder, and is sent off in one submit at the end (see waterIFFT)
 	const aEncoder = device.createCommandEncoder();
+	const res = settings.waterCascadeResolution;
+	const stages = Math.log2(res);
+	const fftDispatch = res / FFT_WORKGROUP_SIZE[0];
 
-	//initial Height Map h0(k)
-	if(step == 0)
-	{
-		
-		//h0k
-		const computeInitialHeightPass = aEncoder.beginComputePass({ timestampWrites: profiler.timestamps('Spectrum h0(k)', 'c_h0k') });
-		const bindSpectrumCGroup = createCompBindGroupSpectrumWater();
+	//initial spectrum h0(k) and conj(h0(-k)), and the twiddle factors. Only when the settings or the resolution have changed
+	if (spectrumDirty) {
+		const computeInitialHeightPass = aEncoder.beginComputePass({ timestampWrites: profiler.timestamps('Spectrum h0(k)', 'c_spectrum') });
 		computeInitialHeightPass.setPipeline(waterSpectrumComputePipeline);
-		computeInitialHeightPass.setBindGroup(0, bindSpectrumCGroup);
-		computeInitialHeightPass.dispatchWorkgroups(settings.waterTileResolution / FFT_WORKGROUP_SIZE[0],
-													settings.waterTileResolution / FFT_WORKGROUP_SIZE[1]);
+		for (let c = 0; c < CASCADE_COUNT; c++) {
+			computeInitialHeightPass.setBindGroup(0, createCompBindGroupSpectrumWater(c));
+			computeInitialHeightPass.dispatchWorkgroups(fftDispatch, fftDispatch);
+		}
 		computeInitialHeightPass.end();
-		
-		//h0-k conj
-		const computeConjPass = aEncoder.beginComputePass({ timestampWrites: profiler.timestamps('Spectrum Conjugate h0(-k)', 'c_h0kConj') });
-		const bindConjCGroup = createCompBindGroupConjWater();
-		computeConjPass.setPipeline(waterConjComputePipeline);
-		computeConjPass.setBindGroup(0, bindConjCGroup);
-		computeConjPass.dispatchWorkgroups(settings.waterTileResolution / FFT_WORKGROUP_SIZE[0],
-										   settings.waterTileResolution / FFT_WORKGROUP_SIZE[1]);
-		computeConjPass.end();
-		
-	}
-	
-	const stages = Math.log2(settings.waterTileResolution);
-	let IFFTBuffer;
-	
-	if(currentFrameTime - lastFrameTime > 1.0 / 30.0){
-		
-		
-		step += 0.025;
-		
-		//hkt
-		const computeHKTPass = aEncoder.beginComputePass({ timestampWrites: profiler.timestamps('Realization h(k,t)', 'c_hkt') });
-		const bindRealizationCGroup = createCompBindGroupRealizationWater();
-		computeHKTPass.setPipeline(waterRealizationComputePipeline);
-		computeHKTPass.setBindGroup(0, bindRealizationCGroup);
-		computeHKTPass.dispatchWorkgroups(settings.waterTileResolution / FFT_WORKGROUP_SIZE[0],
-										settings.waterTileResolution / FFT_WORKGROUP_SIZE[1]);
-		computeHKTPass.end();
-		
-		//copy just to debug view it
-		aEncoder.copyTextureToTexture(
-			{texture: waveHeightRealization},
-			{texture: hkt},	
-			{width: settings.waterTileResolution, height: settings.waterTileResolution}
-		)
-		
-		//-----------------------------IFFT-------------------------------
-		//FFT start, the buttefly group starts with waveHeightRealization ONLY ONCE
-		
-		
-		//pre compute twiddle values
-		let bindButterflyPreCompCGroup = createCompBindGroupButterflyPreCompWater();
+
 		const computePreCompPass = aEncoder.beginComputePass({ timestampWrites: profiler.timestamps('Twiddle Precompute', 'c_PreComp') });
 		computePreCompPass.setPipeline(waterButterflyPreCompComputePipeline);
-		computePreCompPass.setBindGroup(0, bindButterflyPreCompCGroup);
-		computePreCompPass.dispatchWorkgroups(stages / PRECOMP_WORKGROUP_SIZE[0],
-												settings.waterTileResolution / PRECOMP_WORKGROUP_SIZE[1]);
+		computePreCompPass.setBindGroup(0, createCompBindGroupButterflyPreCompWater());
+		computePreCompPass.dispatchWorkgroups(stages / PRECOMP_WORKGROUP_SIZE[0], res / PRECOMP_WORKGROUP_SIZE[1]);
 		computePreCompPass.end();
-		
-		
-		
-		//horizontal displacement goes through the IFFT first, all the way out to its final texture
-		//		it shares the ping pong buffers and finalIFFTOutput with the wave height, which gets loaded into them straight after
-		//		(filed under its own name in the Performance window, as is the wave height's below)
-		const displacementIFFTBuffer = profiler.section('Displacement IFFT', () => waterIFFT(aEncoder, displacementRealizationTexture, stages));
 
-
-		const computeDisplacementAtoTPass = aEncoder.beginComputePass({ timestampWrites: profiler.section('Displacement IFFT', () => profiler.timestamps('To Texture', 'c_ArrayToTexture')) });
-		computeDisplacementAtoTPass.setPipeline(waterAtoTComputePipeline);
-		computeDisplacementAtoTPass.setBindGroup(0, createCompBindGroupAtoTWater(displacementIFFTBuffer));
-		computeDisplacementAtoTPass.dispatchWorkgroups(settings.waterTileResolution / FFT_WORKGROUP_SIZE[0],
-														settings.waterTileResolution / FFT_WORKGROUP_SIZE[1]);
-		computeDisplacementAtoTPass.end();
-		
-		const computeDisplacementShiftPass = aEncoder.beginComputePass({ timestampWrites: profiler.section('Displacement IFFT', () => profiler.timestamps('Shift', 'c_Shift')) });
-		computeDisplacementShiftPass.setPipeline(waterShiftComputePipeline);
-		computeDisplacementShiftPass.setBindGroup(0, createCompBindGroupShiftWater(finalIFFTOutput, finalDisplacementTexture));
-		computeDisplacementShiftPass.dispatchWorkgroups(Math.ceil(settings.waterTileResolution / FFT_WORKGROUP_SIZE[0]),
-														Math.ceil(settings.waterTileResolution / FFT_WORKGROUP_SIZE[1]));
-		computeDisplacementShiftPass.end();
-		
-		
-		//wave height, read out of the buffers by the array to texture and shift passes below
-		IFFTBuffer = profiler.section('Height IFFT', () => waterIFFT(aEncoder, waveHeightRealization, stages));
+		spectrumDirty = false;
 	}
-	
-	
-	//convert F32ARRAY to RGBA32Float for speed and RW access
-	let bindAtoTCGroup = createCompBindGroupAtoTWater(IFFTBuffer);
-	const computeAtoTPass = aEncoder.beginComputePass({ timestampWrites: profiler.section('Height IFFT', () => profiler.timestamps('To Texture', 'c_ArrayToTexture')) });
-	computeAtoTPass.setPipeline(waterAtoTComputePipeline);
-	computeAtoTPass.setBindGroup(0, bindAtoTCGroup);
-	computeAtoTPass.dispatchWorkgroups(settings.waterTileResolution  / FFT_WORKGROUP_SIZE[0],
-											settings.waterTileResolution / FFT_WORKGROUP_SIZE[1]);
-	computeAtoTPass.end();
-	
-	aEncoder.copyTextureToTexture(
-		{texture: finalIFFTOutput},
-		{texture: preShiftFinalWaveHeightTexture},
-		{width: settings.waterTileResolution, height: settings.waterTileResolution});
-	
-	
-	//Shift and Copy
-	let bindShiftCGroup = createCompBindGroupShiftWater(finalIFFTOutput, finalWaveHeightTexture);
-	const computeShiftPass = aEncoder.beginComputePass({ timestampWrites: profiler.section('Height IFFT', () => profiler.timestamps('Shift', 'c_Shift')) });
-	computeShiftPass.setPipeline(waterShiftComputePipeline);
-	computeShiftPass.setBindGroup(0, bindShiftCGroup);
-	computeShiftPass.dispatchWorkgroups(Math.ceil(settings.waterTileResolution / FFT_WORKGROUP_SIZE[0]), 
-													Math.ceil(settings.waterTileResolution / FFT_WORKGROUP_SIZE[1]));
-	computeShiftPass.end();
-	
-	lastFrameTime = currentFrameTime;
-	
-	
+
+	//hkt: every cascade animated to this frame's time, straight into the butterfly passes' first buffer
+	const computeHKTPass = aEncoder.beginComputePass({ timestampWrites: profiler.timestamps('Realization h(k,t)', 'c_hkt') });
+	computeHKTPass.setPipeline(waterRealizationComputePipeline);
+	for (let c = 0; c < CASCADE_COUNT; c++) {
+		computeHKTPass.setBindGroup(0, createCompBindGroupRealizationWater(c));
+		computeHKTPass.dispatchWorkgroups(fftDispatch, fftDispatch);
+	}
+	computeHKTPass.end();
+
+	//-----------------------------IFFT-------------------------------
+	waterIFFT(aEncoder, stages);
+
+	// out of the buffer into the maps the mesh pass reads
+	const computeWaveMapsPass = aEncoder.beginComputePass({ timestampWrites: profiler.timestamps('Wave Maps', 'c_waveMaps') });
+	computeWaveMapsPass.setPipeline(waterWaveMapsComputePipeline);
+	for (let c = 0; c < CASCADE_COUNT; c++) {
+		computeWaveMapsPass.setBindGroup(0, createCompBindGroupWaveMapsWater(c));
+		computeWaveMapsPass.dispatchWorkgroups(fftDispatch, fftDispatch);
+	}
+	computeWaveMapsPass.end();
+
+
 	//---------------------------SHORE DISTANCE-------------------------
 	// distance from the water around the camera to the nearest land, worked out from the top down height map
 	//		two small passes: nearest land up/down each column, then combined sideways. The mesh assembly aims the shore waves with the result
@@ -2175,6 +1997,9 @@ export function waterPass(mainpassDepthTexture) {
 	}
 	
 	computePass.end();
+
+	// the surface where anything floating on it asked (boat.js)
+	const probesSent = probeWater(aEncoder, waterComputeUniformBuffers[Math.floor(tileOffsets.length / 2)]);
 	
 	// Render pass — draws each tile
 	const pass = aEncoder.beginRenderPass({
@@ -2214,4 +2039,7 @@ export function waterPass(mainpassDepthTexture) {
 	
 	const commandBuffer = aEncoder.finish();
 	device.queue.submit([commandBuffer]);
+	if (probesSent) {
+		readProbesBack(probesSent);
+	}
 }

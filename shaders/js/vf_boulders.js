@@ -2,6 +2,7 @@ import { TERRAIN_ZONES, ZONE_MOUNTAIN, ZONE_SNOW } from '../../code/terrainGener
 import { rockShapes } from './vf_terrain.js';
 import { groundTextures } from './f_groundTextures.js';
 import { moonShapes } from './f_moon.js';
+import { skyLookupShapes } from './vfc_atmosphere.js';
 
 // a zone's color from terrainGenerator.js written out as a WGSL vec3f, so the colors only live in one place
 const zoneColor = (zone) => `vec3f(${TERRAIN_ZONES[zone].color.map((c) => c.toFixed(3)).join(', ')})`;
@@ -104,16 +105,7 @@ export const vf_boulders =
 	const HORIZON_LIFT: f32 = 0.016;	// see f_water
 
 	// The color the sky pass puts on screen for a world direction, the same lookup as f_sky, f_water and the terrain use
-	fn skyColorAt(direction: vec3f) -> vec3f {
-		let rd = normalize(direction + vec3f(0.0, 0.00001, 0.0));
-		let azimuth   = atan2(-rd.z, -rd.x);
-		let elevation = asin(clamp(rd.y, -1.0, 1.0));
-		let uv = vec2f(azimuth / (2.0 * PI) + 0.5, elevation / PI + 0.5);
-		let color = textureSampleLevel(skyLUT, skySampler, uv, 0.0).rgb;
-
-		let exposed = 1.0 - exp(-color * 10.0);
-		return pow(exposed, vec3f(1.0 / 2.2));
-	}
+	${skyLookupShapes}
 
 	${moonShapes}
 	${rockShapes}
@@ -177,7 +169,7 @@ export const vf_boulders =
 
 		// and the same fade into the horizon
 		if (UBO.atmosphereEnabled > 0.5) {
-			let horizonColor = skyColorAt(vec3f(toRock.x, HORIZON_LIFT * length(toRock.xz), toRock.z));
+			let horizonColor = fogColorAt(toRock);
 			let fog = 1.0 - exp(-pow(away / UBO.horizonFogDistance, 2.0));
 			color = mix(color, horizonColor, fog);
 		}

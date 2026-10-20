@@ -59,7 +59,7 @@ function makeFrameCopy() {
 makeFrameCopy();
 onRenderResize(makeFrameCopy);
 
-// how sharply the water's surface curves, over one tile of waves (see vf_causticMap)
+// how sharply the water's surface curves, over one tile of the finest cascade of waves (see vf_causticMap)
 const causticTexture = device.createTexture({
 	label: "caustic map",
 	size: [CAUSTIC_MAP_SIZE, CAUSTIC_MAP_SIZE],
@@ -118,7 +118,7 @@ function shaftUniformBufferUpdates(shaftStrength) {
 	bufferResult.push(1 + (settings.sunColor[0] - 1) * low, 1 + (settings.sunColor[1] - 1) * low, 1 + (settings.sunColor[2] - 1) * low, shaftStrength);
 
 	//water
-	bufferResult.push(settings.waterWorldPosY, settings.waterGridSize, settings.causticStrength, cameraUnderWater() ? 1 : 0);
+	bufferResult.push(settings.waterWorldPosY, water.causticWaves().size, settings.causticStrength, cameraUnderWater() ? 1 : 0);
 
 	bufferResult.push(...clouds.cloudMapValues());
 
@@ -156,7 +156,8 @@ export function lightShaftPass(canvasTexture, mainpassDepthTexture) {
 
 	//-------------THE CAUSTIC MAP------------------
 	if (underWater) {
-		const texel = new Float32Array([settings.waterGridSize / settings.waterTileResolution, 0, 0, 0]);
+		const waves = water.causticWaves();
+		const texel = new Float32Array([waves.size / waves.texture.width, CAUSTIC_MAP_SIZE, 0, 0]);
 		device.queue.writeBuffer(causticUniformBuffer, 0, texel);
 
 		const causticPass = encoder.beginRenderPass({
@@ -174,7 +175,8 @@ export function lightShaftPass(canvasTexture, mainpassDepthTexture) {
 			layout: causticPipeline.getBindGroupLayout(0),
 			entries: [
 				{ binding: 0, resource: { buffer: causticUniformBuffer } },
-				{ binding: 1, resource: water.finalWaveHeightTexture.createView() },
+				{ binding: 1, resource: waves.texture.createView() },
+				{ binding: 2, resource: water.waveSampler },
 			],
 		}));
 		causticPass.draw(3);

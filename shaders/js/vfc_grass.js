@@ -1,6 +1,7 @@
 import { TERRAIN_ZONES, ZONE_GRASSLAND, ZONE_MARSH } from '../../code/terrainGenerator.js';
 import { windShapes } from './vf_wind.js';
 import { moonShapes } from './f_moon.js';
+import { skyLookupShapes } from './vfc_atmosphere.js';
 
 export const GRASS_MAX_RINGS = 8;								// the most level of detail rings there can be around the camera (how many there are is a setting)
 export const GRASS_RING_SEGMENTS = [4, 3, 2, 2, 1, 1, 1, 1];	// pieces a blade is cut into along its length, ring by ring outwards. 1 = a single triangle
@@ -287,16 +288,7 @@ export const vf_grass =
 	const HORIZON_LIFT: f32 = 0.016;	// see f_water
 
 	// The color the sky pass puts on screen for a world direction, the same lookup as f_sky, f_water and the terrain use
-	fn skyColorAt(direction: vec3f) -> vec3f {
-		let rd = normalize(direction + vec3f(0.0, 0.00001, 0.0));
-		let azimuth   = atan2(-rd.z, -rd.x);
-		let elevation = asin(clamp(rd.y, -1.0, 1.0));
-		let uv = vec2f(azimuth / (2.0 * PI) + 0.5, elevation / PI + 0.5);
-		let color = textureSampleLevel(skyLUT, skySampler, uv, 0.0).rgb;
-
-		let exposed = 1.0 - exp(-color * 10.0);
-		return pow(exposed, vec3f(1.0 / 2.2));
-	}
+	${skyLookupShapes}
 
 	//same as vertexoutput without builtin bits
 	struct FragInput {
@@ -355,7 +347,7 @@ export const vf_grass =
 		// and the same fade into the horizon
 		if (UBO.grid.w > 0.5) {
 			let toGrass = input.worldPos - Lights.camPos.xyz;
-			let horizonColor = skyColorAt(vec3f(toGrass.x, HORIZON_LIFT * length(toGrass.xz), toGrass.z));
+			let horizonColor = fogColorAt(toGrass);
 			let fog = 1.0 - exp(-pow(length(toGrass) / UBO.grid.z, 2.0));
 			color = mix(color, horizonColor, fog);
 		}

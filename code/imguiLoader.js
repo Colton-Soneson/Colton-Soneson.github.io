@@ -18,6 +18,8 @@ export const imguiParams = {
     camFarPlane: settings.camFarPlane,
     camNearPlane: settings.camNearPlane,
     gameMode: settings.gameMode,
+    sailingVessel: settings.sailingVessel,
+    sailingBoatRecalls: settings.sailingBoatRecalls,
     huntingWalkSpeed: settings.huntingWalkSpeed,
     huntingJumpHeight: settings.huntingJumpHeight,
     huntingLookSensitivity: settings.huntingLookSensitivity,
@@ -125,10 +127,12 @@ export const imguiParams = {
     waterWaveSteepness: settings.waterWaveSteepness,
     waterWaveLength: settings.waterWaveLength,
     waterWindSpeed: settings.waterWindSpeed,
+    waterOceanWindSpeed: settings.waterOceanWindSpeed,
     waterWorldPosY: settings.waterWorldPosY,
-    waterOceanPlanePhysicalSize: settings.waterOceanPlanePhysicalSize,
+    waterFetch: settings.waterFetch,
     waterTileInstanceCount: settings.waterTileInstanceCount,
     waterTileResolution: settings.waterTileResolution,
+    waterCascadeResolution: settings.waterCascadeResolution,
 	waterGridSize: settings.waterGridSize,
 	waterHorizonFogDistance: settings.waterHorizonFogDistance,
 	waterClarityDepth: settings.waterClarityDepth,
@@ -137,19 +141,13 @@ export const imguiParams = {
 	waterChoppiness: settings.waterChoppiness,
 	waterFoamThreshold: settings.waterFoamThreshold,
 	waterFoamFade: settings.waterFoamFade,
-	waterShoreZone: settings.waterShoreZone,
-	waterShoreWaveHeight: settings.waterShoreWaveHeight,
-	waterShoreBreakDistance: settings.waterShoreBreakDistance,
-	waterShoreSteepness: settings.waterShoreSteepness,
-	waterShoreWaveLength1: settings.waterShoreWaveLength1,
-	waterShoreWaveLength2: settings.waterShoreWaveLength2,
-	waterShoreWaveSpeed: settings.waterShoreWaveSpeed,
+	waterShallowRideHigh: settings.waterShallowRideHigh,
+	enableBoulderWater: settings.enableBoulderWater,
 	waterDeepSeaDepth: settings.waterDeepSeaDepth,
 	waterSwellHeight: settings.waterSwellHeight,
 	waterSwellLength: settings.waterSwellLength,
-	waterSwellSteepness: settings.waterSwellSteepness,
-	waterSwellSpeed: settings.waterSwellSpeed,
-	waterSwellShoreDistance: settings.waterSwellShoreDistance,
+	waterSwellSpread: settings.waterSwellSpread,
+	waterSwellDirection: settings.waterSwellDirection,
     // Atmosphere
     enableAtmosphere: settings.enableAtmosphere,
     // Seasons
@@ -317,11 +315,14 @@ gui.add(imguiParams, 'atmosphereSunRotationDemo').name('Sun Cycle (days and seas
 
 // how the scene is seen: Observe flies round it (see the Camera folder), Hunting walks it on foot (hunting.js)
 const modeFolder = gui.addFolder('Game Modes');
-modeFolder.add(imguiParams, 'gameMode', ['Observe', 'Hunting']).name('Mode');
+modeFolder.add(imguiParams, 'gameMode', ['Observe', 'Hunting', 'Sailing']).name('Mode');
 const huntingFolder = modeFolder.addFolder('Hunting');	//click the picture to look round, WASD walk, Shift run, Space jump, hold Tab or Esc for the menus
 huntingFolder.add(imguiParams, 'huntingWalkSpeed', 1, 8, 0.1).name('Walk Speed (m/s)');
 huntingFolder.add(imguiParams, 'huntingJumpHeight', 0.1, 2, 0.05).name('Jump Height (m)');
 huntingFolder.add(imguiParams, 'huntingLookSensitivity', 0.2, 3, 0.05).name('Mouse Sensitivity');
+const sailingFolder = modeFolder.addFolder('Sailing');	//the same on foot as Hunting, with a dinghy to sail: see boat.js
+sailingFolder.add(imguiParams, 'sailingVessel', ['Schooner', 'Dinghy']).name('Vessel');
+sailingFolder.add({ recall: () => { imguiParams.sailingBoatRecalls += 1; } }, 'recall').name('Bring the Boat Back');
 
 const camFolder = gui.addFolder('Camera');
 camFolder.add(imguiParams, 'camPosX', -2000, 2000).name('Pos X');
@@ -511,10 +512,11 @@ const waterFolder = gui.addFolder('Water');
 waterFolder.add(imguiParams, 'enableWater').name('Enable');
 waterFolder.add(imguiParams, 'waterWaveSteepness', 0, 1, 0.01).name('Wave Steepness');
 waterFolder.add(imguiParams, 'waterWaveLength', 1, 500).name('Wave Length');
-waterFolder.add(imguiParams, 'waterWindSpeed', 0, 20).name('Wind Speed');
+waterFolder.add(imguiParams, 'waterOceanWindSpeed', 0, 30).name('Wind Over The Sea');	//its own: the Wind folder's is the land's
+waterFolder.add(imguiParams, 'waterFetch', 1, 1000, 1).name('Fetch (km)');
 waterFolder.add(imguiParams, 'waterWorldPosY', -100, 100).name('World Pos Y');
 waterFolder.add(imguiParams, 'waterTileResolution', [32, 64, 128, 256, 512, 1024]).name('Water Tile Resolution');
-waterFolder.add(imguiParams, 'waterOceanPlanePhysicalSize', 1, 1024).name('WT Physical Size (H0K)');
+waterFolder.add(imguiParams, 'waterCascadeResolution', [128, 256, 512]).name('Wave Cascade Resolution');
 waterFolder.add(imguiParams, 'waterGridSize', 1, 5000).name('Water Tile Grid Size');
 waterFolder.add(imguiParams, 'waterTileInstanceCount', [1, 3, 5, 7, 9, 11]).name('Water Tile Instance Count');
 waterFolder.add(imguiParams, 'waterHorizonFogDistance', 200, 20000).name('Horizon Fog Distance');
@@ -527,22 +529,16 @@ waterChopFolder.add(imguiParams, 'waterChoppiness', 0, 3, 0.05).name('Choppiness
 waterChopFolder.add(imguiParams, 'waterFoamThreshold', 0, 1, 0.01).name('Foam Threshold');
 waterChopFolder.add(imguiParams, 'waterFoamFade', 0.05, 1, 0.01).name('Foam Fade');
 
-const waterShoreFolder = waterFolder.addFolder('Shore Waves');
-waterShoreFolder.add(imguiParams, 'waterShoreZone', 10, 150, 1).name('Zone Distance');
-waterShoreFolder.add(imguiParams, 'waterShoreWaveHeight', 0, 6, 0.1).name('Wave Height');
-waterShoreFolder.add(imguiParams, 'waterShoreBreakDistance', 2, 40, 0.5).name('Break Distance');
-waterShoreFolder.add(imguiParams, 'waterShoreSteepness', 0, 4, 0.1).name('Steepness');
-waterShoreFolder.add(imguiParams, 'waterShoreWaveLength1', 12, 80, 0.5).name('Wave Length 1');
-waterShoreFolder.add(imguiParams, 'waterShoreWaveLength2', 12, 80, 0.5).name('Wave Length 2');
-waterShoreFolder.add(imguiParams, 'waterShoreWaveSpeed', 0, 3, 0.05).name('Wave Speed');
+const waterShoreFolder = waterFolder.addFolder('Shore');
+waterShoreFolder.add(imguiParams, 'waterShallowRideHigh').name('Shallow Waves Ride High');
+waterShoreFolder.add(imguiParams, 'enableBoulderWater').name('Water Round Boulders');
 
 const waterSwellFolder = waterFolder.addFolder('Deep Sea Swell');
-waterSwellFolder.add(imguiParams, 'waterDeepSeaDepth', 1, 1000, 1).name('Deep Sea Depth');
-waterSwellFolder.add(imguiParams, 'waterSwellHeight', 0, 200, 0.5).name('Swell Height');
-waterSwellFolder.add(imguiParams, 'waterSwellLength', 100, 2000, 10).name('Swell Length');
-waterSwellFolder.add(imguiParams, 'waterSwellSteepness', 0, 1, 0.01).name('Steepness');
-waterSwellFolder.add(imguiParams, 'waterSwellSpeed', 0, 3, 0.05).name('Speed');
-waterSwellFolder.add(imguiParams, 'waterSwellShoreDistance', 20, 150, 1).name('Full Size Distance From Land');
+waterSwellFolder.add(imguiParams, 'waterDeepSeaDepth', 1, 1000, 1).name('Open Sea Depth');
+waterSwellFolder.add(imguiParams, 'waterSwellHeight', 0, 40, 0.5).name('Swell Height');
+waterSwellFolder.add(imguiParams, 'waterSwellLength', 100, 1500, 10).name('Swell Length');
+waterSwellFolder.add(imguiParams, 'waterSwellSpread', 0, 1, 0.01).name('Long Crested');
+waterSwellFolder.add(imguiParams, 'waterSwellDirection', -180, 180, 1).name('Direction Off Wind');
 
 
 const atmosphereFolder = gui.addFolder('Atmosphere');
@@ -555,16 +551,16 @@ const debugDisplayModes = ["final",
 							"water line topology",
 							"heightMap", 
 							"shadowMapDepth", 
-							"Oceanographic Spectrum", 
-							"h0(k)", 
-							"waveHeightRealization h(k,t)", 
+							"Oceanographic Spectrum (the 3 cascades, top to bottom)", 
+							"h0(k) (the 3 cascades)", 
+							"Waves Cascade 0 (r: Dx, g: height, b: Dz)", 
 							"PreComp Twiddle Water", 
-							"finalWaveHeightFFT h(x,t) pre Shift", 
-							"finalWaveHeightFFT h(x,t) Shifted",
+							"Waves Cascade 1", 
+							"Waves Cascade 2",
 							"Skyview LUT Texture",
 							"Atmosphere Transmittance LUT Texture",
-							"Choppy Displacement D(k,t)",
-							"Choppy Displacement D(x,t) Shifted",
+							"Wave Slopes Cascade 1 (r: dh/dx, g: dh/dz)",
+							"Wave Slopes Cascade 2",
 							"Shore Distance Field",
 							"Wind Texture",
 							"Cloud Coverage (r: sun through, g: cloud overhead, b: rain)"];

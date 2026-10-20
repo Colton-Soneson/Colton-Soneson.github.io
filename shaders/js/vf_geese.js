@@ -1,4 +1,5 @@
 import { moonShapes } from './f_moon.js';
+import { skyLookupShapes } from './vfc_atmosphere.js';
 
 /*
 	The geese drawn. See geese.js for the goose itself (its 25 triangles) and how they fly. Much the same as the hawks
@@ -97,16 +98,7 @@ export const vf_geese =
 	const PI: f32 = 3.14159265;
 	const HORIZON_LIFT: f32 = 0.016;	// see f_water
 
-	fn skyColorAt(direction: vec3f) -> vec3f {
-		let rd = normalize(direction + vec3f(0.0, 0.00001, 0.0));
-		let azimuth   = atan2(-rd.z, -rd.x);
-		let elevation = asin(clamp(rd.y, -1.0, 1.0));
-		let uv = vec2f(azimuth / (2.0 * PI) + 0.5, elevation / PI + 0.5);
-		let color = textureSampleLevel(skyLUT, skySampler, uv, 0.0).rgb;
-
-		let exposed = 1.0 - exp(-color * 10.0);
-		return pow(exposed, vec3f(1.0 / 2.2));
-	}
+	${skyLookupShapes}
 
 	${moonShapes}
 
@@ -153,7 +145,7 @@ export const vf_geese =
 
 		// and the same fade into the horizon
 		if (GU.look.y > 0.5) {
-			let horizonColor = skyColorAt(vec3f(toGoose.x, HORIZON_LIFT * length(toGoose.xz), toGoose.z));
+			let horizonColor = fogColorAt(toGoose);
 			let fog = 1.0 - exp(-pow(away / GU.look.x, 2.0));
 			color = mix(color, horizonColor, fog);
 		}

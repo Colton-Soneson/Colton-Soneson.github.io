@@ -1,3 +1,4 @@
+import { skyLUTUVShapes } from './vfc_atmosphere.js';
 export const CLOUD_SHAPE_SIZE = 128;		// texels along each side of the shape noise, a cube
 export const CLOUD_DETAIL_SIZE = 64;		// and of the detail noise
 export const CLOUD_NOISE_WORKGROUP = 4;		// the noise is made in blocks of 4 x 4 x 4 texels
@@ -576,11 +577,11 @@ export const vf_cloudMarch =
 		return vec4f(corner * 2.0 - 1.0, 0.0, 1.0);
 	}
 
+	${skyLUTUVShapes}
+
 	// the light of the sky from a direction, as the sky view LUT has it (not yet exposed for the screen)
 	fn skyLight(direction: vec3f) -> vec3f {
-		let azimuth = atan2(-direction.z, -direction.x);
-		let elevation = asin(clamp(direction.y, -1.0, 1.0));
-		return textureSampleLevel(skyLUT, clampSampler, vec2f(azimuth / (2.0 * PI) + 0.5, elevation / PI + 0.5), 0.0).rgb;
+		return textureSampleLevel(skyLUT, clampSampler, skyLUTUV(direction), 0.0).rgb;
 	}
 
 	// Henyey-Greenstein: how much of the light arriving along one direction leaves along another, by the cosine of the angle

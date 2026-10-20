@@ -1,4 +1,5 @@
 import { TERRAIN_ZONES, ZONE_OCEAN, ZONE_BEACH, ZONE_GRASSLAND, ZONE_FOREST, ZONE_MOUNTAIN, ZONE_SNOW, ZONE_LAKE, ZONE_MARSH } from '../../code/terrainGenerator.js';
+import { skyLookupShapes } from './vfc_atmosphere.js';
 
 // a zone's color from terrainGenerator.js written out as a WGSL vec3f, so the colors only live in one place
 import { groundTextures } from './f_groundTextures.js';
@@ -291,16 +292,7 @@ export const vf_terrain =
 	const HORIZON_LIFT: f32 = 0.016;	// see f_water: reads the first row of sky above the horizon, not the seam under it
 
 	// The color the sky pass puts on screen for a world direction, the same lookup as f_sky and f_water use
-	fn skyColorAt(direction: vec3f) -> vec3f {
-		let rd = normalize(direction + vec3f(0.0, 0.00001, 0.0));
-		let azimuth   = atan2(-rd.z, -rd.x);
-		let elevation = asin(clamp(rd.y, -1.0, 1.0));
-		let uv = vec2f(azimuth / (2.0 * PI) + 0.5, elevation / PI + 0.5);
-		let color = textureSampleLevel(skyLUT, skySampler, uv, 0.0).rgb;
-
-		let exposed = 1.0 - exp(-color * 10.0);
-		return pow(exposed, vec3f(1.0 / 2.2));
-	}
+	${skyLookupShapes}
 
 	${moonShapes}
 	${rockShapes}
@@ -675,7 +667,7 @@ export const vf_terrain =
 		//------------------HORIZON FOG-----------------
 		// same as the water: far land fades into the color of the sky on the horizon behind it
 		if (UBO.atmosphereEnabled > 0.5) {
-			let horizonColor = skyColorAt(vec3f(toLand.x, HORIZON_LIFT * length(toLand.xz), toLand.z));
+			let horizonColor = fogColorAt(toLand);
 			let fog = 1.0 - exp(-pow(away / UBO.horizonFogDistance, 2.0));
 			color = mix(color, horizonColor, fog);
 		}

@@ -392,7 +392,7 @@ export const c_spray =
 	${particleUniforms}
 
 	@group(0) @binding(1) var<storage, read_write> spray: array<Particle>;
-	@group(0) @binding(2) var<storage, read> waterVertices: array<f32>;		// the water mesh under the camera, 8 numbers a vertex: position, foam, depth, normal
+	@group(0) @binding(2) var<storage, read> waterVertices: array<f32>;		// the water mesh under the camera, 9 numbers a vertex: position, foam, depth, normal, how peaked
 	@group(0) @binding(3) var windTexture: texture_2d<f32>;
 	@group(0) @binding(4) var windSampler: sampler;
 
@@ -423,8 +423,11 @@ export const c_spray =
 		} else {
 			let count = u32(PU.counts.z);
 			if (count > 0u && random(chance) < PU.amounts.y) {
-				let first = min(u32(random(chance + 1u) * f32(count)), count - 1u) * 8u;
-				let foam = waterVertices[first + 3u];
+				let first = min(u32(random(chance + 1u) * f32(count)), count - 1u) * 9u;
+				// (but not off the water's edge: in a hand's depth of water the least ripple is a wave "too tall for the water" and
+				//		foams, and spray thrown off every one of them all along the shore stands in a sheet over the beach. A wave
+				//		that breaks with any spray off it breaks in water about as deep as it is tall: half a metre and more)
+				let foam = waterVertices[first + 3u] * smoothstep(0.4, 2.0, waterVertices[first + 4u] / PU.terrain.w);
 				if (foam > 0.25 && random(chance + 2u) < foam) {
 					let crest = vec3f(waterVertices[first], waterVertices[first + 1u], waterVertices[first + 2u]);
 					// which way the wave is going: the way its face leans, or with the wind where the water is too level to say.
@@ -523,6 +526,8 @@ export const vf_spray =
 		output.card = corner;
 		// in at once, out slowly
 		output.strength = smoothstep(0.0, 0.1, age) * (1.0 - age) * mix(0.95, 0.22, mist);
+		//	and gone right in front of the camera: a line of it a few metres long, that close, is a sheet across the whole screen
+		output.strength *= smoothstep(1.5, 6.0, distance(PU.cameraPosition.xyz, drop.position) / PU.terrain.w);
 		output.look = vec3f(mist, drop.extra.z * 2.2, drop.extra.w);
 		output.distant = smoothstep(25.0, 120.0, distance(PU.cameraPosition.xyz, drop.position));
 		return output;

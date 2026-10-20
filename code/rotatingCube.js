@@ -45,6 +45,7 @@ import * as rifle from './rifle.js'
 import * as ballistics from './ballistics.js'
 import * as net from './net.js'
 import * as players from './players.js'
+import * as boat from './boat.js'
 import { settings } from './settings.js';
 import * as userInterface from './imguiLoader.js';
 import * as profiler from './profiler.js';
@@ -100,6 +101,9 @@ function getLightsInfo() {
 //-------------------MAIN-----------------------
 
 //function should return GPUShaderModule object if compiled with valid results, code itself is WGSL
+// the water needs to know where the boulders standing in the sea are (see setRockFinder in water.js)
+water.setRockFinder(boulders.bouldersNear);
+
 const genericShaderModule = device.createShaderModule({
 label: "generic vf shader",
 code: vf_p_generic3D
@@ -351,7 +355,8 @@ export function updateRotatingCubePass() {
 
 	// fly camera: after the controls have written their values (so the Pos sliders still work), before anything reads the camera
 	cameraControls.updateCamera();
-	hunting.updateHunter();		//on foot instead, in the Hunting game mode
+	boat.boatUpdate();			//the boat sails on (in the Sailing game mode), before the walker on it is carried along
+	hunting.updateHunter();		//on foot instead, in the Hunting and Sailing game modes
 	rifle.rifleUpdate();		//and the rifle in the hunter's hands
 	net.netUpdate();			//in a game with others: what this player is doing goes out, the host's world and clock come in
 	players.playersUpdate();	//and the others move on
@@ -522,6 +527,7 @@ export function updateRotatingCubePass() {
 		geese.geesePass(encoder, depthTexture);
 		deer.deerPass(encoder, depthTexture);
 		players.playersPass(encoder, depthTexture);	//(and the other players, in a game with others)
+		boat.boatPass(encoder, depthTexture);		//(and the boat, sailing)
 	});
 
 	//screen space shadows and ambient occlusion over everything solid, and the copies of the frame the water finds its reflections in.
@@ -581,35 +587,36 @@ export function updateRotatingCubePass() {
 	}
 	
 	if(settings.displayOceanSpectrum) {
-		postEffectPassTextureDebug_RGBA32FLOAT(encoderDebug, context.getCurrentTexture(), water.phillipsSpectrumTexture);
+		postEffectPassTextureDebug_RGBA32FLOAT(encoderDebug, context.getCurrentTexture(), water.oceanSpectrumTexture);
 	}
-	
+
 	if(settings.displayWaterInitialHeight) {
-		postEffectPassTextureDebug_RGBA32FLOAT(encoderDebug, context.getCurrentTexture(), water.initialWaterHeightMap);
+		postEffectPassTextureDebug_RGBA32FLOAT(encoderDebug, context.getCurrentTexture(), water.initialSpectrumTexture);
 	}
-	
+
+	// the wave cascades' maps (see c_waveMaps). The settings keep their old names, from before the cascades
 	if(settings.displayWaveHeightRealization) {
-		postEffectPassTextureDebug_RGBA32FLOAT(encoderDebug, context.getCurrentTexture(), water.hkt);
+		postEffectPassTextureDebug_RGBA16FLOAT(encoderDebug, context.getCurrentTexture(), water.waveTextures[0]);
 	}
-	
+
 	if(settings.displayWaterPreComp) {
 		postEffectPassTextureDebug_RGBA32FLOAT(encoderDebug, context.getCurrentTexture(), water.preCompTexture);
 	}
-	
+
 	if(settings.displayWaterFFT) {
-		postEffectPassTextureDebug_RGBA32FLOAT(encoderDebug, context.getCurrentTexture(), water.preShiftFinalWaveHeightTexture);
+		postEffectPassTextureDebug_RGBA16FLOAT(encoderDebug, context.getCurrentTexture(), water.waveTextures[1]);
 	}
-	
+
 	if(settings.displayWaterShifted ) {
-		postEffectPassTextureDebug_RGBA32FLOAT(encoderDebug, context.getCurrentTexture(), water.finalWaveHeightTexture);
+		postEffectPassTextureDebug_RGBA16FLOAT(encoderDebug, context.getCurrentTexture(), water.waveTextures[2]);
 	}
 
 	if(settings.displayWaterDisplacementSpectrum) {
-		postEffectPassTextureDebug_RGBA32FLOAT(encoderDebug, context.getCurrentTexture(), water.displacementRealizationTexture);
+		postEffectPassTextureDebug_RGBA16FLOAT(encoderDebug, context.getCurrentTexture(), water.slopeTextures[1]);
 	}
 
 	if(settings.displayWaterDisplacement) {
-		postEffectPassTextureDebug_RGBA32FLOAT(encoderDebug, context.getCurrentTexture(), water.finalDisplacementTexture);
+		postEffectPassTextureDebug_RGBA16FLOAT(encoderDebug, context.getCurrentTexture(), water.slopeTextures[2]);
 	}
 
 	if(settings.displayShoreDistance) {

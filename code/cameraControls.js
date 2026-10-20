@@ -70,8 +70,8 @@ window.addEventListener('blur', () => {
 	releaseMouse();
 });
 
-// (in Hunting the mouse is hunting.js's)
-const observing = () => settings.gameMode != 'Hunting';
+// (in Hunting and Sailing the mouse is hunting.js's)
+const observing = () => settings.gameMode != 'Hunting' && settings.gameMode != 'Sailing';
 
 canvas.addEventListener('mousedown', (event) => {
 	if (event.button == 2 && observing()) {

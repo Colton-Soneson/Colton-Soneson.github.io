@@ -49,10 +49,12 @@ export const vf_causticMap =
 `
 	struct CausticUniforms
 	{
-		texel : f32,		// the world size of one texel of the wave height texture
+		texel : f32,		// the world size of one texel of the wave texture
+		mapSize : f32,		// texels along a side of the caustic map
 	}
 	@group(0) @binding(0) var<uniform> UBO: CausticUniforms;
-	@group(0) @binding(1) var waveHeightTexture: texture_storage_2d<rgba32float, read>;		// x: the height of the waves (see c_water)
+	@group(0) @binding(1) var waveTexture: texture_2d<f32>;		// y: the height of the finest cascade of waves (see c_waveMaps in vfc_water.js)
+	@group(0) @binding(2) var waveSampler: sampler;				// wrapping round, the cascade repeats
 
 	@vertex
 	fn vertexMain(@builtin(vertex_index) vertexIndex: u32) -> @builtin(position) vec4f {
@@ -60,20 +62,22 @@ export const vf_causticMap =
 		return vec4f(corners[vertexIndex], 0.0, 1.0);
 	}
 
-	// the height of the waves at a texel. The tile repeats, so a texel off one edge is the one in from the other
-	fn heightAt(texel: vec2i, size: vec2i) -> f32 {
-		return textureLoad(waveHeightTexture, vec2u((texel % size + size) % size)).x;
+	// the height of the waves at a place on the tile, 0 to 1 across it. The tile repeats, so off one edge is in from the other
+	fn heightAt(uv: vec2f) -> f32 {
+		return textureSampleLevel(waveTexture, waveSampler, uv, 0.0).y;
 	}
 
 	@fragment
 	fn fragmentMain(@builtin(position) fragCoord: vec4f) -> @location(0) vec4f {
-		let size = vec2i(textureDimensions(waveHeightTexture));
-		let texel = vec2i(fragCoord.xy);
+		// the map covers one tile of the waves, whatever their resolution
+		let uv = fragCoord.xy / UBO.mapSize;
+		let toX = vec2f(1.0 / f32(textureDimensions(waveTexture).x), 0.0);	// one texel of the waves
+		let toZ = toX.yx;
 		// how much higher the 4 points round this one stand than it does, over the distance to them squared (the Laplacian).
 		//		Taken over 1 texel and over 2 and the two mixed: the finest ripples alone would make a net too fine to see
-		let here = heightAt(texel, size);
-		let near = heightAt(texel + vec2i(1, 0), size) + heightAt(texel - vec2i(1, 0), size) + heightAt(texel + vec2i(0, 1), size) + heightAt(texel - vec2i(0, 1), size) - 4.0 * here;
-		let wide = heightAt(texel + vec2i(2, 0), size) + heightAt(texel - vec2i(2, 0), size) + heightAt(texel + vec2i(0, 2), size) + heightAt(texel - vec2i(0, 2), size) - 4.0 * here;
+		let here = heightAt(uv);
+		let near = heightAt(uv + toX) + heightAt(uv - toX) + heightAt(uv + toZ) + heightAt(uv - toZ) - 4.0 * here;
+		let wide = heightAt(uv + 2.0 * toX) + heightAt(uv - 2.0 * toX) + heightAt(uv + 2.0 * toZ) + heightAt(uv - 2.0 * toZ) - 4.0 * here;
 		let curve = (0.5 * near + 0.5 * wide / 4.0) / (UBO.texel * UBO.texel);
 		return vec4f(curve, 0.0, 0.0, 1.0);
 	}
@@ -138,9 +142,10 @@ export const vf_lightShafts =
 			return 1.0;
 		}
 		// where the light that gets here came through the surface. Read at two sizes: the waves as they are, and again
-		//		wider and offset, which stands in for the swell the tile of waves does not have
+		//		wider and offset, which stands in for the longer waves of the cascades the map isnt made from
+		//		(the cascades are read at world position / their size, so the map lines up with the surface overhead)
 		let cameThrough = point.xz + toSunInWater.xz / toSunInWater.y * under;
-		let uv = (cameThrough + vec2f(0.5 * SU.water.y, 0.5 * SU.water.y)) / SU.water.y;
+		let uv = cameThrough / SU.water.y;
 		var curve = 0.9 * textureSampleLevel(causticMap, causticSampler, uv * 0.23 + vec2f(0.31, 0.67), 0.0).r;
 		if (fine) {
 			curve = textureSampleLevel(causticMap, causticSampler, uv, 0.0).r + 0.35 * textureSampleLevel(causticMap, causticSampler, uv * 0.37 + vec2f(0.31, 0.67), 0.0).r;

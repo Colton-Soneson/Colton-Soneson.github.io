@@ -10,15 +10,27 @@ import { settings } from './settings.js';
 // The view is 72 degrees from top to bottom, and as wide as the canvas's shape makes it. On a screen taller than it is wide (a phone
 //		held upright) that would leave only a narrow slice of the world across it, so there it is 72 degrees from side to side
 //		instead, and as tall as that makes it. Made again when the window changes shape (see display.js)
+//		Looking through a scope (sharps.js, setZoom) narrows it by its magnification. baseVerticalViewAngle is the angle without it
+//		(the guns in the hands are drawn with that: they are not seen through the scope)
 const VIEW_ANGLE = (2 * Math.PI) / 5;
 export let verticalViewAngle = VIEW_ANGLE;
+export let baseVerticalViewAngle = VIEW_ANGLE;
+let zoom = 1;
 function makeProjection() {
 	const aspect = canvas.width / canvas.height;
-	verticalViewAngle = aspect >= 1 ? VIEW_ANGLE : 2 * Math.atan(Math.tan(VIEW_ANGLE / 2) / aspect);
+	baseVerticalViewAngle = aspect >= 1 ? VIEW_ANGLE : 2 * Math.atan(Math.tan(VIEW_ANGLE / 2) / aspect);
+	verticalViewAngle = 2 * Math.atan(Math.tan(baseVerticalViewAngle / 2) / zoom);
 	return mat4.perspective(verticalViewAngle, aspect, settings.camNearPlane, settings.camFarPlane);
 }
 export let projectionMatrix = makeProjection();
 onRenderResize(() => { projectionMatrix = makeProjection(); });
+// the view magnified (a scope): 1 for none
+export function setZoom(magnification) {
+	if (magnification === zoom) return;
+	zoom = magnification;
+	projectionMatrix = makeProjection();
+}
+export const zoomNow = () => zoom;
 
 // how big one pixel is, as distance across per distance away from the camera (for the shaders that fade detail out at pixel size)
 export function pixelSize() {

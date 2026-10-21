@@ -18,9 +18,10 @@ export const imguiParams = {
     camFarPlane: settings.camFarPlane,
     camNearPlane: settings.camNearPlane,
     gameMode: settings.gameMode,
-    sailingVessel: settings.sailingVessel,
-    sailingBoatRecalls: settings.sailingBoatRecalls,
     huntingWalkSpeed: settings.huntingWalkSpeed,
+    discGolfEnabled: settings.discGolfEnabled,
+    discGolfHoles: settings.discGolfHoles,
+    discGolfSeed: settings.discGolfSeed,
     huntingJumpHeight: settings.huntingJumpHeight,
     huntingLookSensitivity: settings.huntingLookSensitivity,
     cameraFlyMode: settings.cameraFlyMode,
@@ -128,6 +129,7 @@ export const imguiParams = {
     waterWaveLength: settings.waterWaveLength,
     waterWindSpeed: settings.waterWindSpeed,
     waterOceanWindSpeed: settings.waterOceanWindSpeed,
+    waterSeed: settings.waterSeed,
     waterWorldPosY: settings.waterWorldPosY,
     waterFetch: settings.waterFetch,
     waterTileInstanceCount: settings.waterTileInstanceCount,
@@ -190,6 +192,7 @@ export const imguiParams = {
     enableLightShafts: settings.enableLightShafts,
     lightShaftStrength: settings.lightShaftStrength,
     enableUnderwater: settings.enableUnderwater,
+    underwaterStartDepth: settings.underwaterStartDepth,
     causticStrength: settings.causticStrength,
     // Particles
     enableLeaves: settings.enableLeaves,
@@ -313,16 +316,18 @@ const statusController = gui.add(presetState, 'status').name('Auto Check').disab
 // at the top too: the sun going round is what moves the days on, and with them the seasons, the weather and the forest
 gui.add(imguiParams, 'atmosphereSunRotationDemo').name('Sun Cycle (days and seasons)');
 
-// how the scene is seen: Observe flies round it (see the Camera folder), Hunting walks it on foot (hunting.js)
+// how the scene is seen: Observe flies round it (see the Camera folder), Hunting and Sailing walks it on foot (hunting.js), with boats and
+//		the rest from the spawn menu (T, radialMenu.js)
 const modeFolder = gui.addFolder('Game Modes');
-modeFolder.add(imguiParams, 'gameMode', ['Observe', 'Hunting', 'Sailing']).name('Mode');
-const huntingFolder = modeFolder.addFolder('Hunting');	//click the picture to look round, WASD walk, Shift run, Space jump, hold Tab or Esc for the menus
+modeFolder.add(imguiParams, 'gameMode', { 'Observe': 'Observe', 'Hunting and Sailing': 'Hunting' }).name('Mode');
+const huntingFolder = modeFolder.addFolder('Hunting and Sailing');	//click the picture to look round, WASD walk, Shift run, Space jump, T the spawn menu, hold Tab or Esc for the menus
 huntingFolder.add(imguiParams, 'huntingWalkSpeed', 1, 8, 0.1).name('Walk Speed (m/s)');
 huntingFolder.add(imguiParams, 'huntingJumpHeight', 0.1, 2, 0.05).name('Jump Height (m)');
 huntingFolder.add(imguiParams, 'huntingLookSensitivity', 0.2, 3, 0.05).name('Mouse Sensitivity');
-const sailingFolder = modeFolder.addFolder('Sailing');	//the same on foot as Hunting, with a dinghy to sail: see boat.js
-sailingFolder.add(imguiParams, 'sailingVessel', ['Schooner', 'Dinghy']).name('Vessel');
-sailingFolder.add({ recall: () => { imguiParams.sailingBoatRecalls += 1; } }, 'recall').name('Bring the Boat Back');
+const golfFolder = modeFolder.addFolder('Disc Golf');	//a course of tee pads and baskets on the land, to play with the discs from the spawn menu (discgolf.js)
+golfFolder.add(imguiParams, 'discGolfEnabled').name('Course');
+golfFolder.add(imguiParams, 'discGolfHoles', 1, 18, 1).name('Holes');
+golfFolder.add({ again: () => { imguiParams.discGolfSeed += 1; } }, 'again').name('New Course');
 
 const camFolder = gui.addFolder('Camera');
 camFolder.add(imguiParams, 'camPosX', -2000, 2000).name('Pos X');
@@ -485,6 +490,7 @@ const shaftFolder = gui.addFolder('Light Shafts and Underwater');	//see lightSha
 shaftFolder.add(imguiParams, 'enableLightShafts').name('Light Shafts');
 shaftFolder.add(imguiParams, 'lightShaftStrength', 0, 4, 0.05).name('Shaft Strength');
 shaftFolder.add(imguiParams, 'enableUnderwater').name('Underwater View');
+shaftFolder.add(imguiParams, 'underwaterStartDepth', 0, 2, 0.05).name('Underwater From (m deep)');
 shaftFolder.add(imguiParams, 'causticStrength', 0, 4, 0.05).name('Caustic Strength');
 
 const particleFolder = gui.addFolder('Particles');	//see particles.js
@@ -513,6 +519,7 @@ waterFolder.add(imguiParams, 'enableWater').name('Enable');
 waterFolder.add(imguiParams, 'waterWaveSteepness', 0, 1, 0.01).name('Wave Steepness');
 waterFolder.add(imguiParams, 'waterWaveLength', 1, 500).name('Wave Length');
 waterFolder.add(imguiParams, 'waterOceanWindSpeed', 0, 30).name('Wind Over The Sea');	//its own: the Wind folder's is the land's
+waterFolder.add(imguiParams, 'waterSeed', 1, 1000, 1).name('Sea Seed');	//which waves (the same seed, the same sea on every machine)
 waterFolder.add(imguiParams, 'waterFetch', 1, 1000, 1).name('Fetch (km)');
 waterFolder.add(imguiParams, 'waterWorldPosY', -100, 100).name('World Pos Y');
 waterFolder.add(imguiParams, 'waterTileResolution', [32, 64, 128, 256, 512, 1024]).name('Water Tile Resolution');

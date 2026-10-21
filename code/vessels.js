@@ -19,8 +19,10 @@
 
 	THE HULL is lofted from STATIONS: at each z, the keel and points up the side from it (port), and its sheer, the top of the side.
 	Under the hull are COLUMNS that the water is asked about (see FLOATING in boat.js): x, z, the bottom of the hull there and the
-	area of hull each stands for. And the rest: the helm (where the player sits or stands to steer), the ladder up the side, the
-	controls, and how hard the hull is to push through the water and to turn.
+	area of hull each stands for. And the rest: the helm (where the player sits or stands to steer), the ladders up each side, the
+	controls, and how hard the hull is to push through the water and to turn. reach: metres from the centre to the furthest of
+	it (the bowsprit, the boom's end), and footprint: places along it (z) where the water under it is looked at before it is put
+	in the sea (spawn.keel: how far its keel goes under the water).
 */
 
 // what each triangle is made of (see the fragment shader in vf_boat.js)
@@ -177,8 +179,9 @@ function dinghy() {
 	const JIB_TACK = [0, 0.80, 2.02], JIB_HEAD = [0, 4.50, 0.95], JIB_CLEW = [0, 0.95, 0.2];
 	const MAIN_SHEET_BLOCK = [0, 0.36, -1.45], JIB_CLEATS = [[0.62, 0.68, -0.3], [-0.62, 0.68, -0.3]];
 	const BOW_FITTING = [0, 0.78, 2.12];
-	const LADDER = { x: -0.92, z0: -0.95, z1: -0.6, bottom: -0.5, top: 0.7 };
+	const LADDER = { x: 0.92, z0: -0.95, z1: -0.6, bottom: -0.5, top: 0.7 };		// (x: out to either side, starboard -x and port +x)
 	const ladderZ = (LADDER.z0 + LADDER.z1) / 2;
+	const SIDES = [-1, 1];
 
 	const controls = controlsOf([
 		{ kind: 'halyard', sail: 0, at: [0.07, 1.02, MAST_Z], name: 'Mainsail halyard', keys: 'Scroll up to raise · down to lower' },
@@ -187,10 +190,10 @@ function dinghy() {
 		{ kind: 'sheet', sail: 1, at: JIB_CLEATS[0], name: 'Jib sheet', keys: 'Scroll up to haul in · down to ease out' },
 		{ kind: 'sheet', sail: 1, at: JIB_CLEATS[1], name: 'Jib sheet', keys: 'Scroll up to haul in · down to ease out' },
 		{ kind: 'helm', at: [0, SEAT.top + 0.05, seatZ], name: 'Helm seat', keys: 'E sit and take the tiller', radius: 0.5 },
-		{ kind: 'ladder', at: [LADDER.x, 0.1, ladderZ], name: 'Ladder', keys: 'E climb aboard', radius: 0.45 },
+		...SIDES.map((side, k) => ({ kind: 'ladder', ladder: k, at: [side * LADDER.x, 0.1, ladderZ], name: 'Ladder', keys: 'E climb aboard', radius: 0.45 })),
 		{ kind: 'anchor', at: [0, 0.82, 1.72], name: 'Anchor', keys: 'G drop it or bring it up', radius: 0.3 },
 	]);
-	const control = (kind, sail) => controls.find((c) => c.kind == kind && (sail === undefined || c.sail == sail)).id;
+	const control = (kind, sail) => controls.find((c) => c.kind == kind && (sail === undefined || c.sail == sail || c.ladder == sail)).id;
 
 	const mesh = makeMesh();
 	// the hull (72) and the transom (5)
@@ -248,14 +251,17 @@ function dinghy() {
 		mesh.with({ material, role: ROLE.ROPE, rope });
 		mesh.tube([0, 0, 0], [0, 0, 1], 0.01, 0.01, 3);
 	});
-	// the ladder (30): two rails and three rungs
-	mesh.with({ material: M.CHROME, control: control('ladder') });
+	// the ladders, one each side (30 each): two rails and three rungs
 	const L = LADDER;
-	for (const z of [L.z0, L.z1]) mesh.tube([L.x, L.bottom, z], [L.x + 0.04, L.top, z], 0.015, 0.015, 3);
-	for (const y of [-0.3, 0.05, 0.4]) {
-		const x = L.x + 0.04 * (y - L.bottom) / (L.top - L.bottom);
-		mesh.tube([x, y, L.z0], [x, y, L.z1], 0.012, 0.012, 3);
-	}
+	SIDES.forEach((side, k) => {
+		mesh.with({ material: M.CHROME, control: control('ladder', k) });
+		const x0 = side * L.x, lean = -side * 0.04;
+		for (const z of [L.z0, L.z1]) mesh.tube([x0, L.bottom, z], [x0 + lean, L.top, z], 0.015, 0.015, 3);
+		for (const y of [-0.3, 0.05, 0.4]) {
+			const x = x0 + lean * (y - L.bottom) / (L.top - L.bottom);
+			mesh.tube([x, y, L.z0], [x, y, L.z1], 0.012, 0.012, 3);
+		}
+	});
 	// the anchor on the foredeck (10)
 	mesh.with({ material: M.GALVANISED, role: ROLE.STOWED, control: control('anchor') });
 	mesh.tube([0, 0.8, 1.55], [0, 0.8, 1.9], 0.02, 0.02, 3);
@@ -304,13 +310,14 @@ function dinghy() {
 		],
 		controls,
 		helm: { at: [0, SEAT.top, seatZ], eye: 0.8, seated: true, hike: true, hikeX: 0.7, hikeOut: 1.0, standAt: [0, FLOOR, SEAT.z1 + 0.3], tiller: 'tiller' },
-		ladder: { x: L.x, z: ladderZ, top: L.top, foot: [L.x - 0.35, -0.6, ladderZ], over: [L.x + 0.05, L.top + 0.1, ladderZ], inside: [-0.35, FLOOR, ladderZ], seconds: 1.4 },
+		ladders: SIDES.map((side, k) => ({ x: side * L.x, z: ladderZ, top: L.top, foot: [side * (L.x + 0.35), -0.6, ladderZ], over: [side * (L.x - 0.05), L.top + 0.1, ladderZ], inside: [side * 0.35, FLOOR, ladderZ], seconds: 1.4, control: control('ladder', k) })),
+		reach: 3.0, footprint: [-2.1, -1.2, -0.3, 0.6, 1.4, 2.0],
 		bow: BOW_FITTING, anchor: { rode: 40, stiffness: 2500, damping: 1800, most: 6000 },
 		groundPoints: [[0, 0, -2.0], [0, 0, -1.0], [0, 0, 0], [0, 0.03, 1.0], [0, 0.25, 2.0], [0, -0.85, 0.15], [0, -0.6, -2.33]],
 		groundGrip: { stiffness: 40000, damping: 2000, friction: 1500 }, rockStiffness: 30000, rockDamping: 2000, rockReach: 12,
 		hullRing: ring,
 		paint: { top: [0.86, 0.87, 0.85], band: [0.06, 0.12, 0.3], bandY: [0.5, 0.58], bottom: [0.86, 0.87, 0.85], bottomY: -100, inside: [0.86, 0.87, 0.85], ports: null },
-		spawn: { depth: 4, clear: 30, clearDepth: 2.5, draft: 0.12 },
+		spawn: { depth: 4, clear: 30, clearDepth: 2.5, draft: 0.12, keel: 1.0 },
 	};
 }
 
@@ -385,12 +392,12 @@ function schooner() {
 		{ kind: 'sheet', sail: 4, at: rail(1, -0.4), name: 'Topsail braces', keys: 'Scroll up to brace up sharp · down to square away' },
 		{ kind: 'sheet', sail: 4, at: rail(-1, -0.4), name: 'Topsail braces', keys: 'Scroll up to brace up sharp · down to square away' },
 		{ kind: 'helm', at: WHEEL, name: 'Wheel', keys: 'E take the wheel', radius: 0.8 },
-		{ kind: 'ladder', at: [-3.0, 3.2, 1.5], name: 'Boarding ladder', keys: 'E climb aboard', radius: 0.7 },
+		...[-1, 1].map((side, k) => ({ kind: 'ladder', ladder: k, at: [side * 3.0, 3.2, 1.5], name: 'Boarding ladder', keys: 'E climb aboard', radius: 0.7 })),
 		{ kind: 'anchor', at: BOW_FITTING, name: 'Anchor', keys: 'G let go or weigh anchor', radius: 0.6 },
 	]);
 	// (the pins and cleats are big enough to find with the crosshair on a deck that rolls)
 	for (const c of controls) if (c.kind == 'halyard' || c.kind == 'sheet') c.radius = 0.3;
-	const control = (kind) => controls.find((c) => c.kind == kind).id;
+	const control = (kind, k) => controls.find((c) => c.kind == kind && (k === undefined || c.ladder == k)).id;
 
 	const mesh = makeMesh();
 	// the hull (192), its transom (11) and the keel under it (6)
@@ -490,15 +497,18 @@ function schooner() {
 			mesh.quad([side * 1.8, deck + 0.4, z - 0.12], [side * 1.8, deck + 0.4, z + 0.12], [side * 1.8, deck + 0.7, z + 0.12], [side * 1.8, deck + 0.7, z - 0.12]);
 		}
 	}
-	// the boarding ladder, hung over the starboard side (22)
-	mesh.with({ material: M.ROPE_TAN, control: control('ladder') });
-	const ladderX = -3.0, ladderZ = 1.5;
-	for (const dz of [-0.25, 0.25]) mesh.tube([ladderX, 2.0, ladderZ + dz], [ladderX + 0.05, hull.point(ladderZ, 6)[1] + 0.05, ladderZ + dz], 0.025, 0.025, 3);
-	mesh.with({ material: M.WOOD, control: control('ladder') });
-	for (let k = 0; k < 5; k++) {
-		const y = 2.2 + k * 0.5;
-		mesh.quad([ladderX - 0.06, y, ladderZ - 0.27], [ladderX - 0.06, y, ladderZ + 0.27], [ladderX + 0.06, y, ladderZ + 0.27], [ladderX + 0.06, y, ladderZ - 0.27]);
-	}
+	// the boarding ladders, hung over each side (22 each)
+	const ladderSide = 3.0, ladderZ = 1.5;
+	[-1, 1].forEach((side, k) => {
+		const ladderX = side * ladderSide;
+		mesh.with({ material: M.ROPE_TAN, control: control('ladder', k) });
+		for (const dz of [-0.25, 0.25]) mesh.tube([ladderX, 2.0, ladderZ + dz], [ladderX - side * 0.05, hull.point(ladderZ, 6)[1] + 0.05, ladderZ + dz], 0.025, 0.025, 3);
+		mesh.with({ material: M.WOOD, control: control('ladder', k) });
+		for (let r = 0; r < 5; r++) {
+			const y = 2.2 + r * 0.5;
+			mesh.quad([ladderX - 0.06, y, ladderZ - 0.27], [ladderX - 0.06, y, ladderZ + 0.27], [ladderX + 0.06, y, ladderZ + 0.27], [ladderX + 0.06, y, ladderZ - 0.27]);
+		}
+	});
 	// the anchor, hanging at the cathead (20)
 	mesh.with({ material: M.IRON, role: ROLE.STOWED, control: control('anchor') });
 	const A = BOW_FITTING;
@@ -565,13 +575,15 @@ function schooner() {
 		],
 		controls,
 		helm: { at: [0, deckY(-7.6), -7.6], eye: 1.65, seated: false, hike: false, standAt: [0, deckY(-7.6), -7.6], tiller: 'wheel' },
-		ladder: { x: ladderX, z: ladderZ, top: hull.point(ladderZ, 6)[1], foot: [ladderX - 0.45, 1.4, ladderZ], over: [ladderX + 0.2, hull.point(ladderZ, 6)[1] + 0.3, ladderZ], inside: [-2.2, deckY(ladderZ), ladderZ], seconds: 3.0 },
+		ladders: [-1, 1].map((side, k) => ({ x: side * ladderSide, z: ladderZ, top: hull.point(ladderZ, 6)[1], foot: [side * (ladderSide + 0.45), 1.4, ladderZ], over: [side * (ladderSide - 0.2), hull.point(ladderZ, 6)[1] + 0.3, ladderZ],
+			inside: [side * 2.2, deckY(ladderZ), ladderZ], seconds: 3.0, control: control('ladder', k) })),
+		reach: 17, footprint: [-9.0, -6.0, -3.0, 0, 3.0, 6.0, 8.5],
 		bow: BOW_FITTING, anchor: { rode: 120, stiffness: 2e5, damping: 2.7e5, most: 3e5 },
 		groundPoints: [[0, 0, -8.5], [0, 0.15, -4.5], [0, 0.35, 0], [0, 0.65, 4.5], [0, 1.6, 8.8], [0, 0.05, -10.0]],
 		groundGrip: { stiffness: 3e7, damping: 1.5e6, friction: 1e6 }, rockStiffness: 2e7, rockDamping: 1e6, rockReach: 40,
 		hullRing: ring,
 		paint: { top: [0.05, 0.05, 0.06], band: [0.78, 0.6, 0.24], bandY: [3.95, 4.42], bottom: [0.6, 0.36, 0.22], bottomY: 2.65, inside: [0.5, 0.17, 0.11], ports: { z0: GUNS[0], spacing: GUNS[1] - GUNS[0], count: GUNS.length, half: 0.3 } },
-		spawn: { depth: 9, clear: 60, clearDepth: 5, draft: 2.6 },
+		spawn: { depth: 9, clear: 60, clearDepth: 5, draft: 2.6, keel: 3.1 },
 	};
 }
 

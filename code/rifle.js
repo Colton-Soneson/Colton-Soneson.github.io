@@ -15,9 +15,11 @@ import * as transformations from './transformations.js'
 import { lightNow } from './lighting.js'
 import * as hunting from './hunting.js'
 import * as ballistics from './ballistics.js'
+import * as weapons from './weapons.js'
 
 /*
-	The hunter's rifle, in the Hunting game mode only: a Mosin-Nagant 91/30, the Soviet bolt action of the Second World War.
+	The hunter's rifle, in the Hunting game mode, while it is the weapon held (weapons.js): a Mosin-Nagant 91/30, the Soviet
+	bolt action of the Second World War.
 		left click			fire (after the trigger's pull, TRIGGER_SECONDS)
 		right click (held)	aim down the sights
 		middle click		turn the bolt up (open it), or down again (close it): it only closes when it is all the way forward
@@ -30,7 +32,8 @@ import * as ballistics from './ballistics.js'
 	way back throws out whatever is in the chamber, a live round as well as an empty case. With nothing in the chamber the
 	trigger only clicks. TO LOAD: open the bolt, draw it all the way back, press R for each round (up to MAGAZINE), push it
 	forward and close it. The rifle starts with MAGAZINE - 1 in the magazine and one in the chamber, the way a clip of 5
-	leaves it. There is no end to the ammunition. The ammunition is shown in the bottom right, with the next thing to do.
+	leaves it. Each round pushed in is one of those carried (weapons.js: 20 all told, filled up at a horse's saddlebags), and a live
+	round thrown out of the chamber goes back to them. The ammunition is shown in the bottom right, with the next thing to do.
 
 	THE RIFLE (RIFLE_MESH): 247 triangles, in metres, the muzzle along +z, the bore along the z axis:
 		the stock			the butt and the wrist (18) and the forend under the barrel (10), wood
@@ -189,11 +192,11 @@ const rifle = {
 let triggerAsked = false, middleAsked = false, wheelPixels = 0, loadsAsked = 0;
 let lastTime = performance.now();
 
-const active = () => settings.gameMode == 'Hunting' && settings.enableTerrain;
+const active = () => weapons.holding('rifle');
 const locked = () => document.pointerLockElement == canvas;
 
 window.addEventListener('mousedown', (event) => {
-	if (!active() || !locked()) return;
+	if (!active() || !locked() || hunting.input.menuOpen) return;
 	if (event.button == 0) triggerAsked = true;
 	if (event.button == 1) {
 		middleAsked = true;
@@ -205,13 +208,24 @@ window.addEventListener('mouseup', (event) => {
 	if (event.button == 2) rifle.wantsAim = false;
 });
 window.addEventListener('wheel', (event) => {
-	if (!active() || !locked()) return;
+	if (!active() || !locked() || hunting.input.menuOpen || hunting.crosshair.onRope) return;
 	wheelPixels += event.deltaY * (event.deltaMode == 1 ? 40 : event.deltaMode == 2 ? 800 : 1);		// (lines or pages, as pixels)
 	event.preventDefault();
 }, { passive: false });
 window.addEventListener('keydown', (event) => {
-	if (active() && locked() && event.code == 'KeyR' && !event.repeat) loadsAsked++;
+	if (active() && locked() && !hunting.input.menuOpen && event.code == 'KeyR' && !event.repeat) loadsAsked++;
 });
+
+// in the spawn menu's Weapons, and its controls on the left
+weapons.addWeapon('rifle', { label: 'Mosin–Nagant', detail: 'Bolt action rifle, 7.62×54R, 5 rounds', equip: () => { rifle.aimed = 0; },
+	loaded: () => rifle.magazine + (rifle.chamber == 'live' ? 1 : 0) + (rifle.loading >= 0 ? 1 : 0) + rifle.queued, reset: () => resetRifle(),
+	help: () => ['Mosin–Nagant 91/30', [
+		['Left click', 'fire'],
+		['Right click', 'aim down the sights (hold)'],
+		['Middle click', 'turn the bolt up (open) or down (close)'],
+		['Wheel', 'bolt open: down draws it back, up pushes it forward'],
+		['R', 'bolt all the way back: push a round into the magazine'],
+	]] });
 document.addEventListener('pointerlockchange', () => { if (!locked()) rifle.wantsAim = false; });
 
 const clamp01 = (v) => Math.min(Math.max(v, 0), 1);
@@ -391,6 +405,7 @@ function workBolt(elapsed) {
 	for (; loadsAsked > 0; loadsAsked--) {
 		if (r.back < 1 || r.backWanted < 1) say(r.liftWanted == 0 ? 'Open the bolt and draw it back to load' : 'Draw the bolt all the way back to load');
 		else if (r.magazine + r.queued + (r.loading >= 0 ? 1 : 0) >= MAGAZINE) say('The magazine is full');
+		else if (!weapons.takeRound('rifle')) say(weapons.noAmmoWord);
 		else r.queued++;
 	}
 	if (r.loading < 0 && r.queued > 0) {
@@ -424,12 +439,14 @@ function workBolt(elapsed) {
 	r.back = toward(r.back, r.backWanted, elapsed / BOLT_DRAW_SECONDS);
 	// all the way back: out comes whatever was in the chamber
 	if (r.back == 1 && was < 1) {
+		const live = r.chamber == 'live';
 		if (r.chamber != 'empty') {
-			r.eject = { t: 0, from: [0, 0, -BOLT_TRAVEL], live: r.chamber == 'live' };
+			r.eject = { t: 0, from: [0, 0, -BOLT_TRAVEL], live };
 			rifleStats.ejected++;
 		}
 		r.chamber = 'empty';
 		r.stripped = true;
+		if (live) weapons.giveRound('rifle');		// (picked up, and back with the rest)
 	}
 	// all the way forward again: the top round off the magazine goes into the chamber
 	if (r.back == 0 && was > 0 && r.stripped) {
@@ -536,7 +553,7 @@ function showAmmo() {
 	if (!on) return;
 	const r = rifle;
 	const message = r.messageAge < MESSAGE_SECONDS ? r.message : '';
-	const key = [r.magazine, r.chamber, boltWord(), nextStep(), message].join('|');
+	const key = [r.magazine, r.chamber, boltWord(), nextStep(), message, weapons.carried('rifle')].join('|');
 	if (key == ammoShown) return;
 	ammoShown = key;
 
@@ -546,7 +563,7 @@ function showAmmo() {
 	const rounds = r.magazine + (r.chamber == 'live' ? 1 : 0);
 	ammo.innerHTML =
 		`<div style="display: flex; align-items: flex-end; justify-content: flex-end; gap: 12px;">`
-		+ `<div style="font-size: 30px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; margin-right: 2px;">${rounds}</div>`
+		+ `<div style="text-align: center; margin-right: 2px;"><div style="font-size: 30px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums;">${rounds}</div><div style="${label}">+${weapons.carried('rifle')} CARRIED</div></div>`
 		+ `<div><div style="display: flex; gap: 3px;">${magazine}</div><div style="${label}">MAGAZINE</div></div>`
 		+ `<div style="width: 1px; align-self: stretch; background: rgba(255, 255, 255, 0.2);"></div>`
 		+ `<div><div style="display: flex; justify-content: center;">${roundIcon(r.chamber)}</div><div style="${label}">CHAMBER</div></div>`
@@ -582,7 +599,7 @@ export function riflePass() {
 	if (!active() || !hunting.hunterPlace().active || !hunting.hunterLife.alive) {
 		return;
 	}
-	const projection = mat4.perspective(transformations.verticalViewAngle, canvas.width / canvas.height, 0.01, 10);
+	const projection = mat4.perspective(transformations.baseVerticalViewAngle, canvas.width / canvas.height, 0.01, 10);
 	// the light, turned into the camera's space
 	const light = lightNow();
 	const view = transformations.getViewMatrix();

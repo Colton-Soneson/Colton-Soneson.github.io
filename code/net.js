@@ -10,6 +10,12 @@ import * as forest from './forest.js'
 import * as deer from './deer.js'
 import * as birds from './birds.js'
 import * as geese from './geese.js'
+import * as boat from './boat.js'
+import * as horse from './horse.js'
+import * as discgolf from './discgolf.js'
+import * as water from './water.js'
+import * as weapons from './weapons.js'
+import { onSpawn } from './radialMenu.js'
 import { PRESETS } from './graphicsPresets.js';
 
 /*
@@ -29,11 +35,25 @@ import { PRESETS } from './graphicsPresets.js';
 	(strict company ones, some mobile carriers) let nothing through without a relay (TURN), which this does not have.
 
 	WHAT GOES BETWEEN THEM (as JSON, t: what it is)
-		joiner to host		hello (its name), st (its state), shot, hit (it hit someone), up (it is up again after being shot)
-		host to joiners		welcome (its id, who is there, the world, the clock, the scores), join, leave, world, clock,
-							sts (everyone's states), shot, hp (someone's health), down (someone was shot dead), score
-	A state is [x, y, z (its feet), heading, pitch, speed, alive, out hunting], STATE_RATE times a second, on the fast
-	channel (no waiting for what was lost: the next one is newer anyway). Everything else on the game channel, in order.
+		joiner to host		hello (its name), st (its state), shot, hit (it hit someone), up (it is up again after being shot),
+							veh+ and veh- (a vehicle it put out, or took away), vs (the states of the vehicles it sails), claim (it
+							took a vehicle's helm), vctl (a control worked on a vehicle someone else sails)
+		host to joiners		welcome (its id, who is there, the world, the clock, the scores, the vehicles), join, leave, world, clock,
+							sts (everyone's states), shot, hp (someone's health), down (someone was shot dead), score, and veh+,
+							veh-, vs, vctl passed on, and auth (who sails a vehicle now)
+	A state is [x, y, z (its feet), heading, pitch, speed, alive, out hunting, the vehicle it is on (its id, or ''), where on it
+	(x, y, z, metres in the vehicle's own directions), sitting (0 standing, 1 sitting, 2 astride), what it holds], STATE_RATE
+	times a second, on the fast channel (no waiting for what was lost: the next one is newer anyway). So are the vehicles' states.
+	Everything else on the game channel, in order.
+
+	THE VEHICLES (boats, boat.js; and the horses): everyone's. Each is sailed (or ridden) on one machine, its authority: whoever
+	put it out, until someone takes its helm (claim: the host says so, auth). The authority sends its state VEHICLE_RATE times a
+	second, and everyone else draws it from those (see WHO SAILS IT in boat.js). Who is on board, and where, comes with each
+	player's own state, so the authority has their weight on the boat as well. A rope hauled or the anchor let go by someone
+	who is not its authority goes to the authority (vctl), through the host. When a player leaves, the host sails what it
+	sailed. A joiner's own vehicles from before it joined are taken away (they would not be the host's); leaving, it keeps its own.
+	THE SEA is the same on every machine (the waves are drawn from settings.waterSeed, see gaussianNoise in water.js), and its
+	clock is the host's (clock: the waves' time too), so a boat rides the same waves everywhere.
 
 	THE HOST KEEPS:
 		the world		every setting but how well each one draws (WORLD_KEYS: everything but LOCAL_KEYS: the seeds of the
@@ -77,6 +97,8 @@ const ANIMAL_RECORD = 12;			// floats: id, x, y, z, heading, six of the animal's
 const ANIMAL_NEAR = 600;				// metres
 const ANIMAL_FAR_EVERY = 10;
 const ANIMAL_DELAY = 0.2;			// seconds
+const VEHICLE_RATE = 15;			// a second
+const WAVE_SLACK = 0.12;			// step time (water.js): a joiner whose waves are further out than this from the host's is put right
 const TREES_PER_MESSAGE = 1000;		// trees in full in one message: about 120 thousand characters, under what one message can hold
 const BIG_BUFFER = 1000000;			// bytes
 export const DAMAGE = { head: 100, chest: 70, belly: 55, leg: 30 };
@@ -382,6 +404,117 @@ function everyone() {
 function toAll(message, except = -1) {
 	for (const joiner of joiners.values()) if (joiner.id !== except && joiner.link.open) joiner.link.sendGame(message);
 }
+function toAllFast(message, except = -1) {
+	for (const joiner of joiners.values()) if (joiner.id !== except && joiner.link.open) joiner.link.sendFast(message);
+}
+
+// The vehicles (see THE VEHICLES at the top)
+//-------------------------------------------------
+// each kind of vehicle: how to list them, find one, say what it is now, follow what is heard of it, put one out from what is
+//		heard, take it away, and give it to whoever sails it
+const VEHICLES = {
+	boat: {
+		list: () => boat.boats,
+		byId: (id) => boat.boatById(id),
+		share: (b) => boat.boatShare(b),
+		heard: (s) => boat.boatHeard(s),
+		spawn: (s) => boat.spawnFromShare(s),
+		remove: (b) => boat.removeBoat(b),
+		takeOver: (b, authority) => boat.takeOver(b, authority),
+		local: () => boat.setLocalId(myId),
+	},
+	horse: {
+		list: () => horse.horses,
+		byId: (id) => horse.horseById(id),
+		share: (h) => horse.horseShare(h),
+		heard: (s) => horse.horseHeard(s),
+		spawn: (s) => horse.horseFromShare(s),
+		remove: (h) => horse.removeHorse(h),
+		takeOver: (h, authority) => horse.takeOver(h, authority),
+		local: () => horse.setLocalId(myId),
+	},
+};
+players.addVehicleFrames((id) => horse.horseById(id)?.frame);
+const kindOf = (id) => Object.keys(VEHICLES).find((kind) => VEHICLES[kind].byId(id));
+const allVehicles = () => Object.entries(VEHICLES).flatMap(([kind, V]) => V.list().map((v) => ({ kind, v })));
+let lastVehicles = 0;
+
+// a vehicle put out here, or taken away here (the spawn menu): to everyone
+function announceVehicle(kind, v, removed) {
+	const message = removed ? { t: 'veh-', kind, id: v.id } : { t: 'veh+', kind, s: VEHICLES[kind].share(v) };
+	if (role == 'host') toAll(message);
+	else if (role == 'joined') hostLink.sendGame(message);
+}
+onSpawn((kind, v, removed) => {
+	if (v) announceVehicle(kind, v, false);
+	if (removed) announceVehicle(kind, removed, true);
+});
+// heard of one put out, or taken away
+function vehicleHeard(message) {
+	const V = VEHICLES[message.kind];
+	if (!V) return;
+	if (message.t == 'veh+') {
+		const old = V.byId(message.s.id);
+		if (old) V.remove(old);
+		V.spawn(message.s);
+	} else {
+		const v = V.byId(message.id);
+		if (v) V.remove(v);
+	}
+}
+// who sails one now: the host says
+function setAuthority(id, authority) {
+	const kind = kindOf(id);
+	if (!kind) return;
+	VEHICLES[kind].takeOver(VEHICLES[kind].byId(id), authority);
+	if (role == 'host') toAll({ t: 'auth', id, a: authority });
+}
+// this player took a vehicle's helm (or its reins): it sails it from now on
+function claimVehicle(v) {
+	if (role == 'off' || v.authority === myId) return;
+	if (role == 'host') setAuthority(v.id, myId);
+	else if (role == 'joined') hostLink.sendGame({ t: 'claim', id: v.id });
+}
+hunting.onTakeHelm((b) => claimVehicle(b));
+// a control worked on a vehicle sailed somewhere else: to its authority, through the host
+function routeControl(id, what) {
+	const kind = kindOf(id);
+	if (!kind) return;
+	const v = VEHICLES[kind].byId(id);
+	if (v.authority === myId) { if (kind == 'boat') boat.workControl(v, what); return; }
+	if (role == 'host') joiners.get(v.authority)?.link.sendGame({ t: 'vctl', id, what });
+	else if (role == 'joined') hostLink.sendGame({ t: 'vctl', id, what });
+}
+boat.onRemoteControl((b, what) => routeControl(b.id, what));
+// the states of the vehicles sailed here, VEHICLE_RATE times a second
+function sendVehicles() {
+	const mine = allVehicles().filter(({ v }) => v.authority === myId).map(({ kind, v }) => ({ ...VEHICLES[kind].share(v), vk: kind }));
+	if (mine.length == 0) return;
+	if (role == 'host') toAllFast({ t: 'vs', l: mine });
+	else if (role == 'joined') hostLink.sendFast({ t: 'vs', l: mine });
+}
+function vehicleStates(list) {
+	for (const s of list) VEHICLES[s.vk]?.heard(s);
+}
+// who is on each vehicle sailed here: the others, from where their states say they are (this player's own is set by hunting.js)
+function crewFromStates() {
+	const aboard = players.othersAboard();
+	horse.setOtherRiders(aboard.filter((other) => horse.horseById(other.vehicle)).map((other) => [other.id, other.vehicle]));
+	for (const b of boat.boats) {
+		if (!boat.sailedHere(b)) continue;
+		for (const who of [...b.crew.keys()]) if (who !== 'me') b.crew.delete(who);
+		for (const other of aboard) if (other.vehicle === b.id) boat.setCrew(b, other.id, [other.local[0], other.local[1] + (other.sit ? 0.35 : 0.9), other.local[2]]);
+	}
+}
+// leaving a game: the others' vehicles go, this player's own stay (and are its own again, out of any game)
+function vehiclesAfterLeaving() {
+	for (const { kind, v } of allVehicles()) {
+		const V = VEHICLES[kind];
+		if (v.owner !== myId) { V.remove(v); continue; }
+		v.owner = 0;
+		V.takeOver(v, 0);
+	}
+}
 
 function beginGame() {
 	names.clear();
@@ -463,7 +596,8 @@ function takeJoiner(link, invite = null) {
 			names.set(id, joiner.name);
 			health.set(id, players.HEALTH);
 			players.addOther(id, joiner.name);
-			link.sendGame({ t: 'welcome', id, players: everyone(), world: worldNow(), clock: [atmosphere.sunCycles, settings.sunCycleAngle], scores: scoreList() });
+			link.sendGame({ t: 'welcome', id, players: everyone(), world: worldNow(), clock: [atmosphere.sunCycles, settings.sunCycleAngle], waves: water.waveClock(), scores: scoreList(),
+				vehicles: allVehicles().map(({ kind, v }) => ({ kind, s: VEHICLES[kind].share(v) })) });
 			toAll({ t: 'join', id, name: joiner.name }, id);
 			players.addFeed(joiner.name + ' joined');
 			say('Hosting');
@@ -480,6 +614,8 @@ function takeJoiner(link, invite = null) {
 		health.delete(joiner.id);
 		players.removeOther(joiner.id);
 		toAll({ t: 'leave', id: joiner.id });
+		// what it sailed, the host sails now
+		for (const { v } of allVehicles()) if (v.authority === joiner.id) setAuthority(v.id, myId);
 		players.addFeed(joiner.name + ' left');
 		refreshPanel();
 	};
@@ -490,23 +626,36 @@ function fromJoiner(joiner, message) {
 		players.otherState(joiner.id, message.s);
 		netStats.statesHeard++;
 	} else if (message.t == 'shot') {
-		ballistics.fire(message.from, message.dir, { remote: true, shooter: joiner.id });
-		toAll({ t: 'shot', id: joiner.id, from: message.from, dir: message.dir }, joiner.id);
+		for (const dir of message.dirs) ballistics.fire(message.from, dir, { remote: true, shooter: joiner.id, round: message.r });
+		toAll({ t: 'shot', id: joiner.id, from: message.from, dirs: message.dirs, r: message.r }, joiner.id);
 	} else if (message.t == 'hit') {
-		applyHit(joiner.id, message.target, message.part);
+		applyHit(joiner.id, message.target, message.part, message.r);
 	} else if (message.t == 'up') {
 		setHealth(joiner.id, players.HEALTH, joiner.id, '');
 	} else if (message.t == 'animal') {
 		ANIMALS.find((animal) => animal.kind == message.kind)?.kill(message.id, message.v);
 	} else if (message.t == 'forest?') {
 		sendBig(joiner.link, 'forest', { p: forest.plantings, s: treesSent }, forest.forestSnapshot());
+	} else if (message.t == 'veh+' || message.t == 'veh-') {
+		vehicleHeard(message);
+		toAll(message, joiner.id);
+	} else if (message.t == 'vs') {
+		vehicleStates(message.l);
+		toAllFast(message, joiner.id);
+	} else if (message.t == 'dthrow' || message.t == 'drest' || message.t == 'dgone' || message.t == 'dscore') {
+		discHeard(message, joiner.id);
+		toAll(message, joiner.id);
+	} else if (message.t == 'claim') {
+		setAuthority(message.id, joiner.id);
+	} else if (message.t == 'vctl') {
+		routeControl(message.id, message.what);
 	}
 }
-// the host's word on a hit: DAMAGE off the target's health, and at 0 it is down
-function applyHit(shooter, target, part) {
+// the host's word on a hit: DAMAGE off the target's health (the round's share of it), and at 0 it is down
+function applyHit(shooter, target, part, round) {
 	const before = health.get(target);
 	if (before === undefined || before <= 0 || !(part in DAMAGE) || shooter === target) return;
-	const after = Math.max(before - DAMAGE[part], 0);
+	const after = Math.max(before - Math.round(DAMAGE[part] * (ballistics.ROUNDS[round]?.damage ?? 1)), 0);
 	setHealth(target, after, shooter, part);
 	if (after <= 0) {
 		const killer = scores.get(shooter) ?? { kills: 0, deaths: 0 };
@@ -585,6 +734,13 @@ function heard(message) {
 		case 'welcome':
 			role = 'joined';
 			myId = message.id;
+			// (this player's own vehicles from before go: the host's world has its own)
+			for (const { kind, v } of allVehicles()) VEHICLES[kind].remove(v);
+			for (const V of Object.values(VEHICLES)) V.local();
+			for (const { kind, s } of message.vehicles ?? []) VEHICLES[kind]?.spawn(s);
+			discgolf.setLocalId(myId);
+			discgolf.discsForNewGame();
+			if (message.waves !== undefined) water.setWaveClock(message.waves);
 			beginGame();
 			for (const { id, name } of message.players) {
 				names.set(id, name);
@@ -617,6 +773,7 @@ function heard(message) {
 			break;
 		case 'clock':
 			if (settings.atmosphereSunRotationDemo && Math.abs(atmosphere.sunCycles - message.clock[0]) > CLOCK_SLACK) atmosphere.setSunClock(message.clock[0], message.clock[1]);
+			if (message.waves !== undefined && Math.abs(water.waveClock() - message.waves) > WAVE_SLACK) water.setWaveClock(message.waves);
 			if (forestSync.have) {
 				if (Math.abs(forest.clock - message.forest[0]) > 0.05) forest.setForestClock(message.forest[0]);
 				// planted again, there or here: the forest again
@@ -645,7 +802,7 @@ function heard(message) {
 			for (const [id, ...s] of message.l) if (id !== myId) { players.otherState(id, s); netStats.statesHeard++; }
 			break;
 		case 'shot':
-			if (message.id !== myId) ballistics.fire(message.from, message.dir, { remote: true, shooter: message.id });
+			if (message.id !== myId) for (const dir of message.dirs) ballistics.fire(message.from, dir, { remote: true, shooter: message.id, round: message.r });
 			break;
 		case 'hp':
 			if (message.id === myId) players.setLocalHealth(message.hp, message.by === myId ? '' : nameOf(message.by));
@@ -656,6 +813,25 @@ function heard(message) {
 			break;
 		case 'score':
 			setScores(message.list);
+			break;
+		case 'veh+':
+		case 'veh-':
+			vehicleHeard(message);
+			break;
+		case 'vs':
+			vehicleStates(message.l);
+			break;
+		case 'auth':
+			setAuthority(message.id, message.a);
+			break;
+		case 'dthrow':
+		case 'drest':
+		case 'dgone':
+		case 'dscore':
+			discHeard(message);
+			break;
+		case 'vctl':
+			routeControl(message.id, message.what);
 			break;
 	}
 }
@@ -699,6 +875,7 @@ function lockControls(on) {
 //-------------------------------------------------
 export function leaveGame(quietly = true) {
 	const wasHost = role == 'host';
+	if (role == 'joined' || role == 'host') vehiclesAfterLeaving();
 	role = 'off';
 	for (const joiner of joiners.values()) joiner.link.close();
 	joiners.clear();
@@ -718,9 +895,37 @@ export function leaveGame(quietly = true) {
 	scores.clear();
 	health.clear();
 	myId = 0;
+	for (const V of Object.values(VEHICLES)) V.local();
+	discgolf.setLocalId(0);
+	discgolf.discsForNewGame();
 	players.setInGame(false);
 	if (quietly) say(wasHost ? 'Stopped hosting' : '');
 	refreshPanel();
+}
+
+// The golf discs (see IN A GAME WITH OTHERS in discgolf.js): this player's throws, where they come to rest, picked up, a hole finished
+//-------------------------------------------------
+function discSend(message) {
+	if (role == 'host') toAll(message);
+	else if (role == 'joined') hostLink.sendGame(message);
+}
+const r3 = (v) => Math.round(v * 1000) / 1000;
+discgolf.onThrow(({ id, kind, owner, s }) => discSend({ t: 'dthrow', id, kind, owner, s: { p: s.p.map(r3), v: s.v.map(r3), n: s.n.map((v) => Math.round(v * 1e5) / 1e5), spin: r3(s.spin) } }));
+discgolf.onRest(({ id, p, n, state, hole }) => discSend({ t: 'drest', id, p: p.map(r3), n: n.map(r3), state, hole }));
+discgolf.onGone((id) => discSend({ t: 'dgone', id }));
+discgolf.onScore(({ hole, throws, par }) => {
+	const message = { t: 'dscore', name: myName, hole, throws, par };
+	discSend(message);
+	if (role != 'off') discHeard(message);
+});
+function discHeard(message) {
+	if (message.t == 'dthrow') discgolf.remoteThrow(message);
+	else if (message.t == 'drest') discgolf.remoteRest(message);
+	else if (message.t == 'dgone') discgolf.remoteGone(message.id);
+	else if (message.t == 'dscore') {
+		const score = message.throws - message.par;
+		players.addFeed(`${message.name}: hole ${message.hole} in ${message.throws} (${score == 0 ? 'par' : score > 0 ? '+' + score : score})`);
+	}
 }
 
 // What is sent of this player's own doings
@@ -729,16 +934,22 @@ function myState() {
 	const place = hunting.hunterPlace();
 	const forward = transformations.getCameraForward();
 	const metre = settings.forestUnitsPerMetre;
-	return [place.x, place.y, place.z, Math.atan2(forward[0], forward[2]), settings.camPitch, Math.hypot(place.vx ?? 0, place.vz ?? 0) / metre,
-		hunting.hunterLife.alive ? 1 : 0, place.active ? 1 : 0].map((v) => Math.round(v * 1000) / 1000);
+	const r = (v) => Math.round(v * 1000) / 1000;
+	const on = place.vehicle ?? place.boat ?? '';
+	const b = place.boat ? boat.boatById(place.boat) : null;
+	const sit = place.on == 'saddle' ? 2 : place.on == 'seat' && b && boat.helm(b).seated ? 1 : 0;
+	return [...[place.x, place.y, place.z, Math.atan2(forward[0], forward[2]), settings.camPitch, Math.hypot(place.vx ?? 0, place.vz ?? 0) / metre,
+		hunting.hunterLife.alive ? 1 : 0, place.active ? 1 : 0].map(r), on, ...(on ? place.local.map(r) : [0, 0, 0]), sit, weapons.weaponState.current];
 }
-ballistics.onLocalFire((from, direction) => {
-	if (role == 'host') toAll({ t: 'shot', id: myId, from, dir: direction });
-	else if (role == 'joined') hostLink.sendGame({ t: 'shot', from, dir: direction });
+ballistics.onLocalFire((from, directions, round) => {
+	const r3 = (v) => Math.round(v * 1000) / 1000;
+	const dirs = directions.map((d) => d.map(r3));
+	if (role == 'host') toAll({ t: 'shot', id: myId, from, dirs, r: round });
+	else if (role == 'joined') hostLink.sendGame({ t: 'shot', from, dirs, r: round });
 });
-players.onShot((target, part) => {
-	if (role == 'host') applyHit(myId, target, part);
-	else if (role == 'joined') hostLink.sendGame({ t: 'hit', target, part });
+players.onShot((target, part, round) => {
+	if (role == 'host') applyHit(myId, target, part, round);
+	else if (role == 'joined') hostLink.sendGame({ t: 'hit', target, part, r: round });
 });
 players.onRespawn(() => {
 	if (role == 'host') setHealth(myId, players.HEALTH, myId, '');
@@ -751,6 +962,11 @@ export function netUpdate() {
 	if (role == 'joined') applyWorld();
 	if (role != 'host' && role != 'joined') { netStats.role = role; return; }
 	const now = performance.now() / 1000;
+	if (now - lastVehicles >= 1 / VEHICLE_RATE) {
+		lastVehicles = now;
+		sendVehicles();
+	}
+	crewFromStates();
 
 	if (now - lastState >= 1 / STATE_RATE) {
 		lastState = now;
@@ -775,7 +991,7 @@ export function netUpdate() {
 	if (role == 'host') {
 		if (now - lastClock >= CLOCK_SECONDS) {
 			lastClock = now;
-			toAll({ t: 'clock', clock: [atmosphere.sunCycles, settings.sunCycleAngle], forest: [forest.clock, forest.plantings] });
+			toAll({ t: 'clock', clock: [atmosphere.sunCycles, settings.sunCycleAngle], forest: [forest.clock, forest.plantings], waves: water.waveClock() });
 		}
 		if (now - lastTrees >= TREES_SECONDS) {
 			lastTrees = now;
@@ -802,7 +1018,7 @@ export function netUpdate() {
 
 // for testing
 export function netStatus() {
-	return { role, id: myId, name: myName, names: Object.fromEntries(names), health: Object.fromEntries(health), scores: Object.fromEntries(scores), roomCode: netStats.roomCode, status: netStats.status, others: players.otherList(), forest: { ...forestSync, queue: forestSync.queue.length },
+	return { role, id: myId, vehicles: allVehicles().map(({ kind, v }) => ({ kind, id: v.id, owner: v.owner, authority: v.authority, crew: v.crew ? [...v.crew.keys()] : [] })), waves: water.waveClock(), name: myName, names: Object.fromEntries(names), health: Object.fromEntries(health), scores: Object.fromEntries(scores), roomCode: netStats.roomCode, status: netStats.status, others: players.otherList(), forest: { ...forestSync, queue: forestSync.queue.length },
 		animals: Object.fromEntries(ANIMALS.map((animal) => [animal.kind, [...tracks.get(animal.kind).entries()].map(([id, samples]) => { const r = samples[samples.length - 1].r; return { id, x: r[1], y: r[2], z: r[3], alive: r[11] > 0.5 }; })])) };
 }
 

@@ -13,6 +13,8 @@ import { skyLookupShapes } from './vfc_atmosphere.js';
 		7, 8		the left thigh and shin				swing from the hip with the walk, the shin bending back at the knee as
 		9, 10		the right thigh and shin			the leg comes forward
 		11			the rifle
+	Sitting (state.w, 0 to 1: at a dinghy's helm), the thighs come up level and the shins hang down from the knees, and it is let
+	down so its hips are on its place (the seat). Astride a horse (state.w from 1 to 2) the legs go apart round the saddle as well.
 	Then the whole dummy is turned to its heading, made its size and put in its place. A dead one has gone over on to its back,
 	about its feet. A hit one flashes red for a moment.
 	The colours are a crash test dummy's: yellow, the joints black, and the black and yellow quartered circles on the sides of
@@ -49,7 +51,8 @@ export const vf_dummy =
 		@location(0) shape: vec4f,		// xyz: the mesh, in metres, standing on y = 0 and facing +z. w: which part (see the top of the file)
 		@location(1) place: vec4f,		// this player: xyz where its feet are, w: world units to the metre
 		@location(2) pose: vec4f,		// x: heading (radians, round from +z towards +x), y: pitch (radians, up), z: where it is in its stride (radians), w: walking, 0 to 1
-		@location(3) state: vec4f,		// x: gone over, 0 standing to 1 flat on its back, y: hit, 1 just hit fading to 0, z: its colour (0 to 1 round the hues)
+		@location(3) state: vec4f,		// x: gone over, 0 standing to 1 flat on its back, y: hit, 1 just hit fading to 0, z: its colour (0 to 1 round the hues), w: sitting (0 to 1), astride (1 to 2)
+		@location(4) held: vec4f,		// x: how long what it holds is, the rifle it was made with 1 (0: nothing in its hands)
 	};
 
 	struct VertexOutput {
@@ -61,6 +64,7 @@ export const vf_dummy =
 
 	fn turnX(v: vec3f, angle: f32) -> vec3f { return vec3f(v.x, v.y * cos(angle) - v.z * sin(angle), v.y * sin(angle) + v.z * cos(angle)); }
 	fn turnY(v: vec3f, angle: f32) -> vec3f { return vec3f(v.x * cos(angle) + v.z * sin(angle), v.y, v.z * cos(angle) - v.x * sin(angle)); }
+	fn turnZ(v: vec3f, angle: f32) -> vec3f { return vec3f(v.x * cos(angle) - v.y * sin(angle), v.x * sin(angle) + v.y * cos(angle), v.z); }
 
 	const NECK: vec3f = vec3f(0.0, 1.55, 0.0);
 	const SHOULDERS: vec3f = vec3f(0.0, 1.45, 0.0);
@@ -72,7 +76,14 @@ export const vf_dummy =
 		var p = input.shape.xyz;
 		let part = i32(input.shape.w + 0.5);
 		let pitch = input.pose.y;
+		let sit = min(input.state.w, 1.0);
+		let astride = clamp(input.state.w - 1.0, 0.0, 1.0);
 
+		if (part == 11) {
+			// what it holds: the long box made 1.1 metres along z from the right shoulder, as long as the gun is (nothing at 0)
+			p.z = -0.05 + (p.z + 0.05) * input.held.x;
+			p = select(p, vec3f(0.0, 1.3, 0.0), input.held.x < 0.01);
+		}
 		if (part == 2) {
 			p = NECK + turnX(p - NECK, -0.6 * pitch);
 		} else if ((part >= 3 && part <= 6) || part == 11) {
@@ -85,10 +96,13 @@ export const vf_dummy =
 			let hip = vec3f(select(-0.1, 0.1, left), HIP_Y, 0.0);
 			if (part == 8 || part == 10) {
 				let knee = vec3f(p.x, KNEE_Y, 0.0);
-				p = knee + turnX(p - knee, -max(sin(phase), 0.0) * 0.9 * walking);
+				p = knee + turnX(p - knee, -max(sin(phase), 0.0) * 0.9 * walking + 1.45 * sit);
 			}
-			p = hip + turnX(p - hip, cos(phase) * 0.5 * walking);
+			p = hip + turnX(p - hip, cos(phase) * 0.5 * walking - 1.45 * sit);
+			p = hip + turnZ(p - hip, select(-0.45, 0.45, left) * astride);
 		}
+		// sitting: down on to the seat
+		p.y -= (HIP_Y - 0.05) * sit;
 
 		// a dead one goes over on to its back, about its heels
 		let over = input.state.x * 1.5;

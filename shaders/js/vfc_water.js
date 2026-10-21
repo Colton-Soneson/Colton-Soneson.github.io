@@ -306,7 +306,10 @@ fn swellLookup(xz: vec2f, depthMetres: f32) -> SwellRead {
 	let heading = normalize(vec2f(WU.swellDirX, WU.swellDirZ));
 	let across = vec2f(-heading.y, heading.x);
 	let gradient = refracted.yz;
-	let uv = (xz + heading * refracted.x) / WU.cascadeSize0;
+	// (the half texel: texel j of a map is the sea at j / resolution of the way across, where the sampler puts the middle of
+	//		texel j at j + 0.5. Without it the sea would be moved by half a texel, a different way at each resolution, and machines
+	//		with different wave resolutions would not have the same waves under a boat)
+	let uv = (xz + heading * refracted.x) / WU.cascadeSize0 + vec2f(0.5 / f32(textureDimensions(waveTexture0).x));
 	let toMap = outerProduct(heading, gradient) + outerProduct(across, across);
 	let runs = normalize(gradient + vec2f(0.00001, 0.0));
 	let toWorld = outerProduct(runs, heading) + outerProduct(vec2f(-runs.y, runs.x), across);
@@ -351,7 +354,7 @@ fn windLookup(cascade: i32, uv: vec2f, turn: f32) -> TurnedWave {
 		}
 		let toWorld = rotation((lower + f32(side)) * apart);
 		let toMap = transpose(toWorld);
-		let at = toMap * uv;
+		let at = toMap * uv + vec2f(0.5 / f32(textureDimensions(waveTexture1).x));	// (the half texel, see swellLookup)
 		var wave: vec4f;
 		var slope: vec4f;
 		var foam: f32;

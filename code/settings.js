@@ -12,10 +12,11 @@ export const settings = {
     camPosZ: 150.0,
     camFarPlane: 12000.0,	//far enough to see the other land masses
     camNearPlane: 1.0,
-    gameMode: 'Observe',			//Observe: fly round (cameraControls.js). Hunting: on foot, first person (hunting.js). Sailing: the same, with a sailing dinghy offshore to sail (boat.js)
-    sailingVessel: 'Schooner',		//what is sailed in the Sailing mode: Dinghy (an RS Quest, more or less) or Schooner (a naval topsail schooner, about 1800). See vessels.js
-    sailingBoatRecalls: 0,			//counts presses of the Bring the Boat Back control: each one puts the boat offshore again, near the player, with the player at the helm
-    huntingWalkSpeed: 3.0,			//metres a second on foot. Shift runs 1.8x
+    gameMode: 'Observe',			//Observe: fly round (cameraControls.js). Hunting (Hunting and Sailing): on foot, first person (hunting.js), with boats to sail (boat.js) and the rest from the spawn menu, T (radialMenu.js)
+    huntingWalkSpeed: 3.0,			//metres a second on foot. Shift runs 2.3x
+    discGolfEnabled: false,			//a disc golf course laid out on the land (discgolf.js): tee pads and baskets, each hole its own colour
+    discGolfHoles: 9,				//how many holes it has
+    discGolfSeed: 1,				//which course: New Course moves it on
     huntingJumpHeight: 0.5,			//metres
     huntingLookSensitivity: 1.0,	//how far the view turns for the mouse moved
     cameraFlyMode: true,		//WASD + right mouse drag, see cameraControls.js. Off = the camera always looks at the origin
@@ -171,6 +172,7 @@ export const settings = {
 	enableLightShafts: true,			//shafts of sun in the air between the clouds (crepuscular rays). They show while the sky is part cloud and part clear. See vf_lightShafts.js
 	lightShaftStrength: 1.0,
 	enableUnderwater: true,				//with the camera under the sea: the water's color and murk, the surface from underneath, caustics on the sea bed and shafts of light in the water
+	underwaterStartDepth: 0.25,			//metres the camera has to be under the water's surface (the waves counted) before it is seen as under the water: a little lower than the camera, so a swimmer's eyes in the waves do not flicker it on and off
 	causticStrength: 1.0,				//how strongly the waves gather and spread the light under them
 	//------------------PARTICLES------------------
 	enableLeaves: true,					//in the fall, leaves blow off the trees near the camera and are carried on the wind. See particles.js
@@ -197,6 +199,7 @@ export const settings = {
 	waterWaveSteepness: 0.1,	//0 - 1
 	waterWaveLength: 10.0,
 	waterTileResolution: 512.0,			//cells along a side of the mesh of the tile under the camera. Each ring of tiles further out has half as many
+	waterSeed: 1,						//which sea: the waves are drawn from this (see gaussianNoise in water.js). The same seed, the same waves, on every machine
 	waterCascadeResolution: 256,		//texels along a side of each of the 3 cascades of waves, the size of their FFTs: 128, 256 or 512. See the cascades in water.js
 	waterTileInstanceCount: 5,
 	waterWorldPosY: -16,

@@ -11,7 +11,8 @@ import * as transformations from './transformations.js'
 import * as terrain from './terrain.js'
 import * as ballistics from './ballistics.js'
 import * as hunting from './hunting.js'
-import * as rifle from './rifle.js'
+import * as weapons from './weapons.js'
+import * as boat from './boat.js'
 
 //the dummies fade into the horizon color, read from the sky view LUT (same as everything else)
 import {skyViewLUTtexture} from './atmosphere.js'
@@ -30,8 +31,11 @@ import {uniformBufferLights} from './rotatingCube.js'
 		over on to its back.
 
 	THE OTHERS. Each one's state comes in STATE_RATE times a second (net.js): where its feet are, its heading and pitch, how fast
-		it is going, whether it is alive and whether it is out hunting. They are drawn INTERPOLATION_SECONDS behind the last one
-		heard, in between the two states either side of then, so they move smoothly however the states arrive.
+		it is going, whether it is alive and whether it is out hunting, and the vehicle it is on (a boat, a horse), where on it,
+		and whether it is sitting. They are drawn INTERPOLATION_SECONDS behind the last one heard, in between the two states
+		either side of then, so they move smoothly however the states arrive. One on a vehicle is drawn where it is on it, on
+		the vehicle as it is drawn here (its frame, vehicleFrame), so it stays on the deck or in the saddle as they move.
+		Sitting at a helm or astride a horse, the dummy sits (see vf_dummy.js).
 
 	SHOT. Each dummy's hitbox is DUMMY_SPHERES: the head, the chest, the belly, and the thighs and shins. A bullet fired here
 		that hits one (ballistics.js asks every target along every step of its flight) is reported with the part it hit (onShot,
@@ -50,7 +54,9 @@ const INTERPOLATION_SECONDS = 0.12;
 const NAME_DISTANCE = 150;			// metres: further off than this a player's name is not shown
 const FEED_SECONDS = 6;
 const MAX_DRAWN = 16;
-const DUMMY_FLOATS = 16;				// one dummy as the shader gets it: place (4), pose (4), state (4), unused (4)
+const DUMMY_FLOATS = 16;				// one dummy as the shader gets it: place (4), pose (4), state (4), what it holds (4)
+// how long what each one holds is (the box it carries, see vf_dummy.js), as the long gun it was made with is 1: nothing, a disc: 0
+const HELD_LENGTH = { rifle: 1, shotgun: 0.9, sharps: 1.1, revolver: 0.3, none: 0 };
 const STRIDE = 1.5;					// metres a stride takes
 // the hitbox, in the dummy's own metres: x, y, z, radius, and which part it is (see DAMAGE in net.js)
 const DUMMY_SPHERES = [[0, 1.71, 0.01, 0.13, 'head'], [0, 1.33, 0, 0.21, 'chest'], [0, 1.0, 0, 0.19, 'belly'],
@@ -138,7 +144,8 @@ const dummyPipeline = device.createRenderPipeline({
 				attributes: [
 					{ format: "float32x4", offset: 0, shaderLocation: 1 },		// where, how big
 					{ format: "float32x4", offset: 16, shaderLocation: 2 },		// heading, pitch, stride, walking
-					{ format: "float32x4", offset: 32, shaderLocation: 3 },		// gone over, hit, colour
+					{ format: "float32x4", offset: 32, shaderLocation: 3 },		// gone over, hit, colour, sitting
+				{ format: "float32x4", offset: 48, shaderLocation: 4 },		// how long what it holds is
 				],
 			}]
 	},
@@ -149,7 +156,7 @@ const dummyPipeline = device.createRenderPipeline({
 
 // The others
 //-------------------------------------------------
-const others = new Map();		// id -> { id, name, hue, states: [{ at, s }], view, stride, walking, fallen, hit, tag }
+const others = new Map();		// id -> { id, name, hue, states: [{ at, s }], view, stride, walking, fallen, hit, sit, tag }
 let inGame = false;				// in a game with others (net.js)
 const shotListeners = [];
 const respawnListeners = [];
@@ -173,7 +180,7 @@ export function addOther(id, name) {
 	tag.style.cssText = 'position: absolute; transform: translate(-50%, -100%); padding: 1px 6px; border-radius: 3px; background: rgba(0, 0, 0, 0.45); color: #fff; font-size: 12px; white-space: nowrap; display: none;';
 	tag.textContent = name;
 	overlay.appendChild(tag);
-	others.set(id, { id, name, hue: hueOf(id), states: [], view: null, stride: 0, walking: 0, fallen: 0, hit: 0, tag });
+	others.set(id, { id, name, hue: hueOf(id), states: [], view: null, stride: 0, walking: 0, fallen: 0, hit: 0, sit: 0, tag });
 }
 export function removeOther(id) {
 	const other = others.get(id);
@@ -181,7 +188,8 @@ export function removeOther(id) {
 	other.tag.remove();
 	others.delete(id);
 }
-// s: [x, y, z (its feet), heading, pitch, speed (metres a second), alive (1 or 0), out hunting (1 or 0)]
+// s: [x, y, z (its feet), heading, pitch, speed (metres a second), alive (1 or 0), out hunting (1 or 0), the vehicle it is on ('' for
+//		none), x, y, z on it (metres), sitting (0, 1, astride 2), what it holds]
 export function otherState(id, s) {
 	const other = others.get(id);
 	if (!other) return;
@@ -195,7 +203,23 @@ export function otherHit(id) {
 export function otherList() {
 	return [...others.values()].map((o) => ({ id: o.id, name: o.name, view: o.view }));
 }
-// told when a bullet fired here hits one of the others: fn(id, part)
+// the others on a vehicle, as their last states say: [{ id, vehicle, local (metres on it), sit }] (net.js: their weight on a boat)
+export function othersAboard() {
+	const aboard = [];
+	for (const other of others.values()) {
+		const s = other.states[other.states.length - 1]?.s;
+		if (s && s[8]) aboard.push({ id: other.id, vehicle: s[8], local: [s[9], s[10], s[11]], sit: s[12] ?? 0 });
+	}
+	return aboard;
+}
+// where a vehicle is, by its id: its frame (toWorld, a place on it in the world), or null. The boats here, and the others add theirs
+const vehicleFrames = [(id) => boat.boatById(id)?.frame];
+export function addVehicleFrames(find) { vehicleFrames.push(find); }
+function vehicleFrame(id) {
+	for (const find of vehicleFrames) { const frame = find(id); if (frame) return frame; }
+	return null;
+}
+// told when a bullet fired here hits one of the others: fn(id, part, round)
 export function onShot(fn) { shotListeners.push(fn); }
 // told when this player is up again: fn([x, y, z])
 export function onRespawn(fn) { respawnListeners.push(fn); }
@@ -215,14 +239,25 @@ function viewOf(other, now) {
 	const mix = (i) => a.s[i] + (b.s[i] - a.s[i]) * f;
 	let turn = b.s[3] - a.s[3];
 	turn -= Math.PI * 2 * Math.round(turn / (Math.PI * 2));
-	return { x: mix(0), y: mix(1), z: mix(2), heading: a.s[3] + turn * f, pitch: mix(4), speed: mix(5), alive: b.s[6] > 0.5, hunting: b.s[7] > 0.5 };
+	const view = { x: mix(0), y: mix(1), z: mix(2), heading: a.s[3] + turn * f, pitch: mix(4), speed: mix(5), alive: b.s[6] > 0.5, hunting: b.s[7] > 0.5, sit: b.s[12] ?? 0, holds: b.s[13] ?? 'rifle' };
+	// on a vehicle: where it is on it, on the vehicle as it is drawn here
+	const frame = b.s[8] ? vehicleFrame(b.s[8]) : null;
+	if (frame) {
+		const local = a.s[8] == b.s[8] ? [mix(9), mix(10), mix(11)] : [b.s[9], b.s[10], b.s[11]];
+		[view.x, view.y, view.z] = frame.toWorld(local);
+	}
+	return view;
 }
 
-// a dummy's hitbox in the world: [x, y, z, radius, part] for each of DUMMY_SPHERES
-function dummySpheres(view, fallen) {
+// a dummy's hitbox in the world: [x, y, z, radius, part] for each of DUMMY_SPHERES (sitting: let down on to its seat, its legs out in front)
+function dummySpheres(view, fallen, sit = 0) {
 	const s = metre(), c = Math.cos(view.heading), sn = Math.sin(view.heading);
 	if (fallen > 0.5) return [];		// (on the ground: nothing to hit)
-	return DUMMY_SPHERES.map(([x, y, z, r, part]) => [view.x + (x * c + z * sn) * s, view.y + y * s, view.z + (z * c - x * sn) * s, r * s, part]);
+	const down = 0.9 * Math.min(sit, 1);
+	return DUMMY_SPHERES.map(([x, y, z, r, part]) => {
+		if (part == 'leg' && sit > 0.5) { z += (0.95 - y) * 0.9; y = 0.95 - 0.12; }
+		return [view.x + (x * c + z * sn) * s, view.y + (y - down) * s, view.z + (z * c - x * sn) * s, r * s, part];
+	});
 }
 ballistics.addTarget((ax, ay, az, bx, by, bz, bullet) => {
 	if (!inGame) return null;
@@ -232,16 +267,16 @@ ballistics.addTarget((ax, ay, az, bx, by, bz, bullet) => {
 		if (!view || !view.hunting || !view.alive) continue;
 		if (bullet && bullet.shooter === other.id) continue;
 		if (ballistics.crossSphere(ax, ay, az, bx, by, bz, view.x, view.y + 1.0 * metre(), view.z, 1.2 * metre()) === null) continue;
-		for (const [x, y, z, r, part] of dummySpheres(view, other.fallen)) {
+		for (const [x, y, z, r, part] of dummySpheres(view, other.fallen, other.sit)) {
 			const t = ballistics.crossSphere(ax, ay, az, bx, by, bz, x, y, z, r);
 			if (t !== null && (!best || t < best.t)) best = { t, other, part };
 		}
 	}
-	return best && { t: best.t, what: 'player', hit: () => {
+	return best && { t: best.t, what: 'player', hit: (velocity, bullet) => {
 		playerStats.hitsReported++;
 		best.other.hit = 1;
 		showHitMarker(best.part == 'head');
-		for (const fn of shotListeners) fn(best.other.id, best.part);
+		for (const fn of shotListeners) fn(best.other.id, best.part, bullet?.round ?? '7.62x54R');
 	} };
 });
 
@@ -281,7 +316,7 @@ export function respawn() {
 	local.alive = true;
 	local.health = HEALTH;
 	hunting.hunterLife.alive = true;
-	rifle.resetRifle();
+	weapons.resetWeapons();
 	playerStats.respawns++;
 	const place = hunting.hunterPlace();
 	for (const fn of respawnListeners) fn([place.x, place.y, place.z]);
@@ -358,7 +393,7 @@ function showOverlay(now, elapsed) {
 		const view = other.view;
 		let shown = false;
 		if (view && view.hunting && Math.hypot(view.x - settings.camPosX, view.z - settings.camPosZ) < NAME_DISTANCE * metre()) {
-			const p = [view.x, view.y + (view.alive ? 2.05 : 0.6) * metre(), view.z, 1];
+			const p = [view.x, view.y + (view.alive ? 2.05 - 0.9 * Math.min(other.sit, 1) : 0.6) * metre(), view.z, 1];
 			const c = [0, 1, 2, 3].map((r) => viewProj[r] * p[0] + viewProj[4 + r] * p[1] + viewProj[8 + r] * p[2] + viewProj[12 + r] * p[3]);
 			if (c[3] > 0.1) {
 				const x = (c[0] / c[3] * 0.5 + 0.5) * rect.width, y = (0.5 - c[1] / c[3] * 0.5) * rect.height;
@@ -396,6 +431,7 @@ export function playersUpdate() {
 		other.walking += (clamp((view?.speed ?? 0) / 1.5, 0, 1) - other.walking) * Math.min(elapsed * 6, 1);
 		other.fallen = clamp(other.fallen + (view && !view.alive ? 1 : -1) * elapsed / 0.6, 0, 1);
 		other.hit = Math.max(other.hit - elapsed * 3, 0);
+		other.sit += ((view?.sit ?? 0) - other.sit) * Math.min(elapsed * 6, 1);
 	}
 	playerStats.others = others.size;
 
@@ -412,7 +448,8 @@ export function playersPass(aEncoder, mainpassDepthTexture) {
 		const view = other.view;
 		if (!view || !view.hunting || count >= MAX_DRAWN) continue;
 		const fall = other.fallen * other.fallen * (3 - 2 * other.fallen);
-		instanceData.set([view.x, view.y, view.z, metre(), view.heading, view.pitch, other.stride, other.walking * (1 - fall), fall, other.hit, other.hue, 0, 0, 0, 0, 0], count * DUMMY_FLOATS);
+		instanceData.set([view.x, view.y, view.z, metre(), view.heading, view.pitch, other.stride, other.walking * (1 - fall) * (other.sit > 0.5 ? 0 : 1), fall, other.hit, other.hue, other.sit,
+			HELD_LENGTH[view.holds] ?? 0, 0, 0, 0], count * DUMMY_FLOATS);
 		count++;
 	}
 	playerStats.drawn = count;

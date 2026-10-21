@@ -46,6 +46,12 @@ import * as ballistics from './ballistics.js'
 import * as net from './net.js'
 import * as players from './players.js'
 import * as boat from './boat.js'
+import * as horse from './horse.js'
+import * as weapons from './weapons.js'
+import * as shotgun from './shotgun.js'
+import * as revolver from './revolver.js'
+import * as sharps from './sharps.js'
+import * as discgolf from './discgolf.js'
 import { settings } from './settings.js';
 import * as userInterface from './imguiLoader.js';
 import * as profiler from './profiler.js';
@@ -355,9 +361,15 @@ export function updateRotatingCubePass() {
 
 	// fly camera: after the controls have written their values (so the Pos sliders still work), before anything reads the camera
 	cameraControls.updateCamera();
-	boat.boatUpdate();			//the boat sails on (in the Sailing game mode), before the walker on it is carried along
-	hunting.updateHunter();		//on foot instead, in the Hunting and Sailing game modes
-	rifle.rifleUpdate();		//and the rifle in the hunter's hands
+	boat.boatUpdate();			//the boats sail on, before the walker on one is carried along
+	horse.horseUpdate();		//and the horses go on, before their riders
+	hunting.updateHunter();		//on foot instead, in the Hunting and Sailing game mode
+	rifle.rifleUpdate();		//and the gun in the hunter's hands: the rifle, or one of the others
+	shotgun.shotgunUpdate();
+	revolver.revolverUpdate();
+	sharps.sharpsUpdate();		//(and the view through its scope)
+	discgolf.discUpdate();		//the golf discs fly on, and the course is laid out (when it is on)
+	weapons.weaponsUpdate();	//(and the controls of whatever is in them, on the left)
 	net.netUpdate();			//in a game with others: what this player is doing goes out, the host's world and clock come in
 	players.playersUpdate();	//and the others move on
 	ballistics.bulletUpdate();	//the rounds in the air
@@ -527,7 +539,9 @@ export function updateRotatingCubePass() {
 		geese.geesePass(encoder, depthTexture);
 		deer.deerPass(encoder, depthTexture);
 		players.playersPass(encoder, depthTexture);	//(and the other players, in a game with others)
-		boat.boatPass(encoder, depthTexture);		//(and the boat, sailing)
+		boat.boatPass(encoder, depthTexture);		//(and the boats)
+		horse.horsePass(encoder, depthTexture);		//(and the horses)
+		discgolf.discGolfPass(encoder, depthTexture);	//(and the disc golf course, and the discs)
 	});
 
 	//screen space shadows and ambient occlusion over everything solid, and the copies of the frame the water finds its reflections in.
@@ -566,6 +580,7 @@ export function updateRotatingCubePass() {
 	profiler.section('Hunting', () => {
 		ballistics.trailPass(depthTexture);
 		rifle.riflePass();
+		weapons.weaponsPass();	//(the gun held, if it is not the rifle)
 	});
 
 	profiler.cpuMark('Anti-Aliasing, Debug Views');

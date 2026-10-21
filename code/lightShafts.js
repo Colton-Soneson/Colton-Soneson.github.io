@@ -94,10 +94,19 @@ const shaftPipeline = device.createRenderPipeline({
 	primitive: { topology: 'triangle-list' },
 });
 
-// whether the camera is under the sea (the level sea: the waves are not counted)
+// whether the camera is under the sea: under the water's surface where it is (the waves counted: the probe under the camera,
+//		water.cameraWater, or the level of the sea while there is none) by settings.underwaterStartDepth. So it is not under in the
+//		trough of a wave, and the eyes of a swimmer bobbing in the waves do not flicker it on and off
 function cameraUnderWater() {
-	return settings.enableWater && settings.enableUnderwater && settings.camPosY < settings.waterWorldPosY;
+	if (!settings.enableWater || !settings.enableUnderwater) return false;
+	const w = water.cameraWater;
+	const fresh = w.height !== null && performance.now() - w.at < 500 && Math.hypot(w.x - settings.camPosX, w.z - settings.camPosZ) < 10 * settings.forestUnitsPerMetre;
+	const surface = fresh ? w.height : settings.waterWorldPosY;
+	return settings.camPosY < surface - settings.underwaterStartDepth * settings.forestUnitsPerMetre;
 }
+
+// for testing
+export const underwaterNow = cameraUnderWater;
 
 // the ShaftUniforms struct in vf_lightShafts.js
 function shaftUniformBufferUpdates(shaftStrength) {

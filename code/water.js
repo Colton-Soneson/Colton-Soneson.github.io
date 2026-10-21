@@ -92,21 +92,47 @@ const waterVertexShaderModule = device.createShaderModule({
   code: v_water	
 });
 
-//anim
+//anim: the waves' clock, in step time. It goes on by WAVE_STEPS_A_SECOND of real time (a frame's worth at 60 a second used to be
+//		0.025, and the sea looks as it did at 60), and in a game with others the host's is everyone's (net.js: setWaveClock)
 let step = 0.0;
+const WAVE_STEPS_A_SECOND = 1.5;
+let lastStepTime = performance.now();
+export function waveClock() { return step; }
+export function setWaveClock(value) { step = value; }
 
 //random for initial wave map: one complex number for each texel of each cascade, its real and imaginary parts
-//		independent standard normal draws (Box-Muller)
-function gaussianNoise(count) {
-	const noise = new Float32Array(count * 2);
-	for (let i = 0; i < count; i++) {
-		const radius = Math.sqrt(-2.0 * Math.log(Math.max(Math.random(), 1e-7)));
-		const angle = 2.0 * Math.PI * Math.random();
-		noise[i * 2 + 0] = radius * Math.cos(angle);
-		noise[i * 2 + 1] = radius * Math.sin(angle);
+//		independent standard normal draws (Box-Muller). Each is drawn from a hash of the seed (settings.waterSeed), the cascade and
+//		the wave the texel stands for (its wave numbers, from the middle of the grid), not from a running random sequence. So every
+//		machine with the same seed has the same sea, whatever its cascade resolution (a finer one only has more of the short
+//		waves): the players in a game together see the same waves, and a boat sailed on one machine rides them on all of them
+function hashUnit(seed, cascade, x, y, salt) {
+	let h = 0x811c9dc5;
+	for (const v of [seed, cascade, x, y, salt]) {
+		h = Math.imul(h ^ (v | 0), 0x5bd1e995);
+		h ^= h >>> 15;
+		h = Math.imul(h, 0x27d4eb2d) ^ (h >>> 13);
+	}
+	h ^= h >>> 16;
+	return ((h >>> 0) + 0.5) / 4294967296;
+}
+function gaussianNoise(res, cascades) {
+	const noise = new Float32Array(res * res * cascades * 2);
+	const seed = Math.round(settings.waterSeed);
+	for (let c = 0; c < cascades; c++) {
+		for (let y = 0; y < res; y++) {
+			for (let x = 0; x < res; x++) {
+				const i = c * res * res + y * res + x;
+				const nx = x - res / 2, ny = y - res / 2;
+				const radius = Math.sqrt(-2.0 * Math.log(hashUnit(seed, c, nx, ny, 1)));
+				const angle = 2.0 * Math.PI * hashUnit(seed, c, nx, ny, 2);
+				noise[i * 2 + 0] = radius * Math.cos(angle);
+				noise[i * 2 + 1] = radius * Math.sin(angle);
+			}
+		}
 	}
 	return noise;
 }
+let noiseSeed = null;		// the seed the noise in the buffer was drawn with
 
 //bit reversed indices
 function reverseBits(x, bitSize = 32) {
@@ -141,14 +167,18 @@ const CASCADE_COUNT = CASCADE_SIZES.length;
 const WAVE_REPEAT_TIME = 1000;					// the sea comes back to where it started after this long (see c_hkt), in step time
 const WAVE_SHORTEST_TEXELS = 4;				// the shortest wave a cascade carries, in its own texels. Bilinear filtering draws shorter ones badly
 const WAVE_SHORTEST_CELLS = 3;					// and none shorter than this many cells of the finest mesh, which couldnt carry them
+const BAND_RESOLUTION = 128;					// where the bands between the cascades fall is worked out for this resolution, whatever the
+												//		cascades really are (see cascadeBands): the same waves in the same cascade on every machine
 
-// the band of wave numbers (radians per world unit) each cascade carries, [from, to)
+// the band of wave numbers (radians per world unit) each cascade carries, [from, to). Where one band ends and the next begins is the
+//		same at every resolution (BAND_RESOLUTION's), so a wave is in the same cascade, on the same texel, on every machine (see
+//		gaussianNoise). Only the last band reaches up as far as the real resolution lets it: a finer one has more of the short waves
 function cascadeBands() {
 	const res = settings.waterCascadeResolution;
 	const bands = [];
 	let low = 0.5 * 2.0 * Math.PI / CASCADE_SIZES[0];	// everything but the k = 0 texel, which carries nothing
 	for (let c = 0; c < CASCADE_COUNT; c++) {
-		let high = 2.0 * Math.PI / (WAVE_SHORTEST_TEXELS * CASCADE_SIZES[c] / res);
+		let high = 2.0 * Math.PI / (WAVE_SHORTEST_TEXELS * CASCADE_SIZES[c] / (c == CASCADE_COUNT - 1 ? res : Math.min(res, BAND_RESOLUTION)));
 		if (c == CASCADE_COUNT - 1) {
 			high = Math.min(high, 2.0 * Math.PI / (WAVE_SHORTEST_CELLS * settings.waterGridSize / settings.waterTileResolution));
 		}
@@ -432,7 +462,8 @@ function createWaveResources() {
 		foamTextures.push(device.createTexture({ label: `water foam cascade ${c} Texture`, size: [res, res], format: 'r32float', usage: storage | GPUTextureUsage.TEXTURE_BINDING }));
 	}
 
-	const noise = gaussianNoise(res * res * CASCADE_COUNT);
+	const noise = gaussianNoise(res, CASCADE_COUNT);
+	noiseSeed = settings.waterSeed;
 	waveNoiseBuffer = device.createBuffer({ label: "water spectrum gaussian noise Buffer", size: noise.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
 	device.queue.writeBuffer(waveNoiseBuffer, 0, noise);
 
@@ -755,7 +786,7 @@ function waterComputeBuffersUpdate(targetWaterComputeBuffer, tileX = 0, tileZ = 
 //		breaks into foam a little sooner. And what it made is half gone after FOAM_HALF_LIFE of step time
 const CASCADE_FOAM_EASE = 0.45;
 const FOAM_HALF_LIFE = 2.0;
-const foamKeep = Math.pow(0.5, 0.025 / FOAM_HALF_LIFE);	// (step goes on by 0.025 a frame, see waterPass)
+let foamKeep = Math.pow(0.5, 0.025 / FOAM_HALF_LIFE);	// (made again each frame for the step time it went on by, see waterPass)
 
 // Each cascade's settings, in the order of CascadeUniforms (vfc_water.js)
 function writeCascadeUniforms() {
@@ -1721,10 +1752,14 @@ function redirectWindDirectionTemp() {
 //		(probeMain in c_water) and come back a frame or two later (mapAsync, never waited for). waterProbes holds the last that came
 //		back, 8 numbers a place: x, z asked about, the height of the surface there, its normal (x, y, z), the depth of the still
 //		water, the foam. In world units
-export const PROBES_MOST = 64;
+//		And one more after them, always: under the camera (cameraWater), for whether it is under the water (lightShafts.js) and for a
+//		swimmer to float on the waves (hunting.js)
+export const PROBES_MOST = 320;
 const PROBE_FLOATS = 8;
-export const waterProbes = { count: 0, data: new Float32Array(PROBES_MOST * PROBE_FLOATS), at: 0, frames: 0 };
-const probeAsk = new Float32Array(PROBES_MOST * PROBE_FLOATS);
+export const waterProbes = { count: 0, data: new Float32Array((PROBES_MOST + 1) * PROBE_FLOATS), at: 0, frames: 0 };
+// the surface under the camera, as the last probe found it: where it was asked (x, z), its height, its normal, when (performance.now)
+export const cameraWater = { x: 0, z: 0, height: null, normal: [0, 1, 0], at: 0 };
+const probeAsk = new Float32Array((PROBES_MOST + 1) * PROBE_FLOATS);
 let probeAskCount = 0;
 const probeBuffer = device.createBuffer({ label: "water probes", size: probeAsk.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
 const probeNoIndices = device.createBuffer({ label: "water probes (no index data)", size: 16, usage: GPUBufferUsage.STORAGE });
@@ -1736,7 +1771,7 @@ const waterProbePipeline = device.createComputePipeline({
 });
 
 // the places to read the surface at from now on: [[x, z], ...] (world units), up to PROBES_MOST. The results come back in the same order
-export function setWaterProbes(places) {
+export function setWaterProbes(places) {	// (the camera's is added after them: cameraWater)
 	probeAskCount = Math.min(places.length, PROBES_MOST);
 	for (let i = 0; i < probeAskCount; i++) {
 		probeAsk[i * PROBE_FLOATS] = places[i][0];
@@ -1746,22 +1781,23 @@ export function setWaterProbes(places) {
 
 // in waterPass, once the tiles are made: the probes, through the uniforms of the tile under the camera, and copied out to be read
 function probeWater(aEncoder, uniformBuffer) {
-	if (probeAskCount == 0) {
-		return null;
-	}
-	device.queue.writeBuffer(probeBuffer, 0, probeAsk, 0, probeAskCount * PROBE_FLOATS);
+	// (the camera's, after the ones asked for)
+	probeAsk[probeAskCount * PROBE_FLOATS] = settings.camPosX;
+	probeAsk[probeAskCount * PROBE_FLOATS + 1] = settings.camPosZ;
+	const count = probeAskCount + 1;
+	device.queue.writeBuffer(probeBuffer, 0, probeAsk, 0, count * PROBE_FLOATS);
 	const probePass = aEncoder.beginComputePass({ timestampWrites: profiler.timestamps('Probes', 'c_water probeMain') });
 	probePass.setPipeline(waterProbePipeline);
 	probePass.setBindGroup(0, cachedBindGroup('probes', [uniformBuffer, ...waveTextures, ...slopeTextures, ...foamTextures, refractionTexture, scene.heightMapView, shoreDistanceTexture, terrain.terrainWaterTexture],
 		() => makeCompBindGroupwater(probeBuffer, probeNoIndices, uniformBuffer)));
-	probePass.dispatchWorkgroups(Math.ceil(probeAskCount / WATER_WORKGROUP_SIZE[0]));
+	probePass.dispatchWorkgroups(Math.ceil(count / WATER_WORKGROUP_SIZE[0]));
 	probePass.end();
 	const read = probeReadBuffers.find((r) => !r.busy);
 	if (!read) {
 		return null;	// (all three still on their way back: this frame's is not read)
 	}
-	aEncoder.copyBufferToBuffer(probeBuffer, 0, read.buffer, 0, probeAskCount * PROBE_FLOATS * 4);
-	return { read, count: probeAskCount };
+	aEncoder.copyBufferToBuffer(probeBuffer, 0, read.buffer, 0, count * PROBE_FLOATS * 4);
+	return { read, count };
 }
 
 // after the submit: when it is back, it is the latest
@@ -1770,7 +1806,9 @@ function readProbesBack(sent) {
 	sent.read.buffer.mapAsync(GPUMapMode.READ, 0, sent.count * PROBE_FLOATS * 4).then(() => {
 		waterProbes.data.set(new Float32Array(sent.read.buffer.getMappedRange(0, sent.count * PROBE_FLOATS * 4)));
 		sent.read.buffer.unmap();
-		waterProbes.count = sent.count;
+		waterProbes.count = sent.count - 1;
+		const o = (sent.count - 1) * PROBE_FLOATS, d = waterProbes.data;
+		Object.assign(cameraWater, { x: d[o], z: d[o + 1], height: d[o + 2], normal: [d[o + 3], d[o + 4], d[o + 5]], at: performance.now() });
 		waterProbes.at = performance.now();
 		waterProbes.frames++;
 		sent.read.busy = false;
@@ -1902,7 +1940,18 @@ export function waterPass(mainpassDepthTexture) {
 	// Start a compute pass place and animate the instances
 	waterComputeBuffersUpdate(uniformBufferComputeWaterPreMesh);
 
-	step += 0.025;
+	// the waves' clock on by the real time since the last frame (no more than a tenth of a second of it)
+	const stepNow = performance.now();
+	const stepBy = Math.min((stepNow - lastStepTime) / 1000, 0.1) * WAVE_STEPS_A_SECOND;
+	lastStepTime = stepNow;
+	step += stepBy;
+	foamKeep = Math.pow(0.5, stepBy / FOAM_HALF_LIFE);
+	// a new seed: the same grid drawn again (net.js may have changed it to the host's)
+	if (settings.waterSeed !== noiseSeed && waveNoiseBuffer) {
+		noiseSeed = settings.waterSeed;
+		device.queue.writeBuffer(waveNoiseBuffer, 0, gaussianNoise(settings.waterCascadeResolution, CASCADE_COUNT));
+		spectrumDirty = true;
+	}
 	writeCascadeUniforms();
 
 	// everything the water does in a frame goes in this one encoder, and is sent off in one submit at the end (see waterIFFT)

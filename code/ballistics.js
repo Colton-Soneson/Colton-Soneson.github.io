@@ -15,10 +15,13 @@ import * as boulders from './boulders.js'
 /*
 	The rifle's bullets (rifle.js fires them): where they go, what they hit, and the wisp of a trail each leaves behind it.
 
-	THE ROUND: 7.62x54mmR, the Mosin's. MUZZLE_VELOCITY out of the barrel. Two things act on it in flight:
+	THE ROUNDS (ROUNDS): each gun's: how fast it leaves the barrel, how hard the air slows it, and how much harm it does (a share of
+	DAMAGE in net.js). The 7.62x54mmR of the Mosin-Nagant, a pellet of the shotgun's 00 buckshot (nine to a shell, slowed fast: a
+	round ball is a poor shape to fly), the .45 Colt of the revolver (slow and heavy), and the .45-70 of the Sharps (heavy, and
+	slower than the Mosin's, so it drops a long way at range: see the reticle in sharps.js). Two things act on one in flight:
 		gravity		9.81 metres a second, a second, down
-		the air		drag, slowing it by DRAG times the square of its speed: dv/dt = -DRAG * v^2. That is the same as losing
-					the same share of its speed for every metre it goes, so at 400 metres it has lost about 30% (820 down to
+		the air		drag, slowing it by its drag times the square of its speed: dv/dt = -drag * v^2. That is the same as losing
+					the same share of its speed for every metre it goes, so at 400 metres the Mosin's has lost about 30% (820 down to
 					about 570 metres a second, near enough what the real round does)
 	It is moved on in steps of STEP_SECONDS (a little over 3 metres at the muzzle), each step a straight line, and that line is
 	tested against everything it could hit. The nearest thing it crosses stops it:
@@ -35,8 +38,13 @@ import * as boulders from './boulders.js'
 	points is drawn as a soft strip turned to face the eye (vf_trail.js), which widens, drifts up a little and fades away
 	over TRAIL_FADE seconds: the disturbed air a round leaves, made visible.
 */
-const MUZZLE_VELOCITY = 820;		// metres a second
-const DRAG = 0.0009;				// per metre (see THE ROUND)
+// velocity: metres a second at the muzzle, drag: per metre (see THE ROUNDS), damage: of DAMAGE (net.js)
+export const ROUNDS = {
+	'7.62x54R': { velocity: 820, drag: 0.0009, damage: 1.0 },
+	'00 buck': { velocity: 400, drag: 0.0055, damage: 0.24 },
+	'.45 Colt': { velocity: 270, drag: 0.0025, damage: 0.65 },
+	'.45-70': { velocity: 400, drag: 0.0011, damage: 1.35 },
+};
 const GRAVITY = 9.81;
 const STEP_SECONDS = 1 / 240;
 const MAX_SECONDS = 4;
@@ -61,24 +69,30 @@ export function addTarget(test) {
 	targets.push(test);
 }
 
-// told of every round fired here (not the ones that are someone else's): fn(from, direction)
+// told of every shot fired here (not the ones that are someone else's): fn(from, directions (one, or a shell's pellets), round)
 export function onLocalFire(fn) {
 	fireListeners.push(fn);
 }
 
-// Fires a round: from (world units) along a direction (any length), at the muzzle velocity. remote: someone else's (net.js),
-//		flown for its trail only. shooter: who fired it, so it does not hit them
-export function fire(from, direction, { remote = false, shooter = null } = {}) {
+// Fires a round: from (world units) along a direction (any length), at its muzzle velocity. remote: someone else's (net.js),
+//		flown for its trail only. shooter: who fired it, so it does not hit them. round: which (ROUNDS)
+export function fire(from, direction, { remote = false, shooter = null, round = '7.62x54R', quiet = false } = {}) {
 	const metre = settings.forestUnitsPerMetre;
+	const R = ROUNDS[round] ?? ROUNDS['7.62x54R'];
 	const length = Math.hypot(...direction);
-	const speed = MUZZLE_VELOCITY * metre;
+	const speed = R.velocity * metre;
 	bullets.push({
 		x: from[0], y: from[1], z: from[2],
 		vx: direction[0] / length * speed, vy: direction[1] / length * speed, vz: direction[2] / length * speed,
-		age: 0, trailFrom: [from[0], from[1], from[2]], trailAge: seconds, gone: false, remote, shooter,
+		age: 0, trailFrom: [from[0], from[1], from[2]], trailAge: seconds, gone: false, remote, shooter, round, drag: R.drag,
 	});
 	ballisticStats.fired++;
-	if (!remote) for (const fn of fireListeners) fn([...from], [...direction]);
+	if (!remote && !quiet) for (const fn of fireListeners) fn([...from], [[...direction]], round);
+}
+// several at once from the same place (a shotgun's pellets): told as one shot
+export function fireVolley(from, directions, { round = '7.62x54R' } = {}) {
+	for (const direction of directions) fire(from, direction, { round, quiet: true });
+	for (const fn of fireListeners) fn([...from], directions.map((d) => [...d]), round);
 }
 
 // The trail
@@ -191,7 +205,7 @@ function moveBullets(elapsed) {
 			left -= dt;
 			// the air slows it, gravity pulls it down (in metres, then back to world units)
 			const speed = Math.hypot(bullet.vx, bullet.vy, bullet.vz) / metre;
-			const slow = Math.max(1 - DRAG * speed * dt, 0);
+			const slow = Math.max(1 - bullet.drag * speed * dt, 0);
 			bullet.vx *= slow; bullet.vz *= slow;
 			bullet.vy = bullet.vy * slow - GRAVITY * metre * dt;
 			const bx = bullet.x + bullet.vx * dt, by = bullet.y + bullet.vy * dt, bz = bullet.z + bullet.vz * dt;
@@ -214,7 +228,7 @@ function moveBullets(elapsed) {
 				bullet.gone = true;
 				ballisticStats.hits[hit.what] = (ballisticStats.hits[hit.what] ?? 0) + 1;
 				ballisticStats.lastHit = { what: hit.what, x: ex, y: ey, z: ez, metres: null, seconds: bullet.age, speed: Math.hypot(bullet.vx, bullet.vy, bullet.vz) / metre };
-				if (hit.hit && !bullet.remote) hit.hit([bullet.vx, bullet.vy, bullet.vz]);
+				if (hit.hit && !bullet.remote) hit.hit([bullet.vx, bullet.vy, bullet.vz], bullet);
 			} else if (bullet.age > MAX_SECONDS || bullet.y < settings.waterWorldPosY - 500) {
 				bullet.gone = true;
 			}

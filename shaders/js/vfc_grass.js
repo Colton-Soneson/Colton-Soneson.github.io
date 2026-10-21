@@ -88,6 +88,10 @@ export const vf_grass =
 	@group(0) @binding(4) var skySampler: sampler;
 	@group(0) @binding(5) var windTexture: texture_2d<f32>;		// where the gusts are, see wind.js
 	@group(0) @binding(6) var windSampler: sampler;
+	// the towns' streets, lanes, stairs, walls and houses, sorted into a grid of the world (see townMask.js)
+	@group(0) @binding(7) var<storage, read> townCells: array<vec2u>;
+	@group(0) @binding(8) var<storage, read> townList: array<u32>;
+	@group(0) @binding(9) var<storage, read> townItems: array<vec4f>;
 
 	struct VertexOutput {				//into frag
 		@builtin(position) pos: vec4f,
@@ -166,6 +170,37 @@ export const vf_grass =
 		return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 	}
 
+	// Is a place on a town's roads or walls, or under one of its houses? (no grass there: the rest of a town is grassland)
+	fn onTownWork(xz: vec2f) -> bool {
+		let grid = townItems[0];		// half the world, the cell size, cells along a side (0: no towns)
+		let along = i32(grid.z);
+		let cell = vec2i(floor((xz + vec2f(grid.x, grid.x)) / grid.y));
+		if (any(cell < vec2i(0, 0)) || any(cell >= vec2i(along, along))) {
+			return false;
+		}
+		let range = townCells[cell.y * along + cell.x];
+		for (var k = 0u; k < range.y; k++) {
+			let item = townList[range.x + k];
+			let a = townItems[1u + item * 2u];
+			let b = townItems[2u + item * 2u];
+			if (b.z < 0.5) {
+				// a stretch of road or wall: within its half width of the line
+				let ab = a.zw - a.xy;
+				let t = saturate(dot(xz - a.xy, ab) / max(dot(ab, ab), 1e-6));
+				if (length(xz - a.xy - ab * t) < b.x) {
+					return true;
+				}
+			} else {
+				// a box, turned: a.zw along its width
+				let d = xz - a.xy;
+				if (abs(dot(d, a.zw)) < b.x && abs(dot(d, vec2f(-a.w, a.z))) < b.y) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
 	@vertex
 	fn vertexMain(@builtin(vertex_index) vertexIndex: u32, @builtin(instance_index) instanceIndex: u32) -> VertexOutput {
 		var output: VertexOutput;
@@ -226,6 +261,9 @@ export const vf_grass =
 						* smoothstep(0.7, 0.82, groundNormal.y);									// not a cliff
 		if (random(seed + 3u) >= grassland) {
 			return output;	// thins out towards the edge of the zone, gone outside it
+		}
+		if (onTownWork(root)) {
+			return output;	// not on a town's roads, nor under its houses
 		}
 
 		//------------------THE BLADE-----------------

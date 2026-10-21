@@ -2,13 +2,16 @@
 	A gun in the hunter's hands (viewmodel.js: the shotgun, the revolver, the Sharps rifle), drawn the way the rifle is (see vf_rifle.js):
 	in the camera's own space, in metres, with its own near plane and its own depth, over the finished frame.
 
-	Each vertex says which part of the gun it is (shape.w % 16) and what it is made of (shape.w / 16, a whole number). Each part has a
+	Each vertex says which part of the gun it is (shape.w % 32) and what it is made of (shape.w / 32, a whole number). Each part has a
 	matrix (parts), worked out on the CPU each frame: where it is on the gun now (the pump slid back, the cylinder turned, the
 	breech block dropped, a shell on its way into the magazine, an empty case thrown out). A part not there is drawn as nothing (its
 	matrix scaled to 0). Then the whole gun is put where it is held (gun).
 	The materials: 0 walnut, 1 blued steel, 2 brass, 3 lead and copper, 4 a shotgun shell's red hull, 5 case hardened steel (the
 	colours of the quench mottled through it), 6 a scope's black, 7 its lens, 8 nickel, 9 dark rubber, 10 a darker wood, and the
-	plastic of the golf discs: 11 orange, 12 blue, 13 yellow.
+	plastic of the golf discs: 11 orange, 12 blue, 13 yellow, and 14 the face of a revolver's cylinder (blued, with its six chambers
+	CHAMBER_OUT from its middle: the dark holes of the empty ones, see revolver.js), 15 the pale wood of the wizard's staff, 16 the gem
+	in its head, which shines by itself (staff.js).
+	The glow: a light of its own at the mesh's origin (the staff's gem is there), falling on the rest of the mesh near it.
 	The light is the sun's or the moon's, turned into the camera's space, the same strength as everything else gets.
 */
 export const vf_viewmodel =
@@ -19,9 +22,14 @@ export const vf_viewmodel =
 		gun : mat4x4f,
 		light : vec4f,			// xyz: towards the light, in the camera's space, w: how strong it is straight on
 		ambient : vec4f,		// x: the light from everywhere, y: daylight 0 to 1
-		parts : array<mat4x4f, 16>,
+		glow : vec4f,			// rgb: the colour of the light at the mesh's origin, a: how strong (0: none)
+		parts : array<mat4x4f, 32>,
 	}
 	@group(0) @binding(0) var<uniform> VU: ViewmodelUniforms;
+
+	const PI: f32 = 3.14159265;
+	const CHAMBER_OUT: f32 = 0.0125;	// metres from a revolver cylinder's middle to a chamber's (CHAMBER_RADIUS in revolver.js)
+	const CHAMBER_HOLE: f32 = 0.0058;	// a chamber's radius
 
 	struct VertexOutput {
 		@builtin(position) pos: vec4f,
@@ -33,8 +41,8 @@ export const vf_viewmodel =
 	@vertex
 	fn vertexMain(@location(0) shape: vec4f) -> VertexOutput {
 		let code = i32(shape.w + 0.5);
-		let part = code % 16;
-		let material = code / 16;
+		let part = code % 32;
+		let material = code / 32;
 		let placed = (VU.parts[part] * vec4f(shape.xyz, 1.0)).xyz;
 		let viewPos = (VU.gun * vec4f(placed, 1.0)).xyz;
 		var output: VertexOutput;
@@ -84,11 +92,36 @@ export const vf_viewmodel =
 			case 11: { albedo = vec3f(0.95, 0.42, 0.08); gloss = 0.35; }
 			case 12: { albedo = vec3f(0.12, 0.42, 0.95); gloss = 0.35; }
 			case 13: { albedo = vec3f(0.95, 0.82, 0.12); gloss = 0.35; }
+			case 15: {
+				let grain = 0.9 + 0.1 * sin(input.shape.y * 70.0 + sin(input.shape.x * 300.0 + input.shape.z * 260.0) * 1.8);
+				albedo = vec3f(0.8, 0.78, 0.72) * grain; gloss = 0.12; power = 16.0;
+			}
+			case 16: {
+				// the gem: its own light, a little brighter on the facets turned to the eye, and a glint
+				let facing = saturate(dot(N, V));
+				let shining = VU.glow.rgb * (0.7 + 1.3 * VU.glow.a) * (0.65 + 0.45 * facing) + vec3f(1.0) * pow(saturate(dot(N, H)), 40.0) * 0.6;
+				return vec4f(shining, 1.0);
+			}
+			case 14: {
+				// the nearest of the six chambers round the cylinder's middle (the mesh's own x, y: it turns with it)
+				let at = input.shape.xy;
+				let k = round(atan2(at.x, at.y) / (PI / 3.0));
+				let chamber = CHAMBER_OUT * vec2f(sin(k * PI / 3.0), cos(k * PI / 3.0));
+				let off = length(at - chamber);
+				albedo = vec3f(0.055, 0.06, 0.07); gloss = 0.55; power = 48.0;
+				if (off < CHAMBER_HOLE) { albedo = vec3f(0.006, 0.006, 0.007); gloss = 0.0; }
+				else if (off < CHAMBER_HOLE + 0.0007) { albedo = vec3f(0.12, 0.12, 0.13); }
+			}
 			default: {}
 		}
 		let shine = pow(saturate(dot(N, H)), power) * gloss;
 		let lit = VU.ambient.x + VU.light.w * diffuse;
 		var color = albedo * lit + select(vec3f(0.7, 0.75, 0.85), albedo, metal) * shine * VU.light.w + albedo * 0.4 * VU.ambient.x;
+		// the glow's light, on whatever is near it
+		if (VU.glow.a > 0.0) {
+			let d = length(input.shape);
+			color += albedo * VU.glow.rgb * VU.glow.a * 0.0025 / (0.0025 + d * d);
+		}
 		return vec4f(color, 1.0);
 	}
 `;

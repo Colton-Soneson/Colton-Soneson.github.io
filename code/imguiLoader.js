@@ -19,6 +19,7 @@ export const imguiParams = {
     camNearPlane: settings.camNearPlane,
     gameMode: settings.gameMode,
     huntingWalkSpeed: settings.huntingWalkSpeed,
+    horseSpeed: settings.horseSpeed,
     discGolfEnabled: settings.discGolfEnabled,
     discGolfHoles: settings.discGolfHoles,
     discGolfSeed: settings.discGolfSeed,
@@ -84,6 +85,9 @@ export const imguiParams = {
     terrainBankHeight: settings.terrainBankHeight,
     terrainSnowLine: settings.terrainSnowLine,
     terrainRockDetail: settings.terrainRockDetail,
+    terrainTownCount: settings.terrainTownCount,
+    terrainTownSize: settings.terrainTownSize,
+    enableTownFolk: settings.enableTownFolk,
     terrainRockVeins: settings.terrainRockVeins,
     terrainGroundDetail: settings.terrainGroundDetail,
     terrainDepthBias: settings.terrainDepthBias,
@@ -322,6 +326,7 @@ const modeFolder = gui.addFolder('Game Modes');
 modeFolder.add(imguiParams, 'gameMode', { 'Observe': 'Observe', 'Hunting and Sailing': 'Hunting' }).name('Mode');
 const huntingFolder = modeFolder.addFolder('Hunting and Sailing');	//click the picture to look round, WASD walk, Shift run, Space jump, T the spawn menu, hold Tab or Esc for the menus
 huntingFolder.add(imguiParams, 'huntingWalkSpeed', 1, 8, 0.1).name('Walk Speed (m/s)');
+huntingFolder.add(imguiParams, 'horseSpeed', 0.5, 5, 0.1).name('Horse Speed (x real)');
 huntingFolder.add(imguiParams, 'huntingJumpHeight', 0.1, 2, 0.05).name('Jump Height (m)');
 huntingFolder.add(imguiParams, 'huntingLookSensitivity', 0.2, 3, 0.05).name('Mouse Sensitivity');
 const golfFolder = modeFolder.addFolder('Disc Golf');	//a course of tee pads and baskets on the land, to play with the discs from the spawn menu (discgolf.js)
@@ -393,6 +398,9 @@ terrainFolder.add(imguiParams, 'terrainShelfWidth', 1, 6, 0.1).name('Shelf Width
 terrainFolder.add(imguiParams, 'terrainHillHeight', 0, 3, 0.05).name('Hill Height');
 terrainFolder.add(imguiParams, 'terrainWoodland', 0, 1, 0.01).name('Woodland');
 terrainFolder.add(imguiParams, 'terrainLakes', 0, 1, 0.01).name('Lakes');
+terrainFolder.add(imguiParams, 'terrainTownCount', 0, 4, 1).name('Seaside Towns');
+terrainFolder.add(imguiParams, 'terrainTownSize', 0.5, 1.6, 0.05).name('Town Size');
+terrainFolder.add(imguiParams, 'enableTownFolk').name('Townsfolk');
 terrainFolder.add(imguiParams, 'terrainRockDetail', 0, 3, 0.05).name('Rock Detail');
 terrainFolder.add(imguiParams, 'terrainRockVeins', 0, 2, 0.05).name('Rock Veins');
 terrainFolder.add(imguiParams, 'terrainGroundDetail', 0, 2, 0.05).name('Sand, Turf and Forest Floor');
@@ -542,7 +550,7 @@ waterShoreFolder.add(imguiParams, 'enableBoulderWater').name('Water Round Boulde
 
 const waterSwellFolder = waterFolder.addFolder('Deep Sea Swell');
 waterSwellFolder.add(imguiParams, 'waterDeepSeaDepth', 1, 1000, 1).name('Open Sea Depth');
-waterSwellFolder.add(imguiParams, 'waterSwellHeight', 0, 40, 0.5).name('Swell Height');
+waterSwellFolder.add(imguiParams, 'waterSwellHeight', 0, 150, 0.5).name('Swell Height');
 waterSwellFolder.add(imguiParams, 'waterSwellLength', 100, 1500, 10).name('Swell Length');
 waterSwellFolder.add(imguiParams, 'waterSwellSpread', 0, 1, 0.01).name('Long Crested');
 waterSwellFolder.add(imguiParams, 'waterSwellDirection', -180, 180, 1).name('Direction Off Wind');

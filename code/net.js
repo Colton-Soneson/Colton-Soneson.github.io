@@ -15,6 +15,8 @@ import * as horse from './horse.js'
 import * as discgolf from './discgolf.js'
 import * as water from './water.js'
 import * as weapons from './weapons.js'
+import * as staff from './staff.js'
+import * as townFolk from './townFolk.js'
 import { onSpawn } from './radialMenu.js'
 import { PRESETS } from './graphicsPresets.js';
 
@@ -35,12 +37,15 @@ import { PRESETS } from './graphicsPresets.js';
 	(strict company ones, some mobile carriers) let nothing through without a relay (TURN), which this does not have.
 
 	WHAT GOES BETWEEN THEM (as JSON, t: what it is)
-		joiner to host		hello (its name), st (its state), shot, hit (it hit someone), up (it is up again after being shot),
+		joiner to host		hello (its name), st (its state), shot, hit (it hit someone), up (it is up again after being shot), spell (a
+							spell cast with the staff, or its beam while it is on: passed on to the others, but for the hawks, which the
+							host calls up itself),
 							veh+ and veh- (a vehicle it put out, or took away), vs (the states of the vehicles it sails), claim (it
 							took a vehicle's helm), vctl (a control worked on a vehicle someone else sails)
-		host to joiners		welcome (its id, who is there, the world, the clock, the scores, the vehicles), join, leave, world, clock,
-							sts (everyone's states), shot, hp (someone's health), down (someone was shot dead), score, and veh+,
-							veh-, vs, vctl passed on, and auth (who sails a vehicle now)
+		host to joiners		welcome (its id, who is there, the world, the clock, the scores, the vehicles, the disc golf course), join,
+							leave, world, clock, course (the disc golf course's holes, when they change), sts (everyone's states), shot,
+							hp (someone's health), down (someone was shot dead), score, and veh+, veh-, vs, vctl passed on, auth (who
+							sails a vehicle now), and tp (go to this place: the host's Bring button)
 	A state is [x, y, z (its feet), heading, pitch, speed, alive, out hunting, the vehicle it is on (its id, or ''), where on it
 	(x, y, z, metres in the vehicle's own directions), sitting (0 standing, 1 sitting, 2 astride), what it holds], STATE_RATE
 	times a second, on the fast channel (no waiting for what was lost: the next one is newer anyway). So are the vehicles' states.
@@ -61,7 +66,8 @@ import { PRESETS } from './graphicsPresets.js';
 						water and the grass...). A joiner takes the host's and keeps them, and its controls for them are
 						greyed out until it leaves (lockControls). Its graphics settings stay its own
 		the clock		the world's day (sunCycles in atmosphere.js), sent every CLOCK_SECONDS. A joiner more than
-						CLOCK_SLACK days out is put right. The weather and the seasons are drawn from the day, so they follow
+						CLOCK_SLACK days out is put right. The weather and the seasons are drawn from the day, so they follow. With it
+						the townsfolk's clock (townFolk.js: what they are doing is worked out from it, so they follow too)
 		the forest		its trees (see MULTIPLAYER in forest.js): a joiner asks for the whole forest once its own is planted with
 						the host's settings (forest?), and gets it in pieces (big: BIG_PIECE characters each, a few at a time
 						so the channel's buffer never holds more than BIG_BUFFER). From then on, every TREES_SECONDS, the trees
@@ -77,6 +83,10 @@ import { PRESETS } from './graphicsPresets.js';
 		health			everyone's: a bullet that hits someone is seen by whoever fired it (players.js: they see where the
 						others are, and it is their shot), who tells the host the part it hit. The host takes DAMAGE off and
 						says what is left. At 0 that player is down, and the host counts the kill
+		the course		the disc golf course's holes as the host laid them out (discgolf.courseShare): sent with the welcome and
+						whenever they change, and a joiner plays on those, not its own
+	The host can also move the players about (the Multiplayer window): Bring takes one to where the host is (tp), Go To takes the
+	host to one.
 */
 const ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }];
 const PEERJS_SCRIPT = 'https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js';
@@ -99,6 +109,7 @@ const ANIMAL_FAR_EVERY = 10;
 const ANIMAL_DELAY = 0.2;			// seconds
 const VEHICLE_RATE = 15;			// a second
 const WAVE_SLACK = 0.12;			// step time (water.js): a joiner whose waves are further out than this from the host's is put right
+const FOLK_SLACK = 0.5;				// seconds: the same for the townsfolk's clock (townFolk.js)
 const TREES_PER_MESSAGE = 1000;		// trees in full in one message: about 120 thousand characters, under what one message can hold
 const BIG_BUFFER = 1000000;			// bytes
 export const DAMAGE = { head: 100, chest: 70, belly: 55, leg: 30 };
@@ -369,6 +380,7 @@ let hostLink = null;			// joiner: its link to the host
 let peer = null;				// this player's PeerJS peer, if it has one
 let worldFromHost = null;		// joiner: the host's WORLD_KEYS
 let worldSent = '';				// host: the last world it sent
+let courseSent = '';			// host: the last disc golf course it sent
 const names = new Map();		// id -> name, everyone's, this player too
 const health = new Map();		// host: id -> health
 const scores = new Map();		// id -> { kills, deaths }
@@ -387,6 +399,8 @@ export function setName(name) {
 	names.set(myId, myName);
 }
 const nameOf = (id) => names.get(id) ?? 'someone';
+// the thrower's name over each golf disc, in a game
+discgolf.setNameLookup((id) => role == 'host' || role == 'joined' ? nameOf(id) : null);
 const say = (status) => { netStats.status = status; refreshPanel(); };
 
 function worldNow() {
@@ -596,8 +610,8 @@ function takeJoiner(link, invite = null) {
 			names.set(id, joiner.name);
 			health.set(id, players.HEALTH);
 			players.addOther(id, joiner.name);
-			link.sendGame({ t: 'welcome', id, players: everyone(), world: worldNow(), clock: [atmosphere.sunCycles, settings.sunCycleAngle], waves: water.waveClock(), scores: scoreList(),
-				vehicles: allVehicles().map(({ kind, v }) => ({ kind, s: VEHICLES[kind].share(v) })) });
+			link.sendGame({ t: 'welcome', id, players: everyone(), world: worldNow(), clock: [atmosphere.sunCycles, settings.sunCycleAngle], waves: water.waveClock(), folk: townFolk.folkClock(), scores: scoreList(),
+				vehicles: allVehicles().map(({ kind, v }) => ({ kind, s: VEHICLES[kind].share(v) })), course: discgolf.courseShare() });
 			toAll({ t: 'join', id, name: joiner.name }, id);
 			players.addFeed(joiner.name + ' joined');
 			say('Hosting');
@@ -644,6 +658,13 @@ function fromJoiner(joiner, message) {
 		toAllFast(message, joiner.id);
 	} else if (message.t == 'dthrow' || message.t == 'drest' || message.t == 'dgone' || message.t == 'dscore') {
 		discHeard(message, joiner.id);
+		toAll(message, joiner.id);
+	} else if (message.t == 'spell') {
+		staff.remoteSpell(joiner.id, message);
+		if (message.k == 'beam' && message.on) toAllFast({ ...message, id: joiner.id }, joiner.id);
+		else if (message.k != 'hawks') toAll({ ...message, id: joiner.id }, joiner.id);
+	} else if (message.t == 'folkShot') {
+		townFolk.folkShotHeard(message.i, message.at);
 		toAll(message, joiner.id);
 	} else if (message.t == 'claim') {
 		setAuthority(message.id, joiner.id);
@@ -740,7 +761,10 @@ function heard(message) {
 			for (const { kind, s } of message.vehicles ?? []) VEHICLES[kind]?.spawn(s);
 			discgolf.setLocalId(myId);
 			discgolf.discsForNewGame();
+			discgolf.courseFromHost(message.course ?? []);
+			staff.setLocalId(myId);
 			if (message.waves !== undefined) water.setWaveClock(message.waves);
+			if (message.folk !== undefined) townFolk.setFolkClock(message.folk);
 			beginGame();
 			for (const { id, name } of message.players) {
 				names.set(id, name);
@@ -771,9 +795,18 @@ function heard(message) {
 		case 'world':
 			worldFromHost = message.world;
 			break;
+		case 'course':
+			discgolf.courseFromHost(message.holes);
+			break;
+		case 'tp':
+			if (!hunting.hunterPlace().active) break;
+			hunting.teleportHunter(...message.to);
+			players.addFeed(nameOf(0) + ' brought you to them');
+			break;
 		case 'clock':
 			if (settings.atmosphereSunRotationDemo && Math.abs(atmosphere.sunCycles - message.clock[0]) > CLOCK_SLACK) atmosphere.setSunClock(message.clock[0], message.clock[1]);
 			if (message.waves !== undefined && Math.abs(water.waveClock() - message.waves) > WAVE_SLACK) water.setWaveClock(message.waves);
+			if (message.folk !== undefined && Math.abs(townFolk.folkClock() - message.folk) > FOLK_SLACK) townFolk.setFolkClock(message.folk);
 			if (forestSync.have) {
 				if (Math.abs(forest.clock - message.forest[0]) > 0.05) forest.setForestClock(message.forest[0]);
 				// planted again, there or here: the forest again
@@ -832,6 +865,12 @@ function heard(message) {
 			break;
 		case 'vctl':
 			routeControl(message.id, message.what);
+			break;
+		case 'spell':
+			if (message.id !== myId) staff.remoteSpell(message.id, message);
+			break;
+		case 'folkShot':
+			townFolk.folkShotHeard(message.i, message.at);
 			break;
 	}
 }
@@ -898,6 +937,9 @@ export function leaveGame(quietly = true) {
 	for (const V of Object.values(VEHICLES)) V.local();
 	discgolf.setLocalId(0);
 	discgolf.discsForNewGame();
+	discgolf.courseFromHost(null);
+	staff.setLocalId(0);
+	courseSent = '';
 	players.setInGame(false);
 	if (quietly) say(wasHost ? 'Stopped hosting' : '');
 	refreshPanel();
@@ -927,6 +969,33 @@ function discHeard(message) {
 		players.addFeed(`${message.name}: hole ${message.hole} in ${message.throws} (${score == 0 ? 'par' : score > 0 ? '+' + score : score})`);
 	}
 }
+
+// The staff's spells (see IN A GAME WITH OTHERS in staff.js): a strike or the hawks once, the beam STATE_RATE times a second while it is on
+//-------------------------------------------------
+let beamSent = 0;
+staff.onCast((spell) => {
+	if (role != 'host' && role != 'joined') return;
+	const r = (v) => Math.round(v * 10000) / 10000;
+	if (spell.k == 'beam') {
+		const now = performance.now() / 1000;
+		if (spell.on && now - beamSent < 1 / STATE_RATE) return;
+		beamSent = now;
+		const message = { t: 'spell', id: myId, k: 'beam', on: spell.on ? 1 : 0, from: spell.from.map(r), way: spell.way.map(r), strength: r(spell.strength) };
+		if (role == 'host') spell.on ? toAllFast(message) : toAll(message);
+		else spell.on ? hostLink.sendFast(message) : hostLink.sendGame(message);
+		return;
+	}
+	const message = { t: 'spell', id: myId, k: spell.k, at: spell.at.map(r) };
+	if (role == 'host') { if (spell.k != 'hawks') toAll(message); }
+	else hostLink.sendGame(message);
+});
+
+// a townsperson shot here: everyone sees it run home from the same time (see SHOT in townFolk.js)
+townFolk.onFolkShot((i, at) => {
+	const message = { t: 'folkShot', i, at };
+	if (role == 'host') toAll(message);
+	else if (role == 'joined') hostLink.sendGame(message);
+});
 
 // What is sent of this player's own doings
 //-------------------------------------------------
@@ -991,7 +1060,7 @@ export function netUpdate() {
 	if (role == 'host') {
 		if (now - lastClock >= CLOCK_SECONDS) {
 			lastClock = now;
-			toAll({ t: 'clock', clock: [atmosphere.sunCycles, settings.sunCycleAngle], forest: [forest.clock, forest.plantings], waves: water.waveClock() });
+			toAll({ t: 'clock', clock: [atmosphere.sunCycles, settings.sunCycleAngle], forest: [forest.clock, forest.plantings], waves: water.waveClock(), folk: townFolk.folkClock() });
 		}
 		if (now - lastTrees >= TREES_SECONDS) {
 			lastTrees = now;
@@ -1009,6 +1078,12 @@ export function netUpdate() {
 			lastWorldCheck = now;
 			const world = worldNow(), text = JSON.stringify(world);
 			if (text != worldSent) { worldSent = text; toAll({ t: 'world', world }); }
+		}
+		// the course, as soon as it is laid out again (turned on or off, a new one)
+		const holes = discgolf.courseShare(), course = JSON.stringify(holes);
+		if (course != courseSent) {
+			courseSent = course;
+			toAll({ t: 'course', holes });
 		}
 	}
 	netStats.role = role;
@@ -1053,8 +1128,11 @@ function refreshPanel() {
 	const header = `<div style="display: flex; justify-content: space-between; align-items: center;"><div style="font-size: 16px; font-weight: 600;">Multiplayer</div><button data-do="close" style="${styles.quiet} padding: 2px 9px;">×</button></div>`;
 	const status = netStats.status ? `<div style="margin-top: 8px; color: #9fc3ff;">${html(netStats.status)}</div>` : '';
 	const error = s.error ? `<div style="margin-top: 8px; color: #ff9b8a;">${html(s.error)}</div>` : '';
+	// (the host can take anyone to where it is, or go to them)
+	const moveButtons = (id) => role == 'host' && id !== myId
+		? `<div style="display: flex; gap: 6px; margin-top: 3px;"><button data-do="bring" data-id="${id}" style="${styles.quiet} padding: 2px 8px; font-size: 12px;">Bring here</button><button data-do="goTo" data-id="${id}" style="${styles.quiet} padding: 2px 8px; font-size: 12px;">Go to</button></div>` : '';
 	const playerList = () => `<div style="${styles.label}">Players</div>` + scoreList().map(([id, name, kills, deaths]) =>
-		`<div style="display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px solid #23272f;"><span><span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 7px; background: hsl(${Math.round(players.hueOf(id) * 360)}, 70%, 55%);"></span>${html(name)}${id === myId ? ' (you)' : ''}${id === 0 ? ' · host' : ''}</span><span style="color: #9aa1ad;">${kills} kills · ${deaths} deaths</span></div>`).join('');
+		`<div style="padding: 3px 0; border-bottom: 1px solid #23272f;"><div style="display: flex; justify-content: space-between;"><span><span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 7px; background: hsl(${Math.round(players.hueOf(id) * 360)}, 70%, 55%);"></span>${html(name)}${id === myId ? ' (you)' : ''}${id === 0 ? ' · host' : ''}</span><span style="color: #9aa1ad;">${kills} kills · ${deaths} deaths</span></div>${moveButtons(id)}</div>`).join('');
 
 	if (role == 'off' || (role == 'joining' && s.view == 'start')) {
 		body = `<div style="${styles.label}">Your name</div><input data-field="name" style="${styles.input}" maxlength="20" value="${html(myName)}">`
@@ -1101,12 +1179,30 @@ panel.addEventListener('click', async (event) => {
 		else if (action == 'copyReply') copy(s.reply);
 		else if (action == 'copyRoom') copy(netStats.roomCode);
 		else if (action == 'leave') { s.view = 'start'; s.reply = ''; s.invite = ''; leaveGame(); }
+		else if (action == 'bring' || action == 'goTo') movePlayer(action, Number(event.target.dataset.id));
 	} catch (error) {
 		s.error = error.message || String(error);
 		if (role == 'joining' && !hostLink?.open) { s.view = 'start'; }
 	}
 	refreshPanel();
 });
+// the host's Bring here (that player to where the host stands) and Go to (the host to that player)
+export function movePlayer(action, id) {
+	if (role != 'host') return;
+	const joiner = joiners.get(id);
+	if (!joiner) throw new Error('That player has gone');
+	if (action == 'bring') {
+		const place = hunting.hunterPlace();
+		if (!place.active) throw new Error('Go out hunting first (Hunting and Sailing)');
+		joiner.link.sendGame({ t: 'tp', to: [place.x, place.y, place.z] });
+		say('Brought ' + joiner.name + ' to you');
+	} else {
+		if (!joiner.state || !hunting.hunterPlace().active) throw new Error(joiner.state ? 'Go out hunting first (Hunting and Sailing)' : 'Not heard from them yet');
+		hunting.teleportHunter(joiner.state[0], joiner.state[1], joiner.state[2]);
+		say('Went to ' + joiner.name);
+	}
+}
+
 // keys typed in the window are for it, not the walker
 panel.addEventListener('keydown', (event) => event.stopPropagation());
 

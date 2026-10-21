@@ -65,6 +65,9 @@ export function createSite(land, params) {
 		for (const clearing of land.clearings ?? []) {
 			if ((x - clearing.x) ** 2 + (z - clearing.z) ** 2 < clearing.radius ** 2) return out;
 		}
+		// nor in a town: its trees are planted (see plantTownTrees). The forest thins out over the edge of one
+		const town = land.townAt ? land.townAt(x, z) : 0;
+		if (town > 0.55) return out;
 
 		const mountain = sample(land.mountains, x, z, 1, 0);		// how far into a mountain range, the same number the zones are cut from
 		const flatness = sample(land.normals, x, z, 3, 1);			// the y of the ground normal: 1 level, 0 a wall
@@ -88,7 +91,7 @@ export function createSite(land, params) {
 		// and the ground round a lake is too wet for them
 		const dryGround = 1 - smoothstep(0.1, 0.4, sample(land.marshes, x, z, 1, 0));
 
-		out.density = zone * slope * shore * treeLine * open * dryGround;
+		out.density = zone * slope * shore * treeLine * open * dryGround * (1 - smoothstep(0.1, 0.55, town));
 		out.quality = clamp01(0.35 + 0.65 * treeLine * (0.6 + 0.4 * slope));
 		out.standAge = clamp01(0.5 + 0.75 * noise(x / 310 - 71.2, z / 310 + 12.7)[0]);
 		out.gap = noise(x / 48 + 27.9, z / 48 - 63.4)[0];
@@ -143,6 +146,22 @@ export function makeTree(x, z, species, age, where, land, params, random, varian
 		leanZ: Math.sin(leanAngle) * lean,
 		seed: random(),
 	};
+}
+
+// The trees of the towns (townLayout.js): grown broadleaves where the layout left room for them, smaller than in the wild. They are
+//		planted: they never die and drop no seed (see ForestLife), but they come into leaf and turn and drop it with the seasons as any other
+export function plantTownTrees(land, params, variants) {
+	const random = seededRandom(params.seed * 7919 + 4243);
+	const out = [];
+	for (const town of land.towns ?? []) {
+		for (const [x, z, kind] of town.trees) {
+			const species = kind == 'birch' ? BIRCH : OAK;
+			const tree = makeTree(x, z, species, TREE_SPECIES[species].fullGrownAge * (1.1 + 0.6 * random()), { quality: 0.1 * random() }, land, params, random, variants);
+			tree.planted = true;
+			out.push(tree);
+		}
+	}
+	return out;
 }
 
 //-------------------------------PLANTING-------------------------------

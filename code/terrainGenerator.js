@@ -23,7 +23,10 @@
 		snow		mountain above the snow line
 		lake		water with land all the way round it: hollows in the low ground that go down below the level of the sea
 		marsh		the wet ground round a lake. The sea has beaches, a lake has marsh
+		town		a seaside town (townLayout.js): on the shore where the mountains come down near the sea, its own hill rising from a
+					quay in terraces, with its streets cut into it
 */
+import { findTownSites, planTownGround, layoutTowns, makeRoadFlattener } from './townLayout.js'
 
 // index = the tag stored for every grid point. name and color are what the rest of the engine reads
 export const TERRAIN_ZONES = [
@@ -35,6 +38,7 @@ export const TERRAIN_ZONES = [
 	{ name: "snow",      color: [0.94, 0.96, 0.99] },
 	{ name: "lake",      color: [0.17, 0.17, 0.11] },	// the bed of a lake: mud
 	{ name: "marsh",     color: [0.21, 0.27, 0.12] },
+	{ name: "seaside town", color: [0.56, 0.5, 0.4] },
 ];
 export const ZONE_OCEAN = 0;
 export const ZONE_BEACH = 1;
@@ -44,6 +48,7 @@ export const ZONE_MOUNTAIN = 4;
 export const ZONE_SNOW = 5;
 export const ZONE_LAKE = 6;
 export const ZONE_MARSH = 7;
+export const ZONE_TOWN = 8;
 
 // where in a mountain range (0 at its edge to 1 at its heart) the forest starts and where bare mountain takes over
 export const FOREST_THRESHOLD = 0.16;
@@ -648,7 +653,9 @@ function bedFall(params, out) {
 */
 export function makeChunkBuilder(params, grids, sampler = createTerrainSampler(params)) {
 	const { sample, erodedFbm, foothillShape } = sampler;
-	const { ridges, marshes, footings, beyondDrop } = grids;
+	const { ridges, marshes, footings, beyondDrop } = grids;		// (and the towns' grids, read as they are when wanted: generateTerrain fills them in after making this)
+	// the streets of the towns, cut into the land (made when they are first wanted: they are laid out after the builder is made)
+	let roads = null, roadsFrom = null;
 	const cells = params.dataResolution ?? 1024;
 	const points = cells + 1;
 	const cellSize = params.worldSize / cells;
@@ -681,7 +688,22 @@ export function makeChunkBuilder(params, grids, sampler = createTerrainSampler(p
 		}
 		const raised = foothills.raise(x, z, mountain, gridAt(footings, x, z), result.room);
 		landAtCover = coverOf(result.mountain, Math.max(result.woodland, foothills.wooded * (1 - marsh)), marsh);
-		return result.height + raised - (result.height < 0 ? bedFall(params, gridAt(beyondDrop, x, z)) : 0);
+		let height = result.height + raised - (result.height < 0 ? bedFall(params, gridAt(beyondDrop, x, z)) : 0);
+		// a town: its own hill, and its streets cut into that (see townLayout.js). Its ground is short turf
+		if (grids.townStrength) {
+			const town = gridAt(grids.townStrength, x, z);
+			if (town > 0) {
+				// the town's hill as much as the town is there. Over its core that is all of it (a mountain that comes into the core is
+				//		cut back for the terraces), but out over the fade it is never lower than the land: where the land is higher (a
+				//		mountain behind it) the hill rolls up into it (the higher of the two, rounded where they meet)
+				const hill = height + (gridAt(grids.townHeight, x, z) - height) * town;
+				height = hill + (smoothMax(height, hill, 14 * town) - hill) * (1 - smoothstep(0.6, 1, town));
+				landAtCover += (0.04 - landAtCover) * town;
+			}
+			if (grids.townRoads !== roadsFrom) { roadsFrom = grids.townRoads; roads = makeRoadFlattener(roadsFrom); }
+			if (roads && town > 0) height = roads.flatten(x, z, height + params.seaLevel) - params.seaLevel;
+		}
+		return height;
 	}
 
 	/*
@@ -938,6 +960,50 @@ export function generateTerrain(params) {
 		}
 	}
 
+	// the mesh (see makeChunkBuilder)
+	const chunkGrids = { ridges, marshes, footings, beyondDrop, townStrength: null, townHeight: null, townRoads: null };
+	const { landAt, buildChunk } = makeChunkBuilder(params, chunkGrids, { sample, erodedFbm, foothillShape });
+
+	/*
+		THE TOWNS (townLayout.js): where they go, the hill each stands on, and their streets, houses and the rest. The hill goes into
+		the land's grids, and the land is worked out again over each town with its streets cut into it
+	*/
+	const aboveSea = heights.map((h) => h - params.seaLevel);
+	const siteGrids = { points, cells, cellSize, half, heights: aboveSea, covers, sea, toSea };
+	let townSites = findTownSites(siteGrids, params, MOUNTAIN_THRESHOLD);
+	let townGround = null, town = null;
+	const gridValue = (grid, x, z) => {
+		const gx = Math.min(Math.max((x + half) / cellSize, 0), cells - 0.0001), gz = Math.min(Math.max((z + half) / cellSize, 0), cells - 0.0001);
+		const col = Math.floor(gx), row = Math.floor(gz), fx = gx - col, fz = gz - row, i = row * points + col;
+		const top = grid[i] + (grid[i + 1] - grid[i]) * fx, bottom = grid[i + points] + (grid[i + points + 1] - grid[i + points]) * fx;
+		return top + (bottom - top) * fz;
+	};
+	const townAt = (x, z) => gridValue(townGround.strength, x, z);
+	const toSeaWorld = toSea.map((d) => d * cellSize);
+	// (a site where too little of a town could be laid out, its streets broken up by the lie of the land, is given up, the next best
+	//		found in its place, and the hills and layouts made again)
+	const givenUp = [];
+	for (let attempt = 0; attempt < 4; attempt++) {
+		townGround = planTownGround({ points, cells, cellSize, half, sea, toSea, heights: aboveSea }, townSites, params.seed);
+		chunkGrids.townStrength = townGround.strength;
+		chunkGrids.townHeight = townGround.height;
+		chunkGrids.townRoads = null;
+		town = layoutTowns(townSites, (x, z) => params.seaLevel + landAt(x, z), townAt, (x, z) => gridValue(toSeaWorld, x, z), params.seaLevel, params.seed);
+		const kept = townSites.filter((site, k) => town.towns[k].buildings.length >= 30);
+		if (kept.length == townSites.length || attempt == 3) break;
+		givenUp.push(...townSites.filter((site) => !kept.includes(site)));
+		const more = findTownSites(siteGrids, params, MOUNTAIN_THRESHOLD, givenUp).filter((s) => !kept.some((k) => Math.hypot(k.x - s.x, k.z - s.z) < 1));
+		townSites = [...kept, ...more].slice(0, townSites.length).map((site, k) => ({ ...site, number: k, clusters: null }));
+	}
+	chunkGrids.townRoads = town.segments;
+	for (let i = 0; i < points * points; i++) {
+		if (townGround.strength[i] <= 0) continue;
+		const col = i % points, row = (i - col) / points;
+		heights[i] = params.seaLevel + landAt(col * cellSize - half, row * cellSize - half);
+		if (townGround.strength[i] > 0.5 && heights[i] > params.seaLevel + 0.5) zones[i] = ZONE_TOWN;
+	}
+	const roadAt = makeRoadFlattener(town.segments).nearest;
+
 	// normals from the heights either side of each point
 	for (let row = 0; row < points; row++) {
 		for (let col = 0; col < points; col++) {
@@ -949,10 +1015,6 @@ export function generateTerrain(params) {
 			normals[i] = nx / length; normals[i + 1] = ny / length; normals[i + 2] = nz / length;
 		}
 	}
-
-	// the mesh (see makeChunkBuilder)
-	const chunkGrids = { ridges, marshes, footings, beyondDrop };
-	const { landAt, buildChunk } = makeChunkBuilder(params, chunkGrids, { sample, erodedFbm, foothillShape });
 
 	// distance from every grid point to the nearest land (0 on land), so the sea can tell how close it is to a coast anywhere in the world.
 	//		Worked out in two sweeps: first the nearest land up or down each column, then for each point the column that makes the shortest diagonal.
@@ -1039,7 +1101,8 @@ export function generateTerrain(params) {
 
 	const groundAt = (x, z) => params.seaLevel + landAt(x, z);
 
-	return { cells, points, cellSize, heights, mountains, woodlands, covers, marshes, lakes, zones, normals, shoreDistances, ridgeCrests, heightAt, groundAt, zoneAt, normalAt, findSpawnPoints, buildChunk, chunkGrids };
+	return { cells, points, cellSize, heights, mountains, woodlands, covers, marshes, lakes, zones, normals, shoreDistances, ridgeCrests, heightAt, groundAt, zoneAt, normalAt, findSpawnPoints, buildChunk, chunkGrids,
+		towns: town.towns, townStrength: townGround.strength, townAt, roadAt };
 }
 
 // The triangles of a chunk (see buildChunk), as a list of vertex numbers. The same for every chunk with that many cells:

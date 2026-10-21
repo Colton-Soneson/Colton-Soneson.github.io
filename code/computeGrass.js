@@ -14,6 +14,7 @@ import * as transformations from './transformations.js'
 import * as terrain from './terrain.js'
 import { FOREST_THRESHOLD } from './terrainGenerator.js'
 import * as wind from './wind.js'
+import { townMaskBuffers } from './townMask.js'
 import { weatherNow, seasonNow } from './weather.js'
 
 //the grass fades into the horizon color, read from the sky view LUT (same as the water and the land)
@@ -183,7 +184,12 @@ const bindGroupVFLayout = device.createBindGroupLayout({
     binding: 6,
     visibility: GPUShaderStage.VERTEX,
     sampler: {}
-  }
+  },
+  ...[7, 8, 9].map((binding) => ({			//the towns' roads and houses, where no grass grows (townMask.js)
+    binding,
+    visibility: GPUShaderStage.VERTEX,
+    buffer: { type: 'read-only-storage' }
+  }))
   ]
 });
 
@@ -219,6 +225,18 @@ function createVFBindGroupGrass() {
 			{
 				binding: 6,
 				resource: wind.windSampler
+			},
+			{
+				binding: 7,
+				resource: { buffer: townMaskBuffers.cells }
+			},
+			{
+				binding: 8,
+				resource: { buffer: townMaskBuffers.list }
+			},
+			{
+				binding: 9,
+				resource: { buffer: townMaskBuffers.items }
 			}
 			]
 		});

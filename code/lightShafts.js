@@ -6,7 +6,7 @@ import * as profiler from './profiler.js'
 
 import { settings } from './settings.js';
 
-import { vf_causticMap, vf_lightShafts } from '../shaders/js/vf_lightShafts.js'
+import { vf_causticMap, vf_lightShafts, MOST_BEAMS } from '../shaders/js/vf_lightShafts.js'
 
 import * as transformations from './transformations.js'
 import * as clouds from './clouds.js'
@@ -23,6 +23,7 @@ import { lightningNow } from './lightning.js'
 		the caustic map		a small picture of how the water's surface curves, made from this frame's wave heights. Only
 							while the camera is under the sea
 		the shafts			the frame is copied, and drawn back through the shader with the light added
+	and with them the beams of light that are going on (setBeams: the staff's Light Beam, staff.js), whatever the sky is doing.
 */
 
 const CAUSTIC_MAP_SIZE = 512;		// texels along a side of the caustic map
@@ -33,7 +34,7 @@ const shaftShaderModule = device.createShaderModule({ label: "vf_lightShafts", c
 
 const shaftUniformBuffer = device.createBuffer({
   label: "light shaft Uniform",
-  size: 256,
+  size: 256 + MOST_BEAMS * 32 + 16,
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 });
 
@@ -108,6 +109,17 @@ function cameraUnderWater() {
 // for testing
 export const underwaterNow = cameraUnderWater;
 
+// the beams going on now (staff.js): each { from: [x, y, z], way: [x, y, z] (1 long), reach (world units), spread (the tan of half its
+//		cone), strength (0 to 1) }. The nearest MOST_BEAMS are drawn
+let beams = [];
+export function setBeams(list) { beams = list; }
+function beamValues() {
+	const out = new Array(MOST_BEAMS * 8).fill(0);
+	const near = [...beams].sort((a, b) => Math.hypot(a.from[0] - settings.camPosX, a.from[2] - settings.camPosZ) - Math.hypot(b.from[0] - settings.camPosX, b.from[2] - settings.camPosZ)).slice(0, MOST_BEAMS);
+	near.forEach((b, k) => out.splice(k * 8, 8, ...b.from, b.reach, ...b.way.map((v) => v * Math.max(b.strength, 0.001)), b.spread));
+	return [...out, near.length, 0, 0, 0];
+}
+
 // the ShaftUniforms struct in vf_lightShafts.js
 function shaftUniformBufferUpdates(shaftStrength) {
 	const bufferResult = [];
@@ -142,6 +154,8 @@ function shaftUniformBufferUpdates(shaftStrength) {
 		bufferResult.push(viewProjectionMatrix[i]);
 	}
 
+	bufferResult.push(...beamValues());
+
 	const result = new Float32Array(bufferResult);
 	device.queue.writeBuffer(shaftUniformBuffer, 0, result.buffer, result.byteOffset, result.byteLength);
 }
@@ -156,7 +170,7 @@ export function lightShaftPass(canvasTexture, mainpassDepthTexture) {
 	const cover = weatherNow.coverage;
 	const broken = Math.min(Math.max((cover - 0.12) / 0.25, 0), 1) * (1 - Math.min(Math.max((cover - 0.82) / 0.14, 0), 1)) * (1 - 0.85 * weatherNow.skyCover);
 	const shaftStrength = settings.enableLightShafts && settings.enableClouds ? settings.lightShaftStrength * broken * light.daylight : 0;
-	if (!underWater && shaftStrength <= 0.001 && lightningNow.sceneFlash <= 0.001) {
+	if (!underWater && shaftStrength <= 0.001 && lightningNow.sceneFlash <= 0.001 && beams.length == 0) {
 		return;
 	}
 

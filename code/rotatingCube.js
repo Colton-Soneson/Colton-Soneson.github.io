@@ -52,6 +52,10 @@ import * as shotgun from './shotgun.js'
 import * as revolver from './revolver.js'
 import * as sharps from './sharps.js'
 import * as discgolf from './discgolf.js'
+import * as staff from './staff.js'
+import * as town from './town.js'
+import * as townFolk from './townFolk.js'
+import * as pointLights from './pointLights.js'
 import { settings } from './settings.js';
 import * as userInterface from './imguiLoader.js';
 import * as profiler from './profiler.js';
@@ -369,6 +373,7 @@ export function updateRotatingCubePass() {
 	revolver.revolverUpdate();
 	sharps.sharpsUpdate();		//(and the view through its scope)
 	discgolf.discUpdate();		//the golf discs fly on, and the course is laid out (when it is on)
+	staff.staffUpdate();		//the wizard's staff: its spells, and the beams of light going on
 	weapons.weaponsUpdate();	//(and the controls of whatever is in them, on the left)
 	net.netUpdate();			//in a game with others: what this player is doing goes out, the host's world and clock come in
 	players.playersUpdate();	//and the others move on
@@ -389,6 +394,8 @@ export function updateRotatingCubePass() {
 	forest.forestUpdate();		//after the land: the forest is planted again whenever the land under it changes
 	profiler.cpuMark('Boulders, Particles, Birds Update');
 	boulders.boulderUpdate();	//and the boulders laid out again
+	town.townUpdate();			//and the seaside towns built again (their layout comes with the land)
+	townFolk.townFolkUpdate();	//and their people about their day
 	particles.particleUpdate();		//what the leaves, the spray and the rain all need to know this frame
 	birds.birdUpdate();				//the hawks fly on
 	geese.geeseUpdate();			//and the geese
@@ -541,11 +548,16 @@ export function updateRotatingCubePass() {
 		players.playersPass(encoder, depthTexture);	//(and the other players, in a game with others)
 		boat.boatPass(encoder, depthTexture);		//(and the boats)
 		horse.horsePass(encoder, depthTexture);		//(and the horses)
+		town.townPass(encoder, depthTexture);		//(and the seaside towns)
+		townFolk.townFolkPass(encoder, depthTexture);	//(and their people)
 		discgolf.discGolfPass(encoder, depthTexture);	//(and the disc golf course, and the discs)
 	});
 
 	//screen space shadows and ambient occlusion over everything solid, and the copies of the frame the water finds its reflections in.
 	//		Before the water and the sky are drawn
+	//the lamps of the towns (and the like) on everything round them: from the depth buffer, once everything solid is drawn (pointLights.js)
+	profiler.section('Point Lights', () => pointLights.pointLightPass(encoder, context.getCurrentTexture(), depthTexture));
+
 	profiler.cpuMark('Screen Space');
 	profiler.section('Screen Space', () => screenEffectsPass(encoder, context.getCurrentTexture(), depthTexture));
 

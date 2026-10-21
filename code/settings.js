@@ -14,6 +14,7 @@ export const settings = {
     camNearPlane: 1.0,
     gameMode: 'Observe',			//Observe: fly round (cameraControls.js). Hunting (Hunting and Sailing): on foot, first person (hunting.js), with boats to sail (boat.js) and the rest from the spawn menu, T (radialMenu.js)
     huntingWalkSpeed: 3.0,			//metres a second on foot. Shift runs 2.3x
+    horseSpeed: 2.5,				//how many times a real horse's pace the horses go at: the walk, the canter and the gallop (horse.js). 1 = a real horse, a 13.5 m/s gallop
     discGolfEnabled: false,			//a disc golf course laid out on the land (discgolf.js): tee pads and baskets, each hole its own colour
     discGolfHoles: 9,				//how many holes it has
     discGolfSeed: 1,				//which course: New Course moves it on
@@ -90,6 +91,9 @@ export const settings = {
 	terrainGroundDetail: 1.0,			//how strongly the sand of the beaches, the turf of the grassland and the litter under the trees show. 0 = flat color
 	terrainDepthBias: 1.0,				//how much of the relief of all three goes in to the frame's depth, where the screen space shadows and ambient occlusion find it. 0 = none
 	terrainRockDetail: 1.0,				//how strongly the cracks and ledges the shader draws on bare rock show. 0 = lit by the mesh alone
+	terrainTownCount: 2,				//seaside towns: on the shore where the mountains come down near the sea, up a hill of their own (townLayout.js, town.js). 0 to 4
+	terrainTownSize: 1.0,				//how big each one is: 1 = about 340m along the shore and 165m up the hill
+	enableTownFolk: true,				//the towns' people: one to every building, its trade the building's (townFolk.js)
 	//--------------------GRASS--------------------
 	enableGrass: true,
 	grassTotalBladeCount: 420000,	//blades drawn, shared out over the level of detail rings around the camera. Most are skipped wherever there is no grassland

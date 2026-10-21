@@ -15,6 +15,7 @@ import * as help from './controlsHelp.js'
 						deep enough all round it not to touch the shore (boat.spawnSpot). One of each for each player: another
 						takes the place of the first
 		Weapons			what is in the hands
+		Magic			the wizard's staff, and its spells (staff.js)
 	What each choice does is said by whoever adds it (addChoice): the horse, the guns and the discs add their own.
 
 	SPAWNED (onSpawn): told of each boat put in the sea here, for net.js to tell the others.
@@ -37,8 +38,9 @@ const menu = {
 const root = { label: 'Spawn', items: [
 	{ label: 'Vehicles', detail: 'A boat on the water you point at, or a horse on the land', items: [] },
 	{ label: 'Weapons', detail: 'What you hold', items: [] },
+	{ label: 'Magic', detail: 'A wizard\'s staff, and its spells', items: [] },
 ] };
-// a choice added under one of the top ones ('Vehicles' or 'Weapons')
+// a choice added under one of the top ones ('Vehicles', 'Weapons' or 'Magic')
 export function addChoice(under, choice) {
 	root.items.find((item) => item.label == under).items.push(choice);
 	if (menu.open) redraw();

@@ -56,7 +56,7 @@ const FEED_SECONDS = 6;
 const MAX_DRAWN = 16;
 const DUMMY_FLOATS = 16;				// one dummy as the shader gets it: place (4), pose (4), state (4), what it holds (4)
 // how long what each one holds is (the box it carries, see vf_dummy.js), as the long gun it was made with is 1: nothing, a disc: 0
-const HELD_LENGTH = { rifle: 1, shotgun: 0.9, sharps: 1.1, revolver: 0.3, none: 0 };
+const HELD_LENGTH = { rifle: 1, shotgun: 0.9, sharps: 1.1, revolver: 0.3, staff: 1.6, none: 0 };
 const STRIDE = 1.5;					// metres a stride takes
 // the hitbox, in the dummy's own metres: x, y, z, radius, and which part it is (see DAMAGE in net.js)
 const DUMMY_SPHERES = [[0, 1.71, 0.01, 0.13, 'head'], [0, 1.33, 0, 0.21, 'chest'], [0, 1.0, 0, 0.19, 'belly'],
@@ -65,7 +65,7 @@ const DUMMY_SPHERES = [[0, 1.71, 0.01, 0.13, 'head'], [0, 1.33, 0, 0.21, 'chest'
 // The mesh
 //-------------------------------------------------
 // a box between two rectangles across y: [x half width, z back, z front] at y0 and y1, as triangles of [a, b, c, part]
-function box(into, y0, [w0, b0, f0], y1, [w1, b1, f1], part, x = 0) {
+export function box(into, y0, [w0, b0, f0], y1, [w1, b1, f1], part, x = 0) {
 	const ring = (y, w, b, f) => [[x - w, y, b], [x + w, y, b], [x + w, y, f], [x - w, y, f]];
 	const A = ring(y0, w0, b0, f0), B = ring(y1, w1, b1, f1);
 	for (let k = 0; k < 4; k++) {
@@ -75,7 +75,7 @@ function box(into, y0, [w0, b0, f0], y1, [w1, b1, f1], part, x = 0) {
 	into.push([A[0], A[1], A[2], part], [A[0], A[2], A[3], part], [B[0], B[2], B[1], part], [B[0], B[3], B[2], part]);
 }
 // a three sided tube from a to b, radius ra at a and rb at b (6)
-function tube(into, a, b, ra, rb, part) {
+export function tube(into, a, b, ra, rb, part) {
 	const axis = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], length = Math.hypot(...axis);
 	const d = axis.map((v) => v / length);
 	const other = Math.abs(d[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
@@ -89,7 +89,8 @@ function tube(into, a, b, ra, rb, part) {
 		into.push([A[k], B[k], B[n], part], [A[k], B[n], A[n], part]);
 	}
 }
-const DUMMY_MESH = (() => {
+// (the townsfolk are the same dummy, without the rifle: the first bodyTriangles, see townFolk.js)
+export const DUMMY_MESH = (() => {
 	const t = [];
 	box(t, 0.88, [0.16, -0.1, 0.1], 1.05, [0.17, -0.1, 0.1], 0);			// the pelvis (12)
 	box(t, 1.05, [0.16, -0.1, 0.1], 1.5, [0.2, -0.11, 0.11], 1);			// the chest (12)

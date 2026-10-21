@@ -236,7 +236,7 @@ export class ForestLife {
 		});
 		// a forest always has some dead wood standing in it: a few of the grown trees start out already dead, at every point from just browning to about to fall
 		this.trees.forEach((tree) => {
-			if (tree.age > 0.8 * TREE_SPECIES[tree.species].fullGrownAge && this.random() < 0.025) {
+			if (!tree.planted && tree.age > 0.8 * TREE_SPECIES[tree.species].fullGrownAge && this.random() < 0.025) {
 				this.kill(tree, 0);
 				const sooner = this.random() * (tree.fallStart - 0.2);
 				tree.dryStart -= sooner;
@@ -356,7 +356,10 @@ export class ForestLife {
 		this.measure(tree);
 		const shade = shadeAt(this.grid, this.trees, tree.x, tree.z, tree.height, index);
 
-		if (this.random() < deathChance(species, tree.age, shade, years)) {
+		// a planted tree (a town's: see plantTownTrees in forestGenerator.js) lives on as it is, and seeds nothing
+		if (tree.planted) {
+			tree.rate = 1;
+		} else if (this.random() < deathChance(species, tree.age, shade, years)) {
 			this.kill(tree, clock);
 		} else {
 			tree.rate = growthRate(species, shade);

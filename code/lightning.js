@@ -33,6 +33,9 @@ import { weatherNow, seasonNow, SEASON_SUMMER } from './weather.js'
 		Branches leave it at a few of its corners and do the same, heading down and outwards, thinner and dimmer, and
 		stop short of the ground.
 
+	CALLED DOWN (strikeAt: the staff's Lightning spell, staff.js): a strike to the ground at a given place, whatever the weather. It
+	comes from the cloud base, or from high over the place on a clear day, and always reaches the ground, right there.
+
 	Nothing is heard: there is no sound in this engine yet.
 */
 
@@ -167,6 +170,12 @@ let forced = false;
 export function strikeNow() {
 	forced = true;
 }
+// A strike to the ground at (x, z), world units, on the next frame (see CALLED DOWN at the top)
+let calledAt = null;
+export function strikeAt(x, z) {
+	calledAt = [x, z];
+}
+export const lightningStats = { called: 0 };
 
 // Once a frame, before the clouds are worked out: moves the strike that is going on forward, and now and then starts a new one
 export function lightningUpdate() {
@@ -174,6 +183,31 @@ export function lightningUpdate() {
 	const elapsed = Math.min((now - lastTime) / 1000, 0.1);
 	lastTime = now;
 
+	if (calledAt) {
+		const [x, z] = calledAt;
+		calledAt = null;
+		const sea = settings.waterWorldPosY;
+		const ground = Math.max(terrain.land ? terrain.land.heightAt(x, z) : sea, sea);
+		const cloudBottom = sea + weatherNow.base + settings.cloudHeight;
+		const topY = Math.max(cloudBottom + 140, ground + 600);
+		// the top a little off from straight over it, the bottom right there
+		const lean = Math.random() * Math.PI * 2, off = (topY - ground) * 0.12 * Math.random();
+		const top = [x + Math.cos(lean) * off, topY, z + Math.sin(lean) * off];
+		lightningNow.position = [top[0], topY + 120, top[2]];
+		lightningNow.reach = 900 + 600 * Math.random();
+		const away = Math.hypot(x - settings.camPosX, z - settings.camPosZ);
+		strikeNearness = Math.min(Math.max(0.35 + 0.65 * (1 - away / STRIKE_REACH), 0.35), 1);
+		pieceCount = buildBolt(top, [x, ground, z]);
+		device.queue.writeBuffer(pieceBuffer, 0, pieceData, 0, pieceCount * PIECE_FLOATS);
+		strokes = [[0, 1.2]];
+		let when = 0;
+		for (let again = 1 + Math.floor(Math.random() * 2); again > 0; again--) {
+			when += 0.05 + 0.1 * Math.random();
+			strokes.push([when, 0.5 + 0.4 * Math.random()]);
+		}
+		strikeAge = 0;
+		lightningStats.called++;
+	}
 	const storming = forced ? 1 : settings.enableLightning && settings.enableClouds ? weatherNow.lightning : 0;
 	if (strikeAge < 0 && storming > 0.05) {
 		untilNext -= elapsed;

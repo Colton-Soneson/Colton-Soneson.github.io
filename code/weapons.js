@@ -21,11 +21,12 @@ const weapons = new Map();		// name -> { label, detail, help(), equip(), loaded(
 const reserve = new Map();		// name -> rounds carried (not in the gun)
 
 // a weapon: name, what it is called and a word about it in the menu, its controls (help: () => [title, lines]), and what it does when
-//		taken in hand (equip), how many rounds are in it (loaded) and how to make it as it starts (reset: full, ready)
-export function addWeapon(name, { label, detail, help: helpLines, equip, loaded, reset, drawn }) {
+//		taken in hand (equip), how many rounds are in it (loaded) and how to make it as it starts (reset: full, ready). menu: the ring of
+//		the spawn menu it is chosen from (the staff is under Magic)
+export function addWeapon(name, { label, detail, help: helpLines, equip, loaded, reset, drawn, menu = 'Weapons' }) {
 	weapons.set(name, { label, detail, help: helpLines, equip, loaded, reset, drawn });
 	if (name in AMMO) reserve.set(name, AMMO[name] - (loaded?.() ?? 0));
-	addChoice('Weapons', { label, detail, act: () => { equipWeapon(name); return true; } });
+	addChoice(menu, { label, detail, act: () => { equipWeapon(name); return true; } });
 }
 addChoice('Weapons', { label: 'Empty hands', detail: 'Put away what you hold', act: () => { equipWeapon('none'); return true; } });
 

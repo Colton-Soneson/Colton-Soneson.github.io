@@ -120,6 +120,8 @@ export function placeBoulders(land, params) {
 	const boulders = [];
 
 	const add = (x, z, size, tall) => {
+		// not in a town (townLayout.js), or out in the water off its quay
+		if (land.townAt && land.townAt(x, z) > 0.01) return;
 		// not on the ground kept clear round the buildings (placeBuildings in terrain.js)
 		for (const clearing of land.clearings ?? []) {
 			if ((x - clearing.x) ** 2 + (z - clearing.z) ** 2 < (clearing.radius + size) ** 2) return;

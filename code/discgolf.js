@@ -8,12 +8,13 @@ import { mat4 } from 'https://wgpu-matrix.org/dist/3.x/wgpu-matrix.module.js';
 
 import { settings } from './settings.js';
 
-import { vf_discgolf } from '../shaders/js/vf_discgolf.js'
+import { vf_discgolf, vf_discGlow } from '../shaders/js/vf_discgolf.js'
 
 import * as transformations from './transformations.js'
 import * as terrain from './terrain.js'
 import * as forest from './forest.js'
 import * as boulders from './boulders.js'
+import * as town from './town.js'
 import * as hunting from './hunting.js'
 import * as weapons from './weapons.js'
 import * as help from './controlsHelp.js'
@@ -50,7 +51,11 @@ import {uniformBufferLights} from './rotatingCube.js'
 
 	IN A GAME WITH OTHERS (net.js): each throw is sent to the others (onThrow: where, how fast, how turned, how it spins), and they fly
 	it here too, with the same sums over the same land; where it comes to rest is sent when it does (onRest) and put right there. A disc
-	picked up goes (onGone). A hole finished is said to everyone (onScore).
+	picked up goes (onGone). A hole finished is said to everyone (onScore). The course is the host's: it lays it out and sends the holes
+	themselves (courseShare), and a joiner plays on those (courseFromHost) instead of laying out its own.
+
+	FINDING A DISC. Every disc out of the hand glows in its colour (see THE GLOW in vf_discgolf.js), fainter through whatever is in
+	front of it, out to GLOW_REACH. In a game with others the thrower's name is over each one too, out to NAME_REACH.
 */
 const KINDS = ['driver', 'midrange', 'putter'];
 const COLOURS = { driver: [0.95, 0.42, 0.08], midrange: [0.12, 0.42, 0.95], putter: [0.95, 0.82, 0.12] };
@@ -69,12 +74,17 @@ const BASKET = { radius: 0.32, trayBottom: 0.62, trayTop: 0.86, chainTop: 1.36, 
 const SHORTEST = 55;				// metres, a hole
 const LONGEST_THROWS = 2.5;			// of the fairway driver's longest throw
 const MARKER_REACH = 900;			// metres
+const GLOW_REACH = 400;				// metres
+const NAME_REACH = 150;
 export const MAX_DISCS = 64;
 
 const metre = () => settings.forestUnitsPerMetre;
 const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
 let localId = 0;
 export function setLocalId(id) { localId = id; }
+// whose name a disc's owner number is, in a game with others (net.js): null when there is no game
+let nameFor = () => null;
+export function setNameLookup(fn) { nameFor = fn; }
 
 // The discs
 //-------------------------------------------------
@@ -266,13 +276,15 @@ function meetThings(disc) {
 			s.p[0] = (tx + dx / d * (half + r)) / m; s.p[2] = (tz + dz / d * (half + r)) / m;
 		}
 	});
-	if (settings.enableBoulders) boulders.bouldersNear(x, z, reach, (bx, bz, half, bottom, top) => {
+	const blockOff = (bx, bz, half, bottom, top) => {
 		if (y < bottom || y > top + r) return;
 		const dx = x - bx, dz = z - bz;
 		if (Math.abs(dx) > half + r || Math.abs(dz) > half + r) return;
 		if (half + r - Math.abs(dx) < half + r - Math.abs(dz)) { bounce(Math.sign(dx), 0); s.p[0] = (bx + Math.sign(dx) * (half + r)) / m; }
 		else { bounce(0, Math.sign(dz)); s.p[2] = (bz + Math.sign(dz) * (half + r)) / m; }
-	});
+	};
+	if (settings.enableBoulders) boulders.bouldersNear(x, z, reach, blockOff);
+	town.boxesNear(x, z, reach, blockOff);		// (the houses and walls of the towns)
 	// the baskets: into the chains slow enough, and it drops into the basket. Faster, it is thrown back out
 	holes.forEach((hole, k) => {
 		const b = hole.basket;
@@ -314,6 +326,7 @@ hunting.onUse((place) => {
 // each: { number, tee: { x, z, y, heading }, basket: { x, z, y }, length (metres), par, colour }
 export let holes = [];
 let courseFor = '';
+let hostCourse = false;		// the holes are the host's (see IN A GAME WITH OTHERS at the top), not laid out here
 export let longestThrow = 0;
 function random(seed) {
 	let a = seed >>> 0;
@@ -417,7 +430,7 @@ export function discUpdate() {
 	const elapsed = Math.min((now - lastTime) / 1000, 0.1);
 	lastTime = now;
 	const key = [settings.discGolfEnabled, settings.discGolfSeed, settings.discGolfHoles, terrain.land ? terrain.land.points : 0, terrain.land ? terrain.land.heights?.length : 0].join();
-	if (terrain.land && (key != courseFor || (settings.discGolfEnabled && holes.length == 0 && terrain.land !== laidOn))) { courseFor = key; laidOn = terrain.land; layCourse(); }
+	if (!hostCourse && terrain.land && (key != courseFor || terrain.land !== laidOn)) { courseFor = key; laidOn = terrain.land; layCourse(); }
 	if (terrain.land) {
 		for (const disc of discs) {
 			let k = 0;
@@ -436,8 +449,34 @@ export function discUpdate() {
 	hunting.crosshair.hidden = hunting.crosshair.hidden && !holdingDisc();
 	showBox();
 	showMarkers();
+	showNames();
 }
 let laidOn = null;
+
+// The course in a game with others (see IN A GAME WITH OTHERS at the top)
+//-------------------------------------------------
+// host: the holes as they are, to send
+export function courseShare() {
+	const r = (v) => Math.round(v * 1000) / 1000;
+	return holes.map((h) => [h.number, h.colour.map(r), [h.tee.x, h.tee.z, h.tee.y, h.tee.heading].map(r), [h.basket.x, h.basket.z, h.basket.y].map(r), r(h.length), h.par]);
+}
+// joiner: the host's holes (courseShare's), or null to lay out its own again (out of the game)
+export function courseFromHost(list) {
+	const before = JSON.stringify(courseShare());
+	if (!list) {
+		if (!hostCourse) return;
+		hostCourse = false;
+		courseFor = '';
+	} else {
+		hostCourse = true;
+		holes = list.map(([number, colour, tee, basket, length, par]) => ({ number, colour, tee: { x: tee[0], z: tee[1], y: tee[2], heading: tee[3] },
+			basket: { x: basket[0], z: basket[1], y: basket[2] }, length, par }));
+		if (JSON.stringify(courseShare()) == before) return;
+		makeMarkers();
+	}
+	play.hole = null; play.throws = 0;
+	scorecard.clear();
+}
 
 // for testing: thrown by power, as the view is (or yaw and pitch given), the release angle and style set
 export function testThrow(kind, power, { hyzer = 0, style = 'backhand', yaw, pitch } = {}) {
@@ -498,6 +537,44 @@ function makeMarkers() {
 		}
 	}
 }
+// the thrower's name over each disc, in a game with others (see FINDING A DISC at the top)
+const nameTags = new Map();		// disc id -> { el, text }
+function showNames() {
+	const on = settings.gameMode == 'Hunting' && hunting.hunterPlace().active;
+	const viewProj = transformations.getViewProj();
+	const W = innerWidth, H = innerHeight, m = metre();
+	const seen = new Set();
+	for (const disc of discs) {
+		const name = on ? nameFor(disc.owner) : null;
+		if (!name) continue;
+		const p = disc.s.p;
+		if (Math.hypot(p[0] * m - settings.camPosX, p[1] * m - settings.camPosY, p[2] * m - settings.camPosZ) > NAME_REACH * m) continue;
+		const c = [0, 1, 2, 3].map((r) => viewProj[r] * p[0] * m + viewProj[4 + r] * (p[1] + 0.45) * m + viewProj[8 + r] * p[2] * m + viewProj[12 + r]);
+		if (c[3] < 0.1) continue;
+		const x = (c[0] / c[3] * 0.5 + 0.5) * W, y = (0.5 - c[1] / c[3] * 0.5) * H;
+		if (x < -60 || x > W + 60 || y < -20 || y > H + 20) continue;
+		let tag = nameTags.get(disc.id);
+		if (!tag) {
+			const el = document.createElement('div');
+			el.style.cssText = 'position: absolute; transform: translate(-50%, -100%); padding: 0 6px; border-radius: 8px; background: rgba(0, 0, 0, 0.5); color: #fff; font-size: 11px; font-weight: 600; white-space: nowrap;';
+			names.appendChild(el);
+			tag = { el, text: '' };
+			nameTags.set(disc.id, tag);
+		}
+		const text = `<span style="color: rgb(${COLOURS[disc.kind].map((v) => Math.round(v * 255)).join(',')});">●</span> ${html(name)}`;
+		if (text != tag.text) { tag.text = text; tag.el.innerHTML = text; }
+		tag.el.style.left = x.toFixed(0) + 'px';
+		tag.el.style.top = y.toFixed(0) + 'px';
+		seen.add(disc.id);
+	}
+	for (const [id, tag] of nameTags) if (!seen.has(id)) { tag.el.remove(); nameTags.delete(id); }
+	glowStats.named = seen.size;
+}
+const names = document.createElement('div');
+names.style.cssText = 'position: fixed; inset: 0; pointer-events: none; z-index: 4; font-family: system-ui, sans-serif; overflow: hidden;';
+document.body.appendChild(names);
+const html = (text) => String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
 function showMarkers() {
 	const on = holes.length > 0 && settings.gameMode == 'Hunting' && hunting.hunterPlace().active;
 	markers.style.display = on ? '' : 'none';
@@ -602,7 +679,9 @@ export const COURSE_TRIANGLES = { basket: MESHES.basket.length / 12, tee: MESHES
 
 const INSTANCE_FLOATS = 20;
 const MOST_INSTANCES = 18 + MAX_DISCS;
+const GLOW_FLOATS = 8;				// where (3), how big the card is (half its width, world units), colour (3), a number of its own
 const shaderModule = device.createShaderModule({ label: "vf_discgolf", code: vf_discgolf });
+const glowModule = device.createShaderModule({ label: "vf_discGlow", code: vf_discGlow });
 const meshBuffers = {};
 for (const [name, data] of Object.entries(MESHES)) {
 	meshBuffers[name] = device.createBuffer({ label: `disc golf ${name}`, size: data.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
@@ -610,7 +689,9 @@ for (const [name, data] of Object.entries(MESHES)) {
 }
 const instanceBuffers = {};
 for (const name of Object.keys(MESHES)) instanceBuffers[name] = device.createBuffer({ label: `disc golf ${name} instances`, size: MOST_INSTANCES * INSTANCE_FLOATS * 4, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
-const uniformBuffer = device.createBuffer({ label: "disc golf Uniform", size: 96, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+const uniformBuffer = device.createBuffer({ label: "disc golf Uniform", size: 128, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+const glowData = new Float32Array(MAX_DISCS * GLOW_FLOATS);
+const glowBuffer = device.createBuffer({ label: "disc glow instances", size: glowData.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
 const linSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
 const pipeline = device.createRenderPipeline({
 	label: "disc golf pipeline",
@@ -627,6 +708,27 @@ const pipeline = device.createRenderPipeline({
 	primitive: { topology: 'triangle-list', cullMode: 'none' },
 	depthStencil: { depthWriteEnabled: true, depthCompare: 'less', format: 'depth24plus' },
 });
+// the glow (see THE GLOW in vf_discgolf.js): added on, seen and through what is in front
+const glowPipeline = (fragment, depthCompare) => device.createRenderPipeline({
+	label: `disc ${fragment} pipeline`,
+	layout: 'auto',
+	vertex: { module: glowModule, entryPoint: "vertexMain", buffers: [{ arrayStride: GLOW_FLOATS * 4, stepMode: 'instance', attributes: [
+		{ format: "float32x4", offset: 0, shaderLocation: 0 }, { format: "float32x4", offset: 16, shaderLocation: 1 }] }] },
+	fragment: { module: glowModule, entryPoint: fragment, targets: [{ format: canvasFormat, blend: { color: { srcFactor: 'one', dstFactor: 'one' }, alpha: { srcFactor: 'zero', dstFactor: 'one' } } }] },
+	primitive: { topology: 'triangle-list', cullMode: 'none' },
+	depthStencil: { depthWriteEnabled: false, depthCompare, format: 'depth24plus' },
+});
+const glowSeen = glowPipeline('fragmentGlow', 'less'), glowHidden = glowPipeline('fragmentGlowHidden', 'greater-equal');
+const glowBindGroup = device.createBindGroup({ label: "disc glow bind group", layout: glowSeen.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: uniformBuffer } }] });
+const glowHiddenBindGroup = device.createBindGroup({ label: "disc glow (hidden) bind group", layout: glowHidden.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: uniformBuffer } }] });
+const startSeconds = performance.now() / 1000;
+// the discs that glow now: out of the hand, within GLOW_REACH
+function glowing() {
+	const m = metre();
+	return discs.filter((d) => Math.hypot(d.s.p[0] * m - settings.camPosX, d.s.p[1] * m - settings.camPosY, d.s.p[2] * m - settings.camPosZ) < GLOW_REACH * m).slice(0, MAX_DISCS);
+}
+export const glowStats = { glowing: 0, named: 0 };
+
 let bindGroup = null, boundLUT = null;
 
 // a disc's matrix: where it is, its face turned to n, spun round it as it has spun, made world units
@@ -648,6 +750,7 @@ function discMatrix(disc) {
 export function discGolfPass(aEncoder, mainpassDepthTexture) {
 	const showCourse = holes.length > 0;
 	if (!showCourse && discs.length == 0) return;
+	const camera = vm.cameraAxes();
 	const m = metre();
 	const lists = { basket: [], tee: [], disc: [] };
 	if (showCourse) {
@@ -657,10 +760,12 @@ export function discGolfPass(aEncoder, mainpassDepthTexture) {
 		}
 	}
 	for (const disc of discs) lists.disc.push([discMatrix(disc), COLOURS[disc.kind]]);
-	const u = new Float32Array(24);
+	const u = new Float32Array(32);
 	u.set(transformations.getViewProj(), 0);
 	u.set([settings.camPosX, settings.camPosY, settings.camPosZ, 0], 16);
-	u.set([settings.waterHorizonFogDistance, settings.enableAtmosphere ? 1 : 0, 0, 0], 20);
+	u.set([settings.waterHorizonFogDistance, settings.enableAtmosphere ? 1 : 0, performance.now() / 1000 - startSeconds, 0], 20);
+	u.set([...camera.right, 0], 24);
+	u.set([...camera.up, 0], 28);
 	device.queue.writeBuffer(uniformBuffer, 0, u);
 	if (!bindGroup || boundLUT !== skyViewLUTtexture) {
 		boundLUT = skyViewLUTtexture;
@@ -694,6 +799,23 @@ export function discGolfPass(aEncoder, mainpassDepthTexture) {
 		pass.setVertexBuffer(0, meshBuffers[name]);
 		pass.setVertexBuffer(1, instanceBuffers[name]);
 		pass.draw(MESHES[name].length / 4, counts[name], 0, 0);
+	}
+	// the glow round each disc (after the discs: it is added on)
+	const lit = glowing();
+	glowStats.glowing = lit.length;
+	if (lit.length) {
+		lit.forEach((disc, k) => {
+			const away = Math.hypot(disc.s.p[0] * m - settings.camPosX, disc.s.p[1] * m - settings.camPosY, disc.s.p[2] * m - settings.camPosZ) / m;
+			glowData.set([...disc.s.p.map((v) => v * m), Math.max(0.6, away * 0.02) * m, ...COLOURS[disc.kind], k * 0.37], k * GLOW_FLOATS);
+		});
+		device.queue.writeBuffer(glowBuffer, 0, glowData, 0, lit.length * GLOW_FLOATS);
+		pass.setVertexBuffer(0, glowBuffer);
+		pass.setPipeline(glowHidden);
+		pass.setBindGroup(0, glowHiddenBindGroup);
+		pass.draw(6, lit.length, 0, 0);
+		pass.setPipeline(glowSeen);
+		pass.setBindGroup(0, glowBindGroup);
+		pass.draw(6, lit.length, 0, 0);
 	}
 	pass.end();
 }

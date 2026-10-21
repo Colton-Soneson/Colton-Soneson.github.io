@@ -12,6 +12,7 @@ import * as terrain from './terrain.js'
 import * as forest from './forest.js'
 import * as boulders from './boulders.js'
 import * as ballistics from './ballistics.js'
+import * as town from './town.js'
 import * as help from './controlsHelp.js'
 import { addChoice, announceSpawn } from './radialMenu.js'
 
@@ -30,6 +31,8 @@ import {uniformBufferLights} from './rotatingCube.js'
 		A / D			turn. The faster it goes, the wider it turns (TURN, TURN_EASE), and turning at pace slows it down
 						(TURN_BLEED, TURN_SLOWS)
 		Shift			a burst: flat out (GALLOP) for BURST_SECONDS, then it needs BURST_REST before the next
+	Every pace (and how quickly it gets to it, and how wide it turns at it) is settings.horseSpeed times the one above: a real horse's
+	at 1. Its legs are moved by the real horse's pace it stands for (see paceNow), striding longer and quicker the faster that is.
 	It walks, trots, canters and gallops as it goes faster (see THE GAITS in vf_horse.js), on the ground under it (the same ground
 	as the walker's), tipped to its slope. It will not go up ground steeper than STEEPEST, it goes round nothing (it stops at trees
 	and boulders, as the walker does), and in deep water it swims, slowly, its head up. Left alone it grazes now and then.
@@ -48,7 +51,7 @@ const WALK = 1.6, CANTER = 7.5, GALLOP = 13.5, BACK = 1.2;	// metres a second
 const ACCELERATE = 2.4;				// metres a second, a second, on the way up to a canter
 const BURST_ACCELERATE = 5.0;
 const SLOW = 3.0;					// letting go
-const BURST_SECONDS = 3.0;
+const BURST_SECONDS = 7.5;
 const BURST_REST = 6.0;				// seconds after a burst before the next
 const TURN = 1.7;					// radians a second at a stand
 const TURN_EASE = 3.5;				// metres a second: at this pace it turns half as fast, at twice it a third
@@ -66,6 +69,9 @@ const REACH = 3.0;					// metres from the eye it can be worked from
 export const MAX_HORSES = 16;
 
 const metre = () => settings.forestUnitsPerMetre;
+const fast = () => Math.max(settings.horseSpeed, 0.1);		// (see the top: every pace this many times a real horse's)
+// the real horse's pace a horse going at speed stands for: what its gait and its stride are worked out from
+const paceNow = (speed) => speed / fast();
 const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
 
 // The mesh (see THE MESH at the top)
@@ -225,7 +231,8 @@ function gaitAt(speed) {
 const strideLength = (speed) => 1.5 + 0.38 * Math.abs(speed);
 // the body's bob (metres) and rock (radians): the same sums as bodyMotion in vf_horse.js
 function bodyMotion(h) {
-	const g = gaitAt(h.speed), going = Math.min(Math.abs(h.speed) / GALLOP, 1);
+	const pace = paceNow(h.speed);
+	const g = gaitAt(pace), going = Math.min(Math.abs(pace) / GALLOP, 1);
 	const at = (values) => { const low = Math.min(Math.floor(g), 3), high = Math.min(low + 1, 3); return values[low] + (values[high] - values[low]) * (g - low); };
 	const fade = Math.min(going * 10, 1);
 	return { bob: (at([0.02, 0.05, 0, 0]) * Math.sin(2 * h.phase) + at([0, 0, 0.06, 0.07]) * Math.sin(h.phase)) * fade, rock: at([0, 0, 0.06, 0.05]) * Math.cos(h.phase) * fade };
@@ -313,16 +320,18 @@ function stepHorse(h, dt) {
 	if (h.burst > 0) { h.burst -= dt; if (h.burst <= 0) h.rest = BURST_REST; }
 	else if (h.rest > 0) h.rest = Math.max(h.rest - dt, 0);
 	// how fast it wants to go, and how quickly it gets there
+	const times = fast();
 	let want = 0, rate = SLOW;
 	if (h.burst > 0) { want = GALLOP; rate = BURST_ACCELERATE; }
-	else if (input.ahead > 0) { want = CANTER; rate = h.speed < CANTER ? ACCELERATE : SLOW; }
+	else if (input.ahead > 0) { want = CANTER; rate = paceNow(h.speed) < CANTER ? ACCELERATE : SLOW; }
 	else if (input.ahead < 0) { want = -BACK; rate = SLOW; }
+	want *= times; rate *= times;
 	// turning at pace, it slows: the harder it is turned and the faster it goes, the slower it wants to go
-	if (input.turn && want > 0) want *= 1 - TURN_SLOWS * Math.min(Math.abs(h.speed) / CANTER, 1);
+	if (input.turn && want > 0) want *= 1 - TURN_SLOWS * Math.min(Math.abs(paceNow(h.speed)) / CANTER, 1);
 	if (h.swim > 0.5) want = clamp(want, -BACK * 0.5, SWIM_PACE);
 	h.speed += clamp(want - h.speed, -rate * dt, rate * dt);
 	// turning: slower the faster it goes, and it takes some of its pace
-	const most = TURN / (1 + Math.abs(h.speed) / TURN_EASE);
+	const most = TURN / (1 + Math.abs(paceNow(h.speed)) / TURN_EASE);
 	h.turning += clamp(input.turn * most - h.turning, -4 * dt, 4 * dt);
 	h.heading += h.turning * dt * (h.speed < -0.05 ? -1 : 1);
 	h.speed -= Math.sign(h.speed) * Math.min(Math.abs(h.turning) * Math.abs(h.speed) * TURN_BLEED * dt, Math.abs(h.speed));
@@ -356,6 +365,7 @@ function stepHorse(h, dt) {
 		const reach = 2.5 * m;
 		if (settings.enableForest) forest.trunksNear(h.x, h.z, reach, (x, z, half, bottom, top) => { if (top > h.y + 0.5 * m && bottom < h.y + 1.6 * m) pushOut(x, z, half); });
 		if (settings.enableBoulders) boulders.bouldersNear(h.x, h.z, reach, (x, z, half, bottom, top) => { if (top > h.y + 0.5 * m && bottom < h.y + 1.6 * m) pushOut(x, z, half); });
+		town.boxesNear(h.x, h.z, reach, (x, z, half, bottom, top) => { if (top > h.y + 0.5 * m && bottom < h.y + 1.6 * m) pushOut(x, z, half); });
 	}
 	if (bumped) h.speed *= Math.pow(0.05, dt);
 	const edge = settings.terrainWorldSize * 0.5 - 2 * m;
@@ -378,7 +388,10 @@ function stepHorse(h, dt) {
 }
 // its stride, and its head: up while it goes, down to graze now and then while it stands
 function advanceLook(h, dt) {
-	h.phase = (h.phase + Math.abs(h.speed) / strideLength(h.speed) * Math.PI * 2 * dt * (h.swim > 0.5 ? 0.6 : 1)) % (Math.PI * 200);
+	// (as fast as the real horse's legs would go at the pace it stands for, and a little quicker again the faster this one is than
+	//		that: its strides are longer as well)
+	const pace = paceNow(h.speed);
+	h.phase = (h.phase + Math.abs(pace) / strideLength(pace) * Math.sqrt(fast()) * Math.PI * 2 * dt * (h.swim > 0.5 ? 0.6 : 1)) % (Math.PI * 200);
 	if (Math.abs(h.speed) < 0.2 && !h.rider) {
 		h.grazeTimer -= dt;
 		if (h.grazeTimer <= 0) { h.grazing = !h.grazing; h.grazeTimer = h.grazing ? 5 + Math.random() * 8 : 3 + Math.random() * 6; }
@@ -497,7 +510,7 @@ export function horseUpdate() {
 }
 // for testing: a horse's state
 export function horseState(h = horses[0]) {
-	return h && { id: h.id, x: h.x, y: h.y, z: h.z, heading: h.heading, speed: h.speed, turning: h.turning, gait: gaitAt(h.speed), burst: h.burst, rest: h.rest, swim: h.swim, slope: h.slope, rider: h.rider, authority: h.authority };
+	return h && { id: h.id, x: h.x, y: h.y, z: h.z, heading: h.heading, speed: h.speed, turning: h.turning, gait: gaitAt(paceNow(h.speed)), burst: h.burst, rest: h.rest, swim: h.swim, slope: h.slope, rider: h.rider, authority: h.authority };
 }
 // how the rider's eye bobs with the horse (hunting.js)
 export function riderEye(h) {
@@ -548,8 +561,9 @@ export function horsePass(aEncoder, mainpassDepthTexture) {
 	if (horses.length == 0) return;
 	let count = 0;
 	for (const h of horses.slice(0, MAX_HORSES)) {
-		const going = Math.min(Math.abs(h.speed) / GALLOP, 1);
-		instanceData.set([h.x, h.y, h.z, metre(), h.heading, h.phase, going, gaitAt(h.speed), h.slope, h.coat, h.headDown, count, h.swim, h.swish, 0, 0], count * HORSE_FLOATS);
+		const pace = paceNow(h.speed);
+		const going = Math.min(Math.abs(pace) / GALLOP, 1);
+		instanceData.set([h.x, h.y, h.z, metre(), h.heading, h.phase, going, gaitAt(pace), h.slope, h.coat, h.headDown, count, h.swim, h.swish, 0, 0], count * HORSE_FLOATS);
 		count++;
 	}
 	horseStats.drawn = count;

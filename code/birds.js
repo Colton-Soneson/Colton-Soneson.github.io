@@ -40,6 +40,11 @@ import {uniformBufferLights} from './rotatingCube.js'
 		way across the land (bidirectional A* over a coarse grid, in which high ground is dear and the peaks are shut)
 		and flies from one point of that to the next.
 
+	SUMMONED (summonHawks: the staff's Huginn and Muninn, staff.js): a pair of big hawks (SUMMONED_SIZE times the others' wingspan),
+	called up from the ground at a place. They come up out of it and soar low over it for SUMMONED_SECONDS, and then go about as
+	the other hawks do. One pair for each player: calling them again sends the old pair away. They are not counted among the groups
+	(birdGroups), and when they are shot no others take their place. In a game with others they are the host's, as all the hawks are.
+
 	SHOT (rifle.js): each hawk's hitbox is BIRD_SPHERES, 6 balls: body, tail, and two along each wing (not while folded, on a
 	perch). A hawk that is hit falls (fallenBirds.js), out of the air or out of its tree. RESPAWN_SECONDS later another joins
 	its group, well away from the camera (or, if the whole group was shot, a new group of one starts over open ground).
@@ -65,6 +70,10 @@ const CANOPY = 34.0;				// about how tall the trees stand: the birds fly this mu
 const ROAM = 3300.0;				// how far from the middle of the world they go
 const RESPAWN_SECONDS = 120;
 const RESPAWN_AWAY = 120;			// metres from the camera, at least
+const SUMMONED_SIZE = 2.2;			// times the wingspan of the others
+const SUMMONED_SECONDS = 90;		// soaring over where they were called up, before they go their own way
+const SUMMONED_RADIUS = 60.0;		// world units, the circle they soar
+const MAX_SUMMONED = 4;				// pairs
 // the hitbox, a wingspan of 1: x, y, z, radius, and whether it is on a wing (left out while folded)
 const BIRD_SPHERES = [[0, 0, 0.02, 0.08], [0, 0, -0.15, 0.06], [0.22, 0.05, 0, 0.09, true], [-0.22, 0.05, 0, 0.09, true], [0.4, 0.06, 0, 0.07, true], [-0.4, 0.06, 0, 0.07, true]];
 
@@ -106,7 +115,7 @@ const BIRD_MESH = (() => {
 })();
 const BIRD_VERTICES = BIRD_MESH.length / 4;
 
-export const birdStats = { birds: 0, groups: 0, flying: 0, roosting: 0, looked: 0, killed: 0, fallen: 0, respawned: 0, spheres: BIRD_SPHERES.length };	// for anyone who wants to show it
+export const birdStats = { birds: 0, groups: 0, flying: 0, roosting: 0, looked: 0, killed: 0, fallen: 0, respawned: 0, summoned: 0, spheres: BIRD_SPHERES.length };	// for anyone who wants to show it
 
 // Buffers, pipeline
 //-------------------------------------------------
@@ -119,7 +128,7 @@ const meshBuffer = device.createBuffer({
 });
 device.queue.writeBuffer(meshBuffer, 0, BIRD_MESH);
 
-const instanceData = new Float32Array(MAX_BIRDS * 2 * BIRD_FLOATS);		// (the living, and the shot ones going into the ground)
+const instanceData = new Float32Array((MAX_BIRDS + MAX_SUMMONED * 2) * 2 * BIRD_FLOATS);		// (the living, and the shot ones going into the ground)
 const instanceBuffer = device.createBuffer({
 	label: "bird instances",
 	size: instanceData.byteLength,
@@ -191,15 +200,16 @@ let fallenBirdsList = [];		// shot, on their way into the ground (fallenBirds.js
 // Shot
 //-------------------------------------------------
 // (a hawk on a perch sits up: see vf_birds.js)
-const hawkSpheres = (bird) => birdSpheres(bird, BIRD_SPHERES, settings.birdSize, bird.nose + 1.05 * bird.folded);
+const sizeOf = (bird) => bird.size ?? (bird.own >= 2 ? SUMMONED_SIZE : 1) * settings.birdSize;		// (a joiner's: a big one's own has 2 added)
+const hawkSpheres = (bird) => birdSpheres(bird, BIRD_SPHERES, sizeOf(bird), bird.nose + 1.05 * bird.folded);
 ballistics.addTarget((ax, ay, az, bx, by, bz) => {
 	if (!settings.enableBirds) return null;
 	if (followed) {
-		const found = ballistics.crossAnimals(ax, ay, az, bx, by, bz, followed.filter((one) => one.alive), hawkSpheres, (one) => [one.x, one.y, one.z, 0.6 * settings.birdSize]);
+		const found = ballistics.crossAnimals(ax, ay, az, bx, by, bz, followed.filter((one) => one.alive), hawkSpheres, (one) => [one.x, one.y, one.z, 0.6 * sizeOf(one)]);
 		return found && { t: found.t, what: 'hawk', hit: (velocity) => hawkShot.report?.(found.animal.id, velocity) };
 	}
 	const living = groups.flatMap((group) => group.birds.map((bird) => ({ bird, group })));
-	const found = ballistics.crossAnimals(ax, ay, az, bx, by, bz, living, (one) => hawkSpheres(one.bird), (one) => [one.bird.x, one.bird.y, one.bird.z, 0.6 * settings.birdSize]);
+	const found = ballistics.crossAnimals(ax, ay, az, bx, by, bz, living, (one) => hawkSpheres(one.bird), (one) => [one.bird.x, one.bird.y, one.bird.z, 0.6 * sizeOf(one.bird)]);
 	return found && { t: found.t, what: 'hawk', hit: (velocity) => killHawk(found.animal.bird, found.animal.group, velocity) };
 });
 
@@ -208,7 +218,8 @@ function killHawk(bird, group, velocity) {
 	if (at < 0) return;
 	group.birds.splice(at, 1);
 	fallenBirdsList.push(fallen(bird, velocity));
-	(group.respawns ??= []).push(seconds + RESPAWN_SECONDS);
+	if (group.summoned || group.gone) { if (group.birds.length == 0) groups.splice(groups.indexOf(group), 1); }
+	else (group.respawns ??= []).push(seconds + RESPAWN_SECONDS);
 	birdStats.killed++;
 }
 
@@ -221,7 +232,7 @@ let followed = null;		// joiner: the host's, as they are now
 // host: [id, x, y, z, heading, nose, bank, beat, beating, folded, own, alive] for each, the fallen ones too
 export function hawkShare() {
 	const out = [];
-	const add = (bird, alive) => out.push(bird.id ?? 0, bird.x, bird.y, bird.z, bird.heading, bird.nose, bird.bank, bird.beat, bird.beating, bird.folded, bird.own, alive);
+	const add = (bird, alive) => out.push(bird.id ?? 0, bird.x, bird.y, bird.z, bird.heading, bird.nose, bird.bank, bird.beat, bird.beating, bird.folded, bird.own + (bird.size ? 2 : 0), alive);
 	for (const bird of groups.flatMap((group) => group.birds)) add(bird, 1);
 	for (const one of fallenBirdsList) add(one.bird, 0);
 	return new Float32Array(out);
@@ -304,13 +315,46 @@ function pickTree(near) {
 	return null;
 }
 
+// a called up pair's time is up (or they were called again): off on their way as any hawks, and gone once well out of sight
+function letGo(group) {
+	group.summoned = false;
+	group.gone = true;
+	group.leaveAt = seconds + 60;
+	chooseDestination(group);
+}
+// Called up (see SUMMONED at the top): a pair of big hawks rising out of the ground at (x, z), world units, for owner (a player's number)
+export function summonHawks(x, z, owner = 0) {
+	if (!terrain.land || followed) return false;
+	if (!flightGrid) makeFlock();
+	for (const old of groups.filter((group) => group.summoned && group.owner === owner)) letGo(old);
+	// (no more than two pairs on their way out at once: the oldest go)
+	const leaving = groups.filter((group) => group.gone);
+	while (leaving.length > 2) groups.splice(groups.indexOf(leaving.shift()), 1);
+	const summoned = groups.filter((group) => group.summoned);
+	if (summoned.length >= MAX_SUMMONED) groups.splice(groups.indexOf(summoned[0]), 1);
+	const group = { birds: [], state: "soar", target: { x, z, forest: false }, path: [], at: 0, timer: SUMMONED_SECONDS, radius: SUMMONED_RADIUS, summoned: true, owner };
+	for (let b = 0; b < 2; b++) {
+		const bearing = b * Math.PI + Math.random() * 0.5;
+		const bird = makeBird(x + Math.cos(bearing) * 3, z + Math.sin(bearing) * 3, bearing);
+		bird.size = SUMMONED_SIZE * settings.birdSize;
+		bird.y = groundAt(x, z) + 4 * settings.forestUnitsPerMetre;
+		bird.vy = 10;
+		bird.likes = 22 + 10 * b;		// (low over the place: they are there to be seen)
+		bird.beating = 1;
+		group.birds.push(bird);
+	}
+	groups.push(group);
+	birdStats.summoned++;
+	return true;
+}
+
 // Makes the flock, on the land as it is now
 function makeFlock() {
 	flockLand = terrain.land;
 	flightGrid = buildFlightGrid(terrain.land, settings.waterWorldPosY);
 	openGround = terrain.land.findSpawnPoints(terrain.ZONE_GRASSLAND, 40, { seed: 23, minSpacing: 260, near: [0, -600], radius: ROAM });
 
-	groups = [];
+	groups = groups.filter((group) => group.summoned || group.gone);		// (the ones called up stay)
 	const wanted = clamp(Math.round(settings.birdGroups), 0, MAX_GROUPS);
 	for (let g = 0; g < wanted && openGround.length > 0; g++) {
 		// each starts in the air over a stretch of grassland, the first of them over the nearest to where the camera starts
@@ -455,7 +499,9 @@ function advanceBirds(elapsed) {
 	if (!settings.enableBirds || !terrain.land) {
 		return;
 	}
-	if (terrain.land !== flockLand || groups.length != clamp(Math.round(settings.birdGroups), 0, MAX_GROUPS)) {
+	// (a pair let go goes once it is out of sight, or long after)
+	groups = groups.filter((group) => !group.gone || seconds < group.leaveAt || (seconds < group.leaveAt + 300 && group.birds.some((bird) => Math.hypot(bird.x - settings.camPosX, bird.z - settings.camPosZ) < 400)));
+	if (terrain.land !== flockLand || groups.filter((group) => !group.summoned && !group.gone).length != clamp(Math.round(settings.birdGroups), 0, MAX_GROUPS)) {
 		makeFlock();
 	}
 	const day = lightNow().daylight > 0.35;
@@ -500,7 +546,8 @@ function advanceBirds(elapsed) {
 			//------------------ROUND AND ROUND-----------------
 			// each bird heads for the point on the circle a little way round from where it is: that takes it round
 			group.timer -= elapsed;
-			if (group.timer <= 0 || (!day && Math.random() < elapsed * 0.2)) {
+			if (group.summoned && group.timer <= 0) letGo(group);		// (their time over the place is up: hawks like any others now)
+			else if (!group.summoned && (group.timer <= 0 || (!day && Math.random() < elapsed * 0.2))) {
 				chooseDestination(group);
 			}
 			for (const bird of group.birds) {
@@ -583,7 +630,7 @@ export function hawkHitboxes() {
 
 // where every bird is, for anyone who wants to know (the harness, to point a camera at one): [{ x, y, z, landed }, ...]
 export function birdPlaces() {
-	return groups.flatMap((group) => group.birds.map((bird) => ({ x: bird.x, y: bird.y, z: bird.z, landed: bird.landed, state: group.state })));
+	return groups.flatMap((group) => group.birds.map((bird) => ({ x: bird.x, y: bird.y, z: bird.z, landed: bird.landed, state: group.state, big: !!bird.size, summoned: !!group.summoned })));
 }
 
 // The birds drawn, with the solid things
@@ -592,9 +639,9 @@ export function birdPass(aEncoder, mainpassDepthTexture) {
 		return;
 	}
 	let count = 0;
-	const drawn = (followed ?? [...groups.flatMap((group) => group.birds), ...fallenBirdsList.map((one) => one.bird)]).slice(0, MAX_BIRDS * 2);
+	const drawn = (followed ?? [...groups.flatMap((group) => group.birds), ...fallenBirdsList.map((one) => one.bird)]).slice(0, (MAX_BIRDS + MAX_SUMMONED * 2) * 2);
 	for (const bird of drawn) {
-		instanceData.set([bird.x, bird.y, bird.z, settings.birdSize, bird.heading, bird.nose, bird.bank, bird.beat, bird.beating, bird.folded, bird.own, 0], count * BIRD_FLOATS);
+		instanceData.set([bird.x, bird.y, bird.z, sizeOf(bird), bird.heading, bird.nose, bird.bank, bird.beat, bird.beating, bird.folded, bird.own % 2, 0], count * BIRD_FLOATS);
 		count++;
 	}
 	if (count == 0) {

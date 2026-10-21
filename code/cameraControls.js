@@ -50,18 +50,21 @@ function releaseMouse() {
 	}
 }
 
-// keys are for the camera unless they are being typed into one of the controls
+// keys are for the camera unless they are being typed into one of the controls (a box: a checkbox or a slider that was clicked last
+//		still has the focus, but nothing is typed in it)
+const TYPED = new Set(['text', 'number', 'search', 'email', 'password', 'url', 'tel']);
 function typingInAField() {
 	const element = document.activeElement;
-	return element && (element.tagName == 'INPUT' || element.tagName == 'TEXTAREA' || element.isContentEditable);
+	return element && ((element.tagName == 'INPUT' && TYPED.has(element.type)) || element.tagName == 'TEXTAREA' || element.isContentEditable);
 }
 
+// (heard on the way down: the controls stop the keys that reach them, and a key let go over one would never be let go here)
 window.addEventListener('keydown', (event) => {
 	if (!typingInAField()) {
 		keysDown.add(event.code);
 	}
-});
-window.addEventListener('keyup', (event) => keysDown.delete(event.code));
+}, true);
+window.addEventListener('keyup', (event) => keysDown.delete(event.code), true);
 
 // if the window loses focus the key up never arrives, so let go of everything
 window.addEventListener('blur', () => {

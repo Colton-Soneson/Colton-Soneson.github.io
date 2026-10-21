@@ -5,7 +5,7 @@ import {canvasFormat} from './deviceSelection.js'
 import { settings } from './settings.js';
 
 import { generateTerrain, chunkIndices } from './terrainGenerator.js'
-import { TERRAIN_ZONES, ZONE_OCEAN, ZONE_BEACH, ZONE_GRASSLAND, ZONE_FOREST, ZONE_MOUNTAIN, ZONE_SNOW, ZONE_LAKE, ZONE_MARSH } from './terrainGenerator.js'
+import { TERRAIN_ZONES, ZONE_OCEAN, ZONE_BEACH, ZONE_GRASSLAND, ZONE_FOREST, ZONE_MOUNTAIN, ZONE_SNOW, ZONE_LAKE, ZONE_MARSH, ZONE_TOWN } from './terrainGenerator.js'
 import { FOREST_THRESHOLD, MOUNTAIN_THRESHOLD } from './terrainGenerator.js'
 
 import { v_terrainDepth } from '../shaders/js/vf_terrain.js'
@@ -28,7 +28,7 @@ import {skyViewLUTtexture} from './atmosphere.js'
 import {uniformBufferLights} from './rotatingCube.js'
 
 // so anything that spawns by zone only needs this file
-export { TERRAIN_ZONES, ZONE_OCEAN, ZONE_BEACH, ZONE_GRASSLAND, ZONE_FOREST, ZONE_MOUNTAIN, ZONE_SNOW, ZONE_LAKE, ZONE_MARSH };
+export { TERRAIN_ZONES, ZONE_OCEAN, ZONE_BEACH, ZONE_GRASSLAND, ZONE_FOREST, ZONE_MOUNTAIN, ZONE_SNOW, ZONE_LAKE, ZONE_MARSH, ZONE_TOWN };
 
 /*
 	The procedural land. terrainGenerator.js works out the heights, zones and mesh on the CPU, this file owns the result:
@@ -82,6 +82,8 @@ function getTerrainParams() {
 		bankHeight: settings.terrainBankHeight,
 		snowLine: settings.terrainSnowLine,
 		seaLevel: settings.waterWorldPosY,
+		townCount: settings.terrainTownCount,
+		townSize: settings.terrainTownSize,
 	};
 }
 
@@ -393,7 +395,8 @@ function regenerateTerrain() {
 	const fields = new Float32Array(land.points * land.points * 4);
 	for (let i = 0; i < land.points * land.points; i++) {
 		fields[i * 4 + 0] = land.heights[i];
-		fields[i * 4 + 1] = land.covers[i];
+		// (a town is grassland, round its streets and houses: the grass is kept off those by townMask.js)
+		fields[i * 4 + 1] = land.covers[i] + (Math.min(land.covers[i], 0.04) - land.covers[i]) * Math.min(land.townStrength[i] * 1.5, 1);
 		fields[i * 4 + 2] = land.normals[i * 3 + 0];
 		fields[i * 4 + 3] = land.normals[i * 3 + 2];
 	}

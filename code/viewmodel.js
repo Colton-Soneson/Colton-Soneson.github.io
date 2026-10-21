@@ -20,7 +20,8 @@ import * as ballistics from './ballistics.js'
 		meshBuilder		a gun's mesh made of boxes, tapered sections and tubes, each triangle with its part (what moves it) and its
 						material (see vf_viewmodel.js). Its triangles are counted
 		Viewmodel		draws a mesh over the finished frame, in the camera's space, with its own depth: the gun where it is held
-						(gun) and each part where it is on the gun (parts)
+						(gun) and each part where it is on the gun (parts). And a glow (the staff's gem, staff.js): its colour and
+						how strong, lighting what is round the mesh's own origin
 		holdMatrix		where a gun is held: at the hip, at the eye, or between, with its sway, recoil, cant and roll (as rifle.js)
 		shoot			the shots out of its muzzle: aimed, along the line of sight tipped up to come back down on it at the zero; from
 						the hip, at the middle of the view the zero off, give or take a spread
@@ -28,13 +29,13 @@ import * as ballistics from './ballistics.js'
 	A gun's own space is in metres, the bore along +z out of the muzzle, +y up, the origin at the front of the receiver (as the rifle's).
 */
 const GRAVITY = 9.81;
-export const MOST_PARTS = 16;
+export const MOST_PARTS = 32;
 
 // A mesh being made
 //-------------------------------------------------
 export function meshBuilder() {
 	const tris = [];
-	const code = (part, material) => part + 16 * material;
+	const code = (part, material) => part + MOST_PARTS * material;
 	const b = {
 		tri(a, c, d, part, material) { tris.push([a, c, d, code(part, material)]); },
 		quad(a, c, d, e, part, material) { b.tri(a, c, d, part, material); b.tri(a, d, e, part, material); },
@@ -141,7 +142,7 @@ export function shoot({ muzzle, gun, aimed, sight, zero, spread, round, pellets 
 
 // Drawing one
 //-------------------------------------------------
-const UNIFORM_FLOATS = 16 + 16 + 4 + 4 + MOST_PARTS * 16;
+const UNIFORM_FLOATS = 16 + 16 + 4 + 4 + 4 + MOST_PARTS * 16;
 const shaderModule = device.createShaderModule({ label: "vf_viewmodel", code: vf_viewmodel });
 const pipeline = device.createRenderPipeline({
 	label: "viewmodel pipeline",
@@ -168,8 +169,9 @@ export class Viewmodel {
 		this.uniforms = device.createBuffer({ label: `${label} Uniform`, size: UNIFORM_FLOATS * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 		this.bindGroup = device.createBindGroup({ label: `${label} bind group`, layout: pipeline.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: this.uniforms } }] });
 	}
-	// over the finished frame: the gun where it is held, each of its parts where it is on it (missing ones as they were made)
-	draw(gun, parts) {
+	// over the finished frame: the gun where it is held, each of its parts where it is on it (missing ones as they were made), and a
+	//		glow ([r, g, b, how strong]: see Viewmodel at the top)
+	draw(gun, parts, glow = [0, 0, 0, 0]) {
 		const projection = mat4.perspective(transformations.baseVerticalViewAngle, canvas.width / canvas.height, 0.01, 10);
 		const light = lightNow();
 		const view = transformations.getViewMatrix();
@@ -179,7 +181,8 @@ export class Viewmodel {
 		u.set(gun, 16);
 		u.set([L[0], L[1], L[2], light.direct * 1.3], 32);
 		u.set([light.ambient, light.daylight, 0, 0], 36);
-		for (let k = 0; k < MOST_PARTS; k++) u.set(parts[k] ?? IDENTITY, 40 + k * 16);
+		u.set(glow, 40);
+		for (let k = 0; k < MOST_PARTS; k++) u.set(parts[k] ?? IDENTITY, 44 + k * 16);
 		device.queue.writeBuffer(this.uniforms, 0, u);
 		const encoder = device.createCommandEncoder({ label: this.label });
 		const pass = encoder.beginRenderPass({

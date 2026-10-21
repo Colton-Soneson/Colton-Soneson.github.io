@@ -6,7 +6,7 @@ import * as profiler from './profiler.js'
 import { settings } from './settings.js';
 
 import { TREE_SPECIES, generateTree, heightFraction, ageAtGrowth, SECTION_FLOATS, FOLIAGE_FLOATS, NEVER } from './treeGenerator.js'
-import { plantForest, createSite, makeTree, treeRoom } from './forestGenerator.js'
+import { plantForest, plantTownTrees, createSite, makeTree, treeRoom } from './forestGenerator.js'
 import { ForestLife, TreeGrid } from './forestLife.js'
 import { seededRandom } from './terrainGenerator.js'
 
@@ -449,7 +449,7 @@ function removeFromCell(index, tree) {
 
 function plantTrees() {
 	const params = getPlantingParams();
-	trees = plantForest(terrain.land, params, VARIANTS);
+	trees = plantForest(terrain.land, params, VARIANTS).concat(plantTownTrees(terrain.land, params, VARIANTS));
 	trees.forEach((tree) => { tree.archetype = tree.species * VARIANTS + tree.variant; });
 
 	// the forest starts its clock again
@@ -569,7 +569,7 @@ export function advanceForest(years) {
 	A joiner that leaves goes on living from the trees it has (forestFollow(false)).
 */
 const SHARE_FIELDS = ['x', 'y', 'z', 'yaw', 'species', 'variant', 'age', 'ageTime', 'rate', 'scale', 'leanX', 'leanZ', 'seed', 'density',
-	'dead', 'dryStart', 'dryYears', 'fallStart', 'fallDirection', 'fallAngle'];
+	'dead', 'dryStart', 'dryYears', 'fallStart', 'fallDirection', 'fallAngle', 'planted'];
 export const SHARE_RECORD = SHARE_FIELDS.length + 2;	// its number in the list, whether there is a tree there, and the fields
 export const GROWTH_RECORD = 4;						// its number, age, ageTime, rate
 let sharing = null;			// host: the numbers of the trees that came, died or went since they were last sent
@@ -694,6 +694,7 @@ function applyRecord(data, at) {
 	if (old && !same) removeFromCell(index, old);
 	SHARE_FIELDS.forEach((field, k) => { tree[field] = data[at + 2 + k]; });
 	tree.dead = tree.dead > 0.5;
+	tree.planted = tree.planted > 0.5;		// (a town's: see plantTownTrees in forestGenerator.js)
 	tree.archetype = tree.species * VARIANTS + tree.variant;
 	life.measure(tree);
 	ageTree(tree, life.ageAt(tree, clock));

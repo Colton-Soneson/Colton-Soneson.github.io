@@ -3,6 +3,8 @@ import { cloudShadeShapes } from './vfc_clouds.js';
 export const SHAFT_STEPS = 20;			// steps along each ray through the air
 export const WATER_SHAFT_STEPS = 22;	// and through the water
 export const SCREEN_SHAFT_STEPS = 36;	// and across the screen towards the sun
+export const BEAM_STEPS = 40;			// and through a beam of light (the staff's, staff.js)
+export const MOST_BEAMS = 4;
 
 /*
 	Light you can see in the air and in the water: the shafts of sun that come down between clouds (crepuscular rays),
@@ -42,6 +44,13 @@ export const SCREEN_SHAFT_STEPS = 36;	// and across the screen towards the sun
 							from the whole sky is bent into a cone 97 degrees across). Outside it the surface is a
 							mirror, and what it mirrors is the dark water. That much is drawn by the water itself
 							(the end of f_water): here it only gets the glare of the sun through it
+
+	A BEAM (the staff's Light Beam, staff.js): a cone of light from a point, out along a direction. The same haze
+	shows it: every ray is walked through the stretch of it that could be in the cone, and what of it is inside is added, more
+	of it near the point it comes from and nearer its middle, less towards its far end. The haze sends most of it on the way it
+	was going (as for the sun: phase), so it is brightest seen from in front of it, plainest from the side, and faint from
+	behind, along it, as its caster sees it. It is added as light that builds up and evens out (1 - e^-x), never past white.
+	Whatever it falls on is lit by it too.
 */
 
 // The caustic map: how sharply the water's surface curves, at every texel of the tile of waves. Out: r, the curve (rise per unit per unit: under 0 on a crest)
@@ -96,6 +105,8 @@ export const vf_lightShafts =
 		air : vec4f,				// x: the height of the bottom of the clouds, y: how far the shafts are followed, z: 1.0 if there are clouds, w: how bright the lightning is on the scene at this moment
 		screen : vec4f,				// xy: the size of the picture, zw: 1 / that
 		viewProjectionMatrix : mat4x4f,
+		beams : array<vec4f, ${2 * MOST_BEAMS}>,	// each beam two: where it starts (xyz) and how long it is (w, world units), its way (xyz, as long as it is strong, 0 to 1) and the tan of half its cone (w)
+		beamCount : vec4f,				// x: how many beams, yzw: unused
 	}
 	@group(0) @binding(0) var<uniform> SU: ShaftUniforms;
 	@group(0) @binding(1) var frame: texture_2d<f32>;			// the finished picture (a copy of it)
@@ -156,6 +167,45 @@ export const vf_lightShafts =
 		return mix(gathered, 1.0, smoothstep(25.0, 110.0, under));
 	}
 
+	const BEAM_COLOR: vec3f = vec3f(1.0, 0.94, 0.8);
+
+	// How much light a beam (see A BEAM at the top) sends to the eye along a ray, and how much falls on what the ray ends at
+	fn beamLight(k: i32, origin: vec3f, direction: vec3f, solid: f32, jitter: f32) -> vec2f {
+		let start = SU.beams[2 * k].xyz;
+		let reach = SU.beams[2 * k].w;
+		let strength = length(SU.beams[2 * k + 1].xyz);
+		let way = SU.beams[2 * k + 1].xyz / max(strength, 0.0001);
+		let spread = SU.beams[2 * k + 1].w;
+		// the stretch of the ray that could be in it: as far as the far end of the beam from the camera
+		let far = min(solid, distance(origin, start) + reach * 1.05);
+		var lit = 0.0;
+		var previous = 0.0;
+		for (var i = 0; i < ${BEAM_STEPS}; i++) {
+			let following = far * pow((f32(i) + 1.0) / f32(${BEAM_STEPS}), 1.7);
+			let p = origin + direction * mix(previous, following, jitter);
+			let v = p - start;
+			let along = dot(v, way);
+			if (along > 0.0 && along < reach) {
+				let across = length(v - way * along);
+				let edge = along * spread + 0.4;
+				let inside = 1.0 - smoothstep(0.55 * edge, edge, across);
+				lit += inside * pow(1.0 - along / reach, 1.4) / (1.0 + along * 0.004) * (following - previous) / (0.5 + edge * 0.5);
+			}
+			previous = following;
+		}
+		// what the ray ends at, if it is in the beam
+		var onIt = 0.0;
+		if (solid < 100000.0) {
+			let v = origin + direction * solid - start;
+			let along = dot(v, way);
+			if (along > 0.0 && along < reach) {
+				let edge = along * spread + 0.4;
+				onIt = (1.0 - smoothstep(0.6 * edge, edge, length(v - way * along))) * pow(1.0 - along / reach, 1.2) * 40.0 / (40.0 + along);
+			}
+		}
+		return vec2f(lit, onIt) * strength;
+	}
+
 	@fragment
 	fn fragmentMain(@builtin(position) fragCoord: vec4f) -> @location(0) vec4f {
 		let pixel = vec2i(fragCoord.xy);
@@ -188,6 +238,13 @@ export const vf_lightShafts =
 		let daylight = SU.lightDirection.w;
 		let cosAngle = dot(direction, toSun);
 		let jitter = pixelNoise(fragCoord.xy);
+
+		// the beams (see A BEAM at the top): what they fall on lit, and the air they pass through glowing
+		for (var k = 0; k < i32(SU.beamCount.x); k++) {
+			let light = beamLight(k, origin, direction, solid, jitter);
+			let glow = 1.0 - exp(-light.x * phase(dot(SU.beams[2 * k + 1].xyz, -direction) / max(length(SU.beams[2 * k + 1].xyz), 0.0001), 0.5) * 4.5);
+			color += color * BEAM_COLOR * light.y * 2.2 + BEAM_COLOR * glow * 0.9;
+		}
 
 		if (origin.y < SU.water.x && SU.water.w > 0.5) {
 			//------------------UNDER WATER-----------------

@@ -10,6 +10,7 @@ import * as boat from './boat.js'
 import * as horse from './horse.js'
 import * as water from './water.js'
 import * as help from './controlsHelp.js'
+import * as town from './town.js'
 
 /*
 	HUNTING: on foot. A first person walker on the land, in place of the fly camera (Observe, cameraControls.js).
@@ -104,9 +105,18 @@ let lastHeading = null;						// the boat's heading last frame, to turn the view 
 const hunting = () => settings.gameMode == 'Hunting';
 const locked = () => document.pointerLockElement == canvas;
 
+// a box being typed in (not a checkbox, a button or a slider: those only have the focus because they were clicked)
+const TYPED = new Set(['text', 'number', 'search', 'email', 'password', 'url', 'tel']);
 function typingInAField() {
 	const element = document.activeElement;
-	return element && (element.tagName == 'INPUT' || element.tagName == 'TEXTAREA' || element.isContentEditable);
+	return element && ((element.tagName == 'INPUT' && TYPED.has(element.type)) || element.tagName == 'TEXTAREA' || element.isContentEditable);
+}
+// the keyboard taken back from whichever control in the menus last had it. With the focus left on one, Space presses it (a
+//		button, a checkbox), and the menus' own key handlers stop the keys before the window hears them (lil-gui does, so that
+//		typing in a box does not move the camera): the walker would stop hearing W, or never hear it let go
+function takeKeyboard() {
+	const element = document.activeElement;
+	if (element && element !== document.body) element.blur();
 }
 
 function takeMouse() {
@@ -117,7 +127,15 @@ function takeMouse() {
 		// no pointer lock here (or not just now): clicking the picture tries again
 	}
 }
+// the mouse taken: the keyboard too, and a slider still being dragged in the menus let go of (its button came up off the page,
+//		or after the mouse was taken, so lil-gui never heard it: it would go on following the mouse)
+document.addEventListener('pointerlockchange', () => {
+	if (!locked()) return;
+	takeKeyboard();
+	if (document.body.classList.contains('lil-gui-dragging')) window.dispatchEvent(new MouseEvent('mouseup', { button: 0 }));
+});
 
+// (heard on the way down, before anything on the page can stop them: see takeKeyboard)
 window.addEventListener('keydown', (event) => {
 	if (!hunting()) return;
 	if (event.code == 'Tab') {
@@ -125,6 +143,7 @@ window.addEventListener('keydown', (event) => {
 		if (locked()) document.exitPointerLock();
 		return;
 	}
+	if (locked()) takeKeyboard();
 	if (typingInAField()) return;
 	if (event.code == 'Space') {
 		event.preventDefault();		// (Space would press whichever control has the focus)
@@ -134,14 +153,16 @@ window.addEventListener('keydown', (event) => {
 	if ((event.code == 'ShiftLeft' || event.code == 'ShiftRight') && !event.repeat) burstPressed = true;
 	if (event.code == 'KeyG' && !event.repeat) anchorPressed = true;
 	keysDown.add(event.code);
-});
+}, true);
 window.addEventListener('keyup', (event) => {
 	keysDown.delete(event.code);
-	if (hunting() && event.code == 'Tab') {
+	if (!hunting()) return;
+	if (event.code == 'Space' && !typingInAField()) event.preventDefault();		// (a button or a checkbox is pressed when Space comes up)
+	if (event.code == 'Tab') {
 		event.preventDefault();
 		takeMouse();
 	}
-});
+}, true);
 window.addEventListener('blur', () => keysDown.clear());
 // the scroll wheel, for the ropes on the boat (otherwise the gun in the hands has it: see rifle.js)
 window.addEventListener('wheel', (event) => {
@@ -227,26 +248,35 @@ function surfaceAt(x, z) {
 
 // The things in the way (see THE THINGS IN THE WAY at the top)
 //-------------------------------------------------
-const MOST_BOXES = 512;
+const MOST_BOXES = 1024;
 const boxes = new Float32Array(MOST_BOXES * 6);		// min x, min y, min z, max x, max y, max z
-let boxCount = 0;
+let boxCount = 0, stillBoxes = 0;		// (the still ones first, then the moving ones, gathered again every frame)
 let gatheredAt = null, gatheredWhen = 0;
+const add = (x, z, half, bottom, top) => {
+	if (boxCount >= MOST_BOXES) return;
+	boxes.set([x - half, bottom, z - half, x + half, top, z + half], boxCount * 6);
+	boxCount++;
+};
 
 function gather(now) {
 	const metre = settings.forestUnitsPerMetre;
 	const reach = GATHER_REACH * metre;
 	boxCount = 0;
-	const add = (x, z, half, bottom, top) => {
-		if (boxCount >= MOST_BOXES) return;
-		boxes.set([x - half, bottom, z - half, x + half, top, z + half], boxCount * 6);
-		boxCount++;
-	};
 	if (settings.enableForest) forest.trunksNear(hunter.x, hunter.z, reach, add);
 	if (settings.enableBoulders) boulders.bouldersNear(hunter.x, hunter.z, reach, add);
+	town.boxesNear(hunter.x, hunter.z, reach, add);		// (the houses, the walls, the pier, the lamps of the towns)
 	gatheredAt = [hunter.x, hunter.z];
 	gatheredWhen = now;
+	stillBoxes = boxCount;
 	hunterStats.boxes = boxCount;
 	hunterStats.gathers++;
+}
+// Things in the way that move (the townsfolk): each one's fn(x, z, reach, add) gives the boxes within reach, where they are now
+const movers = [];
+export function addMovers(near) { movers.push(near); }
+function gatherMovers() {
+	boxCount = stillBoxes;
+	for (const near of movers) near(hunter.x, hunter.z, 6 * settings.forestUnitsPerMetre, add);
 }
 
 // pushes the walker back out of every box it is in along one axis (0 = x, 2 = z), the way it came. step: how high a box can be and still be stepped on to
@@ -434,6 +464,7 @@ export function updateHunter() {
 	if (!gatheredAt || Math.hypot(hunter.x - gatheredAt[0], hunter.z - gatheredAt[1]) > GATHER_AGAIN * metre || now - gatheredWhen > GATHER_SECONDS * 1000) {
 		gather(now);
 	}
+	gatherMovers();
 
 	// at a boat's ladder, in the water: E (or W towards it) climbs it
 	const control = boatControlInView();
@@ -508,13 +539,15 @@ export function updateHunter() {
 		hunter.vz += (wantZ - hunter.vz) * give;
 		hunter.vy -= GRAVITY * metre * dt;
 
-		// across, a way at a time, out of anything it walked into. On the ground, not up anything too steep
+		// across, a way at a time, out of anything it walked into. On the ground, not up anything too steep (standing on something
+		//		over the ground, a bridge, the pier, it goes where that goes)
 		const fromX = hunter.x, fromZ = hunter.z, fromGround = hunter.grounded ? groundUnder(fromX, fromZ) : 0;
+		const onGround = hunter.y - fromGround < step;
 		hunter.x += hunter.vx * dt;
 		pushOut(0, hunter.vx, half, step);
 		hunter.z += hunter.vz * dt;
 		pushOut(2, hunter.vz, half, step);
-		if (hunter.grounded && !hunter.swimming) {
+		if (hunter.grounded && !hunter.swimming && onGround) {
 			const went = Math.hypot(hunter.x - fromX, hunter.z - fromZ);
 			if (went > 0 && (groundUnder(hunter.x, hunter.z) - fromGround) / went > STEEPEST) {
 				hunter.x = fromX; hunter.z = fromZ;
@@ -860,6 +893,15 @@ export function placeHunter(x, z) {
 	hunter.vx = hunter.vy = hunter.vz = 0;
 	hunter.grounded = true;
 	gatheredAt = null;
+}
+// the walker taken to (x, y, z) world units (the host's Bring and Go To, net.js): a step to one side of it, on the ground there, or
+//		swimming if that is under the sea
+export function teleportHunter(x, y, z) {
+	const metre = settings.forestUnitsPerMetre;
+	const side = Math.random() * Math.PI * 2;
+	x += Math.cos(side) * 1.5 * metre; z += Math.sin(side) * 1.5 * metre;
+	if (groundUnder(x, z) < settings.waterWorldPosY - 0.5 * metre) placeSwimmer(x, z);
+	else placeHunter(x, z);
 }
 // for testing: the walker put in the water at (x, z), swimming
 export function placeSwimmer(x, z) {

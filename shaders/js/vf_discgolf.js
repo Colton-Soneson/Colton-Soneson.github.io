@@ -7,6 +7,11 @@ import { skyLookupShapes } from './vfc_atmosphere.js';
 	and its own colour: a hole's for its basket's band and its tee pad's edge, a disc's own.
 	What each part of a mesh is, by shape.w: 0 painted the colour, 1 galvanised steel (the pole, the basket), 2 the chains, 3 concrete
 	(the tee pad), 4 a disc's top (the colour, with a stripe of white), 5 a disc's rim and bottom (the colour, darker).
+
+	THE GLOW round a thrown disc (vf_discGlow, drawn after them, added to what is there): a ring of its colour on a card turned to the
+	camera, a little bigger the further off it is so it does not shrink to nothing, breathing slowly. Drawn twice: where the disc can be
+	seen (fragmentGlow), and fainter where something is in front of it (fragmentGlowHidden: the grass it lies in, a tree, a rise),
+	so a disc lying in the long grass still shows where it is.
 */
 export const vf_discgolf =
 `
@@ -14,7 +19,9 @@ export const vf_discgolf =
 	{
 		viewProjectionMatrix : mat4x4f,
 		cameraPosition : vec4f,		// xyz
-		look : vec4f,				// x: horizon fog distance, y: 1.0 if the atmosphere is on
+		look : vec4f,				// x: horizon fog distance, y: 1.0 if the atmosphere is on, z: seconds
+		right : vec4f,				// the camera's right and up, in the world (for the glow's cards)
+		up : vec4f,
 	}
 	@group(0) @binding(0) var<uniform> GU: GolfUniforms;
 
@@ -116,5 +123,58 @@ export const vf_discgolf =
 			color = mix(color, horizonColor, fog);
 		}
 		return vec4f(color, 1.0);
+	}
+`;
+
+// The glow round a thrown disc (see THE GLOW at the top). Each instance: where the disc is and how big its card is (world units), its colour
+export const vf_discGlow =
+`
+	struct GolfUniforms
+	{
+		viewProjectionMatrix : mat4x4f,
+		cameraPosition : vec4f,
+		look : vec4f,
+		right : vec4f,
+		up : vec4f,
+	}
+	@group(0) @binding(0) var<uniform> GU: GolfUniforms;
+
+	struct GlowOutput {
+		@builtin(position) pos: vec4f,
+		@location(0) onCard: vec2f,
+		@location(1) @interpolate(flat) colour: vec4f,
+	};
+
+	@vertex
+	fn vertexMain(@builtin(vertex_index) corner: u32, @location(0) place: vec4f, @location(1) colour: vec4f) -> GlowOutput {
+		var corners = array<vec2f, 6>(vec2f(-1.0, -1.0), vec2f(1.0, -1.0), vec2f(1.0, 1.0), vec2f(-1.0, -1.0), vec2f(1.0, 1.0), vec2f(-1.0, 1.0));
+		let c = corners[corner];
+		// (brought a little towards the camera, so the ground the disc lies on does not cut the card in half)
+		let toCamera = normalize(GU.cameraPosition.xyz - place.xyz);
+		let world = place.xyz + toCamera * place.w * 0.6 + (GU.right.xyz * c.x + GU.up.xyz * c.y) * place.w;
+		var output: GlowOutput;
+		output.pos = GU.viewProjectionMatrix * vec4f(world, 1.0);
+		output.onCard = c;
+		output.colour = colour;
+		return output;
+	}
+
+	fn glowAt(onCard: vec2f, colour: vec4f) -> vec4f {
+		let r = length(onCard);
+		let breathe = 0.8 + 0.2 * sin(GU.look.z * 3.2 + colour.w * 6.0);
+		let ring = exp(-pow((r - 0.62) / 0.13, 2.0));
+		let haze = 0.35 * exp(-r * r * 3.5);
+		let edge = 1.0 - smoothstep(0.85, 1.0, r);
+		let light = (ring + haze) * edge * breathe;
+		return vec4f(mix(colour.rgb, vec3f(1.0), 0.35) * light, 0.0);
+	}
+
+	@fragment
+	fn fragmentGlow(@location(0) onCard: vec2f, @location(1) @interpolate(flat) colour: vec4f) -> @location(0) vec4f {
+		return glowAt(onCard, colour) * 1.6;
+	}
+	@fragment
+	fn fragmentGlowHidden(@location(0) onCard: vec2f, @location(1) @interpolate(flat) colour: vec4f) -> @location(0) vec4f {
+		return glowAt(onCard, colour) * 0.55;
 	}
 `;

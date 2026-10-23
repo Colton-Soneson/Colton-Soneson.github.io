@@ -17,6 +17,7 @@ export const settings = {
     hordeWaveGrowth: 1.35,			//each round this many times the one before
     hordeMaxWave: 400,				//the most deer in one round
     hordeAliveCap: 120,				//the most out at once (600 at the most): the rest of the round comes as they go down
+    hordeSpeed: 2.5,				//times the deer's own paces (a sprinter chases at 6.3 m/s at 1): all of their walking, trotting and running
     hordeDamage: 5,					//health a deer's lunge takes off (of 100). A super deer's is twice it
     hordeBreakSeconds: 10,			//between one round and the next
     huntingWalkSpeed: 3.0,			//metres a second on foot. Shift runs 2.3x

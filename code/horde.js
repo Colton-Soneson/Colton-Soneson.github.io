@@ -87,6 +87,7 @@ const SCENT_ERROR = 25;				// metres off the player that a pack on the scent is 
 const WALK = 1.3, TROT = 4.2;		// metres a second
 const PACES = [2.4, 4.6, 6.3];		// metres a second a pack chases at: walkers, runners, sprinters (the walker runs at 6.9)
 const NIGHT_PACE = 1.15;			// times as fast in the dark
+// (all of the paces, the walk, the trot and the chase, times settings.hordeSpeed)
 const OWN_PACE = 0.1;				// each its own pace, this much either way
 const SIGHT_DAY = 85, SIGHT_NIGHT = 45, SIGHT_COS = 0.42;	// metres; the cosine of the angle either side of its heading it sees (65 degrees)
 const CLOSE_SENSE = 9;				// metres
@@ -459,7 +460,7 @@ function step(one, to, pace, elapsed, prey) {
 		}
 		if (heading !== null) {
 			const turned = angleBetween(one.heading, heading);
-			one.heading = turnTo(one.heading, heading, Math.min(elapsed * 5, 1));
+			one.heading = turnTo(one.heading, heading, Math.min(elapsed * 5 * Math.max(settings.hordeSpeed, 1), 1));	// (quicker to turn the faster they go)
 			moved = Math.min(pace * elapsed * (turned > 1.6 ? 0.5 : 1), far);
 			one.x += Math.sin(one.heading) * moved;
 			one.z += Math.cos(one.heading) * moved;
@@ -611,7 +612,7 @@ function advanceHorde(horde, elapsed) {
 			else horde.timer = SEARCH_SECONDS;
 		}
 	}
-	const pace = (horde.state == 'chase' ? horde.pace * nightPace : horde.state == 'hunt' || (horde.state == 'search' && !horde.milling) ? Math.min(TROT, horde.pace) : WALK) * m;
+	const pace = (horde.state == 'chase' ? horde.pace * nightPace : horde.state == 'hunt' || (horde.state == 'search' && !horde.milling) ? Math.min(TROT, horde.pace) : WALK) * m * settings.hordeSpeed;
 
 	// the leader: to the goal. On the scent, no nearer for a while: a way round, off to one side
 	const left = lead.lunge >= 0 ? Infinity : step(lead, horde.goal, pace * lead.pace * (lead.size > 1 ? SUPER_PACE / horde.pace : 1) * (lead.stagger > 0 ? 0.3 : 1), elapsed, prey);
@@ -661,7 +662,7 @@ function advanceHorde(horde, elapsed) {
 					one.millTimer = 3 + 5 * Math.random();
 				}
 				to = one.mill;
-				speed = WALK * m * 1.3;
+				speed = WALK * m * 1.3 * settings.hordeSpeed;
 			} else {
 				to = slotOf(horde, one);
 				const behind = Math.hypot(to[0] - one.x, to[1] - one.z);

@@ -22,6 +22,7 @@ export const imguiParams = {
     hordeWaveGrowth: settings.hordeWaveGrowth,
     hordeMaxWave: settings.hordeMaxWave,
     hordeAliveCap: settings.hordeAliveCap,
+    hordeSpeed: settings.hordeSpeed,
     hordeDamage: settings.hordeDamage,
     hordeBreakSeconds: settings.hordeBreakSeconds,
     huntingWalkSpeed: settings.huntingWalkSpeed,
@@ -340,6 +341,7 @@ hordeFolder.add(imguiParams, 'hordeFirstWave', 1, 100, 1).name('First Round');
 hordeFolder.add(imguiParams, 'hordeWaveGrowth', 1, 3, 0.05).name('Round Growth (x)');
 hordeFolder.add(imguiParams, 'hordeMaxWave', 10, 2000, 10).name('Biggest Round');
 hordeFolder.add(imguiParams, 'hordeAliveCap', 10, 600, 10).name('Out at Once');
+hordeFolder.add(imguiParams, 'hordeSpeed', 0.25, 5, 0.05).name('Deer Speed (x)');
 hordeFolder.add(imguiParams, 'hordeDamage', 1, 50, 1).name('Lunge Damage');
 hordeFolder.add(imguiParams, 'hordeBreakSeconds', 5, 120, 1).name('Break (s)');
 hordeFolder.add({ again: () => import('./horde.js').then((horde) => horde.restartHorde()) }, 'again').name('Start Again');

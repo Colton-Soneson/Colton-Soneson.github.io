@@ -57,7 +57,7 @@ import {uniformBufferLights} from './rotatingCube.js'
 const MAX_GROUPS = 200;
 const MAX_IN_GROUP = 3;
 const MAX_DEER = MAX_GROUPS * MAX_IN_GROUP;
-const MAX_DRAWN = MAX_DEER * 2;		// the living and the shot ones still going into the ground
+const MAX_DRAWN = MAX_DEER * 2 + 1400;	// the living and the shot ones still going into the ground, and the others drawn with them (addDrawn: the horde)
 const HOME_SPACINGS = [250, 180, 120];	// world units between homes: the widest first, closer only when they do not all fit
 const REHERD_SECONDS = 0.4;		// a new number of groups is made once it has held this long (a dragged slider goes through every number)
 const DEER_FLOATS = 12;				// one deer as the shader gets it: place (4), pose (4), state (4)
@@ -175,12 +175,14 @@ let corpses = [];			// shot deer on their way into the ground: { deer, t, side }
 
 const clamp = (value, low, high) => Math.min(Math.max(value, low), high);
 const ease = (v) => { v = clamp(v, 0, 1); return v * v * (3 - 2 * v); };
+// in the Horde game mode the herds are out of sight (and out of reach of the guns): every deer about is one of the horde (horde.js)
+const hidden = () => settings.gameMode == 'Horde';
 
 // Shot
 //-------------------------------------------------
-// a deer's hitbox in the world: [x, y, z, radius] for each of DEER_SPHERES
-function deerSpheres(deer) {
-	const s = settings.forestUnitsPerMetre * settings.deerSize;
+// a deer's hitbox in the world: [x, y, z, radius] for each of DEER_SPHERES (horde.js's deer too)
+export function deerSpheres(deer) {
+	const s = settings.forestUnitsPerMetre * settings.deerSize * (deer.size ?? 1);
 	const down = 1.25 * deer.headDown, c = Math.cos(deer.heading), sn = Math.sin(deer.heading);
 	return DEER_SPHERES.map(([x, y, z, r, head]) => {
 		if (head) {
@@ -191,12 +193,12 @@ function deerSpheres(deer) {
 		return [deer.x + (x * c + z * sn) * s, deer.y + y * s, deer.z + (z * c - x * sn) * s, r * s];
 	});
 }
-function deerAround(deer) {
-	const s = settings.forestUnitsPerMetre * settings.deerSize;
+export function deerAround(deer) {
+	const s = settings.forestUnitsPerMetre * settings.deerSize * (deer.size ?? 1);
 	return [deer.x, deer.y + 1.0 * s, deer.z, 1.3 * s];
 }
 ballistics.addTarget((ax, ay, az, bx, by, bz) => {
-	if (!settings.enableDeer) return null;
+	if (!settings.enableDeer || hidden()) return null;
 	if (followed) {
 		const found = ballistics.crossAnimals(ax, ay, az, bx, by, bz, followed.filter((one) => one.alive), deerSpheres, deerAround);
 		return found && { t: found.t, what: 'deer', hit: (velocity) => deerShot.report?.(found.animal.id, velocity) };
@@ -277,7 +279,7 @@ const between = ([low, high]) => low + (high - low) * Math.random();
 const metre = () => settings.forestUnitsPerMetre;
 
 // ground a deer can stand on: not water, not too steep
-function walkable(x, z) {
+export function walkable(x, z) {
 	const land = terrain.land, half = settings.terrainWorldSize * 0.5 - 20;
 	if (Math.abs(x) > half || Math.abs(z) > half) return false;
 	const y = land.heightAt(x, z);
@@ -352,7 +354,7 @@ function makeHerd() {
 }
 
 // the exact ground under a deer, worked out again only when it has gone GROUND_AGAIN (see THE GROUND at the top)
-function groundUnder(deer) {
+export function groundUnder(deer) {
 	const land = terrain.land;
 	const rough = land.heightAt(deer.x, deer.z);
 	if (!deer.ground || Math.hypot(deer.x - deer.ground.x, deer.z - deer.ground.z) > GROUND_AGAIN * metre()) {
@@ -608,19 +610,26 @@ export function deerDay() {
 	return { clock: dayClock, shoreSpots: shoreSpots.length };
 }
 
+// Others drawn with the deer, the same mesh (horde.js's): fn(put) calls put(x, y, z, heading, stride, head down, walking, own, slope, roll,
+//		feral, scale) for each one (feral: 0 a deer, 1 one of the horde, 2 one in a frenzy: see vf_deer.js. scale: times a deer's size)
+const drawers = [];
+export function addDrawn(fn) { drawers.push(fn); }
+
 // The deer drawn, with the solid things
 export function deerPass(aEncoder, mainpassDepthTexture) {
-	if (!settings.enableDeer || (!followed && groups.length == 0)) {
-		return;
-	}
 	let count = 0;
 	const size = settings.forestUnitsPerMetre * settings.deerSize;
-	const drawn = followed ? followed.map((one) => [one, one.roll, 0])
-		: [...groups.flatMap((group) => group.deer.map((deer) => [deer, 0, 0])), ...corpses.map((corpse) => [corpse.deer, corpse.roll ?? 0, corpse.sink ?? 0])];
-	for (const [deer, roll, sink] of drawn.slice(0, MAX_DRAWN)) {
-		instanceData.set([deer.x, deer.y - sink * settings.forestUnitsPerMetre * settings.deerSize, deer.z, size, deer.heading, deer.stride, deer.headDown, clamp(deer.walking, 0, 1), deer.own, deer.slope, roll, 0], count * DEER_FLOATS);
+	const put = (x, y, z, heading, stride, headDown, walking, own, slope, roll, feral, scale = 1) => {
+		if (count >= MAX_DRAWN) return;
+		instanceData.set([x, y, z, size * scale, heading, stride, headDown, clamp(walking, 0, 1), own, slope, roll, feral], count * DEER_FLOATS);
 		count++;
+	};
+	if (settings.enableDeer && !hidden()) {
+		const drawn = followed ? followed.map((one) => [one, one.roll, 0])
+			: [...groups.flatMap((group) => group.deer.map((deer) => [deer, 0, 0])), ...corpses.map((corpse) => [corpse.deer, corpse.roll ?? 0, corpse.sink ?? 0])];
+		for (const [deer, roll, sink] of drawn) put(deer.x, deer.y - sink * size, deer.z, deer.heading, deer.stride, deer.headDown, deer.walking, deer.own, deer.slope, roll, 0);
 	}
+	for (const fn of drawers) fn(put);
 	if (count == 0) return;
 	device.queue.writeBuffer(instanceBuffer, 0, instanceData, 0, count * DEER_FLOATS);
 

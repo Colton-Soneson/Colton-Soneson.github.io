@@ -12,7 +12,13 @@ export const settings = {
     camPosZ: 150.0,
     camFarPlane: 12000.0,	//far enough to see the other land masses
     camNearPlane: 1.0,
-    gameMode: 'Observe',			//Observe: fly round (cameraControls.js). Hunting (Hunting and Sailing): on foot, first person (hunting.js), with boats to sail (boat.js) and the rest from the spawn menu, T (radialMenu.js)
+    gameMode: 'Observe',			//Observe: fly round (cameraControls.js). Hunting (Hunting and Sailing): on foot, first person (hunting.js), with boats to sail (boat.js) and the rest from the spawn menu, T (radialMenu.js). Horde: the same, against waves of feral deer (horde.js)
+    hordeFirstWave: 10,				//deer in the first round of the Horde game mode
+    hordeWaveGrowth: 1.35,			//each round this many times the one before
+    hordeMaxWave: 400,				//the most deer in one round
+    hordeAliveCap: 120,				//the most out at once (600 at the most): the rest of the round comes as they go down
+    hordeDamage: 5,					//health a deer's lunge takes off (of 100). A super deer's is twice it
+    hordeBreakSeconds: 10,			//between one round and the next
     huntingWalkSpeed: 3.0,			//metres a second on foot. Shift runs 2.3x
     horseSpeed: 2.5,				//how many times a real horse's pace the horses go at: the walk, the canter and the gallop (horse.js). 1 = a real horse, a 13.5 m/s gallop
     discGolfEnabled: false,			//a disc golf course laid out on the land (discgolf.js): tee pads and baskets, each hole its own colour

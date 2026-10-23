@@ -540,7 +540,7 @@ function makeMarkers() {
 // the thrower's name over each disc, in a game with others (see FINDING A DISC at the top)
 const nameTags = new Map();		// disc id -> { el, text }
 function showNames() {
-	const on = settings.gameMode == 'Hunting' && hunting.hunterPlace().active;
+	const on = settings.gameMode != 'Observe' && hunting.hunterPlace().active;
 	const viewProj = transformations.getViewProj();
 	const W = innerWidth, H = innerHeight, m = metre();
 	const seen = new Set();
@@ -576,7 +576,7 @@ document.body.appendChild(names);
 const html = (text) => String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 function showMarkers() {
-	const on = holes.length > 0 && settings.gameMode == 'Hunting' && hunting.hunterPlace().active;
+	const on = holes.length > 0 && settings.gameMode != 'Observe' && hunting.hunterPlace().active;
 	markers.style.display = on ? '' : 'none';
 	if (!on) return;
 	const viewProj = transformations.getViewProj();

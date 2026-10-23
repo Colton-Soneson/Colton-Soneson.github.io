@@ -75,6 +75,8 @@ const MAX_STEP_SECONDS = 1 / 60;	// a long frame is moved through in steps no lo
 const BOAT_LEAN = 0.5;				// how much of the boat's heel and pitch the view leans with
 const ROPE_NOTCH = 0.08;			// of a halyard's or sheet's whole way, for a notch of the scroll wheel (100 pixels of it)
 const LADDER_REACH = 1.6;			// metres from a ladder that a swimmer can take hold of it
+const PROBE_REACH = 8;				// metres: see surfaceAt
+const KNOCK_FADE = 6;				// how quickly a shove dies away (a second, to e to the minus this)
 
 const LOOK_PITCH = Math.PI * 0.5 - 0.02;
 
@@ -99,10 +101,11 @@ let usePressed = false, anchorPressed = false;	// E and G
 let burstPressed = false;						// Shift, in the saddle
 let wheelPixels = 0, scrolled = 0;				// the scroll wheel: turned since it was last read, and what this frame has of it (pixels, down +)
 let lastHeading = null;						// the boat's heading last frame, to turn the view with it
+const knock = [0, 0];						// a shove (shoveHunter), world units a second: on top of where the keys take it, dying away
 
 // Input
 //-------------------------------------------------
-const hunting = () => settings.gameMode == 'Hunting';
+const hunting = () => settings.gameMode != 'Observe';		// (Hunting and Sailing, and Horde: horde.js)
 const locked = () => document.pointerLockElement == canvas;
 
 // a box being typed in (not a checkbox, a button or a slider: those only have the focus because they were clicked)
@@ -238,10 +241,11 @@ function groundUnder(x, z) {
 }
 
 // the water's surface at (x, z) world units: the waves under the camera (the walker is under it), moved along their slope to
-//		(x, z), or the still sea while nothing has come back from the probe
+//		(x, z), or the still sea while nothing has come back from the probe. Not from a probe further off than PROBE_REACH (the
+//		camera somewhere else when it was read: the fly camera's, just after Hunting begins), which moved that far would be nonsense
 function surfaceAt(x, z) {
 	const w = water.cameraWater;
-	if (w.height === null || !settings.enableWater || performance.now() - w.at > 500) return settings.waterWorldPosY;
+	if (w.height === null || !settings.enableWater || performance.now() - w.at > 500 || Math.hypot(x - w.x, z - w.z) > PROBE_REACH * settings.forestUnitsPerMetre) return settings.waterWorldPosY;
 	const ny = Math.max(w.normal[1], 0.2);
 	return w.height - w.normal[0] / ny * (x - w.x) - w.normal[2] / ny * (z - w.z);
 }
@@ -388,9 +392,11 @@ function ride(seconds) {
 	settings.camPosZ = eye[2];
 	transformations.viewUp.splice(0, 3, 0, 1, 0);
 }
-// told when the walker fills its ammunition up at a horse's saddlebags (weapons.js): fn()
-const refillListeners = [];
+// told when the walker fills its ammunition up at a horse's saddlebags (weapons.js): fn(). Asked first (gateRefill): fn() false if it
+//		may not (it costs points in the Horde game mode, horde.js: it says why)
+const refillListeners = [], refillGates = [];
 export function onRefill(fn) { refillListeners.push(fn); }
+export function gateRefill(fn) { refillGates.push(fn); }
 // asked first when E is pressed on foot: fn(place) gives true if it took the press (discgolf.js: a disc picked up)
 const useHandlers = [];
 export function onUse(fn) { useHandlers.push(fn); }
@@ -478,8 +484,10 @@ export function updateHunter() {
 	if (usePressed && !control && hunterLife.alive && !hunter.swimming) {
 		if (tack && tack.kind == 'bags') {
 			usePressed = false;
-			refillListeners.forEach((fn) => fn());
-			help.toast('Ammunition filled up');
+			if (refillGates.every((fn) => fn())) {
+				refillListeners.forEach((fn) => fn());
+				help.toast('Ammunition filled up');
+			}
 		} else {
 			const h = tack && tack.kind == 'saddle' && !tack.horse.rider ? tack.horse : horse.horseBeside(hunter.x, hunter.z);
 			if (h) {
@@ -543,10 +551,11 @@ export function updateHunter() {
 		//		over the ground, a bridge, the pier, it goes where that goes)
 		const fromX = hunter.x, fromZ = hunter.z, fromGround = hunter.grounded ? groundUnder(fromX, fromZ) : 0;
 		const onGround = hunter.y - fromGround < step;
-		hunter.x += hunter.vx * dt;
-		pushOut(0, hunter.vx, half, step);
-		hunter.z += hunter.vz * dt;
-		pushOut(2, hunter.vz, half, step);
+		hunter.x += (hunter.vx + knock[0]) * dt;
+		pushOut(0, hunter.vx + knock[0], half, step);
+		hunter.z += (hunter.vz + knock[1]) * dt;
+		pushOut(2, hunter.vz + knock[1], half, step);
+		knock[0] *= Math.exp(-dt * KNOCK_FADE); knock[1] *= Math.exp(-dt * KNOCK_FADE);
 		if (hunter.grounded && !hunter.swimming && onGround) {
 			const went = Math.hypot(hunter.x - fromX, hunter.z - fromZ);
 			if (went > 0 && (groundUnder(hunter.x, hunter.z) - fromGround) / went > STEEPEST) {
@@ -882,6 +891,13 @@ export function pressKeys(codes, jump = false, use = false, anchor = false, scro
 	if (jump) jumpPressed = true;
 	if (use) usePressed = true;
 	if (anchor) anchorPressed = true;
+}
+
+// the walker shoved, on foot (a deer of the horde butting it, horde.js): vx, vz metres a second
+export function shoveHunter(vx, vz) {
+	if (hunter.on != 'land') return;
+	knock[0] += vx * settings.forestUnitsPerMetre;
+	knock[1] += vz * settings.forestUnitsPerMetre;
 }
 
 // the walker put down on the ground at (x, z), standing still (for testing, and up again after being shot)

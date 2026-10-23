@@ -39,6 +39,7 @@ import * as lightning from './lightning.js'
 import * as birds from './birds.js'
 import * as geese from './geese.js'
 import * as deer from './deer.js'
+import * as horde from './horde.js'
 import * as cameraControls from './cameraControls.js'
 import * as hunting from './hunting.js'
 import * as rifle from './rifle.js'
@@ -400,6 +401,7 @@ export function updateRotatingCubePass() {
 	birds.birdUpdate();				//the hawks fly on
 	geese.geeseUpdate();			//and the geese
 	deer.deerUpdate();				//and the deer
+	horde.hordeUpdate();			//and the horde, in the Horde game mode
 	lightning.lightningUpdate();	//a strike that is going on flickers and dies, and now and then a new one starts
 	profiler.cpuMark('Cloud Map');
 	profiler.section('Cloud Map', () => clouds.cloudUpdate(encoder));	//the weather moves on, and the picture of the clouds from above is taken: their shadows are read from it all through the frame

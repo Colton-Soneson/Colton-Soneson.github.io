@@ -12,6 +12,9 @@ import { skyLookupShapes } from './vfc_atmosphere.js';
 				leg bends back at the knee as it comes forward. The four take turns (a walk: hind, front, other hind, other front)
 	Then the whole deer is tipped to the slope it stands on, turned to its heading, made its size and put in its place.
 	The light comes from the faces as they are after all that (dpdx, dpdy), as for the geese.
+
+	FERAL (state.w): the deer of the horde (horde.js) are darker and greyer, mangy (bare patches of skin), with eyes that glow red,
+	brighter while they are in a frenzy (2).
 */
 export const vf_deer =
 `
@@ -44,7 +47,7 @@ export const vf_deer =
 		@location(0) shape: vec4f,		// xyz: the mesh, in metres, standing on y = 0 and heading along +z. w: which part (see the top of the file)
 		@location(1) place: vec4f,		// this deer: xyz where its feet are, w: world units to the metre (its size)
 		@location(2) pose: vec4f,		// x: its heading (radians, round from +z towards +x), y: where it is in its stride (radians), z: head down, 0 to 1, w: how far it leans its stride (0 standing to 1 walking)
-		@location(3) state: vec4f,		// x: a number of its own, y: the slope under it along its heading (radians, nose up), z: rolled over on to its side (radians: a shot deer)
+		@location(3) state: vec4f,		// x: a number of its own, y: the slope under it along its heading (radians, nose up), z: rolled over on to its side (radians: a shot deer), w: feral (see FERAL)
 	};
 
 	struct VertexOutput {
@@ -52,6 +55,7 @@ export const vf_deer =
 		@location(0) worldPos: vec3f,
 		@location(1) onDeer: vec4f,		// xyz: where on the mesh as it was made, w: the part
 		@location(2) @interpolate(flat) tone: f32,
+		@location(3) @interpolate(flat) feral: f32,
 	};
 
 	fn turnX(v: vec3f, angle: f32) -> vec3f { return vec3f(v.x, v.y * cos(angle) - v.z * sin(angle), v.y * sin(angle) + v.z * cos(angle)); }
@@ -98,6 +102,7 @@ export const vf_deer =
 		output.worldPos = position;
 		output.onDeer = vec4f(input.shape.xyz, part);
 		output.tone = input.state.x;
+		output.feral = input.state.w;
 		return output;
 	}
 
@@ -112,6 +117,7 @@ export const vf_deer =
 		@location(0) worldPos: vec3f,
 		@location(1) onDeer: vec4f,
 		@location(2) @interpolate(flat) tone: f32,
+		@location(3) @interpolate(flat) feral: f32,
 	};
 
 	@fragment
@@ -138,13 +144,24 @@ export const vf_deer =
 		} else if (at.y < 0.84) {
 			albedo = vec3f(0.66, 0.58, 0.48) * tone;		// the belly
 		}
+		// feral: the coat gone dark and grey, worn through to the skin in patches
+		var eyes = 0.0;
+		if (input.feral > 0.5) {
+			albedo = mix(albedo, vec3f(0.17, 0.15, 0.13) * tone, 0.75);
+			let mange = sin(at.x * 41.0 + input.tone * 17.0) * sin(at.y * 23.0 + 1.7) * sin(at.z * 31.0 + input.tone * 5.0);
+			albedo = mix(albedo, vec3f(0.42, 0.3, 0.28), smoothstep(0.35, 0.5, mange) * 0.8);
+			if (input.onDeer.w > 0.5 && input.onDeer.w < 1.5) {
+				let eye = min(length(at - vec3f(0.04, 1.455, 0.77)), length(at - vec3f(-0.04, 1.452, 0.77)));
+				eyes = (1.0 - smoothstep(0.012, 0.028, eye)) * select(1.2, 3.0, input.feral > 1.5);
+			}
+		}
 
 		// the same light as everything else
 		let L = normalize(Lights.sunPos.xyz);
 		let daylight = smoothstep(-0.08, 0.25, L.y);
 		let light = 0.09 + daylight * (0.34 + 0.72 * saturate(dot(N, L)));
 		let sunTint = mix(vec3f(1.0, 1.0, 1.0), Lights.sunCol.rgb, 0.3 * (1.0 - saturate(L.y * 3.0)));
-		var color = albedo * (light * sunTint + moonLight(N));
+		var color = albedo * (light * sunTint + moonLight(N)) + vec3f(1.0, 0.1, 0.03) * eyes;
 
 		if (DU.look.y > 0.5) {
 			let horizonColor = fogColorAt(toDeer);

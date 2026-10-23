@@ -56,7 +56,7 @@ const FEED_SECONDS = 6;
 const MAX_DRAWN = 16;
 const DUMMY_FLOATS = 16;				// one dummy as the shader gets it: place (4), pose (4), state (4), what it holds (4)
 // how long what each one holds is (the box it carries, see vf_dummy.js), as the long gun it was made with is 1: nothing, a disc: 0
-const HELD_LENGTH = { rifle: 1, shotgun: 0.9, sharps: 1.1, revolver: 0.3, staff: 1.6, none: 0 };
+export const HELD_LENGTH = { rifle: 1, shotgun: 0.9, sharps: 1.1, revolver: 0.3, staff: 1.6, none: 0 };
 const STRIDE = 1.5;					// metres a stride takes
 // the hitbox, in the dummy's own metres: x, y, z, radius, and which part it is (see DAMAGE in net.js)
 const DUMMY_SPHERES = [[0, 1.71, 0.01, 0.13, 'head'], [0, 1.33, 0, 0.21, 'chest'], [0, 1.0, 0, 0.19, 'belly'],
@@ -224,6 +224,10 @@ function vehicleFrame(id) {
 export function onShot(fn) { shotListeners.push(fn); }
 // told when this player is up again: fn([x, y, z])
 export function onRespawn(fn) { respawnListeners.push(fn); }
+// asked before this player is up again: fn() gives what to say if it is to stay down for now (the horde's rounds, horde.js), or false
+const respawnHolds = [];
+export function holdRespawn(fn) { respawnHolds.push(fn); }
+const heldBy = () => { for (const fn of respawnHolds) { const why = fn(); if (why) return why; } return false; };
 
 // where one is now: in between the two states either side of INTERPOLATION_SECONDS ago
 function viewOf(other, now) {
@@ -266,7 +270,7 @@ ballistics.addTarget((ax, ay, az, bx, by, bz, bullet) => {
 	for (const other of others.values()) {
 		const view = other.view;
 		if (!view || !view.hunting || !view.alive) continue;
-		if (bullet && bullet.shooter === other.id) continue;
+		if (bullet && (bullet.shooter === other.id || bullet.shooter == 'folk')) continue;	// (nor the townsfolk's, horde.js)
 		if (ballistics.crossSphere(ax, ay, az, bx, by, bz, view.x, view.y + 1.0 * metre(), view.z, 1.2 * metre()) === null) continue;
 		for (const [x, y, z, r, part] of dummySpheres(view, other.fallen, other.sit)) {
 			const t = ballistics.crossSphere(ax, ay, az, bx, by, bz, x, y, z, r);
@@ -283,21 +287,31 @@ ballistics.addTarget((ax, ay, az, bx, by, bz, bullet) => {
 
 // This player
 //-------------------------------------------------
-const local = { health: HEALTH, alive: true, downAt: 0, by: '' };
+const local = { health: HEALTH, alive: true, downAt: 0, by: '', how: '' };
 export function localLife() { return { ...local }; }
+// in the Horde game mode this player has health alone too (horde.js takes it off)
+const horde = () => settings.gameMode == 'Horde';
 
-// the host says how much health this player has now, and who took it
-export function setLocalHealth(health, by) {
+// the host says how much health this player has now, and who took it (how: what is said when it is down, if not shot by them)
+export function setLocalHealth(health, by, how = '') {
 	if (health < local.health) hurtFlash = 1;
-	local.health = health;
+	local.health = Math.max(health, 0);
 	if (health <= 0 && local.alive) {
 		local.alive = false;
 		local.downAt = performance.now() / 1000;
 		local.by = by;
+		local.how = how;
 		hunting.hunterLife.alive = false;
 		playerStats.deaths++;
 	}
 }
+
+// back to full health (a wave of the horde down, horde.js)
+export function healLocal() {
+	if (local.alive) local.health = HEALTH;
+}
+// the hit marker, for a bullet that hit one of the horde
+export function markHit(head) { showHitMarker(head); }
 
 // a random spot on the grassland or in the forest, out of the water
 function respawnSpot() {
@@ -310,9 +324,12 @@ function respawnSpot() {
 	}
 	return null;
 }
+// where to come back, if not somewhere new: fn() gives { x, z } or null (near the others, in the Horde game mode: horde.js)
+let respawnPlacer = null;
+export function placeRespawn(fn) { respawnPlacer = fn; }
 // up again (or into a game for the first time), somewhere new, with full health and a full rifle
 export function respawn() {
-	const spot = respawnSpot();
+	const spot = respawnPlacer?.() ?? respawnSpot();
 	if (spot) hunting.placeHunter(spot.x, spot.z);
 	local.alive = true;
 	local.health = HEALTH;
@@ -359,8 +376,9 @@ let feedShown = '';
 
 function showOverlay(now, elapsed) {
 	const huntingNow = hunting.hunterPlace().active;
-	overlay.style.display = inGame && huntingNow ? '' : 'none';
-	if (!inGame || !huntingNow) return;
+	const shown = (inGame || horde()) && huntingNow;
+	overlay.style.display = shown ? '' : 'none';
+	if (!shown) return;
 
 	healthBox.querySelector('.hp-number').textContent = Math.max(Math.round(local.health), 0);
 	const fill = healthBox.querySelector('.hp-fill');
@@ -369,8 +387,8 @@ function showOverlay(now, elapsed) {
 
 	if (!local.alive) {
 		downBox.style.display = '';
-		const left = Math.max(Math.ceil(RESPAWN_SECONDS - (now - local.downAt)), 0);
-		downBox.innerHTML = `<div style="font-size: 18px; font-weight: 600;">${local.by ? 'Shot by ' + escapeHtml(local.by) : 'Down'}</div><div style="margin-top: 4px; font-size: 13px; opacity: 0.8;">Back in ${left}</div>`;
+		const left = Math.max(Math.ceil(RESPAWN_SECONDS - (now - local.downAt)), 0), held = heldBy();
+		downBox.innerHTML = `<div style="font-size: 18px; font-weight: 600;">${local.by ? 'Shot by ' + escapeHtml(local.by) : escapeHtml(local.how || 'Down')}</div><div style="margin-top: 4px; font-size: 13px; opacity: 0.8;">${held ? escapeHtml(held) : 'Back in ' + left}</div>`;
 	} else {
 		downBox.style.display = 'none';
 	}
@@ -437,7 +455,7 @@ export function playersUpdate() {
 	playerStats.others = others.size;
 
 	// down: up again after RESPAWN_SECONDS
-	if (inGame && !local.alive && now - local.downAt >= RESPAWN_SECONDS) respawn();
+	if ((inGame || horde()) && !local.alive && now - local.downAt >= RESPAWN_SECONDS && !heldBy()) respawn();
 	showOverlay(now, elapsed);
 }
 

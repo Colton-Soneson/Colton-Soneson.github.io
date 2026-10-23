@@ -17,6 +17,7 @@ import * as water from './water.js'
 import * as weapons from './weapons.js'
 import * as staff from './staff.js'
 import * as townFolk from './townFolk.js'
+import * as horde from './horde.js'
 import { onSpawn } from './radialMenu.js'
 import { PRESETS } from './graphicsPresets.js';
 
@@ -46,6 +47,9 @@ import { PRESETS } from './graphicsPresets.js';
 							leave, world, clock, course (the disc golf course's holes, when they change), sts (everyone's states), shot,
 							hp (someone's health), down (someone was shot dead), score, and veh+, veh-, vs, vctl passed on, auth (who
 							sails a vehicle now), and tp (go to this place: the host's Bring button)
+		the horde			(horde.js, the Horde game mode) joiner to host: hpick (a power-up walked into). Host to joiners: horde
+							(the run, HORDE_RATE times a second: its round, the power-ups, the townsfolk fighting and turned), hfx (what
+							just happened: a new run, a round, a power-up taken), hpts (points earned), shove (a deer's lunge)
 	A state is [x, y, z (its feet), heading, pitch, speed, alive, out hunting, the vehicle it is on (its id, or ''), where on it
 	(x, y, z, metres in the vehicle's own directions), sitting (0 standing, 1 sitting, 2 astride), what it holds], STATE_RATE
 	times a second, on the fast channel (no waiting for what was lost: the next one is newer anyway). So are the vehicles' states.
@@ -85,6 +89,11 @@ import { PRESETS } from './graphicsPresets.js';
 						says what is left. At 0 that player is down, and the host counts the kill
 		the course		the disc golf course's holes as the host laid them out (discgolf.courseShare): sent with the welcome and
 						whenever they change, and a joiner plays on those, not its own
+		the horde		in the Horde game mode (horde.js, see MULTIPLAYER there): its deer go with the animals, its run goes to
+						everyone (horde), and a joiner is put in the Horde game mode while the host is in it (and back out to Hunting
+						when it is not). A joiner's shot that hits one of its deer says the part and the round, and the host says what
+						it earned (hpts). Their lunges take health off as the bullets do (by 'horde'), and the host gives it back
+						in time. Everyone's gunshots are heard by the horde, and the townsfolk's shots go to everyone for their trails
 	The host can also move the players about (the Multiplayer window): Bring takes one to where the host is (tp), Go To takes the
 	host to one.
 */
@@ -107,6 +116,7 @@ const ANIMAL_RECORD = 12;			// floats: id, x, y, z, heading, six of the animal's
 const ANIMAL_NEAR = 600;				// metres
 const ANIMAL_FAR_EVERY = 10;
 const ANIMAL_DELAY = 0.2;			// seconds
+const HORDE_RATE = 5;				// a second
 const VEHICLE_RATE = 15;			// a second
 const WAVE_SLACK = 0.12;			// step time (water.js): a joiner whose waves are further out than this from the host's is put right
 const FOLK_SLACK = 0.5;				// seconds: the same for the townsfolk's clock (townFolk.js)
@@ -290,13 +300,14 @@ const ANIMALS = [
 	{ kind: 'deer', share: deer.deerShare, follow: deer.deerFollow, kill: deer.killDeerById, shot: deer.deerShot, angles: [4] },
 	{ kind: 'hawk', share: birds.hawkShare, follow: birds.hawkFollow, kill: birds.killHawkById, shot: birds.hawkShot, angles: [4, 6] },
 	{ kind: 'goose', share: geese.geeseShare, follow: geese.geeseFollow, kill: geese.killGooseById, shot: geese.gooseShot, angles: [4, 6] },
+	{ kind: 'horde', share: horde.hordeShare, follow: horde.hordeFollow, kill: horde.killHordeById, shot: horde.hordeShot, angles: [4] },
 ];
 const tracks = new Map(ANIMALS.map((animal) => [animal.kind, new Map()]));	// joiner: kind -> id -> the last few records heard, [{ at, r }]
 let animalTick = 0, lastAnimals = 0;
 
 // a joiner's shot that hits one of the host's animals goes to the host
 for (const animal of ANIMALS) {
-	animal.shot.report = (id, velocity) => { if (role == 'joined') hostLink.sendGame({ t: 'animal', kind: animal.kind, id, v: velocity }); };
+	animal.shot.report = (id, velocity, part, round) => { if (role == 'joined') hostLink.sendGame({ t: 'animal', kind: animal.kind, id, v: velocity, p: part, r: round }); };
 }
 // host: every animal, to each joiner. The ones within ANIMAL_NEAR of it every time, the rest every ANIMAL_FAR_EVERY-th time
 function sendAnimals() {
@@ -384,7 +395,7 @@ let courseSent = '';			// host: the last disc golf course it sent
 const names = new Map();		// id -> name, everyone's, this player too
 const health = new Map();		// host: id -> health
 const scores = new Map();		// id -> { kills, deaths }
-let lastState = 0, lastClock = 0, lastWorldCheck = 0, lastTrees = 0;
+let lastState = 0, lastClock = 0, lastWorldCheck = 0, lastTrees = 0, lastHorde = 0;
 let treesSent = 0;		// host: the number of the last lot of trees sent. The whole forest says which it already has in it
 // joiner: the forest (see the forest above). asked: waiting for it. have: it has the host's, from the host's planting
 //		hostPlanting, while its own was planted localPlanting. queue: changes that came while the forest was on its way
@@ -537,7 +548,7 @@ function beginGame() {
 	health.clear();
 	health.set(myId, players.HEALTH);
 	players.setInGame(true);
-	if (settings.gameMode != 'Hunting') { settings.gameMode = 'Hunting'; imguiParams.gameMode = 'Hunting'; }
+	if (settings.gameMode == 'Observe') { settings.gameMode = 'Hunting'; imguiParams.gameMode = 'Hunting'; }
 	players.respawn();
 }
 
@@ -642,12 +653,15 @@ function fromJoiner(joiner, message) {
 	} else if (message.t == 'shot') {
 		for (const dir of message.dirs) ballistics.fire(message.from, dir, { remote: true, shooter: joiner.id, round: message.r });
 		toAll({ t: 'shot', id: joiner.id, from: message.from, dirs: message.dirs, r: message.r }, joiner.id);
+		horde.heardShot(message.from, message.r, 'p' + joiner.id);
 	} else if (message.t == 'hit') {
 		applyHit(joiner.id, message.target, message.part, message.r);
 	} else if (message.t == 'up') {
 		setHealth(joiner.id, players.HEALTH, joiner.id, '');
 	} else if (message.t == 'animal') {
-		ANIMALS.find((animal) => animal.kind == message.kind)?.kill(message.id, message.v);
+		ANIMALS.find((animal) => animal.kind == message.kind)?.kill(message.id, message.v, message.p, message.r, joiner.id);
+	} else if (message.t == 'hpick') {
+		horde.hordePick(message.id);
 	} else if (message.t == 'forest?') {
 		sendBig(joiner.link, 'forest', { p: forest.plantings, s: treesSent }, forest.forestSnapshot());
 	} else if (message.t == 'veh+' || message.t == 'veh-') {
@@ -838,11 +852,11 @@ function heard(message) {
 			if (message.id !== myId) for (const dir of message.dirs) ballistics.fire(message.from, dir, { remote: true, shooter: message.id, round: message.r });
 			break;
 		case 'hp':
-			if (message.id === myId) players.setLocalHealth(message.hp, message.by === myId ? '' : nameOf(message.by));
+			if (message.id === myId) players.setLocalHealth(message.hp, message.by === myId || message.by === 'horde' ? '' : nameOf(message.by), message.by === 'horde' ? 'Overrun by the horde' : '');
 			else if (message.part) players.otherHit(message.id);
 			break;
 		case 'down':
-			players.addFeed(nameOf(message.by) + ' shot ' + nameOf(message.id) + (message.part == 'head' ? ' (head)' : ''));
+			players.addFeed(message.by === 'horde' ? nameOf(message.id) + ' was overrun' : nameOf(message.by) + ' shot ' + nameOf(message.id) + (message.part == 'head' ? ' (head)' : ''));
 			break;
 		case 'score':
 			setScores(message.list);
@@ -871,6 +885,21 @@ function heard(message) {
 			break;
 		case 'folkShot':
 			townFolk.folkShotHeard(message.i, message.at);
+			break;
+		case 'horde':
+			// the host's run, and its game mode: in the Horde game mode while the host is
+			if (role != 'joined') break;
+			if (message.s.on != (settings.gameMode == 'Horde')) { settings.gameMode = message.s.on ? 'Horde' : 'Hunting'; imguiParams.gameMode = settings.gameMode; }
+			horde.hordeHeard(message.s);
+			break;
+		case 'hfx':
+			if (role == 'joined') horde.hordeEvent(message.e);
+			break;
+		case 'hpts':
+			horde.hordePoints(message.p);
+			break;
+		case 'shove':
+			hunting.shoveHunter(message.v[0], message.v[1]);
 			break;
 	}
 }
@@ -1026,8 +1055,42 @@ players.onRespawn(() => {
 });
 
 // Per frame: after the hunter has moved and the rifle has fired
+// The horde (see the horde at the top): what horde.js asks of the game
+horde.hordeNet.others = () => role != 'host' ? [] : players.otherList().filter((other) => other.view).map((other) => ({ id: other.id, x: other.view.x, y: other.view.y, z: other.view.z,
+	alive: other.view.alive, hunting: other.view.hunting, speed: other.view.speed }));
+// a lunge on a player ('me': the host): health off, by 'horde', and a shove
+horde.hordeNet.hurtOther = (id, damage, shove) => {
+	if (role != 'host') return;
+	if (id == 'me') id = myId;
+	const before = health.get(id);
+	if (before === undefined || before <= 0) return;
+	const after = Math.max(before - damage, 0);
+	setHealth(id, after, 'horde', 'horde');
+	if (shove && id !== myId) joiners.get(id)?.link.sendGame({ t: 'shove', v: shove });
+	if (after <= 0) {
+		const down = { t: 'down', id, by: 'horde', part: '' };
+		toAll(down);
+		heard(down);
+	}
+};
+horde.hordeNet.healOther = (id, amount) => {
+	if (role != 'host') return;
+	if (id == 'me') id = myId;
+	const before = health.get(id);
+	if (before === undefined || before <= 0 || before >= players.HEALTH) return;
+	setHealth(id, Math.min(Math.round(before + amount), players.HEALTH), id, '');
+};
+horde.hordeNet.points = (id, points) => { if (role == 'host') joiners.get(id)?.link.sendGame({ t: 'hpts', p: points }); };
+horde.hordeNet.event = (e) => { if (role == 'host') toAll({ t: 'hfx', e }); };
+horde.hordeNet.shot = (from, directions, round) => {
+	const r3 = (v) => Math.round(v * 1000) / 1000;
+	if (role == 'host' && joiners.size > 0) toAll({ t: 'shot', id: 'folk', from: from.map(r3), dirs: directions.map((d) => d.map(r3)), r: round });
+};
+horde.hordeNet.pick = (id) => { if (role == 'joined') hostLink.sendGame({ t: 'hpick', id }); };
+
 export function netUpdate() {
 	if (!buttonAdded) addButton();
+	horde.hordeNet.role = role;
 	if (role == 'joined') applyWorld();
 	if (role != 'host' && role != 'joined') { netStats.role = role; return; }
 	const now = performance.now() / 1000;
@@ -1052,6 +1115,10 @@ export function netUpdate() {
 	if (role == 'host' && joiners.size > 0 && now - lastAnimals >= 1 / ANIMAL_RATE) {
 		lastAnimals = now;
 		sendAnimals();
+	}
+	if (role == 'host' && joiners.size > 0 && now - lastHorde >= 1 / HORDE_RATE) {
+		lastHorde = now;
+		toAll({ t: 'horde', s: horde.hordeState() });
 	}
 	if (role == 'joined' && forestSync.need && !forestSync.asked && forest.forestReady()) {
 		forestSync.asked = true;

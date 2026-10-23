@@ -18,6 +18,12 @@ export const imguiParams = {
     camFarPlane: settings.camFarPlane,
     camNearPlane: settings.camNearPlane,
     gameMode: settings.gameMode,
+    hordeFirstWave: settings.hordeFirstWave,
+    hordeWaveGrowth: settings.hordeWaveGrowth,
+    hordeMaxWave: settings.hordeMaxWave,
+    hordeAliveCap: settings.hordeAliveCap,
+    hordeDamage: settings.hordeDamage,
+    hordeBreakSeconds: settings.hordeBreakSeconds,
     huntingWalkSpeed: settings.huntingWalkSpeed,
     horseSpeed: settings.horseSpeed,
     discGolfEnabled: settings.discGolfEnabled,
@@ -323,12 +329,20 @@ gui.add(imguiParams, 'atmosphereSunRotationDemo').name('Sun Cycle (days and seas
 // how the scene is seen: Observe flies round it (see the Camera folder), Hunting and Sailing walks it on foot (hunting.js), with boats and
 //		the rest from the spawn menu (T, radialMenu.js)
 const modeFolder = gui.addFolder('Game Modes');
-modeFolder.add(imguiParams, 'gameMode', { 'Observe': 'Observe', 'Hunting and Sailing': 'Hunting' }).name('Mode');
+modeFolder.add(imguiParams, 'gameMode', { 'Observe': 'Observe', 'Hunting and Sailing': 'Hunting', 'Horde': 'Horde' }).name('Mode');
 const huntingFolder = modeFolder.addFolder('Hunting and Sailing');	//click the picture to look round, WASD walk, Shift run, Space jump, T the spawn menu, hold Tab or Esc for the menus
 huntingFolder.add(imguiParams, 'huntingWalkSpeed', 1, 8, 0.1).name('Walk Speed (m/s)');
 huntingFolder.add(imguiParams, 'horseSpeed', 0.5, 5, 0.1).name('Horse Speed (x real)');
 huntingFolder.add(imguiParams, 'huntingJumpHeight', 0.1, 2, 0.05).name('Jump Height (m)');
 huntingFolder.add(imguiParams, 'huntingLookSensitivity', 0.2, 3, 0.05).name('Mouse Sensitivity');
+const hordeFolder = modeFolder.addFolder('Horde');	//rounds of feral deer, each bigger than the last (horde.js)
+hordeFolder.add(imguiParams, 'hordeFirstWave', 1, 100, 1).name('First Round');
+hordeFolder.add(imguiParams, 'hordeWaveGrowth', 1, 3, 0.05).name('Round Growth (x)');
+hordeFolder.add(imguiParams, 'hordeMaxWave', 10, 2000, 10).name('Biggest Round');
+hordeFolder.add(imguiParams, 'hordeAliveCap', 10, 600, 10).name('Out at Once');
+hordeFolder.add(imguiParams, 'hordeDamage', 1, 50, 1).name('Lunge Damage');
+hordeFolder.add(imguiParams, 'hordeBreakSeconds', 5, 120, 1).name('Break (s)');
+hordeFolder.add({ again: () => import('./horde.js').then((horde) => horde.restartHorde()) }, 'again').name('Start Again');
 const golfFolder = modeFolder.addFolder('Disc Golf');	//a course of tee pads and baskets on the land, to play with the discs from the spawn menu (discgolf.js)
 golfFolder.add(imguiParams, 'discGolfEnabled').name('Course');
 golfFolder.add(imguiParams, 'discGolfHoles', 1, 18, 1).name('Holes');

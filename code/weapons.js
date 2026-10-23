@@ -26,12 +26,19 @@ const reserve = new Map();		// name -> rounds carried (not in the gun)
 export function addWeapon(name, { label, detail, help: helpLines, equip, loaded, reset, drawn, menu = 'Weapons' }) {
 	weapons.set(name, { label, detail, help: helpLines, equip, loaded, reset, drawn });
 	if (name in AMMO) reserve.set(name, AMMO[name] - (loaded?.() ?? 0));
-	addChoice(menu, { label, detail, act: () => { equipWeapon(name); return true; } });
+	addChoice(menu, { label, get detail() { return detail + (priceOf?.(name) ?? ''); }, act: () => { equipWeapon(name); return true; } });
 }
+// asked before a weapon is taken in hand: fn(name) false if it may not be (not bought yet, in the Horde game mode: horde.js). And what
+//		it costs, said after its detail in the menu: fn(name) a few words, or ''
+const equipGates = [];
+export function gateEquip(fn) { equipGates.push(fn); }
+let priceOf = null;
+export function priceTag(fn) { priceOf = fn; }
 addChoice('Weapons', { label: 'Empty hands', detail: 'Put away what you hold', act: () => { equipWeapon('none'); return true; } });
 
 export function equipWeapon(name) {
 	if (name != 'none' && !weapons.has(name)) return;
+	if (name != weaponState.current && !equipGates.every((fn) => fn(name))) return;
 	weaponState.current = name;
 	weapons.get(name)?.equip?.();
 	help.toast(name == 'none' ? 'Empty hands' : weapons.get(name).label);
@@ -39,7 +46,7 @@ export function equipWeapon(name) {
 
 // whether this one is in the hands and can be used now
 export function holding(name) {
-	return weaponState.current == name && settings.gameMode == 'Hunting' && settings.enableTerrain && !hunting.handsBusy() && hunting.hunterLife.alive;
+	return weaponState.current == name && settings.gameMode != 'Observe' && settings.enableTerrain && !hunting.handsBusy() && hunting.hunterLife.alive;
 }
 
 // The ammunition (see THE AMMUNITION at the top)

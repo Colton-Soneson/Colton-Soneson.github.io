@@ -12,7 +12,7 @@ import * as terrain from './terrain.js'
 import * as ballistics from './ballistics.js'
 import * as hunting from './hunting.js'
 import * as players from './players.js'
-import { DUMMY_MESH, box, tube } from './players.js'
+import { DUMMY_MESH, HELD_LENGTH, box, tube } from './players.js'
 import { BUILDING_TYPES } from './townLayout.js'
 import { seededRandom } from './terrainGenerator.js'
 import { lightNow } from './lighting.js'
@@ -49,7 +49,12 @@ import {uniformBufferLights} from './rotatingCube.js'
 	was hit) and stays in until its errand is over. The one who fired tells the others (onFolkShot, net.js), with the time it
 	happened, so it runs the same way everywhere (folkShotHeard).
 
-	THE DRAWING: one draw for every trade (the dummy and its hat), of the people out of doors within DRAW_DISTANCE.
+	THE HORDE (horde.js). A person fighting the horde (setFight: where it stands, which way it aims, the gun in its hands) stands there
+	instead of where its day has it, and when the fight is over runs home from there. One a deer got to (turnFolk) is gone, turned,
+	until the towns are whole again (restoreFolk). In a game with others the host says who is fighting and who has turned.
+
+	THE DRAWING: one draw for every trade (the dummy and its hat), of the people out of doors within DRAW_DISTANCE. One with a gun
+	in its hands is the dummy with the players' gun (players.js), held where it aims.
 */
 const ERRAND_SECONDS = [70, 140];
 const WALK = 1.25;					// metres a second
@@ -494,9 +499,9 @@ export function folkShotHeard(index, at) {
 	person.flee = fleeFrom(person, at);
 	person.hit = 1;
 }
-// the townsfolk's hitboxes, for the bullets fired here
-ballistics.addTarget((ax, ay, az, bx, by, bz) => {
-	if (!settings.enableTownFolk || folk.length == 0) return null;
+// the townsfolk's hitboxes, for the bullets fired here (not their own, horde.js)
+ballistics.addTarget((ax, ay, az, bx, by, bz, bullet) => {
+	if (!settings.enableTownFolk || folk.length == 0 || bullet?.shooter == 'folk') return null;
 	const m = metre(), mx = (ax + bx) / 2, mz = (az + bz) / 2, reach = Math.hypot(bx - ax, bz - az) / 2 + 2 * m;
 	let best = null;
 	for (const person of folk) {
@@ -536,6 +541,33 @@ export function folkNear(x, z, reach, each) {
 }
 hunting.addMovers(folkNear);
 
+// The horde (see THE HORDE at the top): fn(person) for each one out of doors, and not turned
+export function folkOut(each) {
+	if (!settings.enableTownFolk) return;
+	for (const person of folk) if (person.place && !person.turned) each(person);
+}
+// a person fighting: { x, y, z, heading, pitch, gun (players.js's HELD_LENGTH's names) }, or null to stop (goHome: it runs home from there)
+export function setFight(index, fight, goHome = false) {
+	const person = folk[index];
+	if (!person) return;
+	if (!fight && person.fight && goHome) {
+		const f = person.fight, time = folkSeconds + person.offset;
+		const walk = walkBetween(person, { at: [f.x, f.y, f.z], node: person.ways.nearest(f.x, f.z) }, person.home);
+		person.flee = walk && { k: Math.floor(time / person.period), t0: folkSeconds - FLINCH, walk, heading: f.heading };
+	}
+	person.fight = fight;
+}
+export function turnFolk(index) {
+	const person = folk[index];
+	if (person) { person.turned = true; person.fight = null; person.place = null; }
+}
+export function restoreFolk() { for (const person of folk) { person.turned = false; person.fight = null; } }
+export function setTurned(list) {
+	const turned = new Set(list);
+	for (const person of folk) { person.turned = turned.has(person.index); if (person.turned) person.fight = null; }
+}
+export function turnedList() { return folk.filter((person) => person.turned).map((person) => person.index); }
+
 let lastTime = performance.now();
 export function townFolkUpdate() {
 	const now = performance.now();
@@ -550,7 +582,9 @@ export function townFolkUpdate() {
 		const time = folkSeconds + person.offset, k = Math.floor(time / person.period);
 		if (k != person.k) { person.k = k; person.errand = planErrand(person, k); }
 		if (person.flee && person.flee.k != k) person.flee = null;		// (out again with the next errand)
-		const place = person.flee ? fleeingAt(person.flee, folkSeconds - person.flee.t0) : placeAt(person, time - k * person.period);
+		const f = person.fight;
+		const place = person.turned ? null : f ? { x: f.x, y: f.y, z: f.z, heading: f.heading, stride: 0, walking: 0 }
+			: person.flee ? fleeingAt(person.flee, folkSeconds - person.flee.t0) : placeAt(person, time - k * person.period);
 		person.hit = Math.max(person.hit - elapsed * 2, 0);
 		if (!place) { person.place = null; person.push = [0, 0]; person.look = 0; continue; }
 		out++;
@@ -565,7 +599,7 @@ export function townFolkUpdate() {
 		place.x += person.push[0];
 		place.z += person.push[1];
 		let look = 0;
-		if (nearest && !person.flee) {
+		if (nearest && !person.flee && !f) {
 			look = Math.atan2(nearest.x - place.x, nearest.z - place.z) - place.heading;
 			look -= Math.PI * 2 * Math.round(look / (Math.PI * 2));
 			look = Math.min(Math.max(look, -1.1), 1.1);
@@ -582,16 +616,19 @@ function makeGpu() {
 	const module = device.createShaderModule({ label: "vf_dummy (townsfolk)", code: vf_dummy });
 	const body = DUMMY_MESH.data.subarray(0, DUMMY_MESH.bodyTriangles * 12);
 	const meshes = {};
+	// each hat on the dummy, and on the dummy with the gun (a name with + after it: see THE HORDE at the top)
 	for (const [name, make] of Object.entries(HATS)) {
 		const t = [];
 		make(t);
-		const data = new Float32Array(body.length + t.length * 12);
-		data.set(body);
-		let o = body.length;
-		for (const [a, b, c, part] of t) for (const p of [a, b, c]) { data.set([p[0], p[1], p[2], part], o); o += 4; }
-		const buffer = device.createBuffer({ label: `townsfolk ${name}`, size: data.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
-		device.queue.writeBuffer(buffer, 0, data);
-		meshes[name] = { buffer, vertices: data.length / 4, hatTriangles: t.length };
+		for (const [key, under] of [[name, body], [name + '+', DUMMY_MESH.data]]) {
+			const data = new Float32Array(under.length + t.length * 12);
+			data.set(under);
+			let o = under.length;
+			for (const [a, b, c, part] of t) for (const p of [a, b, c]) { data.set([p[0], p[1], p[2], part], o); o += 4; }
+			const buffer = device.createBuffer({ label: `townsfolk ${key}`, size: data.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
+			device.queue.writeBuffer(buffer, 0, data);
+			meshes[key] = { buffer, vertices: data.length / 4, hatTriangles: t.length };
+		}
 	}
 	const pipeline = device.createRenderPipeline({
 		label: "townsfolk pipeline",
@@ -613,7 +650,7 @@ function makeGpu() {
 	const sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
 	return { pipeline, meshes, instanceData, instanceBuffer, uniformBuffer, sampler, bindGroup: null, boundLUT: null };
 }
-export const HAT_TRIANGLES = () => gpu ? Object.fromEntries(Object.entries(gpu.meshes).map(([name, m]) => [name, m.hatTriangles])) : null;
+export const HAT_TRIANGLES = () => gpu ? Object.fromEntries(Object.entries(gpu.meshes).filter(([name]) => !name.endsWith('+')).map(([name, m]) => [name, m.hatTriangles])) : null;
 
 // with the solid things
 export function townFolkPass(aEncoder, mainpassDepthTexture) {
@@ -626,7 +663,7 @@ export function townFolkPass(aEncoder, mainpassDepthTexture) {
 	for (const person of folk) {
 		const p = person.place;
 		if (!p || count >= MAX_DRAWN || Math.hypot(p.x - settings.camPosX, p.z - settings.camPosZ) > DRAW_DISTANCE) continue;
-		const hat = person.profession.hat;
+		const hat = person.profession.hat + (HELD_LENGTH[person.fight?.gun] ? '+' : '');
 		if (!byHat.has(hat)) byHat.set(hat, []);
 		byHat.get(hat).push(person);
 		count++;
@@ -639,7 +676,8 @@ export function townFolkPass(aEncoder, mainpassDepthTexture) {
 		triangles += gpu.meshes[hat].vertices / 3 * people.length;
 		for (const person of people) {
 			const p = person.place;
-			gpu.instanceData.set([p.x, p.y, p.z, metre(), p.heading, 0, p.stride, p.walking, p.lean ?? 0, person.hit, person.hue, 0, 0, 1, person.look, 0], n * DUMMY_FLOATS);
+			const held = HELD_LENGTH[person.fight?.gun] ?? 0;
+			gpu.instanceData.set([p.x, p.y, p.z, metre(), p.heading, held ? person.fight.pitch : 0, p.stride, p.walking, p.lean ?? 0, person.hit, person.hue, 0, held, held ? 0 : 1, person.look, 0], n * DUMMY_FLOATS);
 			n++;
 		}
 	}

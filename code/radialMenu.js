@@ -76,7 +76,7 @@ addChoice('Vehicles', { label: 'Schooner', detail: 'A topsail schooner, 18 m, ab
 // Input
 //-------------------------------------------------
 const locked = () => document.pointerLockElement == canvas;
-const usable = () => settings.gameMode == 'Hunting' && hunting.hunterPlace().active && hunting.hunterLife.alive;
+const usable = () => settings.gameMode != 'Observe' && hunting.hunterPlace().active && hunting.hunterLife.alive;
 const ring = () => {
 	let at = root;
 	for (const k of menu.path) at = at.items.filter((item) => !item.shown || item.shown())[k] ?? at;

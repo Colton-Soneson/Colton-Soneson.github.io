@@ -1,5 +1,6 @@
 import { DEPTH_FORMAT, depthTest, DEPTH_CLEAR } from './depthMode.js'
 import {device} from './deviceSelection.js'
+import { frameTexture } from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
 import * as profiler from './profiler.js'
@@ -12,6 +13,7 @@ import { vf_boat } from '../shaders/js/vf_boat.js'
 import { VESSELS, ROLE, MAX_GROUPS, MAX_ROPES, MAX_PIECES, MAX_PARTS } from './vessels.js'
 
 import * as transformations from './transformations.js'
+import * as temporalAA from './temporalAA.js'
 import * as terrain from './terrain.js'
 import * as water from './water.js'
 import * as boulders from './boulders.js'
@@ -938,6 +940,11 @@ ballistics.addTarget((ax, ay, az, bx, by, bz, bullet) => {
 	}
 	// (a bullet fired here hurts it; the others' are theirs to say, and do)
 	return best && { t: best.t, what: 'boat', hit: () => { if (!bullet?.remote) damage(best.b, ballistics.ROUNDS[bullet?.round]?.damage ?? 1, bullet); } };
+}, () => {
+	const m = metre(), list = [];
+	// (round her hull and up her masts)
+	if (settings.enableWater) for (const b of boats) if (b.destroyed < 0) list.push(b.p[0] * m, b.p[1] * m, b.p[2] * m, (b.vessel.reach + 40) * m);
+	return list;
 });
 // the sea round a boat, for the bullets: as high as it is under the nearest boat now (from how high that floats), fading to flat
 //		SEA_REACH out from it (world units)
@@ -1143,7 +1150,8 @@ function showPanel(b) {
 
 // Drawing them
 //-------------------------------------------------
-const UNIFORM_FLOATS = 64 + MAX_GROUPS * 16 + MAX_ROPES * 8 + MAX_PIECES * 16 + MAX_PARTS * 16;
+const UNIFORM_FLOATS = 64 + MAX_GROUPS * 16 + MAX_ROPES * 8 + MAX_PIECES * 16 + MAX_PARTS * 16 + 32;
+const MOTION_AT = 64 + MAX_GROUPS * 16 + MAX_ROPES * 8 + MAX_PIECES * 16 + MAX_PARTS * 16;		// THE MOTION (temporalAA.js)
 // where each of a boat's parts is (its guns', vessels.js): fn(boat) gives a matrix for each (metres on the boat), or null for none moved
 //		(shipGuns.js)
 let partsSource = null;
@@ -1171,7 +1179,7 @@ const boatPipeline = device.createRenderPipeline({
 			{ format: "float32x4", offset: 32, shaderLocation: 2 },
 		] }],
 	},
-	fragment: { module: boatShaderModule, entryPoint: "fragmentMain", targets: [{ format: canvasFormat }] },
+	fragment: { module: boatShaderModule, entryPoint: "fragmentMain", targets: [{ format: canvasFormat }, { format: temporalAA.MOTION_FORMAT }] },
 	primitive: { topology: 'triangle-list', cullMode: 'none' },
 	depthStencil: { depthWriteEnabled: true, depthCompare: depthTest('less'), format: DEPTH_FORMAT },
 });
@@ -1229,6 +1237,11 @@ function writeBoatUniforms(b) {
 	// its guns' parts
 	const parts = partsSource?.(b);
 	for (let k = 0; k < MAX_PARTS; k++) u.set(parts?.[k] ?? IDENTITY, 64 + MAX_GROUPS * 16 + MAX_ROPES * 8 + MAX_PIECES * 16 + k * 16);
+	// (THE MOTION: back to where it was the frame before, and through that frame's camera)
+	const prev = temporalAA.prevViewProjNow();
+	u.set(temporalAA.viewProjNow(), MOTION_AT);
+	u.set(b.gpu.lastModel ? mat4.multiply(prev, mat4.multiply(b.gpu.lastModel, mat4.inverse(model))) : prev, MOTION_AT + 16);
+	b.gpu.lastModel = model;
 	device.queue.writeBuffer(b.gpu.buffer, 0, u);
 
 	if (!b.gpu.bindGroup || b.gpu.lut !== skyViewLUTtexture) {
@@ -1251,7 +1264,7 @@ export function boatPass(aEncoder, mainpassDepthTexture) {
 	if (boats.length == 0 || !settings.enableWater) return;
 	for (const b of boats) writeBoatUniforms(b);
 	const pass = aEncoder.beginRenderPass({
-		colorAttachments: [{ view: context.getCurrentTexture().createView(), loadOp: "load", storeOp: "store" }],
+		colorAttachments: [{ view: frameTexture().createView(), loadOp: "load", storeOp: "store" }, { view: temporalAA.motionView(), loadOp: "load", storeOp: "store" }],
 		depthStencilAttachment: { view: mainpassDepthTexture.createView(), depthLoadOp: 'load', depthStoreOp: 'store' },
 		timestampWrites: profiler.timestamps('Boats', 'vf_boat'),
 	});

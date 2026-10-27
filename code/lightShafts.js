@@ -1,4 +1,5 @@
 import {device} from './deviceSelection.js'
+import { drawn } from './deviceSelection.js'
 import {canvas} from './deviceSelection.js'
 import {onRenderResize} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
@@ -51,7 +52,7 @@ function makeFrameCopy() {
 	if (frameCopyTexture) frameCopyTexture.destroy();
 	frameCopyTexture = device.createTexture({
 		label: "light shaft copy of the frame",
-		size: [canvas.width, canvas.height],
+		size: [drawn.width, drawn.height],
 		format: canvasFormat,
 		usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
 	});
@@ -147,7 +148,7 @@ function shaftUniformBufferUpdates(shaftStrength) {
 	//		(and in the slot left over: how bright the lightning is on the scene at this moment)
 	bufferResult.push(settings.waterWorldPosY + weatherNow.base + settings.cloudHeight, SHAFT_REACH, clouds.cloudsShowing() ? 1 : 0, lightningNow.sceneFlash);
 
-	bufferResult.push(canvas.width, canvas.height, 1 / canvas.width, 1 / canvas.height);
+	bufferResult.push(drawn.width, drawn.height, 1 / drawn.width, 1 / drawn.height);
 
 	const viewProjectionMatrix = transformations.getViewProj();
 	for(let i = 0; i < 16; i++) {
@@ -207,7 +208,7 @@ export function lightShaftPass(canvasTexture, mainpassDepthTexture) {
 	}
 
 	//-------------THE SHAFTS------------------
-	encoder.copyTextureToTexture({ texture: canvasTexture }, { texture: frameCopyTexture }, [canvas.width, canvas.height]);
+	encoder.copyTextureToTexture({ texture: canvasTexture }, { texture: frameCopyTexture }, [drawn.width, drawn.height]);
 
 	const pass = encoder.beginRenderPass({
 		colorAttachments: [{

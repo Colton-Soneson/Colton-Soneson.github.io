@@ -1,4 +1,5 @@
 import {device} from './deviceSelection.js'
+import { frameTexture, drawn } from './deviceSelection.js'
 import {canvas} from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
@@ -12,6 +13,7 @@ import { settings } from './settings.js';
 import { vf_viewmodel } from '../shaders/js/vf_viewmodel.js'
 
 import * as transformations from './transformations.js'
+import * as temporalAA from './temporalAA.js'
 import { lightNow } from './lighting.js'
 import * as ballistics from './ballistics.js'
 
@@ -220,12 +222,12 @@ const pipeline = device.createRenderPipeline({
 	label: "viewmodel pipeline",
 	layout: 'auto',
 	vertex: { module: shaderModule, entryPoint: "vertexMain", buffers: [{ arrayStride: 16, attributes: [{ format: "float32x4", offset: 0, shaderLocation: 0 }] }] },
-	fragment: { module: shaderModule, entryPoint: "fragmentMain", targets: [{ format: canvasFormat }] },
+	fragment: { module: shaderModule, entryPoint: "fragmentMain", targets: [{ format: canvasFormat }, { format: temporalAA.MOTION_FORMAT }] },
 	primitive: { topology: 'triangle-list', cullMode: 'none' },
 	depthStencil: { depthWriteEnabled: true, depthCompare: 'less', format: 'depth24plus' },
 });
 // its own depth, at the canvas's size (made again when that changes)
-const makeDepth = () => device.createTexture({ label: "viewmodel depth", size: [canvas.width, canvas.height], format: 'depth24plus', usage: GPUTextureUsage.RENDER_ATTACHMENT });
+const makeDepth = () => device.createTexture({ label: "viewmodel depth", size: [drawn.width, drawn.height], format: 'depth24plus', usage: GPUTextureUsage.RENDER_ATTACHMENT });
 let depth = makeDepth();
 onRenderResize(() => { depth.destroy(); depth = makeDepth(); });
 export const HIDDEN = mat4.scaling([0, 0, 0]);
@@ -244,7 +246,7 @@ export class Viewmodel {
 	// over the finished frame: the gun where it is held, each of its parts where it is on it (missing ones as they were made), and a
 	//		glow ([r, g, b, how strong]: see Viewmodel at the top)
 	draw(gun, parts, glow = [0, 0, 0, 0]) {
-		const projection = mat4.perspective(transformations.baseVerticalViewAngle, canvas.width / canvas.height, 0.01, 10);
+		const projection = transformations.jittered(mat4.perspective(transformations.baseVerticalViewAngle, drawn.width / drawn.height, 0.01, 10));
 		const light = lightNow();
 		const view = transformations.getViewMatrix();
 		const L = [0, 1, 2].map((k) => view[k] * light.direction[0] + view[4 + k] * light.direction[1] + view[8 + k] * light.direction[2]);
@@ -258,7 +260,7 @@ export class Viewmodel {
 		device.queue.writeBuffer(this.uniforms, 0, u);
 		const encoder = device.createCommandEncoder({ label: this.label });
 		const pass = encoder.beginRenderPass({
-			colorAttachments: [{ view: context.getCurrentTexture().createView(), loadOp: "load", storeOp: "store" }],
+			colorAttachments: [{ view: frameTexture().createView(), loadOp: "load", storeOp: "store" }, { view: temporalAA.motionView(), loadOp: "load", storeOp: "store" }],
 			depthStencilAttachment: { view: depth.createView(), depthClearValue: 1.0, depthLoadOp: 'clear', depthStoreOp: 'discard' },
 			timestampWrites: profiler.timestamps(this.label, 'vf_viewmodel'),
 		});

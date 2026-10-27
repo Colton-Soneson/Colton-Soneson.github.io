@@ -4,7 +4,7 @@ import * as scene from './scene.js';
 import * as water from './water.js';	//for water options
 import * as grass from './computeGrass.js'
 import * as profiler from './profiler.js';	//for the Performance window
-import { device, canvas, gpuInfo, gpuIsFallback, onRenderResize } from './deviceSelection.js';
+import { device, canvas, gpuInfo, gpuIsFallback, onRenderResize, drawn } from './deviceSelection.js';
 import { RESOLUTIONS, dynamicResolution } from './display.js';
 import { PRESETS, PRESET_NAMES, PresetCheck, detectStartingPreset } from './graphicsPresets.js';
 import { reversedDepth, rememberDepthChoice } from './depthMode.js';
@@ -415,7 +415,7 @@ screenFolder.add(imguiParams, 'ssrDistance', 100, 6000, 50).name('Reflection Dis
 screenFolder.add(imguiParams, 'displayScreenShading').name('Show Shading Only');
 
 const displayFolder = gui.addFolder('Display');	//see smaa.js, fxaa.js and textureFiltering.js
-displayFolder.add(imguiParams, 'antiAliasing', { 'SMAA': 'smaa', 'FXAA': 'fxaa', 'off': 'off' }).name('Anti-Aliasing');
+displayFolder.add(imguiParams, 'antiAliasing', { 'SMAA': 'smaa', 'FXAA': 'fxaa', 'TAA': 'taa', 'TAA + FXAA': 'taa+fxaa', 'FSR 3 Native AA': 'fsr-native', 'FSR 3 Quality': 'fsr-quality', 'FSR 3 Balanced': 'fsr-balanced', 'FSR 3 Performance': 'fsr-performance', 'off': 'off' }).name('Anti-Aliasing');
 // (the depth buffer is made as the page loads: a change is remembered, and is how it is the next time: depthMode.js)
 displayFolder.add(imguiParams, 'reversedDepth').name(`Reversed-Z Depth (${reversedDepth ? 'on' : 'off'} now; on reload)`).onChange((on) => rememberDepthChoice(on));
 displayFolder.add(imguiParams, 'fxaaSubpixel', 0, 1, 0.05).name('FXAA Softening');
@@ -687,7 +687,9 @@ export function updateGraphicsPresets() {
 			: presetCheck.state == 'settling' ? 'settling' + fps
 			: 'measuring' + fps;
 		statusController.updateDisplay();
-		presetState.drawnAt = canvas.width + ' x ' + canvas.height + (settings.dynamicResolution ? ' (' + Math.round(dynamicResolution.scale * 100) + '%)' : '');
+		//		(FSR's upscaling: drawn at less, and the canvas's size made from it)
+		const upscaled = drawn.width != canvas.width || drawn.height != canvas.height ? ' -> ' + canvas.width + ' x ' + canvas.height : '';
+		presetState.drawnAt = drawn.width + ' x ' + drawn.height + upscaled + (settings.dynamicResolution ? ' (' + Math.round(dynamicResolution.scale * 100) + '%)' : '');
 		drawnAtController.updateDisplay();
 		presetController.updateDisplay();
 		overrideController.updateDisplay();

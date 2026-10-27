@@ -1,4 +1,5 @@
 import {device} from './deviceSelection.js'
+import { drawn } from './deviceSelection.js'
 import {canvas} from './deviceSelection.js'
 import {onRenderResize} from './deviceSelection.js'
 import * as profiler from './profiler.js'
@@ -31,7 +32,7 @@ function makeScreenShadowTexture() {
 	if (screenShadowTexture) screenShadowTexture.destroy();
 	screenShadowTexture = device.createTexture({
 		label: "screen space shadow",
-		size: [canvas.width, canvas.height],
+		size: [drawn.width, drawn.height],
 		format: 'r32float',
 		usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
 	});
@@ -237,7 +238,7 @@ export function screenShadowPass(aEncoder, depthTexture, lightDirection) {
 
 	const length = Math.hypot(lightDirection[0], lightDirection[1], lightDirection[2]);
 	const lightProjection = transform(transformations.getViewProj(), [lightDirection[0] / length, lightDirection[1] / length, lightDirection[2] / length, 0]);
-	const list = buildDispatchList(lightProjection, [canvas.width, canvas.height]);
+	const list = buildDispatchList(lightProjection, [drawn.width, drawn.height]);
 
 	list.dispatches.slice(0, MAX_DISPATCHES).forEach((disp, i) => {
 		const block = new ArrayBuffer(48);
@@ -245,8 +246,8 @@ export function screenShadowPass(aEncoder, depthTexture, lightDirection) {
 		floats.set(list.lightCoordinate, 0);
 		ints[4] = disp.waveOffset[0];
 		ints[5] = disp.waveOffset[1];
-		floats[6] = canvas.width;
-		floats[7] = canvas.height;
+		floats[6] = drawn.width;
+		floats[7] = drawn.height;
 		floats[8] = settings.screenShadowThickness;
 		floats[9] = settings.screenShadowThickness * 4;		// the edge threshold goes with the thickness (0.02 at the suggested 0.005)
 		floats[10] = settings.screenShadowContrast;

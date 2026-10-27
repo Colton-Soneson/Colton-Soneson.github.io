@@ -1,4 +1,5 @@
 import {device} from './deviceSelection.js'
+import { drawn } from './deviceSelection.js'
 import {canvas} from './deviceSelection.js'
 import {onRenderResize} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
@@ -30,7 +31,7 @@ const fxaaUniformBuffer = device.createBuffer({
 // the copy of the frame the shader reads. At the canvas's size: it and the bind group are made again when that changes (see display.js)
 const makeFrameCopy = () => device.createTexture({
 	label: "fxaa copy of the frame",
-	size: [canvas.width, canvas.height],
+	size: [drawn.width, drawn.height],
 	format: canvasFormat,
 	usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
 });
@@ -88,14 +89,14 @@ onRenderResize(() => {
 
 export function fxaaPass(aEncoder, canvasTexture) {
 
-	if (settings.antiAliasing != "fxaa") {
+	if (settings.antiAliasing != "fxaa" && settings.antiAliasing != "taa+fxaa") {
 		return;
 	}
 
-	const uniforms = new Float32Array([1 / canvas.width, 1 / canvas.height, settings.fxaaSubpixel, settings.fxaaEdgeThreshold]);
+	const uniforms = new Float32Array([1 / drawn.width, 1 / drawn.height, settings.fxaaSubpixel, settings.fxaaEdgeThreshold]);
 	device.queue.writeBuffer(fxaaUniformBuffer, 0, uniforms.buffer, uniforms.byteOffset, uniforms.byteLength);
 
-	aEncoder.copyTextureToTexture({ texture: canvasTexture }, { texture: frameCopyTexture }, [canvas.width, canvas.height]);
+	aEncoder.copyTextureToTexture({ texture: canvasTexture }, { texture: frameCopyTexture }, [drawn.width, drawn.height]);
 
 	const pass = aEncoder.beginRenderPass({
 		colorAttachments: [{

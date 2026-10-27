@@ -1,5 +1,6 @@
 import { DEPTH_FORMAT, depthTest, DEPTH_CLEAR } from './depthMode.js'
 import {device} from './deviceSelection.js'
+import { frameTexture } from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvas} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
@@ -370,7 +371,7 @@ export function atmospherePass(mainpassDepthTexture)
 	// sky quad
     const renderPass = encoder.beginRenderPass({
 		colorAttachments: [{
-			view: context.getCurrentTexture().createView(),
+			view: frameTexture().createView(),
 			clearValue: { r: 0, g: 0, b: 0, a: 1 },
 			loadOp:  'load',
 			storeOp: 'store',

@@ -1,5 +1,6 @@
 import { DEPTH_FORMAT, depthTest, DEPTH_CLEAR } from './depthMode.js'
 import {device} from './deviceSelection.js'
+import { frameTexture } from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
 import * as profiler from './profiler.js'
@@ -181,7 +182,7 @@ export function smokePass(mainpassDepthTexture) {
 	}
 	const encoder = device.createCommandEncoder();
 	const pass = encoder.beginRenderPass({
-		colorAttachments: [{ view: context.getCurrentTexture().createView(), loadOp: "load", storeOp: "store" }],
+		colorAttachments: [{ view: frameTexture().createView(), loadOp: "load", storeOp: "store" }],
 		depthStencilAttachment: { view: mainpassDepthTexture.createView(), depthLoadOp: 'load', depthStoreOp: 'store' },
 		timestampWrites: profiler.timestamps('Smoke', 'vf_smoke'),
 	});

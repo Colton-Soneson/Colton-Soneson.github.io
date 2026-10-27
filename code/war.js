@@ -20,8 +20,9 @@ import * as npcShips from './npcShips.js'
 						for its schooners; up again a minute after they are lost
 			horsemen	npcRiders.js (addWarRider): out of their own town's inn, after the other's townsfolk; back on a new horse at the
 						inn after they are down, to ride over again
-			schooners	npcShips.js (addWarShip): out of their own town's dock, shelling the other's houses; the next sails 5 seconds
-						after one is lost. None for a side whose town has no dock, or no way by sea to the other's (npcShips.warSeaWay):
+			schooners	npcShips.js (addWarShip): the first guards its own port (lying off its dock, after the other side's ships that
+						come near), the rest out of their own town's dock, shelling the other's houses, some of them round by a flank;
+						the next sails 5 seconds after one is lost, to the same task. None for a side whose town has no dock, or no way by sea to the other's (npcShips.warSeaWay):
 						it has FORCES.noSea more planes instead, for the other's houses, and it is said as the war begins
 		THE TOWNSFOLK are on their own town's side. They are not killed by a round of their own side's townsfolk, but by anything else of
 			FOLK_HEALTH (a hit in the chest of FOLK_HARM, times the round's), a shell, a bomb; killed, they do not come back until it is over.
@@ -222,7 +223,7 @@ function startWar() {
 		FORCES.planes.forEach((task, k) => npcPlanes.addWarFlight(s.side, s.town, enemy, task, k));
 		for (let k = 0; k < FORCES.riders; k++) npcRiders.addWarRider(s.side, s.town, enemy, k);
 		// (schooners only with a dock, and a way by sea from it to the other town: otherwise they would only run aground)
-		if (npcShips.warSeaWay(s.town, enemy)) for (let k = 0; k < FORCES.ships; k++) npcShips.addWarShip(s.town, s.side);
+		if (npcShips.warSeaWay(s.town, enemy)) for (let k = 0; k < FORCES.ships; k++) npcShips.addWarShip(s.town, s.side, k == 0);
 		else {
 			// (and in their place more planes, at the other town's houses)
 			for (let k = 0; k < FORCES.noSea; k++) npcPlanes.addWarFlight(s.side, s.town, enemy, 'village', FORCES.planes.length + k);

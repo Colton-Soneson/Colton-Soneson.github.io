@@ -1,3 +1,4 @@
+import { motionShapes } from './motionShapes.js';
 import { moonShapes } from './f_moon.js';
 import { skyLookupShapes } from './vfc_atmosphere.js';
 import { MAX_GROUPS, MAX_ROPES, MAX_PIECES, MAX_PARTS } from '../../code/vessels.js';
@@ -37,6 +38,8 @@ export const vf_boat =
 		ropes : array<vec4f, ${MAX_ROPES * 2}>,		// each: one end (xyz, w: sag), the other end
 		falls : array<mat4x4f, ${MAX_PIECES}>,		// each piece that falls: where it has fallen to, on the boat
 		parts : array<mat4x4f, ${MAX_PARTS}>,		// each part of its guns: where it is turned to, on the boat (shipGuns.js)
+		motionNow : mat4x4f,		// THE MOTION (temporalAA.js): this frame's view projection without the jitter
+		motionPrev : mat4x4f,		//		and the last frame's, after the boat's own move back to where it was then
 	}
 	@group(0) @binding(0) var<uniform> BU: BoatUniforms;
 
@@ -69,6 +72,8 @@ export const vf_boat =
 		@location(1) onBoat: vec4f,		// xyz: where on the mesh as it was made, w: the material
 		@location(2) onSail: vec2f,
 		@location(3) @interpolate(flat) control: f32,
+		@location(14) nowClip: vec4f,
+		@location(15) prevClip: vec4f,
 	};
 
 	// turned about the axis (length 1) by angle, the right hand way (Rodrigues)
@@ -152,6 +157,8 @@ export const vf_boat =
 		let world = (BU.model * vec4f(p, 1.0)).xyz;
 		var output: VertexOutput;
 		output.pos = BU.viewProjectionMatrix * vec4f(world, 1.0);
+		output.nowClip = BU.motionNow * vec4f(world, 1.0);
+		output.prevClip = BU.motionPrev * vec4f(world, 1.0);
 		output.worldPos = world;
 		output.onBoat = vec4f(input.shape.xyz, f32(material));
 		output.onSail = input.onSail.xy;
@@ -172,6 +179,8 @@ export const vf_boat =
 		@location(1) onBoat: vec4f,
 		@location(2) onSail: vec2f,
 		@location(3) @interpolate(flat) control: f32,
+		@location(14) nowClip: vec4f,
+		@location(15) prevClip: vec4f,
 	};
 
 	// the hull's paint at a place on it: the bottom, the band along it (with its gunports), above it. Seen from inside, the bulwarks
@@ -191,8 +200,7 @@ export const vf_boat =
 		return BU.paintTop.rgb;
 	}
 
-	@fragment
-	fn fragmentMain(input: FragInput) -> @location(0) vec4f {
+	fn shade(input: FragInput) -> vec4f {
 		let toBoat = input.worldPos - Lights.camPos.xyz;
 		let away = length(toBoat);
 		var N = normalize(cross(dpdx(input.worldPos), dpdy(input.worldPos)));
@@ -277,5 +285,12 @@ export const vf_boat =
 			color = mix(color, horizonColor, fog);
 		}
 		return vec4f(color, 1.0);
+	}
+
+	// the colour, and THE MOTION (motionShapes.js: temporalAA.js)
+	${motionShapes}
+	@fragment
+	fn fragmentMain(input: FragInput) -> FrameOut {
+		return FrameOut(shade(input), motionOf(input.nowClip, input.prevClip));
 	}
 `;

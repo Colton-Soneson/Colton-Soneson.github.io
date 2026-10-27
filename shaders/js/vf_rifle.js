@@ -1,3 +1,4 @@
+import { motionShapes } from './motionShapes.js';
 /*
 	The rifle in the hunter's hands (see rifle.js for the rifle itself, its triangles, and what it does).
 
@@ -77,8 +78,7 @@ export const vf_rifle =
 		return output;
 	}
 
-	@fragment
-	fn fragmentMain(input: VertexOutput) -> @location(0) vec4f {
+	fn shade(input: VertexOutput) -> vec4f {
 		var N = normalize(cross(dpdx(input.viewPos), dpdy(input.viewPos)));
 		if (dot(N, input.viewPos) > 0.0) {
 			N = -N;
@@ -112,5 +112,12 @@ export const vf_rifle =
 			color = albedo * (RU.ambient.x + RU.light.w * diffuse) * 0.8 + albedo * shine * RU.light.w;
 		}
 		return vec4f(color, 1.0);
+	}
+
+	// the colour, and THE MOTION (motionShapes.js: temporalAA.js)
+	${motionShapes}
+	@fragment
+	fn fragmentMain(input: VertexOutput) -> FrameOut {
+		return FrameOut(shade(input), vec4f(0.0, 0.0, 0.0, 1.0));
 	}
 `;

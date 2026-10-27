@@ -1,4 +1,5 @@
 import {device} from './deviceSelection.js'
+import { frameTexture } from './deviceSelection.js'
 import { DEPTH_FORMAT, depthTest } from './depthMode.js'
 import {context} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
@@ -1487,7 +1488,7 @@ export function forestPass(aEncoder, mainpassDepthTexture) {
 	//(one pass, or while the Performance window is timing, one for each of the three shaders: see renderPassParts in profiler.js)
 	const parts = profiler.renderPassParts(aEncoder, {
 		colorAttachments: [{
-		view: context.getCurrentTexture().createView(),
+		view: frameTexture().createView(),
 		loadOp: "load",
 		clearValue: { r: 0.0, g: 0.0, b: 0.0, a: 0.0 },
 		storeOp: "store",

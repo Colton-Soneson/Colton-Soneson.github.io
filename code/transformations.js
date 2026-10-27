@@ -1,6 +1,7 @@
 import { mat4, vec3 } from 'https://wgpu-matrix.org/dist/3.x/wgpu-matrix.module.js';
 
 import {canvas} from './deviceSelection.js'
+import { drawn } from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {onRenderResize} from './deviceSelection.js'
 
@@ -17,15 +18,38 @@ const VIEW_ANGLE = (2 * Math.PI) / 5;
 export let verticalViewAngle = VIEW_ANGLE;
 export let baseVerticalViewAngle = VIEW_ANGLE;
 let zoom = 1;
+/*
+	THE JITTER (temporalAA.js): with a temporal anti-aliasing each frame is drawn shifted by a fraction of a pixel (jitter: pixels
+	across and down), a different way each frame, so that the frames together see between the pixels. projectionMatrix has it;
+	unjitteredProjection does not (where things are, for the motion between frames)
+*/
+let jitter = [0, 0];
+export let unjitteredProjection = null;
+export function setJitter(x, y) {
+	if (x === jitter[0] && y === jitter[1]) return;
+	jitter = [x, y];
+	projectionMatrix = makeProjection();
+}
+export const jitterNow = () => jitter;
+// a projection shifted by the jitter (the guns in the hands have their own: rifle.js, viewmodel.js)
+//		(the x and y of the clip space are moved by the depth's share: so after the divide by w, by the same amount everywhere)
+export function jittered(projection) {
+	if (!jitter[0] && !jitter[1]) return projection;
+	const p = mat4.clone(projection);
+	p[8] -= 2 * jitter[0] / drawn.width;
+	p[9] += 2 * jitter[1] / drawn.height;
+	return p;
+}
 function makeProjection() {
-	const aspect = canvas.width / canvas.height;
+	const aspect = drawn.width / drawn.height;
 	baseVerticalViewAngle = aspect >= 1 ? VIEW_ANGLE : 2 * Math.atan(Math.tan(VIEW_ANGLE / 2) / aspect);
 	verticalViewAngle = 2 * Math.atan(Math.tan(baseVerticalViewAngle / 2) / zoom);
 	const projection = mat4.perspective(verticalViewAngle, aspect, seatedNear ?? settings.camNearPlane, settings.camFarPlane);
 	// reversed-Z (depthMode.js): its depth turned round, 1 at the near plane and 0 at the far (the row that makes the depth taken
 	//		from the row that makes w: the depth is w less what it was, over w)
 	if (reversedDepth) for (let c = 0; c < 4; c++) projection[c * 4 + 2] = projection[c * 4 + 3] - projection[c * 4 + 2];
-	return projection;
+	unjitteredProjection = projection;
+	return jittered(projection);
 }
 // in a cockpit the panel is close to the eyes: the near plane closer while seated (plane.js), world units, or null for the setting's
 let seatedNear = null;
@@ -46,7 +70,7 @@ export const zoomNow = () => zoom;
 
 // how big one pixel is, as distance across per distance away from the camera (for the shaders that fade detail out at pixel size)
 export function pixelSize() {
-	return 2 * Math.tan(verticalViewAngle / 2) / canvas.height;
+	return 2 * Math.tan(verticalViewAngle / 2) / drawn.height;
 }
 
 // Fly camera direction. Yaw is the compass turn (0 looks down -z, a positive turn swings right, towards +x),
@@ -89,6 +113,10 @@ export function getViewMatrix() {
 
 export function getViewProj() {
 	return mat4.mul(projectionMatrix, getViewMatrix());
+}
+// without THE JITTER
+export function getViewProjUnjittered() {
+	return mat4.mul(unjitteredProjection, getViewMatrix());
 }
 
 // The 6 planes that box in what the camera sees, each as [x, y, z, d] with the normal pointing inwards. Read straight off the

@@ -1,3 +1,4 @@
+import { motionShapes } from './motionShapes.js';
 import { moonShapes } from './f_moon.js';
 import { skyLookupShapes } from './vfc_atmosphere.js';
 
@@ -29,6 +30,8 @@ export const vf_horse =
 		viewProjectionMatrix : mat4x4f,
 		cameraPosition : vec4f,		// xyz, w: seconds
 		look : vec4f,				// x: horizon fog distance, y: 1.0 if the atmosphere is on, z: the horse the crosshair is on (-1), w: which of it (0 saddle, 1 bags)
+		motionNow : mat4x4f,		// THE MOTION (temporalAA.js): this frame's view projection without the jitter
+		motionPrev : mat4x4f,		//		and the last frame's (each horse's own move back: its more.zw)
 	}
 	@group(0) @binding(0) var<uniform> HU: HorseUniforms;
 
@@ -54,7 +57,7 @@ export const vf_horse =
 		@location(1) place: vec4f,		// this horse: xyz where its hooves stand, w: world units to the metre
 		@location(2) pose: vec4f,		// x: its heading (radians, round from +z towards +x), y: where it is in its stride (radians), z: how hard it is going (0 standing to 1 flat out), w: its gait (0 to 3)
 		@location(3) state: vec4f,		// x: the slope under it along its heading (radians, nose up), y: its coat (0 to 1), z: head down (0 to 1, grazing), w: its number (for the crosshair)
-		@location(4) more: vec4f,		// x: swimming (0 to 1), y: its own swish (seconds offset)
+		@location(4) more: vec4f,		// x: swimming (0 to 1), y: its own swish (seconds offset), zw: how far it went across since the frame before (THE MOTION)
 	};
 
 	struct VertexOutput {
@@ -62,6 +65,8 @@ export const vf_horse =
 		@location(0) worldPos: vec3f,
 		@location(1) onHorse: vec4f,		// xyz: where on the mesh as it was made, w: the part
 		@location(2) @interpolate(flat) coat: vec2f,	// x: the coat, y: lit by the crosshair (0, 1 saddle, 2 bags)
+		@location(14) nowClip: vec4f,
+		@location(15) prevClip: vec4f,
 	};
 
 	fn turnX(v: vec3f, angle: f32) -> vec3f { return vec3f(v.x, v.y * cos(angle) - v.z * sin(angle), v.y * sin(angle) + v.z * cos(angle)); }
@@ -152,6 +157,8 @@ export const vf_horse =
 
 		var output: VertexOutput;
 		output.pos = HU.viewProjectionMatrix * vec4f(position, 1.0);
+		output.nowClip = HU.motionNow * vec4f(position, 1.0);
+		output.prevClip = HU.motionPrev * vec4f(position - vec3f(input.more.z, 0.0, input.more.w), 1.0);
 		output.worldPos = position;
 		output.onHorse = vec4f(input.shape.xyz, f32(part));
 		var lit = 0.0;
@@ -173,6 +180,8 @@ export const vf_horse =
 		@location(0) worldPos: vec3f,
 		@location(1) onHorse: vec4f,
 		@location(2) @interpolate(flat) coat: vec2f,
+		@location(14) nowClip: vec4f,
+		@location(15) prevClip: vec4f,
 	};
 
 	// the coat's colour, its points (the mane, the tail, the lower legs) and how light its belly and muzzle are
@@ -187,8 +196,7 @@ export const vf_horse =
 		}
 	}
 
-	@fragment
-	fn fragmentMain(input: FragInput) -> @location(0) vec4f {
+	fn shade(input: FragInput) -> vec4f {
 		let toHorse = input.worldPos - Lights.camPos.xyz;
 		let away = length(toHorse);
 		var N = normalize(cross(dpdx(input.worldPos), dpdy(input.worldPos)));
@@ -253,5 +261,12 @@ export const vf_horse =
 			color = mix(color, horizonColor, fog);
 		}
 		return vec4f(color, 1.0);
+	}
+
+	// the colour, and THE MOTION (motionShapes.js: temporalAA.js)
+	${motionShapes}
+	@fragment
+	fn fragmentMain(input: FragInput) -> FrameOut {
+		return FrameOut(shade(input), motionOf(input.nowClip, input.prevClip));
 	}
 `;

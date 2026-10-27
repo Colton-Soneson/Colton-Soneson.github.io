@@ -1,5 +1,6 @@
 import { DEPTH_FORMAT, depthTest, DEPTH_CLEAR } from './depthMode.js'
 import {device} from './deviceSelection.js'
+import { frameTexture } from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvas} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
@@ -285,7 +286,7 @@ export function lightningPass(mainpassDepthTexture) {
 	const encoder = device.createCommandEncoder();
 	const pass = encoder.beginRenderPass({
 		colorAttachments: [{
-			view: context.getCurrentTexture().createView(),
+			view: frameTexture().createView(),
 			loadOp: "load",
 			storeOp: "store",
 		}],

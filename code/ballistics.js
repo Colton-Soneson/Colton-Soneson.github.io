@@ -1,5 +1,6 @@
 import { DEPTH_FORMAT, depthTest, DEPTH_CLEAR } from './depthMode.js'
 import {device} from './deviceSelection.js'
+import { frameTexture } from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
 import * as profiler from './profiler.js'
@@ -26,8 +27,8 @@ import * as boulders from './boulders.js'
 		the air		drag, slowing it by its drag times the square of its speed: dv/dt = -drag * v^2. That is the same as losing
 					the same share of its speed for every metre it goes, so at 400 metres the Mosin's has lost about 30% (820 down to
 					about 570 metres a second, near enough what the real round does)
-	It is moved on in steps of STEP_SECONDS (a little over 3 metres at the muzzle), each step a straight line, and that line is
-	tested against everything it could hit. The nearest thing it crosses stops it:
+	It is moved on in steps of STEP_SECONDS (about 7 metres at the muzzle), each step a straight line, and that line is
+	tested against everything it could hit (all along it: a longer step misses nothing but the curve of its fall within it). The nearest thing it crosses stops it:
 		the ground		read along the line every metre or so (land.heightAt)
 		the water		its surface, where the ground under it is lower: flat, but round a boat as high as the waves it rides are there
 					(setSeaHeight: boat.js), or a hull down in a trough would be under the flat sea and could not be hit
@@ -35,6 +36,9 @@ import * as boulders from './boulders.js'
 		boulders		boxes (boulders.bouldersNear), the same as the walker bumps into
 		anything else	that has asked to be shot at (addTarget: the animals, the other players)
 	A bullet that has hit nothing after MAX_SECONDS, or gone below the world, is dropped.
+	THE BROAD PHASE: a target that says where its things are (addTarget's bounds: asked once a frame, a sphere round each of them) is only
+	asked about a step that passes through one of those spheres. They are put in a grid of GRID metres a cell each frame, and a step looks
+	in the cells it crosses. A target that does not say is asked about every step.
 	In a game with others (net.js) their shots are flown here too (remote), for their trails: they stop at what they hit,
 	but do nothing to it. What they hit is theirs to say. The shots fired here are passed on (onLocalFire).
 
@@ -59,7 +63,8 @@ export const ROUNDS = {
 	'bomb': { velocity: 0, drag: 0.0001, damage: 1, burst: true, life: 60, carried: true },
 };
 const GRAVITY = 9.81;
-const STEP_SECONDS = 1 / 240;
+const STEP_SECONDS = 1 / 120;
+const GRID = 40;					// metres a cell of THE BROAD PHASE's grid
 // an NPC's round (not a shell or a bomb): each step tested against everything along its whole length, so a longer step misses nothing; the
 //		ground sampled NPC_SAMPLE metres apart (instead of 1.2), and gone after NPC_LIFE seconds (far out of reach of anything by then)
 const NPC_STEP = 1 / 60, NPC_SAMPLE = 2.5, NPC_LIFE = 2.5;
@@ -80,10 +85,11 @@ const fireListeners = [];	// see onLocalFire
 	Something else that can be hit. test(ax, ay, az, bx, by, bz, bullet) is asked about each step of a bullet's flight: the straight line
 	from a to b. It answers null, or { t, hit } for the first thing on that line it is hit by: t from 0 at a to 1 at b, and hit(
 	velocity) what to do about it (called if it is the nearest thing the line crosses; for someone else's round too if it says remoteToo).
-	The animals add themselves
+	The animals add themselves. bounds(): where its things are now (see THE BROAD PHASE at the top), [x, y, z, radius, x, y, z, radius,
+	...] (world units), each sphere round all of one of them that can be hit; none: asked about every step
 */
-export function addTarget(test) {
-	targets.push(test);
+export function addTarget(test, bounds = null) {
+	targets.push({ test, bounds });
 }
 
 // the sea's height somewhere: fn(x, z) world units, or null where it is flat (boat.js)
@@ -182,6 +188,45 @@ function crossBox(ax, ay, az, bx, by, bz, min, max) {
 	return near;
 }
 
+// THE BROAD PHASE (see the top): the targets' spheres in the grid, for this frame. Each cell: [target, x, y, z, radius, target, ...]
+const grid = new Map(), nearStamp = [];
+let stamp = 0;
+const cellKey = (i, j) => (i + 32768) * 65536 + (j + 32768);
+function buildGrid() {
+	grid.clear();
+	const C = GRID * settings.forestUnitsPerMetre;
+	targets.forEach((T, k) => {
+		if (!T.bounds) return;
+		const list = T.bounds();
+		for (let n = 0; n < list.length; n += 4) {
+			const x = list[n], y = list[n + 1], z = list[n + 2], r = list[n + 3];
+			for (let i = Math.floor((x - r) / C); i <= Math.floor((x + r) / C); i++) for (let j = Math.floor((z - r) / C); j <= Math.floor((z + r) / C); j++) {
+				const key = cellKey(i, j);
+				let cell = grid.get(key);
+				if (!cell) grid.set(key, cell = []);
+				cell.push(k, x, y, z, r);
+			}
+		}
+	});
+}
+// the targets with something the step from a to b passes through: nearStamp[k] == stamp
+function markNear(ax, ay, az, bx, by, bz) {
+	stamp++;
+	const C = GRID * settings.forestUnitsPerMetre, dx = bx - ax, dy = by - ay, dz = bz - az, L = dx * dx + dy * dy + dz * dz;
+	for (let i = Math.floor(Math.min(ax, bx) / C); i <= Math.floor(Math.max(ax, bx) / C); i++) for (let j = Math.floor(Math.min(az, bz) / C); j <= Math.floor(Math.max(az, bz) / C); j++) {
+		const cell = grid.get(cellKey(i, j));
+		if (!cell) continue;
+		for (let n = 0; n < cell.length; n += 5) {
+			if (nearStamp[cell[n]] === stamp) continue;
+			// (the nearest point of the step to the sphere's middle, inside it)
+			const cx = cell[n + 1], cy = cell[n + 2], cz = cell[n + 3], r = cell[n + 4];
+			const t = L > 1e-12 ? Math.min(Math.max(((cx - ax) * dx + (cy - ay) * dy + (cz - az) * dz) / L, 0), 1) : 0;
+			const ex = ax + dx * t - cx, ey = ay + dy * t - cy, ez = az + dz * t - cz;
+			if (ex * ex + ey * ey + ez * ez <= r * r) nearStamp[cell[n]] = stamp;
+		}
+	}
+}
+
 // the nearest thing the line from a to b crosses: { t, what, hit } or null
 function firstHit(ax, ay, az, bx, by, bz, bullet) {
 	const land = terrain.land;
@@ -216,9 +261,12 @@ function firstHit(ax, ay, az, bx, by, bz, bullet) {
 	if (settings.enableBoulders) {
 		boulders.bouldersNear(mx, mz, reach, (x, z, half, bottom, top) => take(crossBox(ax, ay, az, bx, by, bz, [x - half, bottom, z - half], [x + half, top, z + half]), 'boulder'));
 	}
-	// and anything else that can be shot
-	for (const test of targets) {
-		const found = test(ax, ay, az, bx, by, bz, bullet);
+	// and anything else that can be shot (that has anything on the way, THE BROAD PHASE)
+	markNear(ax, ay, az, bx, by, bz);
+	for (let k = 0; k < targets.length; k++) {
+		const T = targets[k];
+		if (T.bounds && nearStamp[k] !== stamp) continue;
+		const found = T.test(ax, ay, az, bx, by, bz, bullet);
 		if (found) take(found.t, found.what ?? 'target', found.hit, found.remoteToo);
 	}
 	return best;
@@ -244,6 +292,7 @@ function moveBullets(elapsed) {
 	if (!terrain.land) return;
 	const metre = settings.forestUnitsPerMetre;
 	const trailStep = TRAIL_SPACING * metre;
+	if (bullets.length) buildGrid();
 	for (const bullet of bullets) {
 		let left = elapsed;
 		while (left > 1e-6 && !bullet.gone) {
@@ -342,7 +391,7 @@ export function trailPass(mainpassDepthTexture) {
 
 	const encoder = device.createCommandEncoder({ label: "bullet trails" });
 	const pass = encoder.beginRenderPass({
-		colorAttachments: [{ view: context.getCurrentTexture().createView(), loadOp: "load", storeOp: "store" }],
+		colorAttachments: [{ view: frameTexture().createView(), loadOp: "load", storeOp: "store" }],
 		depthStencilAttachment: { view: mainpassDepthTexture.createView(), depthLoadOp: 'load', depthStoreOp: 'store' },
 		timestampWrites: profiler.timestamps('Bullet Trails', 'vf_trail'),
 	});
@@ -386,3 +435,5 @@ export function crossAnimals(ax, ay, az, bx, by, bz, animals, spheresOf, around)
 	}
 	return best;
 }
+// for testing: the targets ({ test, bounds })
+export const targetsForTest = targets;

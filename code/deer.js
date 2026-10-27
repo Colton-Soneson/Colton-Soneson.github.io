@@ -1,5 +1,6 @@
 import { DEPTH_FORMAT, depthTest, DEPTH_CLEAR } from './depthMode.js'
 import {device} from './deviceSelection.js'
+import { frameTexture } from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
 import * as profiler from './profiler.js'
@@ -207,6 +208,12 @@ ballistics.addTarget((ax, ay, az, bx, by, bz) => {
 	const living = groups.flatMap((group) => group.deer.map((deer) => ({ deer, group })));
 	const found = ballistics.crossAnimals(ax, ay, az, bx, by, bz, living, (one) => deerSpheres(one.deer), (one) => deerAround(one.deer));
 	return found && { t: found.t, what: 'deer', hit: (velocity) => killDeer(found.animal.deer, found.animal.group, velocity) };
+}, () => {
+	const list = [];
+	if (!settings.enableDeer || hidden()) return list;
+	if (followed) { for (const one of followed) if (one.alive) list.push(...deerAround(one)); }
+	else for (const group of groups) for (const deer of group.deer) list.push(...deerAround(deer));
+	return list;
 });
 
 // a shell bursting (shipGuns.js) at (world units), fired here: every deer within radius (world units) of it dead (a joiner says so to
@@ -657,7 +664,7 @@ export function deerPass(aEncoder, mainpassDepthTexture) {
 	device.queue.writeBuffer(deerUniformBuffer, 0, result.buffer, result.byteOffset, result.byteLength);
 
 	const pass = aEncoder.beginRenderPass({
-		colorAttachments: [{ view: context.getCurrentTexture().createView(), loadOp: "load", storeOp: "store" }],
+		colorAttachments: [{ view: frameTexture().createView(), loadOp: "load", storeOp: "store" }],
 		depthStencilAttachment: { view: mainpassDepthTexture.createView(), depthLoadOp: 'load', depthStoreOp: 'store' },
 		timestampWrites: profiler.timestamps('Deer', 'vf_deer'),
 	});

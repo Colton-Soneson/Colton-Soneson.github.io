@@ -1,5 +1,6 @@
 import { DEPTH_FORMAT, depthTest, DEPTH_CLEAR } from './depthMode.js'
 import {device} from './deviceSelection.js'
+import { frameTexture, drawn } from './deviceSelection.js'
 import {canvas} from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
@@ -10,6 +11,8 @@ import { mat4, vec3 } from 'https://wgpu-matrix.org/dist/3.x/wgpu-matrix.module.
 
 import {screenEffectsPass} from './screenEffects.js'
 import {fxaaPass} from './fxaa.js'
+import * as temporalAA from './temporalAA.js'
+import './fsr3.js'	//(FSR 3: temporalAA.js runs it)
 import {smaaPass} from './smaa.js'
 import * as textureFiltering from './textureFiltering.js'
 import {postEffectPassTextureDebug_DEPTH32FLOAT} from './debugTextureDisplay.js'
@@ -153,7 +156,7 @@ export const uniformBufferLights = device.createBuffer({
 
 // (made again when the size the frame is drawn at changes, see display.js)
 const makeDepthTexture = () => device.createTexture({
-  size: [canvas.width, canvas.height],
+  size: [drawn.width, drawn.height],
   format: DEPTH_FORMAT,
   usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,	//read back by the screen space effects, and copied for the water's reflections
 });
@@ -372,10 +375,13 @@ export function updateRotatingCubePass() {
 	userInterface.refreshControlsUI();
 
 	// the window, the Resolution setting or dynamic resolution changed size: before anything is drawn, everything drawn at the canvas's size is made again (see display.js)
+	//		(the canvas at the Resolution setting's size; drawn at that too, or less for FSR's upscaling: temporalAA.js)
 	const newSize = settledRenderSize(canvas, settings.renderResolution * dynamicResolution.scale, performance.now());
-	if (newSize) {
-		setRenderSize(newSize[0], newSize[1]);
+	const outSize = newSize ?? [canvas.width, canvas.height], insideSize = temporalAA.drawnFor(outSize);
+	if (newSize || insideSize[0] !== drawn.width || insideSize[1] !== drawn.height) {
+		setRenderSize(insideSize[0], insideSize[1], outSize[0], outSize[1]);
 	}
+	temporalAA.beginFrame();	//(a temporal anti-aliasing: the frame drawn into a texture of its own, and this frame's jitter)
 
 	// fly camera: after the controls have written their values (so the Pos sliders still work), before anything reads the camera
 	cameraControls.updateCamera();
@@ -442,6 +448,7 @@ export function updateRotatingCubePass() {
 	deer.deerUpdate();				//and the deer
 	horde.hordeUpdate();			//and the horde, in the Horde game mode
 	lightning.lightningUpdate();	//a strike that is going on flickers and dies, and now and then a new one starts
+	temporalAA.cameraNow(encoder);	//(a temporal anti-aliasing: this frame's camera, and the motion cleared)
 	profiler.cpuMark('Cloud Map');
 	profiler.section('Cloud Map', () => clouds.cloudUpdate(encoder));	//the weather moves on, and the picture of the clouds from above is taken: their shadows are read from it all through the frame
 
@@ -525,7 +532,7 @@ export function updateRotatingCubePass() {
 	profiler.cpuMark('Main Pass');
 	const mainPassParts = profiler.section('Main Pass', () => profiler.renderPassParts(encoder, {
 		colorAttachments: [{
-		view: context.getCurrentTexture().createView(),
+		view: frameTexture().createView(),
 		loadOp: "clear",
 		clearValue: { r: 0.6, g: 0.6, b: 0.6, a: 1.0 },
 		storeOp: "store",
@@ -598,10 +605,10 @@ export function updateRotatingCubePass() {
 	//screen space shadows and ambient occlusion over everything solid, and the copies of the frame the water finds its reflections in.
 	//		Before the water and the sky are drawn
 	//the lamps of the towns (and the like) on everything round them: from the depth buffer, once everything solid is drawn (pointLights.js)
-	profiler.section('Point Lights', () => pointLights.pointLightPass(encoder, context.getCurrentTexture(), depthTexture));
+	profiler.section('Point Lights', () => pointLights.pointLightPass(encoder, frameTexture(), depthTexture));
 
 	profiler.cpuMark('Screen Space');
-	profiler.section('Screen Space', () => screenEffectsPass(encoder, context.getCurrentTexture(), depthTexture));
+	profiler.section('Screen Space', () => screenEffectsPass(encoder, frameTexture(), depthTexture));
 
 	device.queue.submit([encoder.finish()]);
 
@@ -625,7 +632,7 @@ export function updateRotatingCubePass() {
 
 	//the shafts of sun between the clouds, the flash of the lightning, and with the camera under the sea, the water it is looking through
 	profiler.cpuMark('Light Shafts, Spray, Rain');
-	profiler.section('Light Shafts', () => lightShafts.lightShaftPass(context.getCurrentTexture(), depthTexture));
+	profiler.section('Light Shafts', () => lightShafts.lightShaftPass(frameTexture(), depthTexture));
 
 	//spray off the waves and rain: see-through, so last, over everything that is behind them
 	profiler.section('Smoke', () => smoke.smokePass(depthTexture));		//(the smoke, the fire and the dust: smoke.js)
@@ -643,8 +650,10 @@ export function updateRotatingCubePass() {
 	profiler.cpuMark('Anti-Aliasing, Debug Views');
 	const encoderDebug = device.createCommandEncoder();
 
-	//anti-aliasing over the finished frame: whichever of the two the setting names. The debug views go on after it, and are left as they are
+	//anti-aliasing over the finished frame: whichever the setting names. The debug views go on after it, and are left as they are.
+	//		A temporal one (TAA, FSR: temporalAA.js) makes what goes on the canvas from the frame, drawn into a texture of its own
 	profiler.section('Anti-Aliasing', () => {
+		temporalAA.resolve(encoderDebug, depthTexture);
 		fxaaPass(encoderDebug, context.getCurrentTexture());
 		smaaPass(encoderDebug, context.getCurrentTexture());
 	});

@@ -37,6 +37,12 @@ import { VESSELS } from './vessels.js'
 		set when the wind lets them help, furled heading up into it), and lies off it, her broadside to a house of it still standing (npcs.war.houseFor), and
 		shells it; her lookouts shoot at the other side's planes. Lost, the next of hers sails WAR_SHIP seconds after, all of her crew with
 		her. While it is on, the dock town's own schooner is laid up.
+		THE PORT GUARD: the first of a side's (addWarShip: guard) does not go: she lies off her own town's dock (GUARD.off out past its end,
+		swung round it out of the way her side's others sail out by; within GUARD.hold of it), and the other side's on the water within GUARD.reach of there she fights as ATTACKED does (broadside).
+		THE FLANK: each of the others, as she sails, has a chance (FLANK.chance) of going the long way: the way found again with the water
+		within FLANK.lane of the straight way FLANK.dear times as dear (but near either end), so she goes round by another channel, or as
+		far off the straight way as the water lets her, and in on the town from one side (her station off it swung FLANK.turn round the
+		end of its dock). A way no longer than the straight one (FLANK.longer) is no flank: then the straight way.
 	THE CREW: shot dead, a man lies where he fell on her deck. Back RESPAWN_SECONDS later (npcs.js) at the end of the dock, where he
 		waits. Once all of them are dead, or she is shot to pieces (whoever is aboard is lost with her), a new schooner is put in beside
 		the end of the dock (moored, her bow out to sea with the wind on her beam if it can be), each of them aboard as he comes back, and
@@ -62,6 +68,9 @@ const NEW_SHIP = 8;
 const WAR_SHIP = 5;						// seconds after one of a side's is lost in THE WAR before the next sails
 const SHELL_REACH = 1500;				// metres her guns are laid out to
 const SEA_ROUTE = { cell: 40, off: 140, near: 60, ahead: 3 };
+const GUARD = { off: 320, hold: 120, reach: 1400, swing: [0, 1.1, -1.1] };	// THE PORT GUARD: metres out past her own dock's end (swung round it any of those radians), near enough there, and how far from there she goes after them
+const FLANK = { chance: 0.4, lane: 240, dear: 6, free: 450, turn: 0.9, longer: 1.08 };	// THE FLANK: a chance of it; metres either side of the straight way that are dear, how many times, metres from either end that are not;
+								//		radians her station is swung round; how much longer than the straight way it must be
 const ENGINE = { speed: 7, push: 0.6 };	// THE WAR: her auxiliary engine, metres a second it drives her at, and a second to it	// THE WAR's way by sea: metres a cell of its grid, how far off the end of the other town's dock she lies, near enough a point on it						// seconds after the last of them is gone (or she is) before the next is put in at the dock
 
 const metre = () => settings.forestUnitsPerMetre;
@@ -72,7 +81,7 @@ const halfWorld = () => settings.terrainWorldSize * 0.5 / metre();
 // a target in the air: in a vehicle (a plane), AIR.aloft metres or more over the land or the sea
 const aloft = (e) => !!e.vehicle && e.y - Math.max(terrain.land.heightAt(e.x, e.z), settings.waterWorldPosY) > AIR.aloft * metre();
 
-export const shipStats = { ships: 0, shells: 0, newShips: 0, tacks: 0, replaced: 0, lost: 0 };
+export const shipStats = { ships: 0, shells: 0, newShips: 0, tacks: 0, replaced: 0, lost: 0, flanks: 0 };
 
 // SAILING (see the top): shared with the dinghies
 //-------------------------------------------------
@@ -223,6 +232,7 @@ function launch(s, everyone = false) {
 	s.moored = null;
 	s.boat = b;
 	s.route = null;
+	if (s.war) s.war.flank = !s.war.guard && Math.random() < FLANK.chance ? (Math.random() < 0.5 ? -1 : 1) : 0;
 	s.lostAt = -1;
 	s.waiting = true;
 	s.fell.clear();
@@ -435,11 +445,12 @@ function stepShip(s, dt) {
 	}
 	// where to: at what she is after (on the land or the water), or round the patrol. In the war, by sea to the other town first
 	const at = b.frame.toWorld([0, 0, 0]);
+	if (s.war?.guard) { guardPort(s, b, at, dt, now); return; }
 	const enemy = quarry(s, at);
 	let wanted;
 	if (s.war && !s.route) {
 		// (on from the point of it nearest her: the first of it may be behind her, off the dock)
-		const points = seaRoute([at[0] / m, at[2] / m], warStation(s)) ?? [];
+		const points = warRoute(s, [at[0] / m, at[2] / m]);
 		let nearest = 0;
 		points.forEach((p, k) => { if (Math.hypot(p[0] - at[0] / m, p[1] - at[2] / m) < Math.hypot(points[nearest][0] - at[0] / m, points[nearest][1] - at[2] / m)) nearest = k; });
 		s.route = { points, at: Math.min(nearest + 1, Math.max(points.length - 1, 0)) };
@@ -463,14 +474,7 @@ function stepShip(s, dt) {
 		fight(s, enemy && enemy.d < SHELL_REACH * m ? enemy : null, dt);
 		return;
 	} else if (enemy) {
-		const toE = bearing(enemy.x - at[0], enemy.z - at[2]), range = enemy.d / m;
-		if (range > BROADSIDE[1]) wanted = toE;
-		else if (range < BROADSIDE[0]) wanted = toE + Math.PI + (wrap(courseOf(b) - toE - Math.PI) > 0 ? 0.6 : -0.6);
-		else {
-			// across them: whichever way round is nearer the way she is going
-			const a1 = toE + Math.PI / 2, a2 = toE - Math.PI / 2;
-			wanted = Math.abs(wrap(a1 - courseOf(b))) < Math.abs(wrap(a2 - courseOf(b))) ? a1 : a2;
-		}
+		wanted = broadsideCourse(b, enemy, at);
 	} else {
 		const wp = s.patrol[s.wp];
 		if (!wp) return;
@@ -485,6 +489,15 @@ function stepShip(s, dt) {
 	warpOff(s, b, dt);
 	trim(b, { furl: Math.abs(b.stats.apparentAngle ?? 0) > 1.3 ? [] : ['Topsail'] });
 	fight(s, enemy && enemy.d < SHELL_REACH * m ? enemy : null, dt);
+}
+// the course for a fight with enemy (see ATTACKED at the top): at them from far off, across them in BROADSIDE, away from them too close
+function broadsideCourse(b, enemy, at) {
+	const toE = bearing(enemy.x - at[0], enemy.z - at[2]), range = enemy.d / metre();
+	if (range > BROADSIDE[1]) return toE;
+	if (range < BROADSIDE[0]) return toE + Math.PI + (wrap(courseOf(b) - toE - Math.PI) > 0 ? 0.6 : -0.6);
+	// across them: whichever way round is nearer the way she is going
+	const a1 = toE + Math.PI / 2, a2 = toE - Math.PI / 2;
+	return Math.abs(wrap(a1 - courseOf(b))) < Math.abs(wrap(a2 - courseOf(b))) ? a1 : a2;
 }
 // the people on the dock (and the dead there): where they wait
 function placeDock(s) {
@@ -545,21 +558,25 @@ function engine(b, dt) {
 	b.v[0] += ahead[0] * more; b.v[2] += ahead[2] * more;
 }
 // where she lies off the other side's town: SEA_ROUTE.off out past the end of its dock (metres), or as near as there is deep water
+const otherTown = (s) => (terrain.land.towns ?? []).find((t) => t.dock && t !== s.town);
 function warStation(s) {
-	return stationOff((terrain.land.towns ?? []).find((t) => t.dock && t !== s.town));
+	return stationOff(otherTown(s));
 }
-function stationOff(other) {
+// (swung: the way out from the dock's end turned that many radians round it; off: metres out past it)
+function stationOff(other, swung = 0, off = SEA_ROUTE.off) {
 	if (!other?.dock) return null;
-	const D = dockOf(other);
+	const D = dockOf(other), c = Math.cos(swung), s = Math.sin(swung);
+	const out = [D.out[0] * c - D.out[1] * s, D.out[0] * s + D.out[1] * c];
 	for (let more = 0; more < 900; more += 40) {
-		const x = D.end[0] + D.out[0] * (SEA_ROUTE.off + more), z = D.end[1] + D.out[1] * (SEA_ROUTE.off + more);
+		const x = D.end[0] + out[0] * (off + more), z = D.end[1] + out[1] * (off + more);
 		if (depthAt(x, z) > VESSELS.Schooner.spawn.keel + KEEL_CLEAR + 2) return [x, z];
 	}
 	return null;
 }
 // the way by sea from a place to another (metres, x and z): A* over a grid of SEA_ROUTE.cell, through water deep enough for her keel,
-//		inside the world; its points, a cell apart, the last of them the place itself. None (no way by sea, or nowhere to go): null
-function seaRoute(from, to) {
+//		inside the world; its points, a cell apart, the last of them the place itself. None (no way by sea, or nowhere to go): null.
+//		dear(x, z): how many times as dear a cell is there (metres), or every one the same
+function seaRoute(from, to, dear = null) {
 	if (!to) return null;
 	const C = SEA_ROUTE.cell, half = halfWorld() - 150, n = Math.floor(half * 2 / C);
 	const cellOf = ([x, z]) => [clamp(Math.floor((x + half) / C), 0, n - 1), clamp(Math.floor((z + half) / C), 0, n - 1)];
@@ -589,7 +606,7 @@ function seaRoute(from, to) {
 			if (!di && !dj) continue;
 			const a = i + di, c = j + dj;
 			if (a < 0 || c < 0 || a >= n || c >= n || !(open(a, c) || key(a, c) == goal)) continue;
-			const next = key(a, c), g = cost.get(here) + Math.hypot(di, dj);
+			const next = key(a, c), g = cost.get(here) + Math.hypot(di, dj) * (dear ? dear(...middle(a, c)) : 1);
 			if (g < (cost.get(next) ?? Infinity)) { cost.set(next, g); cameFrom.set(next, here); push([g + Math.hypot(ti - a, tj - c), a, c]); }
 		}
 	}
@@ -598,6 +615,61 @@ function seaRoute(from, to) {
 	for (let k = goal; k !== undefined; k = cameFrom.get(k)) path.unshift(middle(Math.floor(k / n), k % n));
 	return [...path.slice(1), to];
 }
+// her way to the other town (see THE FLANK at the top): straight there, or for a flanker round a point off to her side (s.war.flank) and in
+//		from that side; points as seaRoute's (metres), none: []
+function warRoute(s, from) {
+	const other = otherTown(s), straight = () => seaRoute(from, stationOff(other)) ?? [];
+	const F = s.war.flank;
+	const direct = straight();
+	if (!F || direct.length < 4) return direct;
+	const length = (P) => P.reduce((sum, p, k) => sum + (k ? Math.hypot(p[0] - P[k - 1][0], p[1] - P[k - 1][1]) : Math.hypot(p[0] - from[0], p[1] - from[1])), 0);
+	// (the straight way's points in buckets, for how near a place is to it)
+	const B = FLANK.lane, buckets = new Map(), end = direct[direct.length - 1];
+	for (const p of direct) { const k = Math.floor(p[0] / B) + ',' + Math.floor(p[1] / B); if (!buckets.has(k)) buckets.set(k, []); buckets.get(k).push(p); }
+	const dear = (x, z) => {
+		// (free near either end: she has to leave from her dock and come in at theirs)
+		if (Math.hypot(x - from[0], z - from[1]) < FLANK.free || Math.hypot(x - end[0], z - end[1]) < FLANK.free) return 1;
+		const bi = Math.floor(x / B), bj = Math.floor(z / B);
+		for (let i = bi - 1; i <= bi + 1; i++) for (let j = bj - 1; j <= bj + 1; j++) for (const p of buckets.get(i + ',' + j) ?? []) if (Math.hypot(p[0] - x, p[1] - z) < B) return FLANK.dear;
+		return 1;
+	};
+	// (her station off it swung round to her side)
+	const swung = stationOff(other, F * FLANK.turn) ?? stationOff(other, -F * FLANK.turn) ?? end;
+	const round = seaRoute(from, swung, dear);
+	if (round && length(round) > length(direct) * FLANK.longer) { shipStats.flanks++; return round; }
+	return direct;
+}
+// her station (see THE PORT GUARD at the top): GUARD.off out from her dock, swung whichever way is furthest from the way out to the other
+//		town (metres, x and z)
+function guardStation(s) {
+	const D = dockOf(s.town), lane = seaRoute([D.end[0] + D.out[0] * 40, D.end[1] + D.out[1] * 40], warStation(s)) ?? [];
+	const clear = (p) => Math.min(Infinity, ...lane.slice(0, 30).map((q) => Math.hypot(q[0] - p[0], q[1] - p[1])));
+	return GUARD.swing.map((a) => stationOff(s.town, a, GUARD.off)).filter(Boolean).sort((p, q) => clear(q) - clear(p))[0] ?? null;
+}
+// THE PORT GUARD (see the top): out to her station off her own town's dock, and lying there; the other side's on the water near it fought
+function guardPort(s, b, at, dt, now) {
+	const m = metre();
+	const home = s.guardAt ??= guardStation(s);
+	if (!home) { fight(s, null, dt); return; }
+	const enemy = npcs.enemiesOf(s.group, at[0], at[1], at[2]).find((e) => !aloft(e) && e.vehicle && boat.boatById(e.vehicle) && Math.hypot(e.x / m - home[0], e.z / m - home[1]) < GUARD.reach) ?? null;
+	const off = Math.hypot(home[0] - at[0] / m, home[1] - at[2] / m);
+	if (!enemy && off < GUARD.hold) {
+		// (on station: her sails let go, lying there)
+		trim(b, { luff: true, furl: b.vessel.sails.map((sail) => sail.name) });
+		steerFor(b, courseOf(b), dt);
+		fight(s, null, dt);
+		return;
+	}
+	let wanted = enemy ? broadsideCourse(b, enemy, at) : bearing(home[0] - at[0] / m, home[1] - at[2] / m);
+	if (now - (s.leftAt ?? -1e9) < 10) wanted = courseOf(b);
+	const course = chooseCourse(s, b, wanted, b.vessel.spawn.keel, now);
+	steerFor(b, course, dt);
+	warpOff(s, b, dt);
+	const upWind = Math.abs(wrap(course - windFrom())) < NO_GO + 0.2;
+	trim(b, { furl: upWind ? b.vessel.sails.map((sail) => sail.name) : [] });
+	engine(b, dt);
+	fight(s, enemy && enemy.d < SHELL_REACH * m ? enemy : null, dt);
+}
 // whether a side's schooners can get from its town's dock to the other's by sea (war.js asks as it begins: with no way, the side has none)
 export function warSeaWay(home, other) {
 	if (!home?.dock || !other?.dock) return false;
@@ -605,9 +677,10 @@ export function warSeaWay(home, other) {
 	return !!seaRoute([D.end[0] + D.out[0] * 40, D.end[1] + D.out[1] * 40], stationOff(other));
 }
 // a side's schooners, out of its town's dock (null if it has none); and all of them gone when it is over (war.js)
-export function addWarShip(town, side) { return town.dock ? makeShip(town, { side }) : null; }
+//		(guard: THE PORT GUARD, see the top)
+export function addWarShip(town, side, guard = false) { return town.dock ? makeShip(town, { side, guard }) : null; }
 export function clearWarShips() { for (const s of ships.filter((one) => one.war)) clearShip(s); }
-export function warShipList() { return ships.filter((s) => s.war).map((s) => ({ side: s.war.side, boat: s.boat?.id ?? null, at: s.boat && s.boat.frame.toWorld([0, 0, 0]).map((v) => Math.round(v / metre())), crew: s.people.filter((p) => p.alive).length, route: s.route ? [s.route.at, s.route.points.length] : null })); }
+export function warShipList() { return ships.filter((s) => s.war).map((s) => ({ side: s.war.side, guard: !!s.war.guard, flank: s.war.flank ?? 0, boat: s.boat?.id ?? null, at: s.boat && s.boat.frame.toWorld([0, 0, 0]).map((v) => Math.round(v / metre())), crew: s.people.filter((p) => p.alive).length, route: s.route ? [s.route.at, s.route.points.length] : null })); }
 
 // for testing: a side's schooners put where she would lie off the other town, done with the way there (metres: at, and spread round it)
 export function warShipsToForTest(side, at) {
@@ -639,3 +712,15 @@ export function shipState() {
 		at: b && b.frame.toWorld([0, 0, 0]).map((v) => Math.round(v / metre())), speed: b && Math.round(b.stats.speed * 10) / 10, course: b && courseOf(b), rudder: b?.rudder, anchor: !!b?.anchor, health: b?.health, tack: ship.tack, ...shipStats };
 }
 export const shipForTest = () => regular();
+// for testing: a side's attacking schooner's way there, straight and as a flanker (flank -1 or 1): how long each is (metres), and
+//		what was tried
+export function warRouteForTest(side, flank) {
+	const s = ships.find((x) => x.war?.side == side && !x.war.guard);
+	if (!s) return null;
+	const D = dockOf(s.town), from = [D.end[0] + D.out[0] * 40, D.end[1] + D.out[1] * 40], was = s.war.flank;
+	const length = (P) => Math.round(P.reduce((sum, p, k) => sum + Math.hypot(p[0] - (k ? P[k - 1][0] : from[0]), p[1] - (k ? P[k - 1][1] : from[1])), 0));
+	s.war.flank = 0; const direct = warRoute(s, from);
+	s.war.flank = flank; const before = shipStats.flanks, t0 = performance.now(), flanked = warRoute(s, from), ms = Math.round(performance.now() - t0);
+	s.war.flank = was;
+	return { direct: length(direct), flanked: length(flanked), took: shipStats.flanks > before, ms, half: Math.round(halfWorld()), mid: direct[Math.floor(direct.length / 2)]?.map(Math.round) };
+}

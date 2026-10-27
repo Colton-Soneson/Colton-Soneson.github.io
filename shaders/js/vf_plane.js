@@ -1,3 +1,4 @@
+import { motionShapes } from './motionShapes.js';
 import { moonShapes } from './f_moon.js';
 import { skyLookupShapes } from './vfc_atmosphere.js';
 
@@ -32,6 +33,8 @@ export const vf_plane =
 		look : vec4f,				// x: horizon fog distance, y: 1.0 if the atmosphere is on, z: the part the crosshair is on (-1 none), w: the propeller's blur, 0 to 1
 		state : vec4f,				// x: wrecked, 0 to 1, y: world units to the metre, z: a puff of fire's age, 0 to 1, w: its side in the war (0 none, 1 red, 2 blue)
 		parts : array<mat4x4f, 26>,
+		motionNow : mat4x4f,		// THE MOTION (temporalAA.js): this frame's view projection without the jitter
+		motionPrev : mat4x4f,		//		and the last frame's, after the plane's own move back to where it was then
 	}
 	@group(0) @binding(0) var<uniform> PU: PlaneUniforms;
 
@@ -57,6 +60,8 @@ export const vf_plane =
 		@location(0) worldPos: vec3f,
 		@location(1) shape: vec3f,
 		@location(2) @interpolate(flat) what: vec2f,		// x: the material, y: the part
+		@location(14) nowClip: vec4f,
+		@location(15) prevClip: vec4f,
 	};
 
 	@vertex
@@ -68,6 +73,8 @@ export const vf_plane =
 		let world = (PU.model * vec4f(placed, 1.0)).xyz;
 		var output: VertexOutput;
 		output.pos = PU.viewProjectionMatrix * vec4f(world, 1.0);
+		output.nowClip = PU.motionNow * vec4f(world, 1.0);
+		output.prevClip = PU.motionPrev * vec4f(world, 1.0);
 		output.worldPos = world;
 		output.shape = shape.xyz;
 		output.what = vec2f(f32(material), f32(part));
@@ -110,8 +117,7 @@ export const vf_plane =
 	const PC10: vec3f = vec3f(0.31, 0.29, 0.17);
 	const LINEN: vec3f = vec3f(0.76, 0.7, 0.55);
 
-	@fragment
-	fn fragmentMain(input: VertexOutput) -> @location(0) vec4f {
+	fn shade(input: VertexOutput) -> vec4f {
 		let toPlane = input.worldPos - Lights.camPos.xyz;
 		let away = length(toPlane);
 		var N = normalize(cross(dpdx(input.worldPos), dpdy(input.worldPos)));
@@ -229,5 +235,12 @@ export const vf_plane =
 			color = mix(color, horizonColor, fog);
 		}
 		return vec4f(color, 1.0);
+	}
+
+	// the colour, and THE MOTION (motionShapes.js: temporalAA.js)
+	${motionShapes}
+	@fragment
+	fn fragmentMain(input: VertexOutput) -> FrameOut {
+		return FrameOut(shade(input), motionOf(input.nowClip, input.prevClip));
 	}
 `;

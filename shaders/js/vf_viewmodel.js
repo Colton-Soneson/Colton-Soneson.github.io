@@ -1,3 +1,4 @@
+import { motionShapes } from './motionShapes.js';
 /*
 	A gun in the hunter's hands (viewmodel.js: the shotgun, the revolver, the Sharps rifle), drawn the way the rifle is (see vf_rifle.js):
 	in the camera's own space, in metres, with its own near plane and its own depth, over the finished frame.
@@ -54,8 +55,7 @@ export const vf_viewmodel =
 		return output;
 	}
 
-	@fragment
-	fn fragmentMain(input: VertexOutput) -> @location(0) vec4f {
+	fn shade(input: VertexOutput) -> vec4f {
 		var N = normalize(cross(dpdx(input.viewPos), dpdy(input.viewPos)));
 		if (dot(N, input.viewPos) > 0.0) {
 			N = -N;
@@ -135,5 +135,12 @@ export const vf_viewmodel =
 			color += albedo * VU.glow.rgb * VU.glow.a * 0.0025 / (0.0025 + d * d);
 		}
 		return vec4f(color, 1.0);
+	}
+
+	// the colour, and THE MOTION (motionShapes.js: temporalAA.js)
+	${motionShapes}
+	@fragment
+	fn fragmentMain(input: VertexOutput) -> FrameOut {
+		return FrameOut(shade(input), vec4f(0.0, 0.0, 0.0, 1.0));
 	}
 `;

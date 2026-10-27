@@ -1,5 +1,6 @@
 import { DEPTH_FORMAT, depthTest, DEPTH_CLEAR } from './depthMode.js'
 import {device} from './deviceSelection.js'
+import { drawn } from './deviceSelection.js'
 import {canvas} from './deviceSelection.js'
 import {onRenderResize} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
@@ -47,7 +48,7 @@ function makeSizedTextures() {
 	for (const texture of [occlusionTexture, sceneColorTexture, sceneDepthTexture]) {
 		if (texture) texture.destroy();
 	}
-	halfSize = [Math.max(Math.ceil(canvas.width / 2), 1), Math.max(Math.ceil(canvas.height / 2), 1)];
+	halfSize = [Math.max(Math.ceil(drawn.width / 2), 1), Math.max(Math.ceil(drawn.height / 2), 1)];
 
 	// how open every pixel is to the sky, 1.0 to 0.0, at half size
 	occlusionTexture = device.createTexture({
@@ -61,13 +62,13 @@ function makeSizedTextures() {
 	// the frame as it stood before the water was drawn: what a reflection in the water can show
 	sceneColorTexture = device.createTexture({
 		label: "scene color before the water",
-		size: [canvas.width, canvas.height],
+		size: [drawn.width, drawn.height],
 		format: canvasFormat,
 		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING,
 	});
 	sceneDepthTexture = device.createTexture({
 		label: "scene depth before the water",
-		size: [canvas.width, canvas.height],
+		size: [drawn.width, drawn.height],
 		format: DEPTH_FORMAT,
 		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,	//(a depth texture can only be copied to if it could also be drawn to)
 	});
@@ -105,7 +106,7 @@ function screenUniformBufferUpdates(sun, occlusion) {
 	const projection = transformations.projectionMatrix;
 	bufferResult.push(projection[0], projection[5], projection[10], projection[14]);
 
-	bufferResult.push(canvas.width, canvas.height, 1 / canvas.width, 1 / canvas.height);
+	bufferResult.push(drawn.width, drawn.height, 1 / drawn.width, 1 / drawn.height);
 
 	bufferResult.push(settings.enableScreenShadows ? settings.screenShadowStrength : 0);
 	bufferResult.push(settings.ssaoStrength);
@@ -342,8 +343,8 @@ export function screenEffectsPass(aEncoder, canvasTexture, depthTexture) {
 
 	//-------------COPIES FOR REFLECTIONS------------------
 	if (settings.enableSSR && settings.enableWater) {
-		aEncoder.copyTextureToTexture({ texture: canvasTexture }, { texture: sceneColorTexture }, [canvas.width, canvas.height]);
-		aEncoder.copyTextureToTexture({ texture: depthTexture }, { texture: sceneDepthTexture }, [canvas.width, canvas.height]);
+		aEncoder.copyTextureToTexture({ texture: canvasTexture }, { texture: sceneColorTexture }, [drawn.width, drawn.height]);
+		aEncoder.copyTextureToTexture({ texture: depthTexture }, { texture: sceneDepthTexture }, [drawn.width, drawn.height]);
 		sceneCopyReady = true;
 	}
 }

@@ -1,4 +1,5 @@
 import {device} from './deviceSelection.js'
+import { drawn } from './deviceSelection.js'
 import {canvas} from './deviceSelection.js'
 import {onRenderResize} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
@@ -39,7 +40,7 @@ function makeSizedTextures() {
 	// the copy of the frame the shaders read
 	frameCopyTexture = device.createTexture({
 		label: "smaa copy of the frame",
-		size: [canvas.width, canvas.height],
+		size: [drawn.width, drawn.height],
 		format: canvasFormat,
 		usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
 	});
@@ -47,7 +48,7 @@ function makeSizedTextures() {
 	// r: an edge along the left side of the pixel, g: along its top
 	edgeTexture = device.createTexture({
 		label: "smaa edges",
-		size: [canvas.width, canvas.height],
+		size: [drawn.width, drawn.height],
 		format: 'rg8unorm',
 		usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
 	});
@@ -55,7 +56,7 @@ function makeSizedTextures() {
 	// how much each pixel is to be mixed with the ones across its top and left edges
 	weightTexture = device.createTexture({
 		label: "smaa blend weights",
-		size: [canvas.width, canvas.height],
+		size: [drawn.width, drawn.height],
 		format: 'rgba8unorm',
 		usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
 	});
@@ -155,10 +156,10 @@ export function smaaPass(aEncoder, canvasTexture) {
 		return;
 	}
 
-	const uniforms = new Float32Array([1 / canvas.width, 1 / canvas.height, settings.smaaEdgeThreshold, 0]);
+	const uniforms = new Float32Array([1 / drawn.width, 1 / drawn.height, settings.smaaEdgeThreshold, 0]);
 	device.queue.writeBuffer(smaaUniformBuffer, 0, uniforms.buffer, uniforms.byteOffset, uniforms.byteLength);
 
-	aEncoder.copyTextureToTexture({ texture: canvasTexture }, { texture: frameCopyTexture }, [canvas.width, canvas.height]);
+	aEncoder.copyTextureToTexture({ texture: canvasTexture }, { texture: frameCopyTexture }, [drawn.width, drawn.height]);
 
 	screenPass(aEncoder, edgeView, true, edgePipeline, edgeBindGroup, 'SMAA Edges', 'vf_smaaEdges');
 	screenPass(aEncoder, weightView, true, weightPipeline, weightBindGroup, 'SMAA Weights', 'vf_smaaWeights');

@@ -1,5 +1,6 @@
 import { DEPTH_FORMAT, depthTest, DEPTH_CLEAR } from './depthMode.js'
 import {device} from './deviceSelection.js'
+import { frameTexture } from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
 import * as profiler from './profiler.js'
@@ -526,6 +527,11 @@ export function folkShotHeard(index, at) {
 	person.hit = 1;
 }
 // the townsfolk's hitboxes, for the bullets fired here (not their own, horde.js)
+const folkBounds = () => {
+	const m = metre(), list = [];
+	if (settings.enableTownFolk) for (const person of folk) { const p = person.place; if (p) list.push(p.x, p.y + 1.0 * m, p.z, 1.6 * m); }
+	return list;
+};
 ballistics.addTarget((ax, ay, az, bx, by, bz, bullet) => {
 	if (!settings.enableTownFolk || folk.length == 0 || String(bullet?.shooter).startsWith('folk')) return null;
 	const m = metre(), mx = (ax + bx) / 2, mz = (az + bz) / 2, reach = Math.hypot(bx - ax, bz - az) / 2 + 2 * m;
@@ -547,7 +553,7 @@ ballistics.addTarget((ax, ay, az, bx, by, bz, bullet) => {
 		folkShotHeard(best.person.index, folkSeconds);
 		for (const fn of shotListeners) fn(best.person.index, folkSeconds);
 	} };
-});
+}, folkBounds);
 
 // the players about: [x, z] of the walker (out hunting) and the others in a game who are
 function playersAbout() {
@@ -748,7 +754,7 @@ export function townFolkPass(aEncoder, mainpassDepthTexture) {
 		});
 	}
 	const pass = aEncoder.beginRenderPass({
-		colorAttachments: [{ view: context.getCurrentTexture().createView(), loadOp: "load", storeOp: "store" }],
+		colorAttachments: [{ view: frameTexture().createView(), loadOp: "load", storeOp: "store" }],
 		depthStencilAttachment: { view: mainpassDepthTexture.createView(), depthLoadOp: 'load', depthStoreOp: 'store' },
 		timestampWrites: profiler.timestamps('Townsfolk', 'vf_dummy'),
 	});

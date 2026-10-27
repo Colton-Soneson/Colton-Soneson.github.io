@@ -1,4 +1,5 @@
 import {device} from './deviceSelection.js'
+import { frameTexture, drawn } from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvas} from './deviceSelection.js'
 import {onRenderResize} from './deviceSelection.js'
@@ -204,7 +205,7 @@ export let cloudMarchView;	// for the shafts of light, which need to know where 
 function makeCloudTexture() {
 	if (cloudTexture) cloudTexture.destroy();
 	cloudDivisor = Number(settings.cloudResolution) || 2;
-	halfSize = [Math.max(Math.ceil(canvas.width / cloudDivisor), 1), Math.max(Math.ceil(canvas.height / cloudDivisor), 1)];
+	halfSize = [Math.max(Math.ceil(drawn.width / cloudDivisor), 1), Math.max(Math.ceil(drawn.height / cloudDivisor), 1)];
 	cloudTexture = device.createTexture({
 		label: "cloud march",
 		size: halfSize,
@@ -581,7 +582,7 @@ export function cloudPass(mainpassDepthTexture) {
 	//-------------OVER THE FRAME------------------
 	const compositePass = encoder.beginRenderPass({
 		colorAttachments: [{
-			view: context.getCurrentTexture().createView(),
+			view: frameTexture().createView(),
 			loadOp: "load",
 			storeOp: "store",
 		}],

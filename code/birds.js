@@ -1,5 +1,6 @@
 import { DEPTH_FORMAT, depthTest, DEPTH_CLEAR } from './depthMode.js'
 import {device} from './deviceSelection.js'
+import { frameTexture } from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
 import * as profiler from './profiler.js'
@@ -212,6 +213,12 @@ ballistics.addTarget((ax, ay, az, bx, by, bz) => {
 	const living = groups.flatMap((group) => group.birds.map((bird) => ({ bird, group })));
 	const found = ballistics.crossAnimals(ax, ay, az, bx, by, bz, living, (one) => hawkSpheres(one.bird), (one) => [one.bird.x, one.bird.y, one.bird.z, 0.6 * sizeOf(one.bird)]);
 	return found && { t: found.t, what: 'hawk', hit: (velocity) => killHawk(found.animal.bird, found.animal.group, velocity) };
+}, () => {
+	const list = [];
+	if (!settings.enableBirds) return list;
+	if (followed) { for (const one of followed) if (one.alive) list.push(one.x, one.y, one.z, 0.6 * sizeOf(one)); }
+	else for (const group of groups) for (const bird of group.birds) list.push(bird.x, bird.y, bird.z, 0.6 * sizeOf(bird));
+	return list;
 });
 
 function killHawk(bird, group, velocity) {
@@ -662,7 +669,7 @@ export function birdPass(aEncoder, mainpassDepthTexture) {
 
 	const pass = aEncoder.beginRenderPass({
 		colorAttachments: [{
-			view: context.getCurrentTexture().createView(),
+			view: frameTexture().createView(),
 			loadOp: "load",
 			storeOp: "store",
 		}],

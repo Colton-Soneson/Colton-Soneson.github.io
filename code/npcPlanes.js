@@ -45,11 +45,13 @@ import * as town from './town.js'
 		pieces is killed. Each comes back at the hangar, and stands there; a plane is wheeled out to the end of the strip for the
 		pilot once the old one is gone, the gunner climbs in too if he is there, and it takes off (TAKE_OFF) and goes back on patrol.
 	THE WAR (war.js: addWarFlight): each side's planes, in its colour (plane.js: p.team), up over its own town, each with a task: DEFEND
-		(round over its own town, after the other side's planes that come near it: WAR.defend), SHIPS (strafing runs at the other side's
+		(round over its own town, after the other side's planes that come near it: WAR.defend, no more than WAR.share of the way to the other), SHIPS (strafing runs at the other side's
 		schooners, and while there are none, the village) and VILLAGE (BOMBING RUNS at the other side's houses: level at WAR.bombHeight over
 		one still standing, near and the worse for wear, the bombs let go where they will fall on it, then away and round again; between, strafing the other
-		side out in its town). Whatever its task, one of theirs coming at it close (WAR.threat) is fought first. The bombs are only for
-		houses. Lost, it is up again WAR.relaunch later, over its own town; while it is on, the strip's own are put away.
+		side out in its town). THE TASK FIRST: where it is going (its own town, defending; the other's ship it is after, within
+		WAR.atShip; the other town, within WAR.atTown of it) it fights one of theirs coming at it close (WAR.threat), or that has hit it in
+		the last WAR.shotFor seconds; on its way there it does not, but EVADES: flat out for it, weaving (WAR.weave), the gunner firing
+		back, and fights once it is there. One on its bombing line keeps on along it. The bombs are only for houses. Lost, it is up again WAR.relaunch later, over its own town; while it is on, the strip's own are put away.
 	Metres and seconds (the plane's p and v are; the people's places are world units)
 */
 const PER_STRIP = 2;
@@ -74,7 +76,7 @@ const SETUP = 850, ATTACK_HEIGHT = 260, DIVE_ANGLE = 0.42, PULL_OUT = 110;	// me
 const TAKE_OFF = { rotate: 27, climb: 0.18, done: 60 };	// metres a second to lift the tail and climb, radians climbing, metres up it is on patrol
 const SPREAD = { vickers: 0.006, lewis: 0.012 };	// radians
 const EDGE = 250;						// metres from the edge of the world it turns back
-const WAR = { relaunch: 60, patrol: 300, defend: 2500, threat: 700, bombHeight: 170, bombSpeed: 46, bombLine: 14, runIn: 700, lineIn: 140 };	// see THE WAR at the top (metres, seconds)
+const WAR = { relaunch: 60, patrol: 300, defend: 1500, share: 0.45, threat: 700, atShip: 800, atTown: 600, shotFor: 3, weave: [0.55, 5], bombHeight: 170, bombSpeed: 46, bombLine: 14, runIn: 700, lineIn: 140 };	// see THE WAR at the top (metres, seconds)
 const RELAUNCH = 6;						// seconds after the pilot is back at the hangar (and the old plane gone) a new one is out
 
 const ROUND = ballistics.ROUNDS['.303 British'], VICKERS_ROUND = ballistics.ROUNDS['.303 Vickers'];
@@ -307,6 +309,7 @@ function takeOff(f, dt) {
 }
 
 // THE DOGFIGHT (see the top), at a target in a plane (T)
+const DOGFIGHT = ['attack', 'pass', 'turn', 'defend', 'scissors', 'yoyo', 'extend'];
 function dogfight(f, enemy, T, dt) {
 	const p = f.plane, F = f.fight;
 	const fwd = plane.rotate(p.q, [0, 0, 1]), up = plane.rotate(p.q, [0, 1, 0]), right = scale(plane.rotate(p.q, [1, 0, 0]), -1);
@@ -326,7 +329,7 @@ function dogfight(f, enemy, T, dt) {
 	// what to do now
 	let phase = f.phase;
 	const behindMe = itsAngle < 0.75 && myAngle > 2.0 && range < 500;
-	if (phase == 'patrol' || phase == 'takeoff') phase = 'attack';
+	if (!DOGFIGHT.includes(phase)) phase = 'attack';
 	if (V < SLOW && phase != 'extend' && phase != 'scissors' && !(myAngle < 0.8 && range < 300)) phase = 'extend';
 	else if (behindMe && !['defend', 'scissors', 'extend'].includes(phase)) phase = 'defend';
 	if (phase != f.phase) { setPhase(f, phase); F.reversals = 0; F.side = sideOf; }
@@ -632,6 +635,7 @@ export function addWarFlight(side, home, enemy, task, index) {
 	return f;
 }
 export function clearWarFlights() { clearFlights((f) => !!f.war); }
+plane.onPlaneShot((p) => { const f = flights.find((x) => x.plane === p); if (f) f.shotAt = npcs.now(); });
 // up over its own town, on its way round it
 function launchOverTown(f) {
 	const W = f.war, m = metre(), a = Math.random() * Math.PI * 2, r = 250 + f.index * 70;
@@ -652,6 +656,9 @@ function comingAt(T, p) {
 	const to = sub(p.p, T.p), d = len(to);
 	return d < WAR.threat && dot(plane.rotate(T.q, [0, 0, 1]), scale(to, 1 / Math.max(d, 1))) > Math.cos(0.5);
 }
+// how far from its own town's middle a defender defends it (world units): WAR.defend past its edge, but no more than WAR.share of the
+//		way to the other town's
+const defended = (W) => Math.min(W.home.reach + WAR.defend * metre(), WAR.share * Math.hypot(W.enemy.x - W.home.x, W.enemy.z - W.home.z));
 // what one of a side's does now (see THE WAR at the top)
 function warFlight(f, enemies, dt) {
 	const p = f.plane, m = metre(), W = f.war;
@@ -659,17 +666,20 @@ function warFlight(f, enemies, dt) {
 	const air = enemies.filter((e) => { const T = planeOf(e); return T && T.wreck < 0 && T.destroyed < 0 && T.p[1] - groundAt(T.p[0], T.p[2]) > 8; });
 	const at = [p.p[0] * m, p.p[1] * m, p.p[2] * m];
 	let choice = null;
-	// itself first
-	const threat = air.find((e) => comingAt(planeOf(e), p));
-	if (threat) choice = { plane: threat };
+	// where its task is (see THE TASK FIRST at the top), and whether it is there
+	const ship = W.task == 'ships' ? enemies.find((e) => e.vehicle && boat.boatById(e.vehicle)) : null;
+	const goal = W.task == 'defend' ? { x: W.home.x, z: W.home.z, reach: defended(W) }
+		: ship ? { x: ship.x, z: ship.z, reach: WAR.atShip * m } : { x: W.enemy.x, z: W.enemy.z, reach: W.enemy.reach + WAR.atTown * m };
+	const there = Math.hypot(at[0] - goal.x, at[2] - goal.z) < goal.reach;
+	// itself first: there, it fights; on the way, it gets away (on its bombing line, it keeps on)
+	const shot = npcs.now() - (f.shotAt ?? -1e9) < WAR.shotFor;
+	const threat = air.find((e) => comingAt(planeOf(e), p)) ?? (shot ? air[0] : null);
+	if (threat && !(f.phase == 'bomb' && f.fight.house)) choice = there ? { plane: threat } : { evade: goal };
 	if (!choice && W.task == 'defend') {
-		const near = air.find((e) => Math.hypot(e.x - W.home.x, e.z - W.home.z) < W.home.reach + WAR.defend * m);
+		const near = air.find((e) => Math.hypot(e.x - W.home.x, e.z - W.home.z) < goal.reach);
 		if (near) choice = { plane: near };
 	}
-	if (!choice && W.task == 'ships') {
-		const ship = enemies.find((e) => e.vehicle && boat.boatById(e.vehicle));
-		if (ship) choice = { ground: ship };
-	}
+	if (!choice && ship) choice = { ground: ship };
 	// (the ships' with none of theirs out: on to the village while there are none)
 	if (!choice && (W.task == 'village' || W.task == 'ships')) {
 		// (the racks loaded again in the air: the war goes on)
@@ -681,7 +691,8 @@ function warFlight(f, enemies, dt) {
 			if (ground) choice = { ground };
 		}
 	}
-	if (choice?.house) bombRun(f, choice.house, dt);
+	if (choice?.evade) evade(f, choice.evade, dt);
+	else if (choice?.house) bombRun(f, choice.house, dt);
 	else if (choice?.plane) dogfight(f, choice.plane, planeOf(choice.plane), dt);
 	else if (choice?.ground) groundAttack(f, choice.ground, dt);
 	else {
@@ -691,6 +702,19 @@ function warFlight(f, enemies, dt) {
 	}
 	const near = enemies[0];
 	rearGun(f, near && near.d < LEWIS_RANGE * 1.2 * m ? near : null, dt);
+}
+// EVADING on the way to its task (see THE TASK FIRST at the top): flat out for it (to: world units), weaving either way of the way
+//		there (WAR.weave: radians, seconds a weave), up or down a little too
+function evade(f, to, dt) {
+	const p = f.plane, m = metre(), F = f.fight;
+	if (f.phase != 'evade') { setPhase(f, 'evade'); F.weave = Math.random() < 0.5 ? -1 : 1; }
+	const t = inPhase(f), flat = norm([to.x / m - p.p[0], 0, to.z / m - p.p[2]]);
+	const swing = F.weave * WAR.weave[0] * Math.sin(t * Math.PI * 2 / WAR.weave[1]), c = Math.cos(swing), s = Math.sin(swing);
+	const height = groundAt(p.p[0], p.p[2]) + WAR.patrol;
+	const want = norm([flat[0] * c - flat[2] * s, clamp((height - p.p[1]) / 200, -0.2, 0.25) + 0.12 * Math.sin(t * 1.7), flat[0] * s + flat[2] * c]);
+	fly(f, safe(f, want), FIGHT, { throttle: 1, maxG: MAX_G });
+	vickers(f, dt, false, null);
+	airStats.evading = (airStats.evading ?? 0) + dt;
 }
 // a BOMBING RUN (see THE WAR at the top) at a house: { x, y (its middle), z } world units. Out to the start of a line through it
 //		(WAR.runIn back from it, the side the plane is on), round on to the line, along it level at WAR.bombHeight over the house, kept

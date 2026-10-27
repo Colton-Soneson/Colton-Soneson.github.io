@@ -1,5 +1,6 @@
 import { DEPTH_FORMAT, depthTest, DEPTH_CLEAR } from './depthMode.js'
 import {device} from './deviceSelection.js'
+import { frameTexture } from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
 import * as profiler from './profiler.js'
@@ -178,6 +179,11 @@ ballistics.addTarget((ax, ay, az, bx, by, bz) => {
 	}
 	const found = ballistics.crossAnimals(ax, ay, az, bx, by, bz, geese, gooseSpheres, (goose) => [goose.x, goose.y, goose.z, 0.6 * size]);
 	return found && { t: found.t, what: 'goose', hit: (velocity) => killGoose(found.animal, velocity) };
+}, () => {
+	const list = [];
+	if (!settings.enableGeese) return list;
+	for (const goose of followed ?? geese) if (!followed || goose.alive) list.push(goose.x, goose.y, goose.z, 0.6 * settings.geeseSize);
+	return list;
 });
 
 function killGoose(goose, velocity) {
@@ -544,7 +550,7 @@ export function geesePass(aEncoder, mainpassDepthTexture) {
 	device.queue.writeBuffer(gooseUniformBuffer, 0, result.buffer, result.byteOffset, result.byteLength);
 
 	const pass = aEncoder.beginRenderPass({
-		colorAttachments: [{ view: context.getCurrentTexture().createView(), loadOp: "load", storeOp: "store" }],
+		colorAttachments: [{ view: frameTexture().createView(), loadOp: "load", storeOp: "store" }],
 		depthStencilAttachment: { view: mainpassDepthTexture.createView(), depthLoadOp: 'load', depthStoreOp: 'store' },
 		timestampWrites: profiler.timestamps('Geese', 'vf_geese'),
 	});

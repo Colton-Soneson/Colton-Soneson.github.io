@@ -1,4 +1,5 @@
 import {device} from './deviceSelection.js'
+import { frameTexture, drawn } from './deviceSelection.js'
 import {canvas} from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
@@ -12,6 +13,7 @@ import { settings } from './settings.js';
 import { vf_rifle } from '../shaders/js/vf_rifle.js'
 
 import * as transformations from './transformations.js'
+import * as temporalAA from './temporalAA.js'
 import { lightNow } from './lighting.js'
 import * as hunting from './hunting.js'
 import * as ballistics from './ballistics.js'
@@ -594,14 +596,14 @@ const riflePipeline = device.createRenderPipeline({
 	label: "rifle pipeline",
 	layout: 'auto',
 	vertex: { module: rifleShaderModule, entryPoint: "vertexMain", buffers: [{ arrayStride: 16, attributes: [{ format: "float32x4", offset: 0, shaderLocation: 0 }] }] },
-	fragment: { module: rifleShaderModule, entryPoint: "fragmentMain", targets: [{ format: canvasFormat }] },
+	fragment: { module: rifleShaderModule, entryPoint: "fragmentMain", targets: [{ format: canvasFormat }, { format: temporalAA.MOTION_FORMAT }] },
 	primitive: { topology: 'triangle-list', cullMode: 'none' },
 	depthStencil: { depthWriteEnabled: true, depthCompare: 'less', format: 'depth24plus' },
 });
 const rifleBindGroup = device.createBindGroup({ label: "rifle bind group", layout: riflePipeline.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: rifleUniformBuffer } }] });
 
 // its own depth, at the canvas's size (made again when that changes)
-const makeDepth = () => device.createTexture({ label: "rifle depth", size: [canvas.width, canvas.height], format: 'depth24plus', usage: GPUTextureUsage.RENDER_ATTACHMENT });
+const makeDepth = () => device.createTexture({ label: "rifle depth", size: [drawn.width, drawn.height], format: 'depth24plus', usage: GPUTextureUsage.RENDER_ATTACHMENT });
 let rifleDepth = makeDepth();
 onRenderResize(() => { rifleDepth.destroy(); rifleDepth = makeDepth(); });
 
@@ -614,7 +616,7 @@ export function riflePass() {
 	if (!inspectAt && (!active() || !hunting.hunterPlace().active || !hunting.hunterLife.alive)) {
 		return;
 	}
-	const projection = mat4.perspective(transformations.baseVerticalViewAngle, canvas.width / canvas.height, 0.01, 10);
+	const projection = transformations.jittered(mat4.perspective(transformations.baseVerticalViewAngle, drawn.width / drawn.height, 0.01, 10));
 	// the light, turned into the camera's space
 	const light = lightNow();
 	const view = transformations.getViewMatrix();
@@ -635,7 +637,7 @@ export function riflePass() {
 
 	const encoder = device.createCommandEncoder({ label: "rifle" });
 	const pass = encoder.beginRenderPass({
-		colorAttachments: [{ view: context.getCurrentTexture().createView(), loadOp: "load", storeOp: "store" }],
+		colorAttachments: [{ view: frameTexture().createView(), loadOp: "load", storeOp: "store" }, { view: temporalAA.motionView(), loadOp: "load", storeOp: "store" }],
 		depthStencilAttachment: { view: rifleDepth.createView(), depthClearValue: 1.0, depthLoadOp: 'clear', depthStoreOp: 'discard' },
 		timestampWrites: profiler.timestamps('Rifle', 'vf_rifle'),
 	});

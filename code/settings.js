@@ -77,7 +77,7 @@ export const settings = {
 	dynamicResolution: false,			//draw at less than renderResolution while the frame rate is under the target, back up when there is room (see DYNAMIC RESOLUTION in display.js). On in the Low and Very Low presets
 	dynamicResolutionTarget: 30,		//the frame rate dynamic resolution keeps to, 0 to 60
 	reversedDepth: true,				//the frame's depth buffer reversed-Z, 32 bit float: about as fine far off as near (no flicker in the distance). Takes effect when the page loads (see depthMode.js)
-	antiAliasing: "smaa",				//smooths the stair steps along edges, working from the finished frame. "smaa" (see vf_smaa.js), "fxaa" (vf_fxaa.js) or "off"
+	antiAliasing: "smaa",				//smooths the stair steps along edges. From the finished frame: "smaa" (see vf_smaa.js), "fxaa" (vf_fxaa.js). With the frames before (temporalAA.js): "taa", "taa+fxaa", and FSR 3 (fsr3.js) "fsr-native", "fsr-quality", "fsr-balanced", "fsr-performance" (drawn at less, and upscaled). Or "off"
 	smaaEdgeThreshold: 0.1,				//SMAA: how much the brightness has to change between two pixels to count as an edge. Lower finds fainter edges and costs more
 	fxaaSubpixel: 0.75,					//FXAA: how much anything smaller than a pixel (a far blade of grass) is softened into what is round it. 0 = edges only
 	fxaaEdgeThreshold: 0.125,			//FXAA: how much the brightness has to change for it to count as an edge. Lower smooths more of the picture and costs more

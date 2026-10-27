@@ -1,5 +1,6 @@
 import { DEPTH_FORMAT, depthTest, DEPTH_CLEAR } from './depthMode.js'
 import {device} from './deviceSelection.js'
+import { frameTexture } from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
 import * as profiler from './profiler.js'
@@ -342,7 +343,7 @@ export function leafPass(aEncoder, mainpassDepthTexture) {
 
 	const pass = aEncoder.beginRenderPass({
 		colorAttachments: [{
-			view: context.getCurrentTexture().createView(),
+			view: frameTexture().createView(),
 			loadOp: "load",
 			storeOp: "store",
 		}],
@@ -398,7 +399,7 @@ export function weatherParticlePass(mainpassDepthTexture) {
 	//(one pass, or while the Performance window is timing, one for each of the three shaders: see renderPassParts in profiler.js)
 	const parts = profiler.renderPassParts(encoder, {
 		colorAttachments: [{
-			view: context.getCurrentTexture().createView(),
+			view: frameTexture().createView(),
 			loadOp: "load",
 			storeOp: "store",
 		}],

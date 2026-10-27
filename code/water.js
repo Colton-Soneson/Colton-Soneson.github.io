@@ -1,5 +1,6 @@
 import { DEPTH_FORMAT, depthTest, DEPTH_CLEAR } from './depthMode.js'
 import {device} from './deviceSelection.js'
+import { frameTexture } from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvas} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
@@ -2054,7 +2055,7 @@ export function waterPass(mainpassDepthTexture) {
 	// Render pass — draws each tile
 	const pass = aEncoder.beginRenderPass({
 		colorAttachments: [{
-			view: context.getCurrentTexture().createView(),
+			view: frameTexture().createView(),
 			loadOp: "load",
 			clearValue: { r: 0.0, g: 0.0, b: 0.0, a: 0.0 },
 			storeOp: "store",

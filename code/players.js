@@ -1,5 +1,6 @@
 import { DEPTH_FORMAT, depthTest, DEPTH_CLEAR } from './depthMode.js'
 import {device} from './deviceSelection.js'
+import { frameTexture } from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
 import * as profiler from './profiler.js'
@@ -285,6 +286,10 @@ ballistics.addTarget((ax, ay, az, bx, by, bz, bullet) => {
 		showHitMarker(best.part == 'head');
 		for (const fn of shotListeners) fn(best.other.id, best.part, bullet?.round ?? '7.62x54R');
 	} };
+}, () => {
+	const list = [];
+	if (inGame) for (const other of others.values()) { const view = other.view; if (view?.hunting && view.alive) list.push(view.x, view.y + 1.0 * metre(), view.z, 2.5 * metre()); }
+	return list;
 });
 
 // a shell bursting (shipGuns.js) at (world units), fired here: each of the others within radius (world units) of it as if shot (by
@@ -516,7 +521,7 @@ export function playersPass(aEncoder, mainpassDepthTexture) {
 	device.queue.writeBuffer(dummyUniformBuffer, 0, result.buffer, result.byteOffset, result.byteLength);
 
 	const pass = aEncoder.beginRenderPass({
-		colorAttachments: [{ view: context.getCurrentTexture().createView(), loadOp: "load", storeOp: "store" }],
+		colorAttachments: [{ view: frameTexture().createView(), loadOp: "load", storeOp: "store" }],
 		depthStencilAttachment: { view: mainpassDepthTexture.createView(), depthLoadOp: 'load', depthStoreOp: 'store' },
 		timestampWrites: profiler.timestamps('Players', 'vf_dummy'),
 	});

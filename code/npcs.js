@@ -196,6 +196,10 @@ ballistics.addTarget((ax, ay, az, bx, by, bz, bullet) => {
 		if (runsHere()) harm(best.person, HARM[best.part] * (ballistics.ROUNDS[bullet?.round]?.damage ?? 1), who);
 		else npcNet.shot?.(best.person.id, best.part, bullet?.round);
 	} };
+}, () => {
+	const m = metre(), list = [];
+	for (const person of people) { const p = person.place; if (person.alive && p) list.push(p.x, p.y + 1.0 * m, p.z, 2.2 * m); }
+	return list;
 });
 // their vehicles: whose group each is (each kind's file says: fn(vehicle id) gives the group on it, or null). A hit on one is a hit on them
 const groupFinders = [];
@@ -355,6 +359,11 @@ ballistics.addTarget((ax, ay, az, bx, by, bz, bullet) => {
 		const shooter = people.find((one) => one.id === bullet.shooter);
 		hurtPlayer(best.target.id, HARM[best.part] * (ballistics.ROUNDS[bullet.round]?.damage ?? 1), `Shot by ${shooter ? 'the ' + shooter.name : 'someone'}`);
 	} };
+}, () => {
+	if (!runsHere()) return [];
+	const list = [];
+	for (const t of targets()) if (t.alive && t.kind == 'player') list.push(t.x, t.y, t.z, 2.5 * metre());
+	return list;
 });
 // a shell of theirs bursting at (world units): each of the players within radius (world units) hurt by how near
 export function blastPlayers(at, radius) {

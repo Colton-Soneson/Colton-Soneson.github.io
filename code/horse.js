@@ -1,5 +1,6 @@
 import { DEPTH_FORMAT, depthTest, DEPTH_CLEAR } from './depthMode.js'
 import {device} from './deviceSelection.js'
+import { frameTexture } from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
 import * as profiler from './profiler.js'
@@ -9,6 +10,7 @@ import { settings } from './settings.js';
 import { vf_horse } from '../shaders/js/vf_horse.js'
 
 import * as transformations from './transformations.js'
+import * as temporalAA from './temporalAA.js'
 import * as terrain from './terrain.js'
 import * as forest from './forest.js'
 import * as boulders from './boulders.js'
@@ -503,6 +505,10 @@ ballistics.addTarget((ax, ay, az, bx, by, bz, bullet) => {
 		}
 	}
 	return best && { t: best.t, what: 'horse', hit: (velocity, bullet) => { for (const fn of shotListeners) fn(best.h, bullet); } };
+}, () => {
+	const m = metre(), list = [];
+	for (const h of horses) list.push(...h.frame.toWorld([0, 1.3, 0.3]), 1.8 * m);
+	return list;
 });
 
 // Per frame
@@ -542,7 +548,7 @@ const meshBuffer = device.createBuffer({ label: "horse mesh", size: HORSE_MESH.b
 device.queue.writeBuffer(meshBuffer, 0, HORSE_MESH);
 const instanceData = new Float32Array(MAX_HORSES * HORSE_FLOATS);
 const instanceBuffer = device.createBuffer({ label: "horse instances", size: instanceData.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
-const uniformBuffer = device.createBuffer({ label: "horse Uniform", size: 96, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+const uniformBuffer = device.createBuffer({ label: "horse Uniform", size: 224, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 const linSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
 const pipeline = device.createRenderPipeline({
 	label: "horse pipeline",
@@ -563,7 +569,7 @@ const pipeline = device.createRenderPipeline({
 				],
 			}]
 	},
-	fragment: { module: shaderModule, entryPoint: "fragmentMain", targets: [{ format: canvasFormat }] },
+	fragment: { module: shaderModule, entryPoint: "fragmentMain", targets: [{ format: canvasFormat }, { format: temporalAA.MOTION_FORMAT }] },
 	primitive: { topology: 'triangle-list', cullMode: 'none' },
 	depthStencil: { depthWriteEnabled: true, depthCompare: depthTest('less'), format: DEPTH_FORMAT },
 });
@@ -577,13 +583,18 @@ export function horsePass(aEncoder, mainpassDepthTexture) {
 	for (const h of horses.slice(0, MAX_HORSES)) {
 		const pace = paceNow(h.speed);
 		const going = Math.min(Math.abs(pace) / GALLOP, 1);
-		instanceData.set([h.x, h.y, h.z, metre(), h.heading, h.phase, going, gaitAt(pace), h.slope, h.coat, h.headDown, count, h.swim, h.swish, 0, 0], count * HORSE_FLOATS);
+		// (THE MOTION: how far it went across since the frame before)
+		const was = h.drawnAt ?? [h.x, h.z];
+		instanceData.set([h.x, h.y, h.z, metre(), h.heading, h.phase, going, gaitAt(pace), h.slope, h.coat, h.headDown, count, h.swim, h.swish, h.x - was[0], h.z - was[1]], count * HORSE_FLOATS);
+		h.drawnAt = [h.x, h.z];
 		count++;
 	}
 	horseStats.drawn = count;
 	device.queue.writeBuffer(instanceBuffer, 0, instanceData, 0, count * HORSE_FLOATS);
 	const litIndex = lit.horse ? horses.indexOf(lit.horse) : -1;
-	const u = new Float32Array(24);
+	const u = new Float32Array(56);
+	u.set(temporalAA.viewProjNow(), 24);
+	u.set(temporalAA.prevViewProjNow(), 40);
 	u.set(transformations.getViewProj(), 0);
 	u.set([settings.camPosX, settings.camPosY, settings.camPosZ, performance.now() / 1000 - startSeconds], 16);
 	u.set([settings.waterHorizonFogDistance, settings.enableAtmosphere ? 1 : 0, litIndex, lit.kind == 'bags' ? 1 : 0], 20);
@@ -602,7 +613,7 @@ export function horsePass(aEncoder, mainpassDepthTexture) {
 		});
 	}
 	const pass = aEncoder.beginRenderPass({
-		colorAttachments: [{ view: context.getCurrentTexture().createView(), loadOp: "load", storeOp: "store" }],
+		colorAttachments: [{ view: frameTexture().createView(), loadOp: "load", storeOp: "store" }, { view: temporalAA.motionView(), loadOp: "load", storeOp: "store" }],
 		depthStencilAttachment: { view: mainpassDepthTexture.createView(), depthLoadOp: 'load', depthStoreOp: 'store' },
 		timestampWrites: profiler.timestamps('Horses', 'vf_horse'),
 	});

@@ -1,5 +1,6 @@
 import { DEPTH_FORMAT, depthTest, DEPTH_CLEAR } from './depthMode.js'
 import {device} from './deviceSelection.js'
+import { frameTexture } from './deviceSelection.js'
 import {canvas} from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
@@ -12,6 +13,7 @@ import { settings } from './settings.js';
 import { vf_plane } from '../shaders/js/vf_plane.js'
 
 import * as transformations from './transformations.js'
+import * as temporalAA from './temporalAA.js'
 import * as terrain from './terrain.js'
 import { stripWeight } from './terrainGenerator.js'
 import * as forest from './forest.js'
@@ -1354,6 +1356,10 @@ ballistics.addTarget((ax, ay, az, bx, by, bz, bullet) => {
 		damage(best.p, ballistics.ROUNDS[bullet?.round]?.damage ?? 1);
 		for (const fn of shotListeners) fn(best.p, bullet);
 	} };
+}, () => {
+	const m = metre(), list = [];
+	for (const p of planes) if (p.destroyed < 0) list.push(...p.frame.toWorld([0, 0.3, -1]), 7.5 * m);
+	return list;
 });
 
 // Shot to pieces (see the top)
@@ -1537,7 +1543,8 @@ export const AIRFRAME = { MASS, WING_AREA, CL0, CL_ALPHA, STALL, LIFT, CM0, CM_A
 
 // Drawing them
 //-------------------------------------------------
-const UNIFORM_FLOATS = 16 + 16 + 4 + 4 + 4 + PART_COUNT * 16;
+const UNIFORM_FLOATS = 16 + 16 + 4 + 4 + 4 + PART_COUNT * 16 + 32;
+const lastModel = new WeakMap();		// THE MOTION (temporalAA.js): each draw's model the frame before, by what it is of
 const shaderModule = device.createShaderModule({ label: "vf_plane", code: vf_plane });
 const meshBuffer = device.createBuffer({ label: "plane mesh", size: PLANE_MESH.data.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
 device.queue.writeBuffer(meshBuffer, 0, PLANE_MESH.data);
@@ -1546,7 +1553,7 @@ const pipeline = device.createRenderPipeline({
 	label: "plane pipeline",
 	layout: 'auto',
 	vertex: { module: shaderModule, entryPoint: "vertexMain", buffers: [{ arrayStride: 16, attributes: [{ format: "float32x4", offset: 0, shaderLocation: 0 }] }] },
-	fragment: { module: shaderModule, entryPoint: "fragmentMain", targets: [{ format: canvasFormat }] },
+	fragment: { module: shaderModule, entryPoint: "fragmentMain", targets: [{ format: canvasFormat }, { format: temporalAA.MOTION_FORMAT }] },
 	primitive: { topology: 'triangle-list', cullMode: 'none' },
 	depthStencil: { depthWriteEnabled: true, depthCompare: depthTest('less'), format: DEPTH_FORMAT },
 });
@@ -1633,12 +1640,12 @@ export function planePass(aEncoder, mainpassDepthTexture) {
 	for (const p of planes.slice(0, MAX_PLANES)) {
 		if (p.destroyed >= 0) continue;
 		const lit = flying && flying.plane === p && litLever ? LEVERS[litLever].part : -1;
-		draws.push({ model: modelMatrix(p), parts: partsNow(p), look: [lit, smooth((p.engine.rpm - 300) / 600)], state: [p.wreck >= 0 ? Math.min(p.wreck / 2, 1) : 0, 0], mesh: meshBuffer, first: 0, count: PLANE_VERTICES, side: sideCode(p.team) });
+		draws.push({ of: p, model: modelMatrix(p), parts: partsNow(p), look: [lit, smooth((p.engine.rpm - 300) / 600)], state: [p.wreck >= 0 ? Math.min(p.wreck / 2, 1) : 0, 0], mesh: meshBuffer, first: 0, count: PLANE_VERTICES, side: sideCode(p.team) });
 	}
 	// a piece: the plane's mesh with everything but the piece hidden, turned about its middle
 	for (const d of debris) {
 		const c = d.piece.centre, r = rotate(d.q, c);
-		draws.push({ model: place(d.p.map((v, i) => v - r[i]), d.q), parts: d.parts, look: [-1, 0], state: [0.55, 0], mesh: meshBuffer, first: 0, count: PLANE_VERTICES, side: sideCode(d.team) });
+		draws.push({ of: d, model: place(d.p.map((v, i) => v - r[i]), d.q), parts: d.parts, look: [-1, 0], state: [0.55, 0], mesh: meshBuffer, first: 0, count: PLANE_VERTICES, side: sideCode(d.team) });
 	}
 	for (const puff of puffs) {
 		if (puff.age < 0) continue;
@@ -1662,11 +1669,12 @@ export function planePass(aEncoder, mainpassDepthTexture) {
 	if (draws.length == 0) { planeStats.drawn = 0; return; }
 
 	const pass = aEncoder.beginRenderPass({
-		colorAttachments: [{ view: context.getCurrentTexture().createView(), loadOp: "load", storeOp: "store" }],
+		colorAttachments: [{ view: frameTexture().createView(), loadOp: "load", storeOp: "store" }, { view: temporalAA.motionView(), loadOp: "load", storeOp: "store" }],
 		depthStencilAttachment: { view: mainpassDepthTexture.createView(), depthLoadOp: 'load', depthStoreOp: 'store' },
 		timestampWrites: profiler.timestamps('Planes', 'vf_plane'),
 	});
 	pass.setPipeline(pipeline);
+	const motionNow = temporalAA.viewProjNow(), motionPrev = temporalAA.prevViewProjNow();
 	draws.forEach((draw, k) => {
 		let slot = k < slots.length ? slots[k] : extraSlots[k - slots.length];
 		if (!slot) { slot = { buffer: device.createBuffer({ label: `plane extra ${k} Uniform`, size: UNIFORM_FLOATS * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }), bindGroup: null, lut: null }; extraSlots.push(slot); }
@@ -1677,6 +1685,11 @@ export function planePass(aEncoder, mainpassDepthTexture) {
 		u.set([settings.waterHorizonFogDistance, settings.enableAtmosphere ? 1 : 0, draw.look[0], draw.look[1]], 36);
 		u.set([draw.state[0], m, draw.state[1], draw.side ?? 0], 40);
 		draw.parts.forEach((matrix, j) => u.set(matrix, 44 + j * 16));
+		// (THE MOTION: back to where it was the frame before, and through that frame's camera)
+		const was = draw.of && lastModel.get(draw.of);
+		u.set(motionNow, 44 + PART_COUNT * 16);
+		u.set(was ? mat4.multiply(motionPrev, mat4.multiply(was, mat4.inverse(draw.model))) : motionPrev, 44 + PART_COUNT * 16 + 16);
+		if (draw.of) lastModel.set(draw.of, draw.model);
 		device.queue.writeBuffer(slot.buffer, 0, u);
 		if (!slot.bindGroup || slot.lut !== skyViewLUTtexture) {
 			slot.lut = skyViewLUTtexture;

@@ -1,4 +1,5 @@
 import { settings } from '../../code/settings.js';
+import { DEPTH_FAR } from './depthShapes.js';
 export const SKY_WORKGROUP_SIZE = [32, 1, 1];
 
 // Where a direction is in the sky view LUT (c_skyView_LUT), for every shader that reads it. They all name it skyLUT and
@@ -371,7 +372,7 @@ export const v_sky =
 	fn vertexMain(input: VertexInput) -> VertexOutput {	
 	
 		var output: VertexOutput;
-		output.pos = vec4f(input.pos.x, input.pos.y, 1.0, 1.0);
+		output.pos = vec4f(input.pos.x, input.pos.y, ${DEPTH_FAR}, 1.0);		// (at the far plane: behind everything, either way round, depthMode.js)
 		output.fragUV = input.uv;
 		
 		return output;

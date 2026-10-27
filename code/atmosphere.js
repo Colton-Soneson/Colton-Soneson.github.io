@@ -1,3 +1,4 @@
+import { DEPTH_FORMAT, depthTest, DEPTH_CLEAR } from './depthMode.js'
 import {device} from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvas} from './deviceSelection.js'
@@ -259,9 +260,9 @@ const skyRenderPipeline = device.createRenderPipeline({
         cullMode: 'none',
     },
     depthStencil: {
-        format: 'depth24plus',
+        format: DEPTH_FORMAT,
         depthWriteEnabled: false,    // sky doesn't own the depth buffer
-        depthCompare: 'less-equal',  // passes where nothing has drawn yet
+        depthCompare: depthTest('less-equal'),  // passes where nothing has drawn yet
     },
 });
 
@@ -376,7 +377,7 @@ export function atmospherePass(mainpassDepthTexture)
 		}],
 		depthStencilAttachment: {
 			view: mainpassDepthTexture.createView(),	
-			depthClearValue: 1.0,
+			depthClearValue: DEPTH_CLEAR,
 			depthLoadOp:  'load',
 			depthStoreOp: 'store',
 		},

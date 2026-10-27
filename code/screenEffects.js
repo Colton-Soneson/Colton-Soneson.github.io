@@ -1,3 +1,4 @@
+import { DEPTH_FORMAT, depthTest, DEPTH_CLEAR } from './depthMode.js'
 import {device} from './deviceSelection.js'
 import {canvas} from './deviceSelection.js'
 import {onRenderResize} from './deviceSelection.js'
@@ -67,7 +68,7 @@ function makeSizedTextures() {
 	sceneDepthTexture = device.createTexture({
 		label: "scene depth before the water",
 		size: [canvas.width, canvas.height],
-		format: 'depth24plus',
+		format: DEPTH_FORMAT,
 		usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,	//(a depth texture can only be copied to if it could also be drawn to)
 	});
 }

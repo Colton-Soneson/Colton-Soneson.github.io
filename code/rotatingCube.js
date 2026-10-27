@@ -1,3 +1,4 @@
+import { DEPTH_FORMAT, depthTest, DEPTH_CLEAR } from './depthMode.js'
 import {device} from './deviceSelection.js'
 import {canvas} from './deviceSelection.js'
 import {context} from './deviceSelection.js'
@@ -153,7 +154,7 @@ export const uniformBufferLights = device.createBuffer({
 // (made again when the size the frame is drawn at changes, see display.js)
 const makeDepthTexture = () => device.createTexture({
   size: [canvas.width, canvas.height],
-  format: 'depth24plus',
+  format: DEPTH_FORMAT,
   usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,	//read back by the screen space effects, and copied for the water's reflections
 });
 let depthTexture = makeDepthTexture();
@@ -325,8 +326,8 @@ const genericPipeline = device.createRenderPipeline({
 	// is rendered in front.
 	depthStencil: {
 		depthWriteEnabled: true,
-		depthCompare: 'less',
-		format: 'depth24plus',
+		depthCompare: depthTest('less'),
+		format: DEPTH_FORMAT,
 	},
 });
 
@@ -532,7 +533,7 @@ export function updateRotatingCubePass() {
 		depthStencilAttachment: {
 			view: depthTexture.createView(),
 
-			depthClearValue: 1.0,
+			depthClearValue: DEPTH_CLEAR,
 			depthLoadOp: 'clear',
 			depthStoreOp: 'store',
 		},

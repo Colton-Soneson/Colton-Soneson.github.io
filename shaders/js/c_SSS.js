@@ -44,6 +44,8 @@ const READ_COUNT = Math.floor(SSS_SAMPLE_COUNT / SSS_WAVE_SIZE) + 2;	// depth re
 		The depths in the shared list are divided by how far along the line they are from the light. In those terms every ray
 		of light is level, so "is this sample in the way" is just "is its number close to mine".
 */
+import { DEPTH_NEAR, DEPTH_FAR, skyTest } from './depthShapes.js';
+
 export const c_SSS =
 `
 	struct ShadowUniforms
@@ -67,8 +69,8 @@ export const c_SSS =
 	const FADE_OUT_SAMPLES: i32 = ${SSS_FADE_OUT_SAMPLES};
 	const READ_COUNT: i32 = ${READ_COUNT};
 
-	const NEAR_DEPTH: f32 = 0.0;	// what the depth texture holds at the near plane
-	const FAR_DEPTH: f32 = 1.0;		// and at the far plane, or where nothing was drawn
+	const NEAR_DEPTH: f32 = ${DEPTH_NEAR};	// what the depth texture holds at the near plane (depthMode.js: reversed-Z or not)
+	const FAR_DEPTH: f32 = ${DEPTH_FAR};		// and at the far plane, or where nothing was drawn
 
 	// the list the threads of a workgroup share: the depths along their line, already divided by distance from the light
 	var<workgroup> depthData: array<f32, ${READ_COUNT * SSS_WAVE_SIZE}>;
@@ -186,7 +188,7 @@ export const c_SSS =
 		workgroupBarrier();
 
 		// nothing drawn at this pixel (the sky): nothing to shadow, and the texture is already cleared to lit
-		if (samplingDepth[0] >= FAR_DEPTH) {
+		if (${skyTest('samplingDepth[0]')}) {
 			return;
 		}
 

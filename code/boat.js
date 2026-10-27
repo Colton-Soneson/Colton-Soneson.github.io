@@ -1,3 +1,4 @@
+import { DEPTH_FORMAT, depthTest, DEPTH_CLEAR } from './depthMode.js'
 import {device} from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
@@ -1172,7 +1173,7 @@ const boatPipeline = device.createRenderPipeline({
 	},
 	fragment: { module: boatShaderModule, entryPoint: "fragmentMain", targets: [{ format: canvasFormat }] },
 	primitive: { topology: 'triangle-list', cullMode: 'none' },
-	depthStencil: { depthWriteEnabled: true, depthCompare: 'less', format: 'depth24plus' },
+	depthStencil: { depthWriteEnabled: true, depthCompare: depthTest('less'), format: DEPTH_FORMAT },
 });
 
 // one boat's uniforms (each has its own buffer: they are all written before the pass is sent)

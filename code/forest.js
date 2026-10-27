@@ -1,4 +1,5 @@
 import {device} from './deviceSelection.js'
+import { DEPTH_FORMAT, depthTest } from './depthMode.js'
 import {context} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
 import * as profiler from './profiler.js'
@@ -1086,8 +1087,8 @@ function createForestPipeline(label, shaderModule, bake = false) {
 		},
 		depthStencil: {
 			depthWriteEnabled: true,
-			depthCompare: 'less',
-			format: 'depth24plus',
+			depthCompare: bake ? 'less' : depthTest('less'),
+			format: bake ? 'depth24plus' : DEPTH_FORMAT,
 		},
 	});
 }

@@ -1,3 +1,4 @@
+import { skyTest } from './depthShapes.js';
 /*
 	The point lights (pointLights.js): the towns' gas lamps, and the like, lighting whatever is round them at dusk and by night.
 
@@ -61,7 +62,7 @@ export const vf_pointLights =
 		if (dot(N, LU.cameraPosition.xyz - P) < 0.0) {
 			N = -N;
 		}
-		if (depth >= 1.0) {
+		if (${skyTest('depth')}) {
 			return vec4f(0.0, 0.0, 0.0, 0.0);		// the sky
 		}
 		var light = vec3f(0.0, 0.0, 0.0);

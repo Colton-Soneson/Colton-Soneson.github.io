@@ -1,3 +1,4 @@
+import { DEPTH_FORMAT, depthTest, DEPTH_CLEAR } from './depthMode.js'
 import {device} from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvas} from './deviceSelection.js'
@@ -1661,8 +1662,8 @@ function recreateWaterPipeline(inputTopology) {
 	
 	depthStencil: {
 		depthWriteEnabled: true,
-		depthCompare: 'less',
-		format: 'depth24plus',
+		depthCompare: depthTest('less'),
+		format: DEPTH_FORMAT,
 	},
 });
 }

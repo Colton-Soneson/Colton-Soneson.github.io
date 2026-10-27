@@ -1,5 +1,6 @@
 import { settings } from '../../code/settings.js';
 import { skyLookupShapes } from './vfc_atmosphere.js';
+import { reversedDepth } from '../../code/depthMode.js';
 
 export const WATER_WORKGROUP_SIZE = [32, 1, 1];
 export const FFT_WORKGROUP_SIZE = [8, 8, 1];
@@ -1424,7 +1425,8 @@ export const v_water =
 
 	// anything past the camera's far plane normally gets clipped away. Holding the depth just inside it instead
 	//		is what lets the horizon plane run on to the horizon, whatever the far plane is set to
-	output.pos.z = min(output.pos.z, output.pos.w * 0.999999);
+	//		(the far plane is at a depth of 1, or with reversed-Z at 0: depthMode.js)
+	output.pos.z = ${reversedDepth ? 'max(output.pos.z, output.pos.w * 0.000001)' : 'min(output.pos.z, output.pos.w * 0.999999)'};
     output.worldPos = input.pos;
 	output.fragNormal = input.norm;
     output.fragUV = input.uv;

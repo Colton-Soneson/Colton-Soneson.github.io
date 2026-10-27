@@ -1,3 +1,4 @@
+import { DEPTH_FORMAT, depthTest, DEPTH_CLEAR } from './depthMode.js'
 import {device} from './deviceSelection.js'
 import {canvas} from './deviceSelection.js'
 import {context} from './deviceSelection.js'
@@ -776,7 +777,7 @@ const pipeline = device.createRenderPipeline({
 	},
 	fragment: { module: shaderModule, entryPoint: "fragmentMain", targets: [{ format: canvasFormat }] },
 	primitive: { topology: 'triangle-list', cullMode: 'none' },
-	depthStencil: { depthWriteEnabled: true, depthCompare: 'less', format: 'depth24plus' },
+	depthStencil: { depthWriteEnabled: true, depthCompare: depthTest('less'), format: DEPTH_FORMAT },
 });
 // the glow (see THE GLOW in vf_discgolf.js): added on, seen and through what is in front
 const glowPipeline = (fragment, depthCompare) => device.createRenderPipeline({
@@ -786,7 +787,7 @@ const glowPipeline = (fragment, depthCompare) => device.createRenderPipeline({
 		{ format: "float32x4", offset: 0, shaderLocation: 0 }, { format: "float32x4", offset: 16, shaderLocation: 1 }] }] },
 	fragment: { module: glowModule, entryPoint: fragment, targets: [{ format: canvasFormat, blend: { color: { srcFactor: 'one', dstFactor: 'one' }, alpha: { srcFactor: 'zero', dstFactor: 'one' } } }] },
 	primitive: { topology: 'triangle-list', cullMode: 'none' },
-	depthStencil: { depthWriteEnabled: false, depthCompare, format: 'depth24plus' },
+	depthStencil: { depthWriteEnabled: false, depthCompare: depthTest(depthCompare), format: DEPTH_FORMAT },
 });
 const glowSeen = glowPipeline('fragmentGlow', 'less'), glowHidden = glowPipeline('fragmentGlowHidden', 'greater-equal');
 const glowBindGroup = device.createBindGroup({ label: "disc glow bind group", layout: glowSeen.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: uniformBuffer } }] });

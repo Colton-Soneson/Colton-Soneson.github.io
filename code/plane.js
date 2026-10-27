@@ -1,3 +1,4 @@
+import { DEPTH_FORMAT, depthTest, DEPTH_CLEAR } from './depthMode.js'
 import {device} from './deviceSelection.js'
 import {canvas} from './deviceSelection.js'
 import {context} from './deviceSelection.js'
@@ -146,7 +147,8 @@ const LANDING = { throttle: 0.15, over: 8, sink: 9.5, scrape: 4, slow: 32, wear:
 const FLOATS = { drag: 1.63, turn: 0.85, spring: 7000, damp: 2600, water: 0.09, hump: 7, humpDrag: 0.2, land: 0.12 };
 // the smoke (see SMOKE at the top): puffs a second at half health and at none, and the share of its health under which flames come too
 const SMOKE = { least: 2, most: 16, flames: 0.2 };
-const NEAR_SEATED = 0.2;			// metres: the camera's near plane in a cockpit (the panel is close; any nearer and the far ground loses its depth: noise)
+const NEAR_SEATED = 0.3;			// metres: the camera's near plane in a cockpit (the nearest thing to the pilot's eye, the Aldis sight, is 0.45 m off;
+								//		any nearer and, with the usual depth buffer, the far ground loses its depth: noise)
 const LETHAL = 18;					// metres a second hitting the ground: no one gets up
 const WRECK_SECONDS = 12;
 const HEALTH = 60;					// how much shooting it takes: rifle rounds' hits (each round its damage, ballistics.ROUNDS)
@@ -1546,7 +1548,7 @@ const pipeline = device.createRenderPipeline({
 	vertex: { module: shaderModule, entryPoint: "vertexMain", buffers: [{ arrayStride: 16, attributes: [{ format: "float32x4", offset: 0, shaderLocation: 0 }] }] },
 	fragment: { module: shaderModule, entryPoint: "fragmentMain", targets: [{ format: canvasFormat }] },
 	primitive: { topology: 'triangle-list', cullMode: 'none' },
-	depthStencil: { depthWriteEnabled: true, depthCompare: 'less', format: 'depth24plus' },
+	depthStencil: { depthWriteEnabled: true, depthCompare: depthTest('less'), format: DEPTH_FORMAT },
 });
 const slots = Array.from({ length: MAX_PLANES }, (_, k) => ({ buffer: device.createBuffer({ label: `plane ${k} Uniform`, size: UNIFORM_FLOATS * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }), bindGroup: null, lut: null }));
 const startSeconds = performance.now() / 1000;

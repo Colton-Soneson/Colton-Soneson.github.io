@@ -1,3 +1,4 @@
+import { DEPTH_FORMAT, depthTest, DEPTH_CLEAR } from './depthMode.js'
 import {device} from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
@@ -153,7 +154,7 @@ const dummyPipeline = device.createRenderPipeline({
 	},
 	fragment: { module: dummyShaderModule, entryPoint: "fragmentMain", targets: [{ format: canvasFormat }] },
 	primitive: { topology: 'triangle-list', cullMode: 'none' },
-	depthStencil: { depthWriteEnabled: true, depthCompare: 'less', format: 'depth24plus' },
+	depthStencil: { depthWriteEnabled: true, depthCompare: depthTest('less'), format: DEPTH_FORMAT },
 });
 
 // The others

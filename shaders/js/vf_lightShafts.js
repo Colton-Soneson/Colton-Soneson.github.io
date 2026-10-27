@@ -1,4 +1,5 @@
 import { cloudShadeShapes } from './vfc_clouds.js';
+import { DEPTH_NEAR, DEPTH_FAR, skyTest } from './depthShapes.js';
 
 export const SHAFT_STEPS = 20;			// steps along each ray through the air
 export const WATER_SHAFT_STEPS = 22;	// and through the water
@@ -221,15 +222,15 @@ export const vf_lightShafts =
 		//------------------THE RAY-----------------
 		let uv = fragCoord.xy * SU.screen.zw;
 		let ndc = vec2f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
-		let nearPoint = SU.invViewProjectionMatrix * vec4f(ndc, 0.0, 1.0);
-		let farPoint = SU.invViewProjectionMatrix * vec4f(ndc, 1.0, 1.0);
+		let nearPoint = SU.invViewProjectionMatrix * vec4f(ndc, ${DEPTH_NEAR}, 1.0);
+		let farPoint = SU.invViewProjectionMatrix * vec4f(ndc, ${DEPTH_FAR}, 1.0);
 		let origin = SU.cameraPosition.xyz;
 		let direction = normalize(farPoint.xyz / farPoint.w - nearPoint.xyz / nearPoint.w);
 
 		// how far it goes: to whatever was drawn at this pixel, if anything was
 		let depth = textureLoad(depthTexture, pixel, 0);
 		var solid = 1000000000.0;
-		if (depth < 1.0) {
+		if (!${skyTest('depth')}) {
 			let scenePoint = SU.invViewProjectionMatrix * vec4f(ndc, depth, 1.0);
 			solid = distance(scenePoint.xyz / scenePoint.w, origin);
 		}
@@ -306,7 +307,7 @@ export const vf_lightShafts =
 				var reaches = 1.0;
 				for (var i = 0; i < ${SCREEN_SHAFT_STEPS}; i++) {
 					let at = clamp(mix(uv, sunUV, (f32(i) + jitter) / f32(${SCREEN_SHAFT_STEPS})), vec2f(0.001, 0.001), vec2f(0.999, 0.999));
-					let sky = step(1.0, textureLoad(depthTexture, vec2i(at * SU.screen.xy), 0));
+					let sky = select(0.0, 1.0, ${skyTest('textureLoad(depthTexture, vec2i(at * SU.screen.xy), 0)')});
 					let through = textureSampleLevel(cloudTexture, cloudMapSampler, at, 0.0).a;
 					open += sky * through * through * reaches;
 					reaches *= 0.97;		// light from further along the line counts for less: a shaft thins out away from the gap it came through

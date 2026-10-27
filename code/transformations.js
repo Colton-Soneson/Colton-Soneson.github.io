@@ -6,6 +6,7 @@ import {onRenderResize} from './deviceSelection.js'
 
 import * as renderMath from './renderMath.js'
 import { settings } from './settings.js';
+import { reversedDepth } from './depthMode.js';
 
 // The view is 72 degrees from top to bottom, and as wide as the canvas's shape makes it. On a screen taller than it is wide (a phone
 //		held upright) that would leave only a narrow slice of the world across it, so there it is 72 degrees from side to side
@@ -20,7 +21,11 @@ function makeProjection() {
 	const aspect = canvas.width / canvas.height;
 	baseVerticalViewAngle = aspect >= 1 ? VIEW_ANGLE : 2 * Math.atan(Math.tan(VIEW_ANGLE / 2) / aspect);
 	verticalViewAngle = 2 * Math.atan(Math.tan(baseVerticalViewAngle / 2) / zoom);
-	return mat4.perspective(verticalViewAngle, aspect, seatedNear ?? settings.camNearPlane, settings.camFarPlane);
+	const projection = mat4.perspective(verticalViewAngle, aspect, seatedNear ?? settings.camNearPlane, settings.camFarPlane);
+	// reversed-Z (depthMode.js): its depth turned round, 1 at the near plane and 0 at the far (the row that makes the depth taken
+	//		from the row that makes w: the depth is w less what it was, over w)
+	if (reversedDepth) for (let c = 0; c < 4; c++) projection[c * 4 + 2] = projection[c * 4 + 3] - projection[c * 4 + 2];
+	return projection;
 }
 // in a cockpit the panel is close to the eyes: the near plane closer while seated (plane.js), world units, or null for the setting's
 let seatedNear = null;

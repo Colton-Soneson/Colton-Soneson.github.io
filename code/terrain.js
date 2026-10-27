@@ -1,3 +1,4 @@
+import { DEPTH_FORMAT, depthTest, DEPTH_CLEAR } from './depthMode.js'
 import {device} from './deviceSelection.js'
 import {canvas} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
@@ -727,8 +728,8 @@ function createTerrainPipeline(label, fragmentEntryPoint, cullMode = TERRAIN_CUL
 		},
 		depthStencil: {
 			depthWriteEnabled: true,
-			depthCompare: 'less',
-			format: 'depth24plus',
+			depthCompare: depthTest('less'),
+			format: DEPTH_FORMAT,
 		},
 	});
 }
@@ -787,8 +788,8 @@ const terrainBakedPipeline = device.createRenderPipeline({
 	},
 	depthStencil: {
 		depthWriteEnabled: true,
-		depthCompare: 'less',
-		format: 'depth24plus',
+		depthCompare: depthTest('less'),
+		format: DEPTH_FORMAT,
 	},
 });
 

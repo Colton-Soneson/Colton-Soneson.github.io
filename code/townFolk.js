@@ -1,3 +1,4 @@
+import { DEPTH_FORMAT, depthTest, DEPTH_CLEAR } from './depthMode.js'
 import {device} from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
@@ -683,7 +684,7 @@ function makeGpu() {
 		},
 		fragment: { module, entryPoint: "fragmentMain", targets: [{ format: canvasFormat }] },
 		primitive: { topology: 'triangle-list', cullMode: 'none' },
-		depthStencil: { depthWriteEnabled: true, depthCompare: 'less', format: 'depth24plus' },
+		depthStencil: { depthWriteEnabled: true, depthCompare: depthTest('less'), format: DEPTH_FORMAT },
 	});
 	const instanceData = new Float32Array(MAX_DRAWN * DUMMY_FLOATS);
 	const instanceBuffer = device.createBuffer({ label: "townsfolk instances", size: instanceData.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });

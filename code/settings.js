@@ -76,6 +76,7 @@ export const settings = {
 	renderResolution: 1080,				//how many pixels the picture is drawn with across the short side of the window: 2160 (4K), 1440, 1080, 900, 720, 540 or 480. The canvas fills the page whatever this is, see display.js
 	dynamicResolution: false,			//draw at less than renderResolution while the frame rate is under the target, back up when there is room (see DYNAMIC RESOLUTION in display.js). On in the Low and Very Low presets
 	dynamicResolutionTarget: 30,		//the frame rate dynamic resolution keeps to, 0 to 60
+	reversedDepth: true,				//the frame's depth buffer reversed-Z, 32 bit float: about as fine far off as near (no flicker in the distance). Takes effect when the page loads (see depthMode.js)
 	antiAliasing: "smaa",				//smooths the stair steps along edges, working from the finished frame. "smaa" (see vf_smaa.js), "fxaa" (vf_fxaa.js) or "off"
 	smaaEdgeThreshold: 0.1,				//SMAA: how much the brightness has to change between two pixels to count as an edge. Lower finds fainter edges and costs more
 	fxaaSubpixel: 0.75,					//FXAA: how much anything smaller than a pixel (a far blade of grass) is softened into what is round it. 0 = edges only

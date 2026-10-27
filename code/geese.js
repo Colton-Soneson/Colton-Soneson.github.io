@@ -1,3 +1,4 @@
+import { DEPTH_FORMAT, depthTest, DEPTH_CLEAR } from './depthMode.js'
 import {device} from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
@@ -139,7 +140,7 @@ const goosePipeline = device.createRenderPipeline({
 	},
 	fragment: { module: gooseShaderModule, entryPoint: "fragmentMain", targets: [{ format: canvasFormat }] },
 	primitive: { topology: 'triangle-list', cullMode: 'none' },		// (the wings are flat: both sides are seen)
-	depthStencil: { depthWriteEnabled: true, depthCompare: 'less', format: 'depth24plus' },
+	depthStencil: { depthWriteEnabled: true, depthCompare: depthTest('less'), format: DEPTH_FORMAT },
 });
 
 // The skein

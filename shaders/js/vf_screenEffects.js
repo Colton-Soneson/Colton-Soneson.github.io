@@ -1,4 +1,5 @@
 import { cloudShadeShapes } from './vfc_clouds.js';
+import { skyTest, nextDepthOut } from './depthShapes.js';
 
 export const SSAO_TAPS = 10;	// places around a pixel the ambient occlusion looks at
 
@@ -73,7 +74,7 @@ export const vf_ssao =
 	@fragment
 	fn fragmentMain(@builtin(position) fragCoord: vec4f) -> @location(0) vec4f {
 		let pixel = vec2i(fragCoord.xy) * 2;	// this is drawn at half size
-		if (depthAt(pixel) >= 1.0) {
+		if (${skyTest('depthAt(pixel)')}) {
 			return vec4f(1.0, 1.0, 1.0, 1.0);	// sky
 		}
 		let here = viewPositionAt(pixel);
@@ -150,7 +151,7 @@ export const vf_screenShade =
 	fn fragmentMain(@builtin(position) fragCoord: vec4f) -> @location(0) vec4f {
 		let pixel = vec2i(fragCoord.xy);
 		let depth = depthAt(pixel);
-		if (depth >= 1.0) {
+		if (${skyTest('depth')}) {
 			return vec4f(1.0, 1.0, 1.0, 1.0);	// sky: nothing to shade
 		}
 		let here = worldPositionAt(pixel);
@@ -205,8 +206,9 @@ export const vf_screenShade =
 		let clear = exp(-pow(away / SU.amounts.w, 2.0));
 		// and further off than the depth texture can tell one depth from the next across a pixel (it keeps 24 bits: the step between two of
 		//		its depths grows as the square of the distance), the slope worked out from it is noise, flickering from frame to frame. So
-		//		the shading that hangs on it fades out where a step of depth is more than a few tenths of a pixel's width
-		let step = viewDistance(min(depth + 1.0 / 16777216.0, 0.99999994)) - hereDistance;
+		//		the shading that hangs on it fades out where a step of depth is more than a few tenths of a pixel's width. (With reversed-Z,
+		//		depthMode.js, the depth is fine enough nearly everywhere and this all but never happens)
+		let step = viewDistance(${nextDepthOut('depth')}) - hereDistance;
 		let footprint = away * 2.0 / (SU.projection.y * SU.size.y);
 		let sure = 1.0 - smoothstep(0.08, 0.3, step / footprint);
 		left = mix(1.0, left, clear * sure);

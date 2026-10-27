@@ -1,3 +1,4 @@
+import { DEPTH_FORMAT, depthTest, DEPTH_CLEAR } from './depthMode.js'
 import {device} from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
@@ -260,8 +261,8 @@ const leafPipeline = device.createRenderPipeline({
 	},
 	depthStencil: {
 		depthWriteEnabled: true,
-		depthCompare: 'less',
-		format: 'depth24plus',
+		depthCompare: depthTest('less'),
+		format: DEPTH_FORMAT,
 	},
 });
 
@@ -292,8 +293,8 @@ function createSoftPipeline(label, shaderModule) {
 		},
 		depthStencil: {
 			depthWriteEnabled: false,
-			depthCompare: 'less',
-			format: 'depth24plus',
+			depthCompare: depthTest('less'),
+			format: DEPTH_FORMAT,
 		},
 	});
 }

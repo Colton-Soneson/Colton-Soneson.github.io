@@ -1,3 +1,4 @@
+import { DEPTH_FORMAT, depthTest, DEPTH_CLEAR } from './depthMode.js'
 import {device} from './deviceSelection.js'
 import {context} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
@@ -182,8 +183,8 @@ const birdPipeline = device.createRenderPipeline({
 	},
 	depthStencil: {
 		depthWriteEnabled: true,
-		depthCompare: 'less',
-		format: 'depth24plus',
+		depthCompare: depthTest('less'),
+		format: DEPTH_FORMAT,
 	},
 });
 

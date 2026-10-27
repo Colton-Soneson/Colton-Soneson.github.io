@@ -7,6 +7,7 @@ import * as profiler from './profiler.js';	//for the Performance window
 import { device, canvas, gpuInfo, gpuIsFallback, onRenderResize } from './deviceSelection.js';
 import { RESOLUTIONS, dynamicResolution } from './display.js';
 import { PRESETS, PRESET_NAMES, PresetCheck, detectStartingPreset } from './graphicsPresets.js';
+import { reversedDepth, rememberDepthChoice } from './depthMode.js';
 
 export const imguiParams = {
     // Time
@@ -76,6 +77,7 @@ export const imguiParams = {
     dynamicResolution: settings.dynamicResolution,
     dynamicResolutionTarget: settings.dynamicResolutionTarget,
     antiAliasing: settings.antiAliasing,
+    reversedDepth: settings.reversedDepth,
     fxaaSubpixel: settings.fxaaSubpixel,
     anisotropicFiltering: settings.anisotropicFiltering,
     // Grass
@@ -307,6 +309,7 @@ const presetCheck = new PresetCheck(startingPreset.preset, performance.now());
 const presetNames = Object.fromEntries(PRESET_NAMES.map((name) => [name.replace(/\b\w/g, (c) => c.toUpperCase()), name]));	// 'Very Low': 'very low', ...
 const presetController = gui.add(presetState, 'preset', presetNames).name('Graphics Preset').onChange((name) => {
 	applyPreset(name);
+	rememberDepthChoice(PRESETS[name].reversedDepth);		// (chosen by hand: its depth buffer the next time the page loads)
 	// chosen by hand: that is the user deciding, the check stops
 	if (presetCheck.state != 'done') presetCheck.stop('chosen by hand');
 	presetState.override = true;
@@ -413,6 +416,8 @@ screenFolder.add(imguiParams, 'displayScreenShading').name('Show Shading Only');
 
 const displayFolder = gui.addFolder('Display');	//see smaa.js, fxaa.js and textureFiltering.js
 displayFolder.add(imguiParams, 'antiAliasing', { 'SMAA': 'smaa', 'FXAA': 'fxaa', 'off': 'off' }).name('Anti-Aliasing');
+// (the depth buffer is made as the page loads: a change is remembered, and is how it is the next time: depthMode.js)
+displayFolder.add(imguiParams, 'reversedDepth').name(`Reversed-Z Depth (${reversedDepth ? 'on' : 'off'} now; on reload)`).onChange((on) => rememberDepthChoice(on));
 displayFolder.add(imguiParams, 'fxaaSubpixel', 0, 1, 0.05).name('FXAA Softening');
 displayFolder.add(imguiParams, 'anisotropicFiltering', { '1x (off)': 1, '2x': 2, '4x': 4, '8x': 8, '16x': 16 }).name('Anisotropic Filtering');
 

@@ -1,4 +1,5 @@
 import { skyLUTUVShapes } from './vfc_atmosphere.js';
+import { DEPTH_NEAR, DEPTH_FAR, skyTest } from './depthShapes.js';
 export const CLOUD_SHAPE_SIZE = 128;		// texels along each side of the shape noise, a cube
 export const CLOUD_DETAIL_SIZE = 64;		// and of the detail noise
 export const CLOUD_NOISE_WORKGROUP = 4;		// the noise is made in blocks of 4 x 4 x 4 texels
@@ -639,8 +640,8 @@ export const vf_cloudMarch =
 		//------------------THE RAY-----------------
 		let uv = fragCoord.xy / CU.screen.xy;
 		let ndc = vec2f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
-		let nearPoint = CU.invViewProjectionMatrix * vec4f(ndc, 0.0, 1.0);
-		let farPoint = CU.invViewProjectionMatrix * vec4f(ndc, 1.0, 1.0);
+		let nearPoint = CU.invViewProjectionMatrix * vec4f(ndc, ${DEPTH_NEAR}, 1.0);
+		let farPoint = CU.invViewProjectionMatrix * vec4f(ndc, ${DEPTH_FAR}, 1.0);
 		let origin = CU.cameraPosition.xyz;
 		let direction = normalize(farPoint.xyz / farPoint.w - nearPoint.xyz / nearPoint.w);
 
@@ -649,7 +650,7 @@ export const vf_cloudMarch =
 		let depthSize = vec2i(textureDimensions(depthTexture));
 		let depth = textureLoad(depthTexture, min(vec2i(fragCoord.xy * vec2f(depthSize) / CU.screen.xy), depthSize - vec2i(1, 1)), 0);
 		var solid = 1000000000.0;
-		if (depth < 1.0) {
+		if (!${skyTest('depth')}) {
 			let scenePoint = CU.invViewProjectionMatrix * vec4f(ndc, depth, 1.0);
 			solid = distance(scenePoint.xyz / scenePoint.w, origin);
 		}
@@ -872,10 +873,10 @@ export const vf_cloudComposite =
 
 		// the moon: a plain white disc wherever the view comes within its radius of the way to the moon, in the sky only
 		var moonLight = vec3f(0.0, 0.0, 0.0);
-		if (CU.moonLook.x > 0.0 && textureLoad(depthTexture, vec2i(fragCoord.xy), 0) >= 1.0) {
+		if (CU.moonLook.x > 0.0 && ${skyTest('textureLoad(depthTexture, vec2i(fragCoord.xy), 0)')}) {
 			let ndc = vec2f(fragCoord.x / f32(fullSize.x) * 2.0 - 1.0, 1.0 - fragCoord.y / f32(fullSize.y) * 2.0);
-			let nearPoint = CU.invViewProjectionMatrix * vec4f(ndc, 0.0, 1.0);
-			let farPoint = CU.invViewProjectionMatrix * vec4f(ndc, 1.0, 1.0);
+			let nearPoint = CU.invViewProjectionMatrix * vec4f(ndc, ${DEPTH_NEAR}, 1.0);
+			let farPoint = CU.invViewProjectionMatrix * vec4f(ndc, ${DEPTH_FAR}, 1.0);
 			let direction = normalize(farPoint.xyz / farPoint.w - nearPoint.xyz / nearPoint.w);
 			let fromMiddle = acos(clamp(dot(direction, CU.moon.xyz), -1.0, 1.0));
 			let disc = 1.0 - smoothstep(0.93 * CU.moon.w, CU.moon.w, fromMiddle);

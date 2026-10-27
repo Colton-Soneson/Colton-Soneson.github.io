@@ -8,13 +8,15 @@ import { mat4 } from 'https://wgpu-matrix.org/dist/3.x/wgpu-matrix.module.js';
 import { settings } from './settings.js';
 
 import { vf_boat } from '../shaders/js/vf_boat.js'
-import { VESSELS, ROLE, MAX_GROUPS, MAX_ROPES } from './vessels.js'
+import { VESSELS, ROLE, MAX_GROUPS, MAX_ROPES, MAX_PIECES, MAX_PARTS } from './vessels.js'
 
 import * as transformations from './transformations.js'
 import * as terrain from './terrain.js'
 import * as water from './water.js'
 import * as boulders from './boulders.js'
 import { windAtPoint } from './wind.js'
+import * as ballistics from './ballistics.js'
+import { announceSpawn } from './radialMenu.js'
 import { weatherNow } from './weather.js'
 
 //the boat fades into the horizon color, read from the sky view LUT (same as everything else)
@@ -36,12 +38,16 @@ import {uniformBufferLights} from './rotatingCube.js'
 	here knows where the others on it are (setCrew, from what they send) and heels and trims to their weight too. A rope worked or
 	the anchor let go on a boat sailed somewhere else is sent there (remoteControl), and done there.
 
+	THE STEADYING (settings.boatSteadying, 0 to 1): an invisible hand holding every boat level, against sea sickness on a rough sea. Each
+	step that share of its roll and its pitch (and of its rolling and pitching) is taken away every STEADY_TIME: at 0 nothing, at 1 all
+	of it at once, so it keeps only its heading. The waves still lift it and turn it.
+
 	FLOATING. The water's surface is only known on the GPU (the waves are made there). So the water is asked (water.js,
 	setWaterProbes) for its height and its slope under each sailed boat's COLUMNS: places under the hull, each standing for a
 	piece of it. Each boat has its own run of the probes (probeSlot), kept for as long as the boat is. The answers come back a
 	frame or two later, so each is moved on to where the column is now along the slope it had, and on in time at the rate it was
 	rising. A column pushes up with the weight of the water it puts aside (Archimedes): the hull's sections are a V near the
-	keel, so it puts aside more and more water the deeper it goes. It pushes along the water's normal, not straight up: on the
+	keel, so it puts aside more and more water the deeper it goes (times settings.buoyancy). It pushes along the water's normal, not straight up: on the
 	face of a wave the boat is pushed down it. And it is damped, against the water rising and falling, or the boat would bounce
 	for ever.
 
@@ -74,6 +80,12 @@ import {uniformBufferLights} from './rotatingCube.js'
 	so it sits there with its sails luffing until they are hauled in. Failing that, whichever way round fits. And it is put there
 	at anchor (anchorAtSpawn: the rode already laid out upwind, so it holds at once), or a boat left alone in a blow would drift
 	away faster than its sailor can swim after it. G brings the anchor up.
+
+	SHOT TO PIECES. A bullet into the hull (not one fired by someone on it) takes its round's damage off the boat's health (the
+	vessel's health is in rifle rounds' hits), on the machine that sails it. At none it breaks up: a ball of fire (plane.js), its
+	masts (and the bowsprit) fall each its own way with whatever they carry (the vessel's pieces: the same way on every machine,
+	from the boat's id), its ropes are gone, and its hull floods from the bow until nothing holds it up (sinkSeconds). Whoever is
+	on it is in the water (hunting.js). GONE_SECONDS after that it is taken away.
 */
 const RHO_WATER = 1025;				// kg per cubic metre
 const RHO_AIR = 1.225;
@@ -86,6 +98,10 @@ export const SPAWN_REACH = 50;		// metres
 const SPAWN_CLEARANCE = 0.4;		// metres of water under the keel, all round, for a boat to be put there
 const PROBE_SKIP = 3;				// the first lots of probes that come back for a boat are someone else's (the boat that had its slot before)
 const FOLLOW_DELAY = 0.15;			// seconds behind the last state heard that a boat sailed somewhere else is drawn
+const SEA_REACH = 30;				// metres out from a boat that the bullets' sea is as high as the waves under it (fading to flat: about a
+									//		wave's trough or crest across. See setSeaHeight in ballistics.js)
+const STEADY_TIME = 0.25;			// seconds: see THE STEADYING
+const GONE_SECONDS = 25;			// a boat shot to pieces is taken away this long after it has had its time to sink (see SHOT TO PIECES)
 
 // The boats, and how each one is now
 //-------------------------------------------------
@@ -98,7 +114,8 @@ const FOLLOW_DELAY = 0.15;			// seconds behind the last state heard that a boat 
 //		  rudder (over to port, the bow goes to port, radians), anchor (down: { x, y, z (on the bottom, metres), rode, holding }),
 //		  hovered (the control the crosshair is on), time, rising (each column's water: the last height that came back, when, how
 //		  fast it was rising), crew (who is on it: id -> the middle of them, metres on the boat), message, messageAge,
-//		  track (sailed somewhere else: the last few states heard), frame (its places into the world and back, see makeFrame), stats }
+//		  track (sailed somewhere else: the last few states heard), frame (its places into the world and back, see makeFrame), stats,
+//		  health, destroyed (seconds since it was shot to pieces, -1 before), falls (how each piece falls: breakUp) }
 export const boats = [];
 const metre = () => settings.forestUnitsPerMetre;
 const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
@@ -381,7 +398,7 @@ function stepBoat(b, dt, now) {
 		if (d <= 0) return;
 		const share = Math.min(d / V.vDepth, 1);
 		wet += share / V.columns.length;
-		const lift = RHO_WATER * GRAVITY * sunkVolume(V, c, d);
+		const lift = RHO_WATER * GRAVITY * sunkVolume(V, c, d) * afloat(b, c) * (settings.buoyancy ?? 1);
 		const n = under.normal, nl = len(n);
 		const at = [c.x, c.bottom + d * 0.5, c.z];
 		const rising = velocityAt(b, at)[1] - under.rate;
@@ -407,7 +424,7 @@ function stepBoat(b, dt, now) {
 	// the sails
 	const wind = trueWind(b);
 	let driveAhead = 0;
-	V.sails.forEach((sail, i) => {
+	if (b.destroyed < 0) V.sails.forEach((sail, i) => {
 		const at = placeOnBoat(b, sail.centre, sail.group, ROLE.CLOTH);
 		const f = sailForce(b, i, unrotate(b.q, sub(wind, velocityAt(b, at))), dt);
 		push(rotate(b.q, f), at);
@@ -492,6 +509,7 @@ function stepBoat(b, dt, now) {
 	b.q = b.q.map((c, k) => c + 0.5 * dq[k] * dt);
 	const ql = Math.hypot(...b.q);
 	b.q = b.q.map((c) => c / ql);
+	steady(b, dt);
 
 	// not off the edge of the world
 	const edge = settings.terrainWorldSize * 0.5 / m - 5;
@@ -510,6 +528,21 @@ function stepBoat(b, dt, now) {
 	});
 }
 
+// THE STEADYING (see the top): towards the boat turned only to its heading, by the setting's share every STEADY_TIME
+function steady(b, dt) {
+	const s = clamp(settings.boatSteadying ?? 0, 0, 1);
+	if (s <= 0) return;
+	const k = s >= 1 ? 1 : 1 - Math.pow(1 - s, dt / STEADY_TIME);
+	const f = rotate(b.q, [0, 0, 1]), turn = Math.atan2(f[0], f[2]);
+	let level = [Math.cos(turn / 2), 0, Math.sin(turn / 2), 0];
+	if (dot4(level, b.q) < 0) level = level.map((c) => -c);
+	const q = b.q.map((c, i) => c + (level[i] - c) * k), l = Math.hypot(...q);
+	// (turned about its centre of mass, where b.p is: nothing moves but the tilt)
+	b.q = q.map((c) => c / l);
+	b.w = [b.w[0] * (1 - k), b.w[1], b.w[2] * (1 - k)];
+}
+const dot4 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
+
 function gatherRocks(b) {
 	b.nearRocks = [];
 	if (!settings.enableBoulders) return;
@@ -522,7 +555,8 @@ function gatherRocks(b) {
 // Putting one in the sea (see PUTTING ONE IN THE SEA at the top)
 //-------------------------------------------------
 // whether a vessel fits at (x, z) world units turned to yaw (as settings.camYaw): deep enough under all of it. null if so, or what is wrong
-function footprintClear(V, x, z, yaw) {
+//		(npcShips.js puts its boats in with it too)
+export function footprintClear(V, x, z, yaw) {
 	const land = terrain.land;
 	if (!land || !settings.enableTerrain) return null;
 	const m = metre();
@@ -595,7 +629,7 @@ export function spawnBoat(x, z, name, { yaw = null, owner = localId, id = null, 
 		id: id ?? `${owner}:${nextBoatNumber++}`, owner, authority, vessel, exists: true,
 		q: [Math.cos(turn / 2), 0, Math.sin(turn / 2), 0], centre: [...vessel.centre], v: [0, 0, 0], w: [0, 0, 0],
 		sails: vessel.sails.map((sail) => ({ hoist: sail.start.hoist, sheet: sail.start.sheet, hoistWant: sail.start.hoist, sheetWant: sail.start.sheet, angle: 0, fill: 0, shake: 0, attack: 0 })),
-		rudder: 0, anchor: null, hovered: -1, time: 0, rising: [], crew: new Map(), message: '', messageAge: 99,
+		rudder: 0, anchor: null, hovered: -1, time: 0, health: vessel.health, destroyed: -1, falls: [], rising: [], crew: new Map(), message: '', messageAge: 99,
 		track: [], nearRocks: [], rocksAt: 0, probeSlot: null, probeSkip: 0, gpu: null,
 		stats: { vessel: vessel.name, triangles: vessel.triangles, speed: 0, heel: 0, trueWind: 0, apparentWind: 0, apparentAngle: 0, trueAngle: 0, attacks: [], driveAhead: 0, wet: 0, aground: false,
 			bowFreeboard: 0 },	// (how far the deck at the bow is over the water there, metres: under it with green water on the foredeck)
@@ -669,7 +703,7 @@ export function controlInView(eye, look, usable = () => true) {
 	const eyeM = scale(eye, 1 / m);
 	let best = null, bestAlong = Infinity, bestBoat = null;
 	for (const b of boats) {
-		if (Math.hypot(b.p[0] - eyeM[0], b.p[2] - eyeM[2]) > b.vessel.reach + REACH) continue;
+		if (b.destroyed >= 0 || Math.hypot(b.p[0] - eyeM[0], b.p[2] - eyeM[2]) > b.vessel.reach + REACH) continue;
 		for (const control of b.vessel.controls) {
 			if (!usable(b, control)) continue;
 			const at = toWorldMetres(b, control.at);
@@ -712,6 +746,10 @@ export function workControl(b, what) {
 		if (control) nudgeControl(b, control, what.amount);
 	} else if (what.kind == 'anchor') {
 		toggleAnchor(b);
+	} else if (what.kind == 'damage') {
+		hurtBoat(b, what.amount);
+	} else if (what.kind == 'mend') {
+		mend(b, what.amount);
 	}
 }
 
@@ -784,6 +822,7 @@ export function boatShare(b) {
 		s: b.sails.map((s) => [r(s.hoist), r(s.sheet), r(s.angle), r(s.fill), r(s.shake), r(s.hoistWant), r(s.sheetWant)]),
 		k: b.anchor ? [r(b.anchor.x), r(b.anchor.y), r(b.anchor.z), r(b.anchor.rode), b.anchor.holding ? 1 : 0] : null,
 		m: b.messageAge < 2.5 ? b.message : '',
+		hp: r(b.health), dx: r(b.destroyed), tm: b.team ?? null,
 	};
 }
 // a boat put out somewhere else (net.js): as its state says, sailed where it says
@@ -793,6 +832,9 @@ export function spawnFromShare(s) {
 	b.p = [...s.p]; b.q = [...s.q]; b.v = [...s.v]; b.w = [...s.w]; b.centre = [...s.c]; b.rudder = s.r;
 	s.s.forEach((x, i) => { if (b.sails[i]) Object.assign(b.sails[i], { hoist: x[0], sheet: x[1], angle: x[2], fill: x[3], shake: x[4], hoistWant: x[5], sheetWant: x[6] }); });
 	b.anchor = s.k ? { x: s.k[0], y: s.k[1], z: s.k[2], rode: s.k[3], holding: s.k[4] > 0.5 } : null;
+	if (s.hp !== undefined) b.health = s.hp;
+	b.team = s.tm ?? null;
+	if (s.dx >= 0) { breakUp(b, false); b.destroyed = s.dx; }	// (already in pieces: no bang, it is how it was)
 	if (!sailedHere(b)) b.track.push({ at: performance.now() / 1000, s });
 	return b;
 }
@@ -803,6 +845,9 @@ export function boatHeard(share) {
 	b.track.push({ at: performance.now() / 1000, s: share });
 	if (b.track.length > 8) b.track.shift();
 	if (share.m && share.m != b.message) say(b, share.m);
+	if (share.hp !== undefined) b.health = share.hp;
+	if (share.tm !== undefined) b.team = share.tm;
+	if (share.dx >= 0 && b.destroyed < 0) breakUp(b);
 }
 // a boat sailed somewhere else, where it was FOLLOW_DELAY ago: in between the two states either side of then (and on from the last
 //		one at the speed it was going, if nothing newer has come)
@@ -842,6 +887,142 @@ export function takeOver(b, authority = localId) {
 	else freeProbeSlot(b);
 }
 
+// Shot to pieces (see SHOT TO PIECES at the top)
+//-------------------------------------------------
+export const boatStats = { hits: 0, destroyed: 0 };
+const IDENTITY = mat4.identity();
+// the hull's box (metres on the boat): round everything on it but the pieces that fall and the ropes
+const hullBoxes = new Map();
+function hullBox(V) {
+	if (hullBoxes.has(V)) return hullBoxes.get(V);
+	const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+	for (let i = 0; i < V.mesh.length; i += 12) {
+		if (V.mesh[i + 10] > 0.5 || V.mesh[i + 7] == ROLE.ROPE) continue;
+		for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], V.mesh[i + k]); hi[k] = Math.max(hi[k], V.mesh[i + k]); }
+	}
+	hullBoxes.set(V, { lo, hi });
+	return hullBoxes.get(V);
+}
+// where along a bullet's step from A to B (metres on the boat, 0 to 1) it first goes into the hull: in its box, then inside its
+//		sides and under its sheer. null if it does not
+function intoHull(V, A, B) {
+	const box = hullBox(V);
+	let t0 = 0, t1 = 1;
+	for (let i = 0; i < 3; i++) {
+		const d = B[i] - A[i];
+		if (Math.abs(d) < 1e-9) { if (A[i] < box.lo[i] || A[i] > box.hi[i]) return null; continue; }
+		let near = (box.lo[i] - A[i]) / d, far = (box.hi[i] - A[i]) / d;
+		if (near > far) [near, far] = [far, near];
+		t0 = Math.max(t0, near); t1 = Math.min(t1, far);
+		if (t0 > t1) return null;
+	}
+	const STEPS = 16;
+	for (let k = 0; k <= STEPS; k++) {
+		const t = t0 + (t1 - t0) * k / STEPS;
+		const x = A[0] + (B[0] - A[0]) * t, y = A[1] + (B[1] - A[1]) * t, z = A[2] + (B[2] - A[2]) * t;
+		if (Math.abs(x) <= V.halfBreadth(z) + 0.05 && y <= V.sheerHeight(z) + 0.2) return t;
+	}
+	return null;
+}
+ballistics.addTarget((ax, ay, az, bx, by, bz, bullet) => {
+	if (!settings.enableWater) return null;
+	const m = metre();
+	let best = null;
+	for (const b of boats) {
+		if (b.destroyed >= 0) continue;
+		if (bullet?.remote || bullet?.npc ? b.crew.has(bullet.shooter) : b.crew.has('me')) continue;
+		if (Math.hypot(b.p[0] - ax / m, b.p[2] - az / m) > b.vessel.reach + Math.hypot(bx - ax, bz - az) / m) continue;
+		const t = intoHull(b.vessel, toLocal(b, [ax / m, ay / m, az / m]), toLocal(b, [bx / m, by / m, bz / m]));
+		if (t !== null && (!best || t < best.t)) best = { t, b };
+	}
+	// (a bullet fired here hurts it; the others' are theirs to say, and do)
+	return best && { t: best.t, what: 'boat', hit: () => { if (!bullet?.remote) damage(best.b, ballistics.ROUNDS[bullet?.round]?.damage ?? 1, bullet); } };
+});
+// the sea round a boat, for the bullets: as high as it is under the nearest boat now (from how high that floats), fading to flat
+//		SEA_REACH out from it (world units)
+ballistics.setSeaHeight((x, z) => {
+	const m = metre();
+	let nearest = null, off = SEA_REACH;
+	for (const b of boats) {
+		const d = Math.hypot(b.p[0] - x / m, b.p[2] - z / m) - b.vessel.reach;
+		if (b.destroyed < 0 && d < off) { nearest = b; off = d; }
+	}
+	if (!nearest) return null;
+	const flat = settings.waterWorldPosY / m, here = nearest.p[1] - nearest.centre[1] + nearest.vessel.spawn.draft;
+	const f = clamp(1 - off / SEA_REACH, 0, 1);
+	return (flat + (here - flat) * f * f * (3 - 2 * f)) * m;
+});
+// a shell bursting (shipGuns.js) at (world units), fired here: every boat within radius (metres) of it hurt, amount at the most, less
+//		the further its hull is from it (bullet: the shell)
+export function blast(at, radius, amount, bullet = null) {
+	const m = metre();
+	for (const b of boats) {
+		if (b.destroyed >= 0) continue;
+		const local = toLocal(b, scale(at, 1 / m)), box = hullBox(b.vessel);
+		const d = Math.hypot(...[0, 1, 2].map((i) => local[i] - clamp(local[i], box.lo[i], box.hi[i])));
+		if (d < radius) damage(b, amount * (1 - d / radius), bullet);
+	}
+}
+// mended (shipGuns.js: a piece of wood at a mast): its health up by amount, where it is sailed
+export function mend(b, amount) {
+	if (b.destroyed >= 0) return;
+	if (!sailedHere(b)) { remoteControl?.(b, { kind: 'mend', amount }); return; }
+	b.health = Math.min(b.health + amount, b.vessel.health);
+}
+// hit by a bullet fired here: its health down here, if it is sailed here, or where it is sailed (net.js). Told: fn(boat, bullet) (npcs.js: its
+//		crew know they are shot at)
+const shotListeners = [];
+export function onBoatShot(fn) { shotListeners.push(fn); }
+function damage(b, amount, bullet = null) {
+	if (b.destroyed >= 0) return;
+	boatStats.hits++;
+	for (const fn of shotListeners) fn(b, bullet);
+	if (sailedHere(b)) hurtBoat(b, amount);
+	else remoteControl?.(b, { kind: 'damage', amount });
+}
+function hurtBoat(b, amount) {
+	if (b.destroyed >= 0) return;
+	b.health = Math.max(b.health - amount, 0);
+	if (b.health <= 0) breakUp(b);
+}
+const breakListeners = [];
+// told when a boat is shot to pieces: fn(where (world units), boat) (plane.js: the fire, sound.js: the bang, hunting.js: into the water)
+export function onBreak(fn) { breakListeners.push(fn); }
+// to pieces: each piece falls its own way, the same on every machine. loud: told to the listeners (not for a boat that was already in
+//		pieces when it was first heard of)
+function breakUp(b, loud = true) {
+	b.destroyed = Math.max(b.destroyed, 0);
+	b.anchor = null;
+	boatStats.destroyed++;
+	let seed = 7;
+	for (const ch of b.id) seed = (seed * 31 + ch.charCodeAt(0)) >>> 0;
+	const random = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+	b.falls = b.vessel.pieces.map((piece, k) => {
+		// (over one side or the other, a little fore or aft: turned about the level line across that, the mast's top going that way)
+		const d = unit([random() < 0.5 ? 1 : -1, 0, (random() - 0.5) * 0.8]);
+		return { axis: [d[2], 0, -d[0]], most: 1.55 + random() * 0.25, delay: k * 0.3 + random() * 0.3, seconds: 0.8 * Math.sqrt(piece.height) };
+	});
+	say(b, 'Shot to pieces!');
+	if (!loud) return;
+	const at = scale(toWorldMetres(b, [0, b.vessel.centre[1] + 1.5, 0]), metre());
+	for (const fn of breakListeners) fn(at, b);
+}
+// how much of a column's water still holds it up: shot to pieces, less and less, none by sinkSeconds (sooner at the bow)
+function afloat(b, column) {
+	if (b.destroyed < 0) return 1;
+	return clamp(1 - b.destroyed / b.vessel.sinkSeconds * (1 + 0.5 * column.z / b.vessel.reach), 0, 1);
+}
+// where a falling piece is (metres on the boat): turned over about its foot, faster and faster as a tree falls, then going under
+function fallMatrix(b, k) {
+	const f = b.falls[k], piece = b.vessel.pieces[k];
+	if (b.destroyed < 0 || !f) return IDENTITY;
+	const t = Math.max(b.destroyed - f.delay, 0);
+	const angle = f.most * Math.min((t / f.seconds) ** 2, 1);
+	const sink = Math.max(t - f.seconds, 0) * 0.4;
+	const matrix = mat4.multiply(mat4.translation([piece.foot[0], piece.foot[1] - sink, piece.foot[2]]), mat4.axisRotation(f.axis, angle));
+	return mat4.translate(matrix, scale(piece.foot, -1));
+}
+
 // Per frame
 //-------------------------------------------------
 let lastTime = performance.now();
@@ -857,7 +1038,11 @@ export function boatUpdate() {
 		return;
 	}
 	readWater(now);
-	for (const b of boats) {
+	for (const b of [...boats]) {
+		if (b.destroyed >= 0) {
+			b.destroyed += elapsed;
+			if (sailedHere(b) && b.destroyed > b.vessel.sinkSeconds + GONE_SECONDS) { removeBoat(b); announceSpawn('boat', null, b); continue; }
+		}
 		if (!sailedHere(b)) {
 			follow(b, now / 1000);
 		} else {
@@ -935,7 +1120,7 @@ function showPanel(b) {
 	const anchor = b.anchor ? (b.anchor.holding ? 'down' : 'hanging') : 'up';
 	const message = b.messageAge < 2.5 ? b.message : '';
 	const key = [b.id, knots(s.speed).toFixed(1), knots(s.trueWind).toFixed(0), knots(s.apparentWind).toFixed(0), (s.apparentAngle * 20).toFixed(0), (s.trueAngle * 20).toFixed(0),
-		...b.sails.map((x) => `${x.hoist.toFixed(2)},${x.sheet.toFixed(2)},${x.shake > 0.5}`), b.rudder.toFixed(2), anchor, message].join('|');
+		...b.sails.map((x) => `${x.hoist.toFixed(2)},${x.sheet.toFixed(2)},${x.shake > 0.5}`), b.rudder.toFixed(2), anchor, message, Math.ceil(b.health)].join('|');
 	if (key == panelShown) return;
 	panelShown = key;
 	const label = 'font-size: 10px; letter-spacing: 0.08em; color: rgba(232, 232, 232, 0.6);';
@@ -951,17 +1136,26 @@ function showPanel(b) {
 		+ rows
 		+ `<div style="display: flex; align-items: center; gap: 6px; margin-top: 6px;"><div style="width: 64px; color: rgba(232, 232, 232, 0.85); font-size: 11px;">${vessel.helm.tiller == 'wheel' ? 'Wheel' : 'Tiller'}</div>${bar(-b.rudder / vessel.rudder.most, true)}</div>`
 		+ `<div style="margin-top: 7px; font-size: 11px; letter-spacing: 0.08em; font-weight: 600;">ANCHOR ${anchor.toUpperCase()}</div>`
+		+ `<div style="margin-top: 3px; font-size: 11px; letter-spacing: 0.08em; font-weight: 600; color: ${b.health < vessel.health * 0.35 ? '#ff6a4d' : b.health < vessel.health * 0.7 ? '#f2c46d' : 'rgba(232, 232, 232, 0.85)'};">HULL ${Math.ceil(b.health / vessel.health * 100)}%</div>`
 		+ (message ? `<div style="margin-top: 3px; color: #f2c46d;">${message}</div>` : '');
 }
 
 // Drawing them
 //-------------------------------------------------
-const UNIFORM_FLOATS = 64 + MAX_GROUPS * 16 + MAX_ROPES * 8;
+const UNIFORM_FLOATS = 64 + MAX_GROUPS * 16 + MAX_ROPES * 8 + MAX_PIECES * 16 + MAX_PARTS * 16;
+// where each of a boat's parts is (its guns', vessels.js): fn(boat) gives a matrix for each (metres on the boat), or null for none moved
+//		(shipGuns.js)
+let partsSource = null;
+export function setPartsSource(fn) { partsSource = fn; }
 const boatShaderModule = device.createShaderModule({ label: "vf_boat", code: vf_boat });
+// each vessel's mesh on the GPU, made the first time it is drawn (shipGuns.js adds to the schooner's before then)
 const meshBuffers = {};
-for (const [name, v] of Object.entries(VESSELS)) {
-	meshBuffers[name] = device.createBuffer({ label: `boat mesh ${name}`, size: v.mesh.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
-	device.queue.writeBuffer(meshBuffers[name], 0, v.mesh);
+function meshBufferOf(v) {
+	if (!meshBuffers[v.name]) {
+		meshBuffers[v.name] = device.createBuffer({ label: `boat mesh ${v.name}`, size: v.mesh.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
+		device.queue.writeBuffer(meshBuffers[v.name], 0, v.mesh);
+	}
+	return meshBuffers[v.name];
 }
 const linSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
 const boatPipeline = device.createRenderPipeline({
@@ -1004,6 +1198,7 @@ function writeBoatUniforms(b) {
 	u.set([...P.bottom, P.bandY[1]], 48);
 	u.set([...P.inside, 0], 52);
 	u.set(P.ports ? [P.ports.z0, P.ports.spacing, P.ports.count, P.ports.half] : [0, 1, 0, 0], 56);
+	u.set([b.team == 'red' ? 1 : b.team == 'blue' ? 2 : 0, 0, 0, 0], 60);		// (her side in the war: war.js)
 	// the groups: where each turns about, how far, and how its sail is hoisted, filled and shaking
 	V.groups.forEach((group, g) => {
 		const o = 64 + g * 16;
@@ -1016,6 +1211,7 @@ function writeBoatUniforms(b) {
 	// the ropes' ends: a sheet from where its sail is now to the block or cleat on the side it is on, the rode down to the anchor
 	V.ropes.forEach((rope, r) => {
 		const o = 64 + MAX_GROUPS * 16 + r * 8;
+		if (b.destroyed >= 0) { u.set([...V.bow, 0], o); u.set([...V.bow, 0], o + 4); return; }	// (in pieces: the ropes are gone, all of each in one point)
 		let a, c, sag = rope.sag;
 		if (rope.rode) {
 			a = V.bow;
@@ -1027,6 +1223,11 @@ function writeBoatUniforms(b) {
 		u.set([...a, sag], o);
 		u.set([...c, 0], o + 4);
 	});
+	// the pieces, falling once it is shot to pieces
+	for (let k = 0; k < MAX_PIECES; k++) u.set(fallMatrix(b, k), 64 + MAX_GROUPS * 16 + MAX_ROPES * 8 + k * 16);
+	// its guns' parts
+	const parts = partsSource?.(b);
+	for (let k = 0; k < MAX_PARTS; k++) u.set(parts?.[k] ?? IDENTITY, 64 + MAX_GROUPS * 16 + MAX_ROPES * 8 + MAX_PIECES * 16 + k * 16);
 	device.queue.writeBuffer(b.gpu.buffer, 0, u);
 
 	if (!b.gpu.bindGroup || b.gpu.lut !== skyViewLUTtexture) {
@@ -1056,7 +1257,7 @@ export function boatPass(aEncoder, mainpassDepthTexture) {
 	pass.setPipeline(boatPipeline);
 	for (const b of boats) {
 		pass.setBindGroup(0, b.gpu.bindGroup);
-		pass.setVertexBuffer(0, meshBuffers[b.vessel.name]);
+		pass.setVertexBuffer(0, meshBufferOf(b.vessel));
 		pass.draw(b.vessel.mesh.length / 12, 1, 0, 0);
 	}
 	pass.end();

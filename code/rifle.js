@@ -16,6 +16,7 @@ import { lightNow } from './lighting.js'
 import * as hunting from './hunting.js'
 import * as ballistics from './ballistics.js'
 import * as weapons from './weapons.js'
+import * as vm from './viewmodel.js'
 
 /*
 	The hunter's rifle, in the Hunting game mode, while it is the weapon held (weapons.js): a Mosin-Nagant 91/30, the Soviet
@@ -35,16 +36,21 @@ import * as weapons from './weapons.js'
 	leaves it. Each round pushed in is one of those carried (weapons.js: 20 all told, filled up at a horse's saddlebags), and a live
 	round thrown out of the chamber goes back to them. The ammunition is shown in the bottom right, with the next thing to do.
 
-	THE RIFLE (RIFLE_MESH): 247 triangles, in metres, the muzzle along +z, the bore along the z axis:
-		the stock			the butt and the wrist (18) and the forend under the barrel (10), wood
-		the receiver		with the magazine under it, open on top over the ejection port (PORT) (12), steel
-		the barrel			a four sided taper (8)
-		the sights			the rear sight's notch (6) and the hooded post of the front sight (8), their tops SIGHT_HEIGHT over
-							the bore: the line between them is the line of sight
-		the bolt			its body in the receiver (8), the cocking piece at the back (7), and the handle out to the right
-							with its knob (6): part 1
-		the trigger			and its guard (4): part 2
-		4 rounds			each a brass case (28) and a copper bullet (12): parts 3 to 6 (see THE ROUNDS)
+	THE RIFLE (RIFLE_MESH): RIFLE_TRIANGLE_COUNT triangles (no more than 500), in metres, the muzzle along +z, the bore along the z axis
+	(made with viewmodel.js's meshBuilder):
+		the stock			lofted through rings with their edges taken off, from the receiver back down the wrist to the butt (48),
+							its steel butt plate (22), on round the receiver (16), the forend under the barrel (38) and the handguard
+							over it (14), wood. The two barrel bands round them (16)
+		the receiver		the six sided receiver of the 91/30 round the bolt, open on the top and the right over the ejection
+							port (PORT) (36), the magazine box out under the wood (10) and the trigger guard behind that (24), steel
+		the barrel			eight sided, stepped down in front of the rear sight, the dark of its bore at the muzzle (36), and the
+							cleaning rod under it (8)
+		the sights			the rear sight's base and its notched leaf (18), the post of the front sight in its hood, on a collar
+							round the barrel (24), their tops SIGHT_HEIGHT over the bore: the line between them is the line of sight
+		the bolt			its body in the receiver (12), the cocking piece at the back (22), and the handle out to the right
+							with its ball (24): part 1
+		the trigger			(12): part 2
+		4 rounds			each a brass case (13) and a copper bullet (8): parts 3 to 6 (see THE ROUNDS)
 	vf_rifle.js draws it, and moves the bolt, the trigger and the rounds.
 
 	THE ROUNDS that can be seen, each placed (in the rifle's space) by a vec4 of the uniforms, w: 0 not there, 1 an empty case,
@@ -97,76 +103,76 @@ const AIM = { x: 0, y: -SIGHT_HEIGHT, z: -0.33, yaw: 0, pitch: 0 };
 
 // The rifle
 //-------------------------------------------------
-const WOOD = 0, STEEL = 1, BRASS = 2, COPPER = 3;
+const WOOD = 0, STEEL = 1, BRASS = 2, COPPER = 3, DARK = 4;
 const RIFLE_MESH = (() => {
-	const tris = [];
-	const code = (part, material) => part + 10 * material;
-	const tri = (a, b, c, part, material) => tris.push([a, b, c, code(part, material)]);
-	const quad = (a, b, c, d, part, material) => { tri(a, b, c, part, material); tri(a, c, d, part, material); };
-	// a box between two rectangles across the rifle: [x half width, y bottom, y top] at z0 and z1. caps: which ends are closed. skip: sides left open (0 bottom, 1 right, 2 top, 3 left)
-	const section = (z0, r0, z1, r1, material, caps, part = 0, skip = []) => {
-		const ring = (z, [h, b, t]) => [[-h, b, z], [h, b, z], [h, t, z], [-h, t, z]];
-		const A = ring(z0, r0), B = ring(z1, r1);
-		for (let k = 0; k < 4; k++) if (!skip.includes(k)) quad(A[k], A[(k + 1) % 4], B[(k + 1) % 4], B[k], part, material);
-		if (caps.includes(0)) quad(A[0], A[1], A[2], A[3], part, material);
-		if (caps.includes(1)) quad(B[0], B[1], B[2], B[3], part, material);
-	};
-	// a tube along z with any number of sides
-	const tube = (x, y, z0, r0, z1, r1, sides, material, part = 0, capBack = false) => {
-		const ring = (z, r) => Array.from({ length: sides }, (_, k) => { const a = (k + 0.5) / sides * Math.PI * 2; return [x + Math.cos(a) * r, y + Math.sin(a) * r, z]; });
-		const A = ring(z0, r0), B = ring(z1, r1);
-		for (let k = 0; k < sides; k++) quad(A[k], A[(k + 1) % sides], B[(k + 1) % sides], B[k], part, material);
-		if (capBack) for (let k = 1; k < sides - 1; k++) tri(A[0], A[k], A[k + 1], part, material);
-	};
-	// a round, 7.62x54R, its base at the origin and its point along +z: the case, closed at the base (28), and the bullet (12)
-	const cartridge = (part) => {
-		tube(0, 0, 0, 0.0068, 0.052, 0.0062, 6, BRASS, part, true);
-		tube(0, 0, 0.052, 0.0062, 0.058, 0.0043, 6, BRASS, part);
-		tube(0, 0, 0.058, 0.0043, ROUND_LENGTH, 0.0008, 6, COPPER, part);
-	};
+	const m = vm.meshBuilder();
 	const H = SIGHT_HEIGHT;
+	// a round, 7.62x54R, its base at the origin and its point along +z: the case, closed at the base, tapering to its neck (13), and
+	//		the bullet (8)
+	const cartridge = (part) => {
+		m.tube(0, 0, 0, 0.0068, 0.058, 0.0046, 5, BRASS, part, [0]);
+		m.tube(0, 0, 0.058, 0.0043, ROUND_LENGTH, 0.0008, 4, COPPER, part);
+	};
 
-	// the stock: from the receiver back along the wrist, dropping, to the butt plate (18)
-	section(-0.15, [0.02, -0.04, -0.004], -0.27, [0.019, -0.065, -0.03], WOOD, []);
-	section(-0.27, [0.019, -0.065, -0.03], -0.52, [0.022, -0.14, -0.035], WOOD, [1]);
-	// the forend under the barrel, to the front band (10)
-	section(0.05, [0.022, -0.04, 0.008], 0.62, [0.019, -0.033, 0.006], WOOD, [1]);
-	// the receiver, with the magazine below it, its top open over the ejection port (12)
-	section(-0.15, [0.018, -0.07, 0.014], 0.05, [0.018, -0.07, 0.014], STEEL, [0], 0, [2]);
-	const top = (z0, z1) => quad([-0.018, 0.014, z0], [0.018, 0.014, z0], [0.018, 0.014, z1], [-0.018, 0.014, z1], 0, STEEL);
-	top(-0.15, PORT[0]);
-	top(PORT[1], 0.05);
-	// the barrel (8)
-	tube(0, 0, 0.05, 0.016, MUZZLE, 0.011, 4, STEEL);
-	// the rear sight: a plate across the barrel at z 0.12 with a notch in the top (6)
+	// THE STOCK
+	// from the back of the receiver along the wrist, dropping, to the butt (48), and the steel butt plate on it (22)
+	const stock = [[-0.15, [0.02, -0.042, -0.002]], [-0.27, [0.0175, -0.068, -0.03]], [-0.38, [0.02, -0.105, -0.033]], [-0.515, [0.022, -0.143, -0.035]]];
+	m.loft(stock.map(([z, r]) => m.across(z, r, 0.007)), WOOD);
+	m.loft([m.across(-0.515, [0.022, -0.143, -0.035], 0.007), m.across(-0.528, [0.0222, -0.145, -0.034], 0.007)], STEEL, 0, [1]);
+	// on round the receiver and the magazine, to the forend (16): the wood is one piece, the magazine out under it
+	m.loft([m.across(-0.15, [0.0205, -0.046, -0.004], 0.007), m.across(0.04, [0.022, -0.044, 0.002], 0.008)], WOOD);
+	// the forend under the barrel, to the front band (38), and the handguard over the barrel, from the rear sight back (14)
+	m.loft([m.across(0.04, [0.022, -0.042, 0.004], 0.008), m.across(0.33, [0.0205, -0.036, 0.004], 0.008), m.across(0.62, [0.019, -0.031, 0.004], 0.007)], WOOD, 0, [1]);
+	const guard = [[0.0165, 0.004], [0.0135, 0.0145], [0, 0.0185], [-0.0135, 0.0145], [-0.0165, 0.004]];
+	m.loft([guard.map(([x, y]) => [x, y, 0.18]), guard.map(([x, y]) => [x, y, 0.46])], WOOD, 0, [0, 1], [4]);
+	// the barrel bands round them (16)
+	m.section(0.28, [0.0228, -0.039, 0.0195], 0.292, [0.0228, -0.039, 0.0195], STEEL);
+	m.section(0.598, [0.0212, -0.033, 0.0125], 0.61, [0.0212, -0.033, 0.0125], STEEL);
+
+	// THE RECEIVER AND THE BARREL
+	// the six sided receiver round the bolt: in front of the port, round it (open on the top and the right), behind it, its back closed (36)
+	const hex = (z) => Array.from({ length: 6 }, (_, k) => { const a = k / 6 * Math.PI * 2; return [Math.cos(a) * 0.0185, 0.002 + Math.sin(a) * 0.0185, z]; });
+	m.loft([hex(PORT[1]), hex(0.05)], STEEL);
+	m.loft([hex(PORT[0]), hex(PORT[1])], STEEL, 0, [], [0, 1]);
+	m.loft([hex(-0.15), hex(PORT[0])], STEEL, 0, [0]);
+	// the magazine box under it (10), and the trigger guard from its back down round under the trigger and up into the stock (24)
+	m.section(-0.095, [0.0172, -0.071, -0.01], -0.005, [0.0172, -0.064, -0.01], STEEL, 0, [0, 1], [2]);
+	const bow = [[0, -0.052, -0.09], [0, -0.084, -0.1], [0, -0.089, -0.142], [0, -0.054, -0.178]];
+	for (let k = 0; k < bow.length - 1; k++) m.strut(bow[k], bow[k + 1], 0.0035, 0.0035, 4, STEEL);
+	// the barrel: eight sided, stepped down in front of the rear sight, the dark of the bore at the muzzle (36)
+	m.tube(0, 0, 0.05, 0.0145, 0.12, 0.0135, 8, STEEL);
+	m.tube(0, 0, 0.12, 0.0125, MUZZLE, 0.0105, 8, STEEL);
+	m.disc(0, 0, MUZZLE + 0.0003, 0.0042, 6, DARK);
+	// the cleaning rod under it, out past the forend to the muzzle (8)
+	m.strut([0, -0.024, 0.6], [0, -0.021, MUZZLE + 0.012], 0.0022, 0.0022, 4, STEEL);
+
+	// THE SIGHTS
+	// the rear sight: its base on the barrel (10), and its leaf across it at zr with a notch in the top (6)
 	const zr = 0.12;
-	quad([-0.012, 0.016, zr], [0.012, 0.016, zr], [0.012, H, zr], [-0.012, H, zr], 0, STEEL);
-	quad([-0.012, H, zr], [-0.0025, H, zr], [-0.0025, H + 0.007, zr], [-0.012, H + 0.007, zr], 0, STEEL);
-	quad([0.0025, H, zr], [0.012, H, zr], [0.012, H + 0.007, zr], [0.0025, H + 0.007, zr], 0, STEEL);
-	// the front sight: a post, its top on the line of sight, in a ring of a hood (8)
+	m.section(0.1, [0.0115, 0.009, 0.019], 0.17, [0.0115, 0.009, 0.0215], STEEL, 0, [0, 1], [0]);
+	m.quad([-0.012, 0.016, zr], [0.012, 0.016, zr], [0.012, H, zr], [-0.012, H, zr], 0, STEEL);
+	m.quad([-0.012, H, zr], [-0.0025, H, zr], [-0.0025, H + 0.007, zr], [-0.012, H + 0.007, zr], 0, STEEL);
+	m.quad([0.0025, H, zr], [0.012, H, zr], [0.012, H + 0.007, zr], [0.0025, H + 0.007, zr], 0, STEEL);
+	// the front sight: its collar round the barrel (12), the post with its top on the line of sight (4), and the ring of the hood over it (8)
 	const zf = 0.735;
-	quad([-0.0018, 0.01, zf], [0.0018, 0.01, zf], [0.0018, H, zf], [-0.0018, H, zf], 0, STEEL);
-	quad([-0.009, 0.01, zf - 0.012], [-0.009, 0.01, zf + 0.012], [-0.009, H + 0.008, zf + 0.012], [-0.009, H + 0.008, zf - 0.012], 0, STEEL);
-	quad([0.009, 0.01, zf - 0.012], [0.009, 0.01, zf + 0.012], [0.009, H + 0.008, zf + 0.012], [0.009, H + 0.008, zf - 0.012], 0, STEEL);
-	quad([-0.009, H + 0.008, zf - 0.012], [0.009, H + 0.008, zf - 0.012], [0.009, H + 0.008, zf + 0.012], [-0.009, H + 0.008, zf + 0.012], 0, STEEL);
-	// the bolt: its body in the receiver, up to the chamber at z 0 (8), the cocking piece sticking out of the back of the receiver (7), the handle out to the right and down, and its knob (6)
-	tube(0, 0.002, -0.15, 0.0095, 0, 0.0095, 4, STEEL, 1);
-	tube(0, 0.002, -0.19, 0.011, -0.15, 0.011, 3, STEEL, 1, true);
-	quad([0.012, 0.004, -0.115], [0.012, -0.004, -0.125], [0.062, -0.034, -0.135], [0.062, -0.026, -0.125], 1, STEEL);
-	const knob = [0.066, -0.032, -0.13];
-	tri([knob[0] - 0.01, knob[1] + 0.01, knob[2]], [knob[0] + 0.01, knob[1] - 0.004, knob[2] - 0.009], [knob[0] + 0.01, knob[1] - 0.004, knob[2] + 0.009], 1, STEEL);
-	tri([knob[0] - 0.01, knob[1] + 0.01, knob[2]], [knob[0] + 0.01, knob[1] - 0.004, knob[2] + 0.009], [knob[0], knob[1] - 0.014, knob[2]], 1, STEEL);
-	tri([knob[0] - 0.01, knob[1] + 0.01, knob[2]], [knob[0], knob[1] - 0.014, knob[2]], [knob[0] + 0.01, knob[1] - 0.004, knob[2] - 0.009], 1, STEEL);
-	tri([knob[0] + 0.01, knob[1] - 0.004, knob[2] - 0.009], [knob[0] + 0.01, knob[1] - 0.004, knob[2] + 0.009], [knob[0], knob[1] - 0.014, knob[2]], 1, STEEL);
-	// the trigger, and the bottom of its guard (4)
-	quad([0, -0.07, -0.095], [0, -0.07, -0.11], [0, -0.1, -0.12], [0, -0.1, -0.108], 2, STEEL);
-	quad([-0.006, -0.112, -0.05], [0.006, -0.112, -0.05], [0.006, -0.112, -0.165], [-0.006, -0.112, -0.165], 0, STEEL);
-	// the rounds A to D (see THE ROUNDS at the top), each placed by the shader (160)
-	for (let part = 3; part <= 6; part++) cartridge(part);
+	m.tube(0, 0, zf - 0.015, 0.0115, zf + 0.012, 0.0115, 6, STEEL);
+	m.quad([-0.0018, 0.01, zf], [0.0018, 0.01, zf], [0.0018, H, zf], [-0.0018, H, zf], 0, STEEL);
+	m.quad([0, 0.01, zf - 0.0018], [0, 0.01, zf + 0.0018], [0, H, zf + 0.0018], [0, H, zf - 0.0018], 0, STEEL);
+	const hood = Array.from({ length: 5 }, (_, k) => { const a = k / 4 * Math.PI; return [Math.cos(a) * 0.0095, H - 0.002 + Math.sin(a) * 0.0095]; });
+	for (let k = 0; k < 4; k++) m.quad([hood[k][0], hood[k][1], zf - 0.011], [hood[k + 1][0], hood[k + 1][1], zf - 0.011], [hood[k + 1][0], hood[k + 1][1], zf + 0.011], [hood[k][0], hood[k][1], zf + 0.011], 0, STEEL);
 
-	const data = [];
-	for (const [a, b, c, k] of tris) for (const p of [a, b, c]) data.push(p[0], p[1], p[2], k);
-	return new Float32Array(data);
+	// THE MOVING PARTS
+	// the bolt: its body in the receiver, up to the chamber at z 0 (12), the cocking piece out of the back of the receiver (22), the
+	//		handle out to the right and down (8) and its ball (16)
+	m.tube(0, 0.002, -0.15, 0.0095, 0, 0.0095, 6, STEEL, 1);
+	m.tube(0, 0.002, -0.19, 0.011, -0.15, 0.011, 8, STEEL, 1, [0]);
+	m.strut([0.009, 0.002, -0.118], [0.056, -0.03, -0.128], 0.0045, 0.004, 4, STEEL, 1);
+	m.ball([0.062, -0.034, -0.13], 0.009, 4, STEEL, 1);
+	// the trigger (12)
+	m.prismX([[-0.105, -0.046], [-0.115, -0.046], [-0.125, -0.076], [-0.119, -0.077]], -0.0018, 0.0018, STEEL, 2);
+	// the rounds A to D (see THE ROUNDS at the top), each placed by the shader (84)
+	for (let part = 3; part <= 6; part++) cartridge(part);
+	return m.done();
 })();
 const RIFLE_VERTICES = RIFLE_MESH.length / 4;
 export const RIFLE_TRIANGLE_COUNT = RIFLE_VERTICES / 3;
@@ -246,11 +252,11 @@ function gunMatrix() {
 	const mix = (p, q) => p + (q - p) * a;
 	const sway = 1 - 0.7 * a;
 	const x = mix(HIP.x, AIM.x) + Math.sin(rifle.bob) * 0.007 * sway;
-	const y = mix(HIP.y, AIM.y) - Math.abs(Math.cos(rifle.bob)) * 0.006 * sway - rifle.drop;
+	const y = mix(HIP.y, AIM.y) - Math.abs(Math.cos(rifle.bob)) * 0.006 * sway - rifle.drop + vm.ride.y * sway;
 	const z = mix(HIP.z, AIM.z) + rifle.kick * 0.045;
 	let m = mat4.translation([x, y, z]);
 	m = mat4.rotateY(m, mix(HIP.yaw, AIM.yaw) + Math.sin(rifle.bob) * 0.008 * sway);
-	m = mat4.rotateX(m, mix(HIP.pitch, AIM.pitch) + rifle.kick * 0.11 + rifle.tilt);
+	m = mat4.rotateX(m, mix(HIP.pitch, AIM.pitch) + rifle.kick * 0.11 + rifle.tilt + vm.ride.pitch * sway);
 	m = mat4.rotateZ(m, rifle.roll);
 	return mat4.scale(m, [1, 1, -1]);		// (the rifle's +z, out of the muzzle, is the camera's -z)
 }
@@ -337,6 +343,7 @@ function advanceRifle(elapsed) {
 				// the muzzle climbs, and takes the view a little way with it
 				settings.camPitch = Math.min(settings.camPitch + 0.012, Math.PI * 0.5 - 0.02);
 			} else {
+				weapons.actionSound('click');
 				say(r.chamber == 'spent' ? 'Click. Work the bolt' : 'Click. The chamber is empty');
 			}
 			r.state = 'recoil';
@@ -399,7 +406,9 @@ function workBolt(elapsed) {
 		}
 	}
 	middleAsked = false;
+	const wasLift = r.lift;
 	r.lift = toward(r.lift, r.liftWanted, elapsed / BOLT_TURN_SECONDS);
+	if ((r.lift == 1 && wasLift < 1) || (r.lift == 0 && wasLift > 0)) weapons.actionSound('turn');
 
 	// R: a round at a time, with the bolt all the way back, while there is room in the magazine
 	for (; loadsAsked > 0; loadsAsked--) {
@@ -417,6 +426,7 @@ function workBolt(elapsed) {
 		if (r.loading >= LOAD_SECONDS) {
 			r.magazine++;
 			r.loading = -1;
+			weapons.actionSound('load');
 			r.sinceLoad = 0;
 			rifleStats.loaded++;
 		}
@@ -437,6 +447,7 @@ function workBolt(elapsed) {
 
 	const was = r.back;
 	r.back = toward(r.back, r.backWanted, elapsed / BOLT_DRAW_SECONDS);
+	if ((r.back == 1 && was < 1) || (r.back == 0 && was > 0)) weapons.actionSound('bolt');
 	// all the way back: out comes whatever was in the chamber
 	if (r.back == 1 && was < 1) {
 		const live = r.chamber == 'live';
@@ -594,9 +605,13 @@ const makeDepth = () => device.createTexture({ label: "rifle depth", size: [canv
 let rifleDepth = makeDepth();
 onRenderResize(() => { rifleDepth.destroy(); rifleDepth = makeDepth(); });
 
+// for testing: the rifle drawn where a matrix puts it (in the camera's space), as it is now
+let inspectAt = null;
+export function inspectRifle(matrix) { inspectAt = matrix; riflePass(); inspectAt = null; }
+
 // over the finished frame, in front of everything
 export function riflePass() {
-	if (!active() || !hunting.hunterPlace().active || !hunting.hunterLife.alive) {
+	if (!inspectAt && (!active() || !hunting.hunterPlace().active || !hunting.hunterLife.alive)) {
 		return;
 	}
 	const projection = mat4.perspective(transformations.baseVerticalViewAngle, canvas.width / canvas.height, 0.01, 10);
@@ -607,7 +622,7 @@ export function riflePass() {
 	const [A, B, C, D, spin] = roundsNow();
 	const uniforms = new Float32Array(64);
 	uniforms.set(projection, 0);
-	uniforms.set(gunMatrix(), 16);
+	uniforms.set(inspectAt ?? gunMatrix(), 16);
 	uniforms.set([ease(rifle.lift) * BOLT_TURN, rifle.back * BOLT_TRAVEL, rifle.trigger, 0], 32);
 	uniforms.set([L[0], L[1], L[2], light.direct * 1.3], 36);
 	uniforms.set([light.ambient, light.daylight, 0, 0], 40);

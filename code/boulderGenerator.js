@@ -9,12 +9,14 @@
 						ridges there are small outcrops, knots of standing rock that the crest has weathered down around.
 						And away from the mountains: stones lying about under the trees and in the grass, a line of them along
 						the top of every beach where the sea has undercut the bank, and big rocks out in the water past the edge
-						of the shallows, the nearer ones standing clear of the waves.
+						of the shallows, the nearer ones standing clear of the waves. And small stones scattered along the
+						footpaths through the forest (footpaths.js), on them and at their edges.
 */
 
 import { seededRandom } from './terrainGenerator.js'
 import { MOUNTAIN_THRESHOLD } from './terrainGenerator.js'
 import { ZONE_OCEAN, ZONE_BEACH, ZONE_GRASSLAND, ZONE_FOREST } from './terrainGenerator.js'
+import { PATHS } from './footpaths.js'
 
 export const BOULDER_SHAPES = 4;			// how many different boulders there are
 export const BOULDER_VERTEX_FLOATS = 6;		// position (3), normal (3)
@@ -119,9 +121,9 @@ export function placeBoulders(land, params) {
 	const metre = params.unitsPerMetre;
 	const boulders = [];
 
-	const add = (x, z, size, tall) => {
-		// not in a town (townLayout.js), or out in the water off its quay
-		if (land.townAt && land.townAt(x, z) > 0.01) return;
+	const add = (x, z, size, tall, onPath = false) => {
+		// not in a town (townLayout.js), or out in the water off its quay (nor on a footpath, unless it is one of its stones)
+		if (!onPath && land.townAt && land.townAt(x, z) > 0.01) return;
 		// not on the ground kept clear round the buildings (placeBuildings in terrain.js)
 		for (const clearing of land.clearings ?? []) {
 			if ((x - clearing.x) ** 2 + (z - clearing.z) ** 2 < (clearing.radius + size) ** 2) return;
@@ -217,5 +219,16 @@ export function placeBoulders(land, params) {
 		}
 	}
 
+	//---small stones along the footpaths through the forest: here and there, on the tread or at its edges, pebbles to fist-sized
+	//		(the walker steps over them)
+	for (const path of land.paths ?? []) {
+		for (let i = 0; i < path.points.length - 1; i++) {
+			const [x, , z] = path.points[i], [nx, , nz] = path.points[i + 1];
+			if (land.zoneAt(x, z) != ZONE_FOREST || random() > 0.3) continue;
+			const run = Math.hypot(nx - x, nz - z) || 1, across = (random() * 2 - 1) * (PATHS.half + 1.2), along = random();
+			const sx = x + (nx - x) * along - (nz - z) / run * across, sz = z + (nz - z) * along + (nx - x) / run * across;
+			add(sx, sz, (0.08 + 0.17 * random() * random()) * metre, 0.7, true);
+		}
+	}
 	return new Float32Array(boulders);
 }

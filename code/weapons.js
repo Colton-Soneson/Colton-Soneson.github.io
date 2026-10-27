@@ -15,7 +15,7 @@ import { addChoice } from './radialMenu.js'
 	(giveRound). A horse's saddlebags fill every gun back up to its whole (refill, hunting.onRefill), and so does coming back after
 	being shot (resetWeapons).
 */
-export const AMMO = { rifle: 20, shotgun: 18, revolver: 36, sharps: 8 };
+export const AMMO = { rifle: 20, shotgun: 18, revolver: 36, sharps: 8, mauser: 40, lewis: 188 };
 export const weaponState = { current: 'rifle' };
 const weapons = new Map();		// name -> { label, detail, help(), equip(), loaded(), reset() }
 const reserve = new Map();		// name -> rounds carried (not in the gun)
@@ -23,10 +23,11 @@ const reserve = new Map();		// name -> rounds carried (not in the gun)
 // a weapon: name, what it is called and a word about it in the menu, its controls (help: () => [title, lines]), and what it does when
 //		taken in hand (equip), how many rounds are in it (loaded) and how to make it as it starts (reset: full, ready). menu: the ring of
 //		the spawn menu it is chosen from (the staff is under Magic)
+// (menu: which part of the spawn menu it is in, or null for none: a thing picked up, as the schooner's rounds and wood, shipGuns.js)
 export function addWeapon(name, { label, detail, help: helpLines, equip, loaded, reset, drawn, menu = 'Weapons' }) {
 	weapons.set(name, { label, detail, help: helpLines, equip, loaded, reset, drawn });
 	if (name in AMMO) reserve.set(name, AMMO[name] - (loaded?.() ?? 0));
-	addChoice(menu, { label, get detail() { return detail + (priceOf?.(name) ?? ''); }, act: () => { equipWeapon(name); return true; } });
+	if (menu) addChoice(menu, { label, get detail() { return detail + (priceOf?.(name) ?? ''); }, act: () => { equipWeapon(name); return true; } });
 }
 // asked before a weapon is taken in hand: fn(name) false if it may not be (not bought yet, in the Horde game mode: horde.js). And what
 //		it costs, said after its detail in the menu: fn(name) a few words, or ''
@@ -78,6 +79,12 @@ export function ammoState() {
 	return Object.fromEntries([...weapons].filter(([name]) => name in AMMO).map(([name, w]) => [name, { loaded: w.loaded?.() ?? 0, carried: carried(name), total: AMMO[name] }]));
 }
 export const noAmmoWord = 'Out of ammunition: fill up at a horse\'s saddlebags';
+// the sounds of the guns' workings (sound.js plays them): a gun says what just happened, kind one of 'click' (the trigger on nothing),
+//		'bolt' (back or forward), 'turn' (a bolt turned up or down), 'pump', 'lever', 'cock', 'load' (a round in), 'eject', 'gate', 'tick'
+//		(a cylinder's notch), 'clip', 'pan', 'deploy'
+let soundHook = null;
+export function setSoundHook(fn) { soundHook = fn; }
+export function actionSound(kind) { soundHook?.(kind); }
 
 // once a frame, after the guns: the controls of the one held, on the left
 export function weaponsUpdate() {

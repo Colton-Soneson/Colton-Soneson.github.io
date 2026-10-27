@@ -17,7 +17,8 @@ import { skyLookupShapes } from './vfc_atmosphere.js';
 	Sitting (state.w, 0 to 1: at a dinghy's helm), the thighs come up level and the shins hang down from the knees, and it is let
 	down so its hips are on its place (the seat). Astride a horse (state.w from 1 to 2) the legs go apart round the saddle as well.
 	One that holds nothing (held.y: the townsfolk) has its arms down at its sides, swinging against its legs as it walks.
-	Then the whole dummy is turned to its heading, made its size and put in its place. A dead one has gone over on to its back,
+	Then the whole dummy is tipped (tilt: forward, and rolled, as the cockpit or the deck it is on is: npcs.js) and turned to its
+	heading, made its size and put in its place. A dead one has gone over on to its back,
 	about its feet. A hit one flashes red for a moment.
 	The colours are a crash test dummy's: yellow, the joints black, and the black and yellow quartered circles on the sides of
 	the head and on the chest.
@@ -64,6 +65,8 @@ export const vf_dummy =
 		@location(2) pose: vec4f,		// x: heading (radians, round from +z towards +x), y: pitch (radians, up), z: where it is in its stride (radians), w: walking, 0 to 1
 		@location(3) state: vec4f,		// x: gone over, 0 standing to 1 flat on its back, y: hit, 1 just hit fading to 0, z: its colour (0 to 1 round the hues), w: sitting (0 to 1), astride (1 to 2)
 		@location(4) held: vec4f,		// x: how long what it holds is, the rifle it was made with 1 (0: nothing in its hands), y: 1 arms down at its sides, z: its head turned (radians, as heading)
+		@location(5) tilt: vec4f,		// x: tipped about its own x (radians: + its front down), y: rolled about its own z (radians), before it is turned to its heading,
+										//		z: in the war, 1 the other side (bright red) or 2 this one's (bright blue)
 	};
 
 	struct VertexOutput {
@@ -71,6 +74,7 @@ export const vf_dummy =
 		@location(0) worldPos: vec3f,
 		@location(1) onDummy: vec4f,		// xyz: where on the mesh as it was made, w: the part
 		@location(2) @interpolate(flat) state: vec4f,
+		@location(3) @interpolate(flat) side: f32,
 	};
 
 	fn turnX(v: vec3f, angle: f32) -> vec3f { return vec3f(v.x, v.y * cos(angle) - v.z * sin(angle), v.y * sin(angle) + v.z * cos(angle)); }
@@ -151,13 +155,14 @@ export const vf_dummy =
 		// a dead one goes over on to its back, about its heels
 		let over = input.state.x * 1.5;
 		let fallen = turnX(p, -over) + vec3f(0.0, 0.12 * sin(over), 0.0);
-		let position = input.place.xyz + turnY(fallen, input.pose.x) * input.place.w;
+		let position = input.place.xyz + turnY(turnX(turnZ(fallen, input.tilt.y), input.tilt.x), input.pose.x) * input.place.w;
 
 		var output: VertexOutput;
 		output.pos = DU.viewProjectionMatrix * vec4f(position, 1.0);
 		output.worldPos = position;
 		output.onDummy = vec4f(input.shape.xyz, f32(part));
 		output.state = input.state;
+		output.side = input.tilt.z;
 		return output;
 	}
 
@@ -185,6 +190,7 @@ export const vf_dummy =
 		@location(0) worldPos: vec3f,
 		@location(1) onDummy: vec4f,
 		@location(2) @interpolate(flat) state: vec4f,
+		@location(3) @interpolate(flat) side: f32,
 	};
 
 	@fragment
@@ -198,7 +204,8 @@ export const vf_dummy =
 
 		let at = input.onDummy.xyz;
 		let part = i32(input.onDummy.w + 0.5);
-		let yellow = vec3f(0.86, 0.66, 0.08);
+		let sideColour = select(vec3f(0.95, 0.1, 0.07), vec3f(0.12, 0.38, 1.0), input.side > 1.5);
+		let yellow = select(vec3f(0.86, 0.66, 0.08), sideColour, input.side > 0.5);
 		let black = vec3f(0.035, 0.035, 0.04);
 		var albedo = yellow;
 		if (part >= 12) {
@@ -226,6 +233,7 @@ export const vf_dummy =
 		let sunTint = mix(vec3f(1.0, 1.0, 1.0), Lights.sunCol.rgb, 0.3 * (1.0 - saturate(L.y * 3.0)));
 		var color = albedo * (light * sunTint + moonLight(N));
 		color = mix(color, vec3f(0.9, 0.05, 0.03), 0.7 * input.state.y);
+		if (input.side > 0.5) { color += sideColour * 0.22; }		// (bright: seen from far off)
 
 		if (DU.look.y > 0.5) {
 			let horizonColor = fogColorAt(toDummy);

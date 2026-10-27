@@ -297,6 +297,7 @@ function advance(elapsed) {
 				g.kick = 1;
 				settings.camPitch = Math.min(settings.camPitch + 0.025, Math.PI * 0.5 - 0.02);
 			} else {
+				weapons.actionSound('click');
 				say(g.chambers[k] == 'spent' ? 'Click. A fired case' : 'Click. An empty chamber');
 			}
 			g.hammer = 0;
@@ -314,6 +315,7 @@ function advance(elapsed) {
 
 	// the middle button: the gate open (half cock), or shut (the last round put in turned under the hammer)
 	if (middleAsked && g.state == 'ready' && !busy()) {
+		weapons.actionSound('gate');
 		if (!g.open) {
 			g.open = true;
 			g.lastIn = null;
@@ -340,6 +342,7 @@ function advance(elapsed) {
 		if (notches) {
 			g.aligned = wrap(g.aligned + notches);
 			wheelPixels -= notches * 100;
+			weapons.actionSound('tick');
 		}
 	} else {
 		wheelPixels = 0;
@@ -374,6 +377,7 @@ function advance(elapsed) {
 		if (w.kind == 'out' && !w.freed && w.t >= OUT_SECONDS * PUSH_SHARE) {
 			// out of the chamber: it falls away, and the chamber is empty
 			w.freed = true;
+			weapons.actionSound('eject');
 			g.chambers[w.chamber] = 'empty';
 			if (w.live) { weapons.giveRound('revolver'); revolverStats.pulled++; }
 			g.falling.push({ t: 0, live: w.live, at: caseOut(w.chamber, 1) });
@@ -386,6 +390,7 @@ function advance(elapsed) {
 			g.chambers[w.chamber] = 'live';
 			g.lastIn = w.chamber;
 			revolverStats.put++;
+			weapons.actionSound('load');
 			g.work = null;
 			// and on to the next chamber that needs a round, with a click (the next one along when they are all full)
 			g.aligned = wrap(g.aligned + 1 + needsWork(wrap(gateChamber() + 1)));

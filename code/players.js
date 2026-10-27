@@ -54,9 +54,9 @@ const INTERPOLATION_SECONDS = 0.12;
 const NAME_DISTANCE = 150;			// metres: further off than this a player's name is not shown
 const FEED_SECONDS = 6;
 const MAX_DRAWN = 16;
-const DUMMY_FLOATS = 16;				// one dummy as the shader gets it: place (4), pose (4), state (4), what it holds (4)
+const DUMMY_FLOATS = 20;				// one dummy as the shader gets it: place (4), pose (4), state (4), what it holds (4), tilt (4)
 // how long what each one holds is (the box it carries, see vf_dummy.js), as the long gun it was made with is 1: nothing, a disc: 0
-export const HELD_LENGTH = { rifle: 1, shotgun: 0.9, sharps: 1.1, revolver: 0.3, staff: 1.6, none: 0 };
+export const HELD_LENGTH = { rifle: 1, shotgun: 0.9, sharps: 1.1, revolver: 0.3, mauser: 0.32, lewis: 1.25, staff: 1.6, none: 0 };
 const STRIDE = 1.5;					// metres a stride takes
 // the hitbox, in the dummy's own metres: x, y, z, radius, and which part it is (see DAMAGE in net.js)
 const DUMMY_SPHERES = [[0, 1.71, 0.01, 0.13, 'head'], [0, 1.33, 0, 0.21, 'chest'], [0, 1.0, 0, 0.19, 'belly'],
@@ -147,6 +147,7 @@ const dummyPipeline = device.createRenderPipeline({
 					{ format: "float32x4", offset: 16, shaderLocation: 2 },		// heading, pitch, stride, walking
 					{ format: "float32x4", offset: 32, shaderLocation: 3 },		// gone over, hit, colour, sitting
 				{ format: "float32x4", offset: 48, shaderLocation: 4 },		// how long what it holds is
+				{ format: "float32x4", offset: 64, shaderLocation: 5 },		// tipped and rolled (none: npcs.js tilts its own)
 				],
 			}]
 	},
@@ -244,7 +245,7 @@ function viewOf(other, now) {
 	const mix = (i) => a.s[i] + (b.s[i] - a.s[i]) * f;
 	let turn = b.s[3] - a.s[3];
 	turn -= Math.PI * 2 * Math.round(turn / (Math.PI * 2));
-	const view = { x: mix(0), y: mix(1), z: mix(2), heading: a.s[3] + turn * f, pitch: mix(4), speed: mix(5), alive: b.s[6] > 0.5, hunting: b.s[7] > 0.5, sit: b.s[12] ?? 0, holds: b.s[13] ?? 'rifle' };
+	const view = { x: mix(0), y: mix(1), z: mix(2), heading: a.s[3] + turn * f, pitch: mix(4), speed: mix(5), alive: b.s[6] > 0.5, hunting: b.s[7] > 0.5, sit: b.s[12] ?? 0, holds: b.s[13] ?? 'rifle', chute: b.s[14] > 0.5, side: b.s[15] || null };
 	// on a vehicle: where it is on it, on the vehicle as it is drawn here
 	const frame = b.s[8] ? vehicleFrame(b.s[8]) : null;
 	if (frame) {
@@ -255,7 +256,7 @@ function viewOf(other, now) {
 }
 
 // a dummy's hitbox in the world: [x, y, z, radius, part] for each of DUMMY_SPHERES (sitting: let down on to its seat, its legs out in front)
-function dummySpheres(view, fallen, sit = 0) {
+export function dummySpheres(view, fallen, sit = 0) {
 	const s = metre(), c = Math.cos(view.heading), sn = Math.sin(view.heading);
 	if (fallen > 0.5) return [];		// (on the ground: nothing to hit)
 	const down = 0.9 * Math.min(sit, 1);
@@ -270,7 +271,7 @@ ballistics.addTarget((ax, ay, az, bx, by, bz, bullet) => {
 	for (const other of others.values()) {
 		const view = other.view;
 		if (!view || !view.hunting || !view.alive) continue;
-		if (bullet && (bullet.shooter === other.id || bullet.shooter == 'folk')) continue;	// (nor the townsfolk's, horde.js)
+		if (bullet && (bullet.shooter === other.id || bullet.shooter == 'folk' || bullet.npc)) continue;	// (nor the townsfolk's, horde.js, nor npcs.js's: it says what they hit)
 		if (ballistics.crossSphere(ax, ay, az, bx, by, bz, view.x, view.y + 1.0 * metre(), view.z, 1.2 * metre()) === null) continue;
 		for (const [x, y, z, r, part] of dummySpheres(view, other.fallen, other.sit)) {
 			const t = ballistics.crossSphere(ax, ay, az, bx, by, bz, x, y, z, r);
@@ -285,16 +286,34 @@ ballistics.addTarget((ax, ay, az, bx, by, bz, bullet) => {
 	} };
 });
 
+// a shell bursting (shipGuns.js) at (world units), fired here: each of the others within radius (world units) of it as if shot (by
+//		how near: in the head, the chest or a leg), and, alone, this player hurt by how near
+export function blast(at, radius) {
+	const m = metre();
+	if (inGame) {
+		for (const other of others.values()) {
+			const view = other.view;
+			if (!view || !view.alive || !view.hunting) continue;
+			const d = Math.hypot(view.x - at[0], view.y + m - at[1], view.z - at[2]);
+			if (d < radius) for (const fn of shotListeners) fn(other.id, d < radius * 0.3 ? 'head' : d < radius * 0.6 ? 'chest' : 'leg', '80mm');
+		}
+		return;
+	}
+	const me = hunting.hunterPlace(), d = Math.hypot(me.x - at[0], me.y + m - at[1], me.z - at[2]);
+	if (d < radius && local.alive) setLocalHealth(local.health - 110 * (1 - d / radius), '', 'Caught in a shell burst');
+}
+
 // This player
 //-------------------------------------------------
-const local = { health: HEALTH, alive: true, downAt: 0, by: '', how: '' };
+const local = { health: HEALTH, alive: true, downAt: 0, hurtAt: -1e9, by: '', how: '' };
+const HEAL_DELAY = 6, HEAL_RATE = 12;		// alone: seconds after it was last hurt, and health a second
 export function localLife() { return { ...local }; }
 // in the Horde game mode this player has health alone too (horde.js takes it off)
 const horde = () => settings.gameMode == 'Horde';
 
 // the host says how much health this player has now, and who took it (how: what is said when it is down, if not shot by them)
 export function setLocalHealth(health, by, how = '') {
-	if (health < local.health) hurtFlash = 1;
+	if (health < local.health) { hurtFlash = 1; local.hurtAt = performance.now() / 1000; }
 	local.health = Math.max(health, 0);
 	if (health <= 0 && local.alive) {
 		local.alive = false;
@@ -305,6 +324,16 @@ export function setLocalHealth(health, by, how = '') {
 		playerStats.deaths++;
 	}
 }
+
+// hurt by its own doing (a fall: hunting.js), how: what is said if it is down. Alone, here; in a game the host takes it off (net.js sets
+//		selfHurt.send)
+export const selfHurt = { send: null };
+export function hurtSelf(amount, how) {
+	if (!local.alive) return;
+	if (inGame && selfHurt.send) selfHurt.send(amount, how);
+	else setLocalHealth(local.health - amount, '', how);
+}
+hunting.onFall((amount) => hurtSelf(amount, 'Fell from a height'));
 
 // back to full health (a wave of the horde down, horde.js)
 export function healLocal() {
@@ -325,11 +354,13 @@ function respawnSpot() {
 	return null;
 }
 // where to come back, if not somewhere new: fn() gives { x, z } or null (near the others, in the Horde game mode: horde.js)
-let respawnPlacer = null;
-export function placeRespawn(fn) { respawnPlacer = fn; }
+const respawnPlacers = [];
+export function placeRespawn(fn) { respawnPlacers.push(fn); }
 // up again (or into a game for the first time), somewhere new, with full health and a full rifle
 export function respawn() {
-	const spot = respawnPlacer?.() ?? respawnSpot();
+	let spot = null;
+	for (const fn of respawnPlacers) if ((spot = fn())) break;
+	spot ??= respawnSpot();
 	if (spot) hunting.placeHunter(spot.x, spot.z);
 	local.alive = true;
 	local.health = HEALTH;
@@ -376,7 +407,7 @@ let feedShown = '';
 
 function showOverlay(now, elapsed) {
 	const huntingNow = hunting.hunterPlace().active;
-	const shown = (inGame || horde()) && huntingNow;
+	const shown = (inGame || horde() || !local.alive || local.health < HEALTH) && huntingNow;
 	overlay.style.display = shown ? '' : 'none';
 	if (!shown) return;
 
@@ -455,7 +486,9 @@ export function playersUpdate() {
 	playerStats.others = others.size;
 
 	// down: up again after RESPAWN_SECONDS
-	if ((inGame || horde()) && !local.alive && now - local.downAt >= RESPAWN_SECONDS && !heldBy()) respawn();
+	if (!local.alive && now - local.downAt >= RESPAWN_SECONDS && !heldBy()) respawn();
+	// alone (not in a game, not the Horde): hurt (a crash), it heals by itself after a while
+	if (!inGame && !horde() && local.alive && local.health < HEALTH && now - local.hurtAt > HEAL_DELAY) local.health = Math.min(local.health + HEAL_RATE * elapsed, HEALTH);
 	showOverlay(now, elapsed);
 }
 
@@ -468,7 +501,7 @@ export function playersPass(aEncoder, mainpassDepthTexture) {
 		if (!view || !view.hunting || count >= MAX_DRAWN) continue;
 		const fall = other.fallen * other.fallen * (3 - 2 * other.fallen);
 		instanceData.set([view.x, view.y, view.z, metre(), view.heading, view.pitch, other.stride, other.walking * (1 - fall) * (other.sit > 0.5 ? 0 : 1), fall, other.hit, other.hue, other.sit,
-			HELD_LENGTH[view.holds] ?? 0, 0, 0, 0], count * DUMMY_FLOATS);
+			HELD_LENGTH[view.holds] ?? 0, 0, 0, 0, 0, 0, 0, 0], count * DUMMY_FLOATS);
 		count++;
 	}
 	playerStats.drawn = count;

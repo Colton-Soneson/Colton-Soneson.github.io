@@ -38,6 +38,8 @@ import { seededRandom, createNoise } from './terrainGenerator.js'
 					one is a type (BUILDING_TYPES) and its own size and colours. Its floor is at the street, and where the land
 					falls away under it, it stands on stone footings. A gap now and then has a tree in it
 		pier		a timber pier out from the quay into the sea, with the fisherman's shack at its end
+		dock		a narrow jetty out to deep water for the schooners (npcShips.js), as long as it has to be (DOCK), in every town that can
+					have one
 		lamps		gas lamps along every street, either side by turns
 		trees		in the gaps between the houses, round the plaza, along the promenade
 		roses		rose bushes in the gardens round the houses and along the lanes
@@ -53,12 +55,16 @@ const QUAY_DEPTH = 34;						// how far inland the quay runs flat
 const TOWN_LENGTH = 440;					// half the length of its core along the shore, at a town size of 1
 const TOWN_DEPTH = 380;						// how far inland its core goes
 const FADE_SLOPE = 0.22;					// the steepest the fade from the town's hill to the land round it gets (rise over run)
+const FADE_MOST = 700;						// and the widest it gets (the ground is planned out as far as that, so it is never cut short)
 const MAIN_CLUSTER = [0.58, 0.52];			// the main cluster's half length and half depth, of the core's
 const HAMLETS = [2, 4];
 const SITE_FIT = [0.78, 0.87];				// how much of the core's length and depth a site has to be good for
 const CROSSING_BONUS = 0.1;
 const BRIDGE_LONGEST = 320;					// world units
-const BRIDGE_CLEAR = 5;						// the least height of a bridge's deck over the sea					// how much a site across water (bridged) is favoured over a straight shore						// how many hamlets
+const BRIDGE_CLEAR = 5;						// the least height of a bridge's deck over the sea
+// the dock (one town's): out to where the sea is depth deep, and past more, least long at the least, most at the most (it is not
+//		had if it cannot get that deep), and wide (world units)
+const DOCK = { depth: 12, past: 10, least: 40, most: 320, width: 5 };					// how much a site across water (bridged) is favoured over a straight shore						// how many hamlets
 const HAMLET_SIZE = [72, 112];				// their half length (world units)
 const MOUNTAIN_NEAR = [250, 1500];			// how far from the shore the nearest mountain may be
 const TOWN_APART = 2400;
@@ -96,7 +102,7 @@ export const BUILDING_TYPES = [
 export const FLOOR_HEIGHT = 6.4, GROUND_FLOOR = 7.2;
 // what the towns are made of, a number for each (see vf_town.js)
 export const TOWN_MATERIALS = { PLASTER: 0, STONE: 1, ROOF: 2, TIMBER: 3, PLANKS: 4, GLASS: 5, TRIM: 6, IRON: 7, LAMP: 8, COBBLE: 9, DRESSED: 10,
-	AWNING: 11, BRASS: 12, BRICK: 13, DOOR: 14, FLOWERS: 15, COPPER: 16, CLOCK: 17, LEAVES: 18, ROSES: 19, TULIPS: 20 };
+	AWNING: 11, BRASS: 12, BRICK: 13, DOOR: 14, FLOWERS: 15, COPPER: 16, CLOCK: 17, LEAVES: 18, ROSES: 19, TULIPS: 20, DIRT: 21, PATH: 22 };
 // Each type comes in VARIANTS sizes (its meshes are made once for each, so they can be drawn many times over without being stretched):
 //		{ width, depth, floors } of one of them
 export const VARIANTS = 4;
@@ -271,7 +277,7 @@ export function planTownGround(g, sites, seed) {
 	const noise = createNoise(seed * 13 + 5);
 	for (const site of sites) {
 		placeClusters(site, seed);
-		const reach = Math.max(site.length, site.depth) + (site.top - QUAY_HEIGHT) / FADE_SLOPE + 60;
+		const reach = Math.max(site.length, site.depth) + FADE_MOST + 35 + 60;		// (35: the most the ragged edge reaches out)
 		const c0 = Math.max(Math.floor((site.x - reach + half) / cellSize), 0), c1 = Math.min(Math.ceil((site.x + reach + half) / cellSize), cells);
 		const r0 = Math.max(Math.floor((site.z - reach + half) / cellSize), 0), r1 = Math.min(Math.ceil((site.z + reach + half) / cellSize), cells);
 		for (let row = r0; row <= r1; row++) {
@@ -287,10 +293,11 @@ export function planTownGround(g, sites, seed) {
 				// (terraced where the houses are, a plain grassy slope between the clusters)
 				const hill = hillAt(site, v, smoothstep(0.05, 0.4, clusterOf(site, u, v, x, z))) + 2.5 * noise(x / 70 + 9, z / 70 - 3)[0] * smoothstep(QUAY_DEPTH, QUAY_DEPTH + 30, v);
 				// how far out of the core, and how wide the fade has to be there to come down to the land gently (or up to it, into a
-				//		mountain the core was cut into)
-				const beyond = Math.max(Math.abs(u) - site.length, v - site.depth, 0);
+				//		mountain the core was cut into). Out of it as well past its depth inland of the site's own shore (across): further
+				//		along the coast another stretch of water (a bay) is near, but that is not this town's
+				const beyond = Math.max(Math.abs(u) - site.length, v - site.depth, across - site.depth, 0);
 				const out = beyond + Math.max(ragged, -beyond);
-				const width = clamp(Math.abs(hill - heights[i]) / FADE_SLOPE, 60, 700);
+				const width = clamp(Math.abs(hill - heights[i]) / FADE_SLOPE, 60, FADE_MOST);
 				const f = clamp(out / width, 0, 1);
 				const s = (1 - f * f * f * (f * (f * 6 - 15) + 10)) * smoothstep(-60, -20, across);
 				if (s <= strength[i]) continue;
@@ -363,17 +370,19 @@ export function makeRoadFlattener(segments) {
 	strengthAt(x, z): the town's strength there. distanceToSea(x, z): world units. Returns { towns: [one per site, below], segments }
 	A town: { site, streets: [{ points: [[x, y, z], ...], width }], links: [{ a: [x, y, z], b, width, stairs }], plaza: { x, y, z, tx, tz, size },
 		buildings: [{ type (index into BUILDING_TYPES), x, y (floor), z, yaw, width, depth, floors, footing (world y of the bottom of its
-		footings), plaster, roof, trim (colours), seed }], pier: { a: [x, y, z], b, width } or null, lamps: [[x, y, z, yaw], ...],
+		footings), plaster, roof, trim (colours), seed }], pier: { a: [x, y, z], b, width } or null, dock (as the pier: one town's, see DOCK) or
+		null, lamps: [[x, y, z, yaw], ...],
 		trees: [[x, z, species], ...], walls: [{ points: [[x, z, top, bottom], ...] }], quay: [[x, z, top], ...] }
 */
 export function layoutTowns(sites, ground, strengthAt, distanceToSea, seaLevel, seed) {
 	const segments = [];
-	const towns = sites.map((site) => layoutTown(site, ground, strengthAt, distanceToSea, seaLevel, seededRandom(seed * 977 + site.number * 131 + 7), segments));
+	// (every town that can have a dock has one: DOCK)
+	const towns = sites.map((site) => layoutTown(site, ground, strengthAt, distanceToSea, seaLevel, seededRandom(seed * 977 + site.number * 131 + 7), segments, true));
 	return { towns, segments: new Float32Array(segments) };
 }
 
-function layoutTown(site, ground, strengthAt, distanceToSea, seaLevel, random, segments) {
-	const town = { site, streets: [], links: [], plaza: null, buildings: [], pier: null, lamps: [], trees: [], walls: [], quay: [] };
+function layoutTown(site, ground, strengthAt, distanceToSea, seaLevel, random, segments, wantDock = false) {
+	const town = { site, streets: [], links: [], plaza: null, buildings: [], pier: null, dock: null, lamps: [], trees: [], walls: [], quay: [] };
 	const debug = town.debug = { failed: {}, why: {} };
 	const pick = (list) => list[Math.floor(random() * list.length)];
 	const between = ([a, b]) => a + (b - a) * random();
@@ -548,6 +557,23 @@ function layoutTown(site, ground, strengthAt, distanceToSea, seaLevel, random, s
 			length = Math.max(length, 22);
 			const b = [a[0] - site.nx * length, a[1], a[2] - site.nz * length];
 			town.pier = { a, b, width: 7 };
+			break;
+		}
+	}
+
+	//---the dock (wantDock: where the schooners of npcShips.js tie up): a narrow jetty out from the promenade as the pier is, away
+	//		from it and the bridges, out past where it is DOCK.depth deep (deep enough for her keel at its end), or none if it cannot get there
+	if (promenade && wantDock) {
+		for (const f of [0.5, 0.35, 0.65, 0.2, 0.8, 0.1, 0.9]) {
+			const p = promenade.points[Math.floor((promenade.points.length - 1) * f)];
+			const a = [p[0] - site.nx * (PROMENADE_WIDTH / 2), p[1] - 0.25, p[2] - site.nz * (PROMENADE_WIDTH / 2)];
+			if (town.pier && Math.hypot(a[0] - town.pier.a[0], a[2] - town.pier.a[2]) < 40) continue;
+			const free = (s) => !nearBridge(a[0] - site.nx * s, a[2] - site.nz * s, 16) && !(town.pier && Math.hypot(a[0] - site.nx * s - town.pier.b[0], a[2] - site.nz * s - town.pier.b[2]) < 30);
+			let length = 0;
+			while (length < DOCK.most && free(length + 4) && ground(a[0] - site.nx * length, a[2] - site.nz * length) > seaLevel - DOCK.depth) length += 4;
+			if (length >= DOCK.most || !free(length + 4)) continue;
+			length = Math.max(length + DOCK.past, DOCK.least);
+			town.dock = { a, b: [a[0] - site.nx * length, a[1], a[2] - site.nz * length], width: DOCK.width };
 			break;
 		}
 	}
@@ -918,7 +944,7 @@ function layoutTown(site, ground, strengthAt, distanceToSea, seaLevel, random, s
 				const f = clamp(((ex - a[0]) * dx + (ez - a[2]) * dz) / (dx * dx + dz * dz), 0, 1);
 				return Math.hypot(ex - a[0] - dx * f, ez - a[2] - dz * f) < b.width / 2 + 2;
 			});
-			if (bridged || (town.pier && Math.hypot(ex - town.pier.a[0], ez - town.pier.a[2]) < town.pier.width / 2 + 2)) {
+			if (bridged || [town.pier, town.dock].some((pier) => pier && Math.hypot(ex - pier.a[0], ez - pier.a[2]) < pier.width / 2 + 2)) {
 				if (edge.length >= 2) town.walls.push({ points: edge, quay: true });
 				edge = [];
 				continue;

@@ -11,6 +11,7 @@ import * as horse from './horse.js'
 import * as water from './water.js'
 import * as help from './controlsHelp.js'
 import * as town from './town.js'
+import * as vm from './viewmodel.js'
 
 /*
 	HUNTING: on foot. A first person walker on the land, in place of the fly camera (Observe, cameraControls.js).
@@ -37,16 +38,18 @@ import * as town from './town.js'
 	it came. A box whose top is no higher than STEP over the walker's feet does not stop it: it steps up on to it, the way it
 	would up a stair. And it can stand on a box as on the ground.
 
+	FALLING: coming down on to the ground or a deck faster than FALL.safe metres a second hurts (onFall: players.js takes it off), more
+	the faster, all of it at FALL.deadly (about 15 metres up). Not into the water, nor under a parachute.
 	Ground steeper than STEEPEST cannot be walked up. Water deeper than WADE_DEPTH is swum in: the walker floats with its head out,
 	up and down with the waves (the water's surface under the camera, water.cameraWater: the waves are only known on the GPU).
 
 	SAILING is the same walker, with boats in the sea (boat.js, vessels.js: put there with the spawn menu). Where it is:
 		land		as above: walking, swimming. It cannot swim through a boat's hull, and it can jump down on to its deck
-		ladder		climbing a ladder on a boat's side up out of the water (E, or W, at the ladder: there is one each side)
+		ladder		climbing a ladder on a boat's side up out of the water (F, or W, at the ladder: there is one each side)
 		deck		standing on a boat: where it is is kept on the boat (metres, the boat's directions: boat.deckHeight is what
 					its feet stand on), so it goes where the boat goes. It walks about the cockpit, up on to the side decks and
 					the foredeck, and jumps over the side
-		seat		at the helm (E at the seat or the wheel, E or Space again to let it go). A and D work the tiller or the wheel.
+		seat		at the helm (F at the seat or the wheel, F or Space again to let it go). A and D work the tiller or the wheel.
 					In a dinghy it sits, leaning out to windward
 	On a boat, the view turns as the boat turns, and leans a little as it heels and pitches. The halyards, sheets and braces are
 	worked by looking at one (the crosshair on it says what it is) and the scroll wheel: up to haul it in or raise the sail, down
@@ -54,9 +57,22 @@ import * as town from './town.js'
 	G drops the anchor or brings it up. (With the crosshair on a rope the wheel is the rope's, not the gun's: crosshair.onRope)
 	The walker's weight is on the boat where it is, so the boat heels and trims to it.
 
-	RIDING (horse.js): E at a horse's saddle (or right beside it) puts the walker in the saddle (on: 'saddle'), E again puts it down on
+	THE MASTS (the schooner's: shipGuns.js): F at the foot of one, on deck, climbs its ladder (on: 'mast') up into its crow's nest
+	(on: 'nest': standing in it, the boat's controls there worked from it). F at the top of the ladder climbs back down. On the ladder,
+	Space jumps off it (out from the mast, LADDER_LEAP) and F lets go of it: down on to the deck, as hard as it falls (FALLING).
+	BOATS' SEATS (onBoatSeat: its howitzers, the nests' Lewis guns): F at one puts the walker in it (on: 'aboard', still on the boat),
+	and out of it back where it was; and the rest of what is on a boat's deck (onBoatUse: its stores) is worked with E.
+	SEATS (addRides: the biplane's two cockpits, plane.js): F at one, on foot, climbs into it (on: 'aboard'), and whatever has the seat
+	works the keys, the view and the wheel while the walker is in it, until it says the walker got out (and where).
+
+	LYING DOWN, behind a gun on its bipod (the Lewis gun, lewis.js: setStance): the walker does not move, its eyes come down to
+	LYING_EYE, and the view turns no further than the gun's arc either side of the way it faces, nor up or down further than it
+	allows. A deer's shove does not move it.
+
+	RIDING (horse.js): F at a horse's saddle (or right beside it) puts the walker in the saddle (on: 'saddle'), F again puts it down on
 	the horse's left. W, S, A, D and Shift ride it (see THE HORSE in horse.js). The view turns as the horse turns, and rides up and
-	down with its gait. The gun can be used from the saddle. E at the saddlebags, on foot, fills the ammunition back up (onRefill).
+	down with its gait, and the gun in the hands with it (vm.ride: horse.riderLag). The gun can be used from the saddle. F at the
+	saddlebags, on foot, fills the ammunition back up (onRefill).
 */
 const BODY_WIDTH = 0.6;				// metres
 const BODY_HEIGHT = 1.8;
@@ -77,6 +93,12 @@ const ROPE_NOTCH = 0.08;			// of a halyard's or sheet's whole way, for a notch o
 const LADDER_REACH = 1.6;			// metres from a ladder that a swimmer can take hold of it
 const PROBE_REACH = 8;				// metres: see surfaceAt
 const KNOCK_FADE = 6;				// how quickly a shove dies away (a second, to e to the minus this)
+const LYING_EYE = 0.38;				// metres up the eyes are, lying behind a gun on its bipod (see LYING DOWN)
+const LIE_SECONDS = 0.6;			// to get down, or up
+const FALL = { safe: 8.5, deadly: 17 };	// metres a second coming down: see FALLING at the top
+const LADDER_LEAP = 2.2;			// metres a second out from a mast's ladder, jumping off it
+const RIDE_HANDS = { bob: 0.45, rock: 0.35 };	// how much of horse.riderLag the gun in the hands goes by
+const CHUTE_SINK = 6;				// metres a second: how fast it comes down under a parachute (thrown out of a plane shot to pieces, plane.js)
 
 const LOOK_PITCH = Math.PI * 0.5 - 0.02;
 
@@ -87,17 +109,22 @@ export const hunterStats = { boxes: 0, gathers: 0, cornerReads: 0, grounded: fal
 export const input = { menuOpen: false, lookScale: 1 };
 
 const hunter = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, grounded: false, swimming: false,
-	on: 'land',					// land, ladder, deck or seat (see SAILING at the top), or saddle (RIDING)
+	on: 'land',					// land, ladder, deck or seat (see SAILING at the top), mast or nest (THE MASTS), saddle (RIDING), or aboard (SEATS)
+	nest: 0, climbingUp: true,	// the mast it is climbing, or whose nest it is in, and which way
+	ride: null,					// aboard: { rides (whose seat it is: addRides), vehicle, seat }
 	boat: null,					// the boat it is on (off the land)
 	horse: null,				// the horse it rides
 	ladder: 0,					// which of the boat's ladders it is climbing
 	local: [0, 0, 0], localVy: 0,	// on the boat: where its feet are (metres on the boat) and how fast it is going up
-	climb: 0, hike: 0 };			// how far up the ladder, 0 to 1. How far out to windward it is leaning, sitting (-1 to 1)
+	chute: false,				// coming down under a parachute
+	climb: 0, hike: 0,
+	drift: null };				// off a mast's ladder: metres a second (on the boat) it goes on out from it until it lands			// how far up the ladder, 0 to 1. How far out to windward it is leaning, sitting (-1 to 1)
 let active = false;
 let lastTime = performance.now();
 const keysDown = new Set();
 let jumpPressed = false;
 let usePressed = false, anchorPressed = false;	// E and G
+let vehiclePressed = false, vehicleNow = false;		// F: pressed, and pressed this frame (taken at the start of each: updateHunter)
 let burstPressed = false;						// Shift, in the saddle
 let wheelPixels = 0, scrolled = 0;				// the scroll wheel: turned since it was last read, and what this frame has of it (pixels, down +)
 let lastHeading = null;						// the boat's heading last frame, to turn the view with it
@@ -153,6 +180,7 @@ window.addEventListener('keydown', (event) => {
 		if (!event.repeat) jumpPressed = true;
 	}
 	if (event.code == 'KeyE' && !event.repeat) usePressed = true;
+	if (event.code == 'KeyF' && !event.repeat) vehiclePressed = true;
 	if ((event.code == 'ShiftLeft' || event.code == 'ShiftRight') && !event.repeat) burstPressed = true;
 	if (event.code == 'KeyG' && !event.repeat) anchorPressed = true;
 	keysDown.add(event.code);
@@ -185,6 +213,7 @@ window.addEventListener('mousemove', (event) => {
 		const turn = 0.0025 * settings.huntingLookSensitivity * input.lookScale;
 		settings.camYaw += event.movementX * turn;
 		settings.camPitch = Math.min(Math.max(settings.camPitch - event.movementY * turn, -LOOK_PITCH), LOOK_PITCH);
+		if (stance.hold) keepToArc();
 	}
 });
 
@@ -199,7 +228,7 @@ hint.textContent = 'Click to look around · T spawn menu · hold Tab or Esc for 
 // what the crosshair is on, on the boat: what it is, which keys work it, and how far it is set
 const prompt = document.createElement('div');
 prompt.style.cssText = 'position: absolute; left: 50%; top: calc(50% + 18px); transform: translateX(-50%); padding: 4px 10px; border-radius: 4px; background: rgba(0, 0, 0, 0.55); color: #e8e8e8; font-size: 12px; white-space: nowrap; text-align: center; display: none;';
-let promptShown = '';
+let promptShown = '', promptPlace = 'middle';
 overlay.append(dot, hint, prompt);
 document.body.appendChild(overlay);
 
@@ -333,6 +362,7 @@ function startHunting() {
 function stopHunting() {
 	if (locked()) document.exitPointerLock();
 	keysDown.clear();
+	getOutOfSeat();
 	leaveBoat();
 	if (hunter.on == 'saddle') dismount();
 	help.showHelp(null);
@@ -347,7 +377,7 @@ function mount(h) {
 	horse.setRider(h, 'me');
 	lastHeading = null;
 	boatHelmListeners.forEach((fn) => fn(h));		// (whoever rides it works its sums: net.js)
-	help.toast('W to ride on · E to get down');
+	help.toast('W to ride on · F to get down');
 }
 // down on the ground on the horse's left
 function dismount() {
@@ -372,7 +402,7 @@ function ride(seconds) {
 	horse.rideHorse(h, { ahead, turn, burst: burstPressed }, seconds);
 	burstPressed = jumpPressed = anchorPressed = false;
 	scrolled = 0;
-	if (usePressed) { usePressed = false; dismount(); return; }
+	if (vehicleNow) { dismount(); return; }
 	// the view turns with the horse, and rides with it
 	const heading = h.frame.heading();
 	if (lastHeading !== null) {
@@ -391,8 +421,13 @@ function ride(seconds) {
 	settings.camPosY = eye[1];
 	settings.camPosZ = eye[2];
 	transformations.viewUp.splice(0, 3, 0, 1, 0);
+	// the gun in the hands with the horse's stride
+	const lag = horse.riderLag(h);
+	vm.ride.y = lag.bob * RIDE_HANDS.bob;
+	vm.ride.pitch = lag.rock * RIDE_HANDS.rock;
 }
-// told when the walker fills its ammunition up at a horse's saddlebags (weapons.js): fn(). Asked first (gateRefill): fn() false if it
+// told when the walker fills its ammunition up at a horse's saddlebags (weapons.js): fn(), which may give a word more to say (plane.js: a
+//		supply pack taken). Asked first (gateRefill): fn() false if it
 //		may not (it costs points in the Horde game mode, horde.js: it says why)
 const refillListeners = [], refillGates = [];
 export function onRefill(fn) { refillListeners.push(fn); }
@@ -400,6 +435,97 @@ export function gateRefill(fn) { refillGates.push(fn); }
 // asked first when E is pressed on foot: fn(place) gives true if it took the press (discgolf.js: a disc picked up)
 const useHandlers = [];
 export function onUse(fn) { useHandlers.push(fn); }
+// and F at something on foot, as onUse (plane.js: a biplane's wheels or floats)
+const vehicleHandlers = [];
+export function onVehicleUse(fn) { vehicleHandlers.push(fn); }
+// told when the walker comes down hard (see FALLING at the top): fn(health it takes off)
+const fallListeners = [];
+export function onFall(fn) { fallListeners.push(fn); }
+function landed(speed) {
+	if (speed <= FALL.safe || !hunterLife.alive || hunter.chute) return;
+	const harm = 100 * (speed - FALL.safe) / (FALL.deadly - FALL.safe);
+	for (const fn of fallListeners) fn(harm);
+}
+// a boat's seats (F at its control: shipGuns.js): fn(boat, control) gives { rides (addRides's), seat } to be put in it, or null
+const boatSeaters = [];
+export function onBoatSeat(fn) { boatSeaters.push(fn); }
+// the rest of a boat's controls (E at one: its stores): fn(boat, control) true if it was worked
+const boatUsers = [];
+export function onBoatUse(fn) { boatUsers.push(fn); }
+// what the eye is on, said in the middle of the screen: fn() gives { name, keys } or null (plane.js: a biplane's wheels)
+const promptMakers = [];
+export function addPrompt(fn) { promptMakers.push(fn); }
+function promptInView() {
+	for (const fn of promptMakers) { const said = fn(); if (said) return said; }
+	return null;
+}
+
+// Seats (see SEATS at the top)
+//-------------------------------------------------
+// whoever has seats: { inView(eye, look) (the seat the crosshair is on: { vehicle, seat, name, keys } or null), board(vehicle, seat) (false
+//		if it may not be), ride(vehicle, seat, { keys, jump, scrolled }, seconds) (in it this frame: { feet, eye, velocity } world units, or
+//		{ left: { x, z } } got out), leave(vehicle, seat) (put out of it from here), local(vehicle, seat) ({ local, sit }: where on it, for
+//		the others), help(vehicle, seat) ([title, lines]) }
+const rides = [];
+export function addRides(r) { rides.push(r); }
+function seatInView() {
+	const eye = [settings.camPosX, settings.camPosY, settings.camPosZ], look = transformations.getCameraForward();
+	for (const r of rides) { const s = r.inView(eye, look); if (s) return { ...s, rides: r }; }
+	return null;
+}
+// in a seat this frame: false if the walker is out of it (on the land, where it got out)
+function aboard(seconds) {
+	const R = hunter.ride;
+	if (!hunterLife.alive) { getOutOfSeat(); return false; }
+	const result = R.rides.ride(R.vehicle, R.seat, { keys: keysDown, jump: jumpPressed, use: vehicleNow, scrolled }, seconds);
+	jumpPressed = usePressed = anchorPressed = burstPressed = false;
+	scrolled = 0;
+	crosshair.onRope = false;
+	if (result.left) {
+		vehicleNow = false;		// (the press that got it out is spent: not the press to climb straight back in, the seat still in view)
+		hunter.on = 'land';
+		hunter.ride = null;
+		lastHeading = null;
+		transformations.viewUp.splice(0, 3, 0, 1, 0);
+		// (out of a boat's seat: back on its deck, or in its crow's nest)
+		if (result.left.boat) {
+			hunter.on = result.left.nest !== undefined ? 'nest' : 'deck';
+			hunter.nest = result.left.nest ?? 0;
+			hunter.boat = result.left.boat;
+			hunter.local = [...result.left.local];
+			hunter.localVy = 0;
+			return false;
+		}
+		placeHunter(result.left.x, result.left.z);
+		// thrown out in the air (a plane shot to pieces): falling from there, under a parachute if it opened
+		if (result.left.y !== undefined) {
+			hunter.y = Math.max(result.left.y, hunter.y);
+			hunter.vx = result.left.vx; hunter.vy = result.left.vy; hunter.vz = result.left.vz;
+			hunter.grounded = false;
+			hunter.chute = result.left.chute;
+		}
+		return false;
+	}
+	// (in a seat, what the crosshair is on goes down in the corner: nothing needs climbing into)
+	showPrompt(result.prompt ?? null, true);
+	[hunter.x, hunter.y, hunter.z] = result.feet;
+	hunter.vx = result.velocity[0]; hunter.vy = result.velocity[1]; hunter.vz = result.velocity[2];
+	hunter.grounded = true;
+	hunter.swimming = false;
+	hunterStats.grounded = true;
+	hunterStats.swimming = false;
+	return true;
+}
+// out of the seat, put somewhere else (where the walker is)
+function getOutOfSeat() {
+	if (hunter.on != 'aboard') return;
+	const R = hunter.ride;
+	hunter.on = 'land';
+	hunter.ride = null;
+	R.rides.leave(R.vehicle, R.seat);
+	transformations.viewUp.splice(0, 3, 0, 1, 0);
+	if (hunter.boat && R.vehicle === hunter.boat) { boat.setCrew(hunter.boat, 'me', null); hunter.boat = null; }
+}
 
 // off the boat
 function leaveBoat() {
@@ -434,6 +560,10 @@ export function updateHunter() {
 	const now = performance.now();
 	const seconds = Math.min((now - lastTime) / 1000, 0.1);
 	lastTime = now;
+	vehicleNow = vehiclePressed;
+	vehiclePressed = false;
+	if (hunter.on != 'aboard') transformations.setSeatedNear(null);		// (a seat's close near plane only while in it: see plane.js)
+	vm.ride.y = vm.ride.pitch = 0;
 
 	const on = hunting() && settings.enableTerrain && terrain.land;
 	if (on && !active) startHunting();
@@ -449,8 +579,15 @@ export function updateHunter() {
 	dot.style.display = locked() && !crosshair.hidden && hunterLife.alive && !input.menuOpen ? '' : 'none';
 	hint.style.display = locked() ? 'none' : '';
 
+	if (hunter.on == 'aboard') {
+		if (aboard(seconds)) {
+			showControls();
+			return;
+		}
+	}
 	if (hunter.on == 'saddle') {
 		if (hunter.horse && hunter.horse.exists) {
+			showPrompt(null);
 			ride(seconds);
 			showControls();
 			return;
@@ -472,39 +609,50 @@ export function updateHunter() {
 	}
 	gatherMovers();
 
-	// at a boat's ladder, in the water: E (or W towards it) climbs it
+	// at a boat's ladder, in the water: F (or W towards it) climbs it
 	const control = boatControlInView();
 	boat.setHovered(control?.boat ?? null, control ? control.id : -1);
-	// a horse: E at its saddle (or right beside it) to get on, at its saddlebags for ammunition
+	// a horse: E at its saddlebags for ammunition (F at its saddle to get on: below)
 	const tack = !control && hunterLife.alive ? horse.controlInView([settings.camPosX, settings.camPosY, settings.camPosZ], transformations.getCameraForward()) : null;
 	horse.setHovered(tack?.horse ?? null, tack?.kind ?? '');
-	showPrompt(control ?? tack);
+	// a seat (the biplane's cockpits): F at it to climb in
+	const seat = !control && !tack && hunterLife.alive ? seatInView() : null;
+	// (and whatever else has something to say about what the eye is on: addPrompt)
+	const other = !control && !tack && !seat && hunterLife.alive ? promptInView() : null;
+	showPrompt(control ?? tack ?? seat ?? other);
+	if (vehicleNow && seat && !hunter.swimming && seat.rides.board(seat.vehicle, seat.seat)) {
+		hunter.on = 'aboard';
+		hunter.ride = { rides: seat.rides, vehicle: seat.vehicle, seat: seat.seat };
+		vehicleNow = false;		// (the press that got it in is spent: it is not the press to get out as well)
+		if (aboard(0)) { showControls(); return; }
+	}
 	crosshair.onRope = false;
 	if (usePressed && !control && hunterLife.alive && useHandlers.some((fn) => fn(hunterPlace()))) usePressed = false;
-	if (usePressed && !control && hunterLife.alive && !hunter.swimming) {
-		if (tack && tack.kind == 'bags') {
-			usePressed = false;
-			if (refillGates.every((fn) => fn())) {
-				refillListeners.forEach((fn) => fn());
-				help.toast('Ammunition filled up');
-			}
-		} else {
-			const h = tack && tack.kind == 'saddle' && !tack.horse.rider ? tack.horse : horse.horseBeside(hunter.x, hunter.z);
-			if (h) {
-				usePressed = false;
-				mount(h);
-				ride(0);
-				showControls();
-				return;
-			}
+	if (vehicleNow && !control && hunterLife.alive && !hunter.swimming && vehicleHandlers.some((fn) => fn(hunterPlace()))) vehicleNow = false;
+	if (vehicleNow && !control && hunterLife.alive && !hunter.swimming && tack && tack.kind == 'bags') {
+		vehicleNow = false;		// (F at the saddlebags fills up: it does not put the walker in the saddle as well)
+		if (refillGates.every((fn) => fn())) {
+			const more = refillListeners.map((fn) => fn()).filter(Boolean);
+			help.toast(['Ammunition filled up', ...more].join(' · '), more.length ? 3 : 2.2);
 		}
 	}
-	if (control && control.kind == 'ladder' && hunterLife.alive && (usePressed || keysDown.has('KeyW'))) {
+	// a horse: F at its saddle, or right beside it, to get on
+	if (vehicleNow && !control && hunterLife.alive && !hunter.swimming) {
+		const h = tack && tack.kind == 'saddle' && !tack.horse.rider ? tack.horse : horse.horseBeside(hunter.x, hunter.z);
+		if (h) {
+			mount(h);
+			vehicleNow = false;		// (as above: in the saddle, not straight back down again)
+			ride(0);
+			showControls();
+			return;
+		}
+	}
+	if (control && control.kind == 'ladder' && hunterLife.alive && (vehicleNow || keysDown.has('KeyW'))) {
 		hunter.on = 'ladder';
 		hunter.boat = control.boat;
 		hunter.ladder = control.ladder;
 		hunter.climb = 0;
-		usePressed = anchorPressed = false;
+		usePressed = anchorPressed = vehicleNow = false;
 		onBoat(seconds);
 		showControls();
 		return;
@@ -521,6 +669,9 @@ export function updateHunter() {
 	if (keysDown.has('KeyS')) ahead -= 1;
 	if (keysDown.has('KeyD')) side += 1;
 	if (keysDown.has('KeyA')) side -= 1;
+	// lying behind a gun: it does not move (see LYING DOWN at the top)
+	stance.lying = Math.min(Math.max(stance.lying + (stance.hold ? 1 : -1) * seconds / LIE_SECONDS, 0), 1);
+	if (stance.hold || stance.lying > 0) { ahead = side = 0; jumpPressed = false; }
 	const length = Math.hypot(ahead, side) || 1;
 	const running = keysDown.has('ShiftLeft') || keysDown.has('ShiftRight');
 	const pace = settings.huntingWalkSpeed * metre * (running ? RUN : 1) * (hunter.swimming ? SWIM_PACE : 1);
@@ -546,6 +697,7 @@ export function updateHunter() {
 		hunter.vx += (wantX - hunter.vx) * give;
 		hunter.vz += (wantZ - hunter.vz) * give;
 		hunter.vy -= GRAVITY * metre * dt;
+		if (hunter.chute) hunter.vy = Math.max(hunter.vy, -CHUTE_SINK * metre);
 
 		// across, a way at a time, out of anything it walked into. On the ground, not up anything too steep (standing on something
 		//		over the ground, a bridge, the pier, it goes where that goes)
@@ -568,6 +720,7 @@ export function updateHunter() {
 		const support = supportUnder(step);
 		const keepsFeet = hunter.grounded && hunter.vy <= 0 && hunter.y - support < step;
 		if (hunter.y <= support || keepsFeet) {
+			if (!hunter.grounded) landed(-hunter.vy / metre);
 			hunter.y = support;
 			hunter.vy = 0;
 			hunter.grounded = true;
@@ -599,9 +752,12 @@ export function updateHunter() {
 	}
 	hunterStats.grounded = hunter.grounded;
 	hunterStats.swimming = hunter.swimming;
+	// the parachute: let go of on the ground or in the water, and gone with whoever was shot under it
+	if (hunter.grounded || hunter.swimming || !hunterLife.alive) hunter.chute = false;
 
 	settings.camPosX = hunter.x;
-	settings.camPosY = hunter.y + EYE_HEIGHT * metre;
+	const lying = stance.lying * stance.lying * (3 - 2 * stance.lying);
+	settings.camPosY = hunter.y + (EYE_HEIGHT + (LYING_EYE - EYE_HEIGHT) * lying) * metre;
 	settings.camPosZ = hunter.z;
 	showControls();
 }
@@ -614,14 +770,16 @@ function boatControlInView() {
 	if (boat.boats.length == 0 || !hunterLife.alive) return null;
 	const eye = [settings.camPosX, settings.camPosY, settings.camPosZ];
 	const aboard = (b) => (hunter.on == 'deck' || hunter.on == 'seat') && hunter.boat === b;
-	const usable = (b, c) => c.kind == 'ladder' ? hunter.on == 'land' : c.kind == 'helm' ? hunter.on == 'deck' && hunter.boat === b : aboard(b);
+	const usable = (b, c) => c.kind == 'ladder' ? hunter.on == 'land' : c.kind == 'helm' ? hunter.on == 'deck' && hunter.boat === b
+		: c.kind == 'nestGun' || c.kind == 'nestDown' ? hunter.on == 'nest' && hunter.boat === b && hunter.nest == c.nest
+		: hunter.on == 'nest' || hunter.on == 'mast' ? false : aboard(b);
 	let control = boat.controlInView(eye, transformations.getCameraForward(), usable);
 	const inWater = hunter.swimming || hunter.y < surfaceAt(hunter.x, hunter.z) - 0.3 * settings.forestUnitsPerMetre;
 	if (!control && hunter.on == 'land' && inWater) {
 		for (const b of boat.boats) {
 			const at = b.frame.toLocal([hunter.x, hunter.y, hunter.z]);
 			boat.ladders(b).forEach((L, k) => {
-				if (!control && Math.hypot(at[0] - L.x, at[2] - L.z) < LADDER_REACH && at[1] < L.top + 0.8 && at[1] > L.foot[1] - 2.5) control = { boat: b, id: L.control, kind: 'ladder', ladder: k, name: 'Ladder', keys: 'E climb aboard' };
+				if (!control && Math.hypot(at[0] - L.x, at[2] - L.z) < LADDER_REACH && at[1] < L.top + 0.8 && at[1] > L.foot[1] - 2.5) control = { boat: b, id: L.control, kind: 'ladder', ladder: k, name: 'Ladder', keys: 'F climb aboard' };
 			});
 		}
 	}
@@ -637,8 +795,10 @@ function meetBoats() {
 		const half = boat.halfBreadth(b, local[2]);
 		if (half <= 0) continue;
 		const deck = boat.deckHeight(b, local[0], local[2]);
-		if (deck !== null && !hunter.swimming && hunter.vy <= 0 && local[1] <= deck + 0.05 && local[1] >= deck - 0.6 && Math.abs(local[0]) < half - 0.15) {
+		if (deck !== null && b.destroyed < 0 && !hunter.swimming && hunter.vy <= 0 && local[1] <= deck + 0.05 && local[1] >= deck - 0.6 && Math.abs(local[0]) < half - 0.15) {
+			landed(-hunter.vy / metre);
 			hunter.on = 'deck';
+			hunter.drift = null;
 			hunter.boat = b;
 			hunter.local = [local[0], deck, local[2]];
 			hunter.localVy = 0;
@@ -654,6 +814,29 @@ function meetBoats() {
 	}
 	return false;
 }
+
+// into one of a boat's seats (a gun: onBoatSeat), from its control: true if it is in it now
+function seatOnBoat(B, control) {
+	for (const fn of boatSeaters) {
+		const seat = fn(B, control);
+		if (!seat || !seat.rides.board(B, seat.seat)) continue;
+		hunter.on = 'aboard';
+		hunter.ride = { rides: seat.rides, vehicle: B, seat: seat.seat };
+		boat.setHovered(null, -1);
+		return true;
+	}
+	return false;
+}
+
+// on a boat when it is shot to pieces: in the water, over the side nearer it
+boat.onBreak((at, b) => {
+	if (hunter.boat !== b || hunter.on == 'land') return;
+	const local = b.frame.toLocal([hunter.x, hunter.y, hunter.z]);
+	const out = Math.max(boat.halfBreadth(b, local[2]), 0.5) + 1.2;
+	const world = b.frame.toWorld([local[0] >= 0 ? out : -out, 0, local[2]]);
+	placeSwimmer(world[0], world[2]);
+	help.toast('Your boat is going down!', 3);
+});
 
 // the walker on a boat: climbing its ladder, standing on it or sitting at its helm. The view goes with the boat
 function onBoat(seconds) {
@@ -696,6 +879,28 @@ function onBoat(seconds) {
 		if (t >= 0.7) hunter.local[1] += 0.25 * Math.sin(Math.PI * (t - 0.7) / 0.3);
 		if (t >= 1) hunter.on = 'deck';
 		usePressed = jumpPressed = false;
+	} else if (hunter.on == 'mast') {
+		// up the ladder on the front of a mast to its crow's nest, or down it to the deck
+		const N = B.vessel.nests[hunter.nest];
+		hunter.climb = Math.min(hunter.climb + seconds / N.climb, 1);
+		const t = hunter.climbingUp ? hunter.climb : 1 - hunter.climb;
+		hunter.local = N.foot.map((v, i) => v + (N.stand[i] - v) * t);
+		if (hunter.climb >= 1) hunter.on = hunter.climbingUp ? 'nest' : 'deck';
+		// off it: Space jumps, out from the mast; F lets go. Down on to the deck from there (see THE MASTS at the top)
+		else if (jumpPressed || vehicleNow) {
+			hunter.on = 'deck';
+			hunter.localVy = jumpPressed ? Math.sqrt(2 * GRAVITY * settings.huntingJumpHeight) * 0.5 : 0;
+			hunter.drift = jumpPressed ? [0, 0, LADDER_LEAP] : null;
+			vehicleNow = false;
+		}
+		usePressed = jumpPressed = false;
+	} else if (hunter.on == 'nest') {
+		// standing in a crow's nest: its gun (F), the stores' uses (E: a supply pack for its gun), or back down its ladder (E)
+		hunter.local = [...B.vessel.nests[hunter.nest].stand];
+		if (vehicleNow && control && seatOnBoat(B, control)) return;
+		if (vehicleNow && control && control.kind == 'nestDown') { hunter.on = 'mast'; hunter.climbingUp = false; hunter.climb = 0; vehicleNow = false; }
+		else if (usePressed && control) boatUsers.some((fn) => fn(B, control));
+		usePressed = jumpPressed = false;
 	} else if (hunter.on == 'seat') {
 		// the tiller or the wheel, and (in a dinghy) out to windward
 		let tiller = 0;
@@ -705,15 +910,28 @@ function onBoat(seconds) {
 		const helm = boat.helm(B);
 		if (helm.hike) hunter.hike += Math.max(Math.min(frame.windwardSide() - hunter.hike, seconds * 1.5), -seconds * 1.5);
 		hunter.local = helmSpot();
-		if (usePressed || jumpPressed) {
+		if (vehicleNow || jumpPressed) {
 			hunter.on = 'deck';
 			hunter.local = [helm.standAt[0], boat.deckHeight(B, helm.standAt[0], helm.standAt[2]) ?? helm.standAt[1], helm.standAt[2]];
 			hunter.localVy = 0;
 		}
 		usePressed = jumpPressed = false;
 	} else {
-		if (usePressed && control && control.kind == 'helm' && control.boat === B) {
+		if (vehicleNow && control && control.kind == 'helm' && control.boat === B) {
 			sitAtHelm();
+		} else if (vehicleNow && control && control.boat === B && seatOnBoat(B, control)) {
+			return;
+		} else if (vehicleNow && control && control.boat === B && STORES.has(control.kind) && boatUsers.some((fn) => fn(B, control))) {
+			vehicleNow = false;
+		} else if (vehicleNow && control && control.boat === B && control.kind == 'mast') {
+			hunter.on = 'mast';
+			hunter.nest = control.mast;
+			hunter.climbingUp = true;
+			hunter.climb = 0;
+			hunter.drift = null;
+			vehicleNow = false;
+		} else if (usePressed && control && control.boat === B && boatUsers.some((fn) => fn(B, control))) {
+			usePressed = false;
 		} else if (walkOnDeck(seconds)) {
 			usePressed = false;
 			return;	// (over the side)
@@ -729,7 +947,7 @@ function onBoat(seconds) {
 	const going = frame.velocityAt(hunter.local);
 	hunter.x = feet[0]; hunter.y = feet[1]; hunter.z = feet[2];
 	hunter.vx = going[0]; hunter.vy = going[1]; hunter.vz = going[2];
-	hunter.grounded = hunter.on != 'ladder';
+	hunter.grounded = hunter.on != 'ladder' && hunter.on != 'mast';
 	hunter.swimming = false;
 	hunterStats.grounded = hunter.grounded;
 	hunterStats.swimming = false;
@@ -755,6 +973,7 @@ function walkOnDeck(seconds) {
 	const length = Math.hypot(ahead, side) || 1;
 	const pace = settings.huntingWalkSpeed;
 	const want = frame.directionToLocal([(forward[0] * ahead + right[0] * side) / length * pace, 0, (forward[2] * ahead + right[2] * side) / length * pace]);
+	if (hunter.drift) { want[0] += hunter.drift[0]; want[2] += hunter.drift[2]; }
 	if (jumpPressed && hunter.localVy == 0) hunter.localVy = Math.sqrt(2 * GRAVITY * settings.huntingJumpHeight);
 	jumpPressed = false;
 
@@ -774,6 +993,7 @@ function walkOnDeck(seconds) {
 			hunter.x = world[0]; hunter.y = world[1]; hunter.z = world[2];
 			hunter.vx = going[0] + mine[0] * metre; hunter.vy = going[1] + mine[1] * metre; hunter.vz = going[2] + mine[2] * metre;
 			hunter.grounded = false;
+			hunter.drift = null;
 			lastHeading = null;
 			leaveBoat();
 			return true;
@@ -792,6 +1012,7 @@ function walkOnDeck(seconds) {
 		hunter.localVy -= GRAVITY * dt;
 		local[1] += hunter.localVy * dt;
 		if (local[1] <= under || (hunter.localVy <= 0 && local[1] - under < STEP && !airborne)) {
+			if (airborne) { landed(-hunter.localVy); hunter.drift = null; }
 			local[1] = under;
 			hunter.localVy = 0;
 		}
@@ -799,9 +1020,14 @@ function walkOnDeck(seconds) {
 	return false;
 }
 
-// what the crosshair is on, under it
-function showPrompt(control) {
+// what the crosshair is on, under it (or in the bottom left corner, in a seat: corner)
+function showPrompt(control, corner = false) {
 	let text = '';
+	const place = corner ? 'corner' : 'middle';
+	if (place != promptPlace) {
+		promptPlace = place;
+		Object.assign(prompt.style, corner ? { left: '16px', top: 'auto', bottom: '96px', transform: 'none', textAlign: 'left' } : { left: '50%', top: 'calc(50% + 18px)', bottom: 'auto', transform: 'translateX(-50%)', textAlign: 'center' });
+	}
 	if (control && locked() && !input.menuOpen) {
 		// how far it is now, and a mark where it is wanted (it is hauled there)
 		const set = control.value !== undefined ? `<div style="position: relative; margin-top: 4px; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.2);"><div style="height: 100%; width: ${(control.value * 100).toFixed(0)}%; border-radius: 2px; background: #8fc3e8;"></div>`
@@ -818,6 +1044,11 @@ function showPrompt(control) {
 // the controls for where the walker is, on the side (controlsHelp.js). The gun in its hands adds its own (help.setWeaponHelp)
 function showControls() {
 	if (!hunterLife.alive) { help.showHelp(null); return; }
+	if (hunter.on == 'aboard') {
+		const [title, lines] = hunter.ride.rides.help(hunter.ride.vehicle, hunter.ride.seat);
+		help.showHelp(title, lines, false);
+		return;
+	}
 	if (hunter.on == 'saddle') {
 		const b = horse.burstState(hunter.horse);
 		help.showHelp('On horseback', [
@@ -825,14 +1056,14 @@ function showControls() {
 			['S', 'slow down, back up'],
 			['A / D', 'turn (wider the faster it goes)'],
 			['Shift', b.burst > 0 ? 'galloping…' : b.ready ? 'a burst of gallop' : `a burst of gallop (ready in ${Math.ceil(b.rest)} s)`],
-			['E', 'get down'],
+			['F', 'get down'],
 			['T', 'spawn menu'],
 		]);
 	} else if (hunter.on == 'seat') {
 		const B = hunter.boat, wheel = boat.helm(B).tiller == 'wheel';
 		help.showHelp(`${B.vessel.name}: at the ${wheel ? 'wheel' : 'tiller'}`, [
 			['A / D', `turn the ${wheel ? 'wheel' : 'tiller'} (it stays where it is put)`],
-			['E or Space', 'let go of the helm'],
+			['F or Space', 'let go of the helm'],
 			['G', 'drop or raise the anchor'],
 			['Mouse', 'look around'],
 			['T', 'spawn menu'],
@@ -841,16 +1072,27 @@ function showControls() {
 		help.showHelp(`On the ${hunter.boat.vessel.name}`, [
 			['W A S D', 'walk about the deck'],
 			['Look + wheel', 'at a halyard: raise or lower its sail · at a sheet or brace: haul it in or ease it out'],
-			['E', `at the ${boat.helm(hunter.boat).tiller == 'wheel' ? 'wheel' : 'helm seat'}: take the helm`],
+			['F', `at the ${boat.helm(hunter.boat).tiller == 'wheel' ? 'wheel' : 'helm seat'}: take the helm`],
 			['G', 'drop or raise the anchor'],
+			['F', 'at a howitzer: man it'],
+			['F', 'at the rounds, the supply packs or the wood: take one · at a mast: climb to its crow\'s nest'],
+			['R (held)', 'with wood, at a mast: mend her'],
 			['Space', 'jump (over the side to swim)'],
 		]);
 	} else if (hunter.on == 'ladder') {
 		help.showHelp('Climbing aboard', [['', 'up the ladder and over the side']], false);
+	} else if (hunter.on == 'mast') {
+		help.showHelp('Climbing', [['', hunter.climbingUp ? 'up to the crow\'s nest' : 'down to the deck'], ['Space', 'jump off'], ['F', 'let go']], false);
+	} else if (hunter.on == 'nest') {
+		help.showHelp('In the crow\'s nest', [
+			['F', 'at the Lewis gun: man it · at the ladder: climb down'],
+			['E', 'at the gun with a supply pack: fill its pans'],
+			['Mouse', 'look around'],
+		]);
 	} else if (hunter.swimming) {
 		help.showHelp('Swimming', [
 			['W A S D', 'swim'],
-			['E or W', 'at a boat\'s ladder: climb aboard'],
+			['F or W', 'at a boat\'s ladder: climb aboard'],
 			['Space', 'kick up'],
 			['T', 'spawn menu'],
 		], false);
@@ -859,7 +1101,8 @@ function showControls() {
 			['W A S D', 'walk · Shift run'],
 			['Space', 'jump'],
 			['T', 'spawn menu: vehicles and weapons'],
-			['E', 'at a horse: get on · at its saddlebags: fill up your ammunition · by your disc: pick it up'],
+			['F', 'at a horse: get on · at its saddlebags: fill up your ammunition · at a biplane\'s cockpit: climb in · at its wheels: floats or wheels'],
+			['E', 'by your disc: pick it up'],
 			['Tab / Esc', 'let go of the mouse'],
 		]);
 	}
@@ -868,23 +1111,65 @@ function showControls() {
 // where the walker is, for anyone who wants to know (the rifle, the harness, net.js): { x, y (its feet), z, vx, vz, grounded, swimming,
 //		active, on (land, ladder, deck, seat), boat (the boat's id, off the land), local (where on it, metres) }
 export function hunterPlace() {
-	return { x: hunter.x, y: hunter.y, z: hunter.z, vx: hunter.vx, vz: hunter.vz, grounded: hunter.grounded, swimming: hunter.swimming, boxes: boxCount, active: active, on: hunter.on,
-		boat: hunter.on != 'land' && hunter.on != 'saddle' && hunter.boat ? hunter.boat.id : null, vehicle: hunter.on == 'saddle' && hunter.horse ? hunter.horse.id : null, local: [...hunter.local] };
+	const seat = hunter.on == 'aboard' ? hunter.ride.rides.local(hunter.ride.vehicle, hunter.ride.seat) : null;
+	return { x: hunter.x, y: hunter.y, z: hunter.z, vx: hunter.vx, vz: hunter.vz, grounded: hunter.grounded && hunter.on != 'saddle', swimming: hunter.swimming, boxes: boxCount, active: active, on: hunter.on,
+		boat: hunter.on != 'land' && hunter.on != 'saddle' && hunter.on != 'aboard' && hunter.boat ? hunter.boat.id : null,
+		vehicle: hunter.on == 'saddle' && hunter.horse ? hunter.horse.id : seat ? hunter.ride.vehicle.id : null, local: seat ? seat.local : [...hunter.local], sit: seat?.sit ?? 0, seat: seat ? hunter.ride.seat : null, chute: hunter.chute };
 }
-// for testing: the boat control the walker would work now
+// what is taken from a boat's stores with F (shipGuns.js: a round, a supply pack, planks)
+const STORES = new Set(['shells', 'packs', 'barrel']);
+// the boat control the walker would work now: { kind, ladder, boat (its id), id (its place in the vessel's controls) } or null
+//		(shipGuns.js: the howitzer stood at; and testing)
 export function controlNow() {
 	const c = boatControlInView();
 	return c && { kind: c.kind, ladder: c.ladder, boat: c.boat?.id, id: c.id };
 }
+// for testing: into a seat of a vehicle (the first that has seats: plane.js), or out of it (vehicle null)
+export function testSeat(vehicle, seat) {
+	if (!vehicle) { getOutOfSeat(); return; }
+	if (!rides[0].board(vehicle, seat)) return;
+	hunter.on = 'aboard';
+	hunter.ride = { rides: rides[0], vehicle, seat };
+}
+// for testing: into a seat of any rides (addRides's): of a boat's (shipGuns.js), still on it
+export function testRide(r, vehicle, seat) {
+	if (!r.board(vehicle, seat)) return false;
+	hunter.on = 'aboard';
+	hunter.ride = { rides: r, vehicle, seat };
+	if (vehicle.vessel) hunter.boat = vehicle;
+	return true;
+}
 // for testing: get on a horse, or down
 export function testMount(h) { if (h) { mount(h); ride(0); } else dismount(); }
+// Lying down (see LYING DOWN at the top)
+//-------------------------------------------------
+// hold: { facing (as settings.camYaw), arc (radians either way), low, high (the pitch, radians) } to lie down behind the gun, or null to
+//		get up. The view is brought inside it at once
+const stance = { hold: null, lying: 0 };
+export function setStance(hold) {
+	stance.hold = hold;
+	if (hold) keepToArc();
+}
+// how far down it is (0 standing to 1 lying), and whether it can lie down here: on its feet on the land, not in the water
+export function stanceNow() {
+	return { lying: stance.lying, down: !!stance.hold, canLie: hunter.on == 'land' && hunter.grounded && !hunter.swimming && active };
+}
+function keepToArc() {
+	const h = stance.hold;
+	let off = settings.camYaw - h.facing;
+	off -= Math.PI * 2 * Math.round(off / (Math.PI * 2));
+	settings.camYaw = h.facing + Math.min(Math.max(off, -h.arc), h.arc);
+	settings.camPitch = Math.min(Math.max(settings.camPitch, h.low), h.high);
+}
+
 // whether the hands are busy (at the helm, on a ladder): no gun then
 export function handsBusy() {
-	return hunter.on == 'seat' || hunter.on == 'ladder';
+	return hunter.on == 'seat' || hunter.on == 'ladder' || hunter.on == 'mast' || hunter.on == 'aboard';
 }
 
 // for testing: the keys held, as if pressed (KeyW, ShiftLeft...), and a jump, E and G, and the scroll wheel turned (pixels, down +)
-export function pressKeys(codes, jump = false, use = false, anchor = false, scroll = 0) {
+export function pressKeys(codes, jump = false, use = false, anchor = false, scroll = 0, vehicle = false) {
+	if (vehicle) vehiclePressed = true;
 	wheelPixels += scroll;
 	keysDown.clear();
 	for (const code of codes) keysDown.add(code);
@@ -895,19 +1180,21 @@ export function pressKeys(codes, jump = false, use = false, anchor = false, scro
 
 // the walker shoved, on foot (a deer of the horde butting it, horde.js): vx, vz metres a second
 export function shoveHunter(vx, vz) {
-	if (hunter.on != 'land') return;
+	if (hunter.on != 'land' || stance.hold) return;
 	knock[0] += vx * settings.forestUnitsPerMetre;
 	knock[1] += vz * settings.forestUnitsPerMetre;
 }
 
 // the walker put down on the ground at (x, z), standing still (for testing, and up again after being shot)
 export function placeHunter(x, z) {
+	getOutOfSeat();
 	if (hunter.on == 'saddle') { hunter.on = 'land'; horse.setRider(hunter.horse, null); hunter.horse = null; }
 	if (hunter.on != 'land') leaveBoat();
 	hunter.x = x; hunter.z = z;
 	hunter.y = groundUnder(x, z);
 	hunter.vx = hunter.vy = hunter.vz = 0;
 	hunter.grounded = true;
+	hunter.chute = false;
 	gatheredAt = null;
 }
 // the walker taken to (x, y, z) world units (the host's Bring and Go To, net.js): a step to one side of it, on the ground there, or
@@ -921,6 +1208,7 @@ export function teleportHunter(x, y, z) {
 }
 // for testing: the walker put in the water at (x, z), swimming
 export function placeSwimmer(x, z) {
+	getOutOfSeat();
 	if (hunter.on == 'saddle') { hunter.on = 'land'; horse.setRider(hunter.horse, null); hunter.horse = null; }
 	if (hunter.on != 'land') leaveBoat();
 	hunter.x = x; hunter.z = z;
@@ -929,6 +1217,26 @@ export function placeSwimmer(x, z) {
 	hunter.grounded = false;
 	hunter.swimming = true;
 	gatheredAt = null;
+}
+
+// for testing: the walker let go of in the air at (x, y, z) world units (it comes down on whatever is under it: a boat's deck)
+export function dropHunter(x, y, z) {
+	placeHunter(x, z);
+	hunter.y = y;
+	hunter.grounded = false;
+}
+
+// for testing: the walker put on a boat, at local (metres on it) on its deck, or in a crow's nest (nest: which)
+export function placeOnBoat(b, local, nest = null) {
+	getOutOfSeat();
+	if (hunter.on == 'saddle') { hunter.on = 'land'; horse.setRider(hunter.horse, null); hunter.horse = null; }
+	hunter.boat = b;
+	hunter.on = nest === null ? 'deck' : 'nest';
+	hunter.nest = nest ?? 0;
+	hunter.local = [...local];
+	hunter.localVy = 0;
+	hunter.drift = null;
+	lastHeading = null;
 }
 
 // for testing: the height of the ground the walker stands on at (x, z): the drawn mesh's (see THE GROUND at the top)

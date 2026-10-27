@@ -171,6 +171,19 @@ export const vf_grass =
 	}
 
 	// Is a place on a town's roads or walls, or under one of its houses? (no grass there: the rest of a town is grassland)
+	// a smooth noise, 0 to 1, a lattice every unit (a ragged edge in the town mask)
+	fn latticeRandom(c: vec2f) -> f32 {
+		return random(hash((bitcast<u32>(i32(c.x) + 100000) * 73856093u) ^ (bitcast<u32>(i32(c.y) + 100000) * 19349663u)));
+	}
+	fn edgeNoise(p: vec2f) -> f32 {
+		let i = floor(p);
+		let f = fract(p);
+		let s = f * f * (3.0 - 2.0 * f);
+		let a = mix(latticeRandom(i), latticeRandom(i + vec2f(1.0, 0.0)), s.x);
+		let b = mix(latticeRandom(i + vec2f(0.0, 1.0)), latticeRandom(i + vec2f(1.0, 1.0)), s.x);
+		return mix(a, b, s.y);
+	}
+
 	fn onTownWork(xz: vec2f) -> bool {
 		let grid = townItems[0];		// half the world, the cell size, cells along a side (0: no towns)
 		let along = i32(grid.z);
@@ -184,16 +197,21 @@ export const vf_grass =
 			let a = townItems[1u + item * 2u];
 			let b = townItems[2u + item * 2u];
 			if (b.z < 0.5) {
-				// a stretch of road or wall: within its half width of the line
+				// a stretch of road or wall: within its half width of the line (a footpath's ragged, in by up to b.y, and with a tuft
+				//		coming up here and there on it, b.w of it)
 				let ab = a.zw - a.xy;
 				let t = saturate(dot(xz - a.xy, ab) / max(dot(ab, ab), 1e-6));
-				if (length(xz - a.xy - ab * t) < b.x) {
+				if (length(xz - a.xy - ab * t) < b.x - b.y * edgeNoise(xz / 2.5)) {
+					if (b.w > 0.0 && latticeRandom(floor(xz * 1.3)) < b.w) {
+						continue;
+					}
 					return true;
 				}
 			} else {
 				// a box, turned: a.zw along its width
 				let d = xz - a.xy;
-				if (abs(dot(d, a.zw)) < b.x && abs(dot(d, vec2f(-a.w, a.z))) < b.y) {
+				let ragged = b.w * edgeNoise(xz / 6.0);
+				if (abs(dot(d, a.zw)) < b.x - ragged && abs(dot(d, vec2f(-a.w, a.z))) < b.y - ragged) {
 					return true;
 				}
 			}

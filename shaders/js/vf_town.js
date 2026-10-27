@@ -353,6 +353,48 @@ export const vf_town =
 				petal = petal * mix(0.65, 1.05, input.uv.y);
 				albedo = mix(vec3f(0.22, 0.38, 0.14), petal, TU.season.x);
 			}
+			case 21: {
+				// the landing strip's packed earth (uv: along it and across it, world units): pebbly, the wheels' two worn tracks down its
+				//		middle darker and smoother, the grass coming in at its edges. Its edges ragged: in and out along it, the land showing
+				//		(it is drawn a little wider than the strip), here and there a tongue of grass reaching well in
+				let side = select(-11.0, 11.0, uv.y >= 0.0);
+				let reach = 24.0 - 5.0 * fbm2(vec2f(uv.x / 16.0, side)) - 2.5 * noise2(vec2f(uv.x / 3.5, side * 0.5)) - 6.0 * smoothstep(0.6, 0.85, fbm2(vec2f(uv.x / 9.0, side * 2.0)));
+				if (abs(uv.y) > reach) { discard; }
+				let soil = mix(vec3f(0.36, 0.28, 0.19), vec3f(0.47, 0.38, 0.26), fbm2(uv / 6.0));
+				var earth = soil * (0.9 + 0.15 * noise2(uv * 3.0));
+				let track = 1.0 - smoothstep(0.6, 1.8, abs(abs(uv.y) - 2.2));
+				earth *= 1.0 - 0.2 * track * (0.7 + 0.3 * noise2(vec2f(uv.x * 0.05, uv.y)));
+				let grassy = smoothstep(15.0, 21.0, abs(uv.y) + 4.0 * fbm2(uv / 5.0)) + 0.35 * smoothstep(0.7, 0.85, fbm2(uv / 9.0 + vec2f(3.0, 0.0)));
+				albedo = mix(earth, vec3f(0.22, 0.34, 0.12) * (0.8 + 0.3 * noise2(uv * 1.5)), saturate(grassy));
+			}
+			case 22: {
+				// a footpath's trodden earth (uv: along it and across it, world units; input.height: how much forest is round it, 0 to 1).
+				//		Its edges ragged, in and out over the land (it is drawn a little wider than its tread), grass coming in at them in
+				//		patches and a tuft or two on it, darker where it is walked most, down the middle. Through the forest, strewn with
+				//		fallen leaves on their mulch, thicker towards its edges
+				let edge = 1.85 - 0.75 * fbm2(vec2f(uv.x / 2.2, select(-9.0, 9.0, uv.y >= 0.0))) - 0.3 * noise2(vec2f(uv.x * 1.7, uv.y * 3.0));
+				if (abs(uv.y) > edge) { discard; }
+				let soil = mix(vec3f(0.31, 0.24, 0.16), vec3f(0.41, 0.33, 0.22), fbm2(uv / 2.5));
+				var earth = soil * (0.85 + 0.25 * noise2(uv * 5.0));
+				earth *= 1.0 - 0.12 * (1.0 - smoothstep(0.1, 0.8, abs(uv.y)));
+				let leafy = saturate(input.height);
+				let grassy = smoothstep(0.55, 0.75, fbm2(uv / 1.6 + vec2f(7.0, 2.0))) * smoothstep(edge - 0.9, edge - 0.1, abs(uv.y)) + 0.5 * smoothstep(0.8, 0.9, fbm2(uv / 1.1 + vec2f(1.0, 9.0)));
+				earth = mix(earth, vec3f(0.2, 0.32, 0.11) * (0.8 + 0.4 * noise2(uv * 2.0)), saturate(grassy) * (1.0 - 0.7 * leafy));
+				if (leafy > 0.01) {
+					earth = mix(earth, vec3f(0.24, 0.16, 0.09) * (0.85 + 0.3 * noise2(uv * 3.0)), 0.4 * leafy);
+					// (a leaf to a cell, or none: each turned its own way, its own colour)
+					let cell = floor(uv * 2.6);
+					let r = hash2(cell);
+					let spot = fract(uv * 2.6) - vec2f(0.5) + (vec2f(hash2(cell + vec2f(3.1, 0.0)), hash2(cell + vec2f(0.0, 5.7))) - 0.5) * 0.4;
+					let turn = r * 6.283;
+					let along = vec2f(spot.x * cos(turn) - spot.y * sin(turn), spot.x * sin(turn) + spot.y * cos(turn));
+					let leaf = 1.0 - smoothstep(0.2, 0.26, length(along * vec2f(1.0, 2.0)));
+					let density = leafy * (0.75 + 0.25 * smoothstep(0.3, 1.4, abs(uv.y)));
+					let colour = mix(mix(vec3f(0.5, 0.33, 0.15), vec3f(0.62, 0.47, 0.24), hash2(cell + vec2f(9.0, 9.0))), vec3f(0.42, 0.22, 0.09), step(0.7, hash2(cell + vec2f(4.0, 4.0))));
+					earth = mix(earth, colour * (0.85 + 0.3 * noise2(uv * 9.0)), leaf * step(1.0 - density, r));
+				}
+				albedo = earth;
+			}
 			default: {}
 		}
 

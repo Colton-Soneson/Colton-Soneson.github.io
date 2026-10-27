@@ -20,7 +20,14 @@ function makeProjection() {
 	const aspect = canvas.width / canvas.height;
 	baseVerticalViewAngle = aspect >= 1 ? VIEW_ANGLE : 2 * Math.atan(Math.tan(VIEW_ANGLE / 2) / aspect);
 	verticalViewAngle = 2 * Math.atan(Math.tan(baseVerticalViewAngle / 2) / zoom);
-	return mat4.perspective(verticalViewAngle, aspect, settings.camNearPlane, settings.camFarPlane);
+	return mat4.perspective(verticalViewAngle, aspect, seatedNear ?? settings.camNearPlane, settings.camFarPlane);
+}
+// in a cockpit the panel is close to the eyes: the near plane closer while seated (plane.js), world units, or null for the setting's
+let seatedNear = null;
+export function setSeatedNear(near) {
+	if (near === seatedNear) return;
+	seatedNear = near;
+	projectionMatrix = makeProjection();
 }
 export let projectionMatrix = makeProjection();
 onRenderResize(() => { projectionMatrix = makeProjection(); });

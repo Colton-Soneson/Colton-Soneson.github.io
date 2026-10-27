@@ -27,9 +27,14 @@ export const imguiParams = {
     hordeBreakSeconds: settings.hordeBreakSeconds,
     huntingWalkSpeed: settings.huntingWalkSpeed,
     horseSpeed: settings.horseSpeed,
+    boatSteadying: settings.boatSteadying,
+    buoyancy: settings.buoyancy,
+    aiDifficulty: settings.aiDifficulty,
     discGolfEnabled: settings.discGolfEnabled,
     discGolfHoles: settings.discGolfHoles,
     discGolfSeed: settings.discGolfSeed,
+    enableSound: settings.enableSound,
+    soundVolume: settings.soundVolume,
     huntingJumpHeight: settings.huntingJumpHeight,
     huntingLookSensitivity: settings.huntingLookSensitivity,
     cameraFlyMode: settings.cameraFlyMode,
@@ -94,7 +99,10 @@ export const imguiParams = {
     terrainRockDetail: settings.terrainRockDetail,
     terrainTownCount: settings.terrainTownCount,
     terrainTownSize: settings.terrainTownSize,
+    terrainLandingStrip: settings.terrainLandingStrip,
+    terrainFootpaths: settings.terrainFootpaths,
     enableTownFolk: settings.enableTownFolk,
+    enableNPCs: settings.enableNPCs,
     terrainRockVeins: settings.terrainRockVeins,
     terrainGroundDetail: settings.terrainGroundDetail,
     terrainDepthBias: settings.terrainDepthBias,
@@ -330,25 +338,33 @@ gui.add(imguiParams, 'atmosphereSunRotationDemo').name('Sun Cycle (days and seas
 // how the scene is seen: Observe flies round it (see the Camera folder), Hunting and Sailing walks it on foot (hunting.js), with boats and
 //		the rest from the spawn menu (T, radialMenu.js)
 const modeFolder = gui.addFolder('Game Modes');
-modeFolder.add(imguiParams, 'gameMode', { 'Observe': 'Observe', 'Hunting and Sailing': 'Hunting', 'Horde': 'Horde' }).name('Mode');
+modeFolder.add(imguiParams, 'gameMode', { 'Observe': 'Observe', 'Hunting and Sailing': 'Hunting', 'Horde': 'Horde', 'War': 'War' }).name('Mode');
 const huntingFolder = modeFolder.addFolder('Hunting and Sailing');	//click the picture to look round, WASD walk, Shift run, Space jump, T the spawn menu, hold Tab or Esc for the menus
 huntingFolder.add(imguiParams, 'huntingWalkSpeed', 1, 8, 0.1).name('Walk Speed (m/s)');
 huntingFolder.add(imguiParams, 'horseSpeed', 0.5, 5, 0.1).name('Horse Speed (x real)');
+huntingFolder.add(imguiParams, 'boatSteadying', 0, 1, 0.01).name('Boat Steadying (0 off, 1 level)');
+huntingFolder.add(imguiParams, 'buoyancy', 0.5, 2, 0.01).name('Buoyancy (boats, floats)');
+huntingFolder.add(imguiParams, 'aiDifficulty', 0, 1, 0.01).name('AI Difficulty (NPC aim)');
 huntingFolder.add(imguiParams, 'huntingJumpHeight', 0.1, 2, 0.05).name('Jump Height (m)');
 huntingFolder.add(imguiParams, 'huntingLookSensitivity', 0.2, 3, 0.05).name('Mouse Sensitivity');
 const hordeFolder = modeFolder.addFolder('Horde');	//rounds of feral deer, each bigger than the last (horde.js)
 hordeFolder.add(imguiParams, 'hordeFirstWave', 1, 100, 1).name('First Round');
 hordeFolder.add(imguiParams, 'hordeWaveGrowth', 1, 3, 0.05).name('Round Growth (x)');
-hordeFolder.add(imguiParams, 'hordeMaxWave', 10, 2000, 10).name('Biggest Round');
-hordeFolder.add(imguiParams, 'hordeAliveCap', 10, 600, 10).name('Out at Once');
+hordeFolder.add(imguiParams, 'hordeMaxWave', 10, 6000, 10).name('Biggest Round');
+hordeFolder.add(imguiParams, 'hordeAliveCap', 10, 1500, 10).name('Out at Once');
 hordeFolder.add(imguiParams, 'hordeSpeed', 0.25, 5, 0.05).name('Deer Speed (x)');
 hordeFolder.add(imguiParams, 'hordeDamage', 1, 50, 1).name('Lunge Damage');
 hordeFolder.add(imguiParams, 'hordeBreakSeconds', 5, 120, 1).name('Break (s)');
 hordeFolder.add({ again: () => import('./horde.js').then((horde) => horde.restartHorde()) }, 'again').name('Start Again');
+// (the Horde game mode over, it puts this back to Hunting itself: horde.js)
+import('./horde.js').then((horde) => { horde.modeHook.set = (mode) => { settings.gameMode = mode; imguiParams.gameMode = mode; }; });
 const golfFolder = modeFolder.addFolder('Disc Golf');	//a course of tee pads and baskets on the land, to play with the discs from the spawn menu (discgolf.js)
 golfFolder.add(imguiParams, 'discGolfEnabled').name('Course');
 golfFolder.add(imguiParams, 'discGolfHoles', 1, 18, 1).name('Holes');
 golfFolder.add({ again: () => { imguiParams.discGolfSeed += 1; } }, 'again').name('New Course');
+const soundFolder = gui.addFolder('Sound');	//made as it plays, nothing downloaded (sound.js). It starts once the page is clicked
+soundFolder.add(imguiParams, 'enableSound').name('Sound');
+soundFolder.add(imguiParams, 'soundVolume', 0, 1, 0.05).name('Volume');
 
 const camFolder = gui.addFolder('Camera');
 camFolder.add(imguiParams, 'camPosX', -2000, 2000).name('Pos X');
@@ -416,7 +432,10 @@ terrainFolder.add(imguiParams, 'terrainWoodland', 0, 1, 0.01).name('Woodland');
 terrainFolder.add(imguiParams, 'terrainLakes', 0, 1, 0.01).name('Lakes');
 terrainFolder.add(imguiParams, 'terrainTownCount', 0, 4, 1).name('Seaside Towns');
 terrainFolder.add(imguiParams, 'terrainTownSize', 0.5, 1.6, 0.05).name('Town Size');
+terrainFolder.add(imguiParams, 'terrainLandingStrip').name('Landing Strip');
+terrainFolder.add(imguiParams, 'terrainFootpaths').name('Footpaths');
 terrainFolder.add(imguiParams, 'enableTownFolk').name('Townsfolk');
+terrainFolder.add(imguiParams, 'enableNPCs').name('NPCs (riders, airmen, sailors)');
 terrainFolder.add(imguiParams, 'terrainRockDetail', 0, 3, 0.05).name('Rock Detail');
 terrainFolder.add(imguiParams, 'terrainRockVeins', 0, 2, 0.05).name('Rock Veins');
 terrainFolder.add(imguiParams, 'terrainGroundDetail', 0, 2, 0.05).name('Sand, Turf and Forest Floor');

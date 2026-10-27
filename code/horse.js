@@ -32,11 +32,11 @@ import {uniformBufferLights} from './rotatingCube.js'
 						(TURN_BLEED, TURN_SLOWS)
 		Shift			a burst: flat out (GALLOP) for BURST_SECONDS, then it needs BURST_REST before the next
 	Every pace (and how quickly it gets to it, and how wide it turns at it) is settings.horseSpeed times the one above: a real horse's
-	at 1. Its legs are moved by the real horse's pace it stands for (see paceNow), striding longer and quicker the faster that is.
+	at 1. On a footpath (footpaths.js) it goes ON_PATH times as fast ahead. Its legs are moved by the real horse's pace it stands for (see paceNow), striding longer and quicker the faster that is.
 	It walks, trots, canters and gallops as it goes faster (see THE GAITS in vf_horse.js), on the ground under it (the same ground
 	as the walker's), tipped to its slope. It will not go up ground steeper than STEEPEST, it goes round nothing (it stops at trees
 	and boulders, as the walker does), and in deep water it swims, slowly, its head up. Left alone it grazes now and then.
-	The SADDLEBAGS (E at them, on foot) fill the player's ammunition back up (hunting.onRefill).
+	The SADDLEBAGS (F at them, on foot) fill the player's ammunition back up (hunting.onRefill).
 
 	THE MESH (HORSE_MESH): HORSE_TRIANGLES (no more than 500), in metres, standing on y = 0 and facing +z, +x its left: the barrel
 	lofted from rings along it (8 sides), the neck and the head (6), the ears, the mane, the tail, four legs of an upper and a
@@ -48,6 +48,7 @@ import {uniformBufferLights} from './rotatingCube.js'
 */
 const SPAWN_REACH = 50;				// metres
 const WALK = 1.6, CANTER = 7.5, GALLOP = 13.5, BACK = 1.2;	// metres a second
+const ON_PATH = 1.15;				// how much faster ahead on a footpath
 const ACCELERATE = 2.4;				// metres a second, a second, on the way up to a canter
 const BURST_ACCELERATE = 5.0;
 const SLOW = 3.0;					// letting go
@@ -66,7 +67,7 @@ export const RIDER_EYE = 0.82;		// metres over the seat
 const FOLLOW_DELAY = 0.15;
 const GROUND_AGAIN = 0.4;			// metres it goes before the exact ground under it is worked out again
 const REACH = 3.0;					// metres from the eye it can be worked from
-export const MAX_HORSES = 16;
+export const MAX_HORSES = 48;		// (the War's thirty horsemen, the riders and the players')
 
 const metre = () => settings.forestUnitsPerMetre;
 const fast = () => Math.max(settings.horseSpeed, 0.1);		// (see the top: every pace this many times a real horse's)
@@ -174,9 +175,9 @@ const HORSE_MESH = (() => {
 const HORSE_VERTICES = HORSE_MESH.length / 4;
 export const HORSE_TRIANGLES = HORSE_VERTICES / 3;
 // where the crosshair can find it: the saddle (to get on) and the saddlebags (the ammunition)
-const CONTROLS = [{ kind: 'saddle', at: [0, 1.62, 0.05], radius: 0.45, name: 'Horse', keys: 'E get in the saddle' },
-	{ kind: 'bags', at: [0.32, 1.25, -0.42], radius: 0.25, name: 'Saddlebags', keys: 'E fill up your ammunition' },
-	{ kind: 'bags', at: [-0.32, 1.25, -0.42], radius: 0.25, name: 'Saddlebags', keys: 'E fill up your ammunition' }];
+const CONTROLS = [{ kind: 'saddle', at: [0, 1.62, 0.05], radius: 0.45, name: 'Horse', keys: 'F get in the saddle' },
+	{ kind: 'bags', at: [0.32, 1.25, -0.42], radius: 0.25, name: 'Saddlebags', keys: 'F fill up your ammunition' },
+	{ kind: 'bags', at: [-0.32, 1.25, -0.42], radius: 0.25, name: 'Saddlebags', keys: 'F fill up your ammunition' }];
 // the hitbox: the quarters, the barrel, the chest, the neck and the head
 const SPHERES = [[0, 1.2, -0.5, 0.36], [0, 1.2, 0.1, 0.38], [0, 1.27, 0.62, 0.33], [0, 1.68, 0.95, 0.17], [0, 1.75, 1.38, 0.15]];
 
@@ -236,6 +237,14 @@ function bodyMotion(h) {
 	const at = (values) => { const low = Math.min(Math.floor(g), 3), high = Math.min(low + 1, 3); return values[low] + (values[high] - values[low]) * (g - low); };
 	const fade = Math.min(going * 10, 1);
 	return { bob: (at([0.02, 0.05, 0, 0]) * Math.sin(2 * h.phase) + at([0, 0, 0.06, 0.07]) * Math.sin(h.phase)) * fade, rock: at([0, 0, 0.06, 0.05]) * Math.cos(h.phase) * fade };
+}
+
+// how a rider's hands go with the horse (hunting.js: the gun in them, viewmodel.ride): its body as it was RIDER_LAG of the stride ago, less as
+//		it is now (metres up, radians of rock), so the hands follow the body a moment late
+const RIDER_LAG = 0.7;
+export function riderLag(h) {
+	const now = bodyMotion(h), then = bodyMotion({ ...h, phase: h.phase - RIDER_LAG });
+	return { bob: then.bob - now.bob, rock: then.rock - now.rock };
 }
 
 // Putting one on the land
@@ -326,6 +335,7 @@ function stepHorse(h, dt) {
 	else if (input.ahead > 0) { want = CANTER; rate = paceNow(h.speed) < CANTER ? ACCELERATE : SLOW; }
 	else if (input.ahead < 0) { want = -BACK; rate = SLOW; }
 	want *= times; rate *= times;
+	if (want > 0 && land?.onPath?.(h.x, h.z)) want *= ON_PATH;
 	// turning at pace, it slows: the harder it is turned and the faster it goes, the slower it wants to go
 	if (input.turn && want > 0) want *= 1 - TURN_SLOWS * Math.min(Math.abs(paceNow(h.speed)) / CANTER, 1);
 	if (h.swim > 0.5) want = clamp(want, -BACK * 0.5, SWIM_PACE);
@@ -426,12 +436,12 @@ export function horseBeside(x, z) {
 let lit = { horse: null, kind: '' };
 export function setHovered(h, kind) { lit = { horse: h, kind }; }
 
-// who is on each one: this player ('me', from hunting.js), and the others (net.js, from their states)
+// who is on each one: this player ('me', from hunting.js), the others (net.js, from their states), and npcs.js's riders (their ids)
 export function setRider(h, who) {
 	if (h) h.rider = who;
 }
 export function setOtherRiders(riders) {		// id -> horse id
-	for (const h of horses) if (h.rider !== 'me') h.rider = null;
+	for (const h of horses) if (h.rider !== 'me' && !String(h.rider).startsWith('npc:')) h.rider = null;
 	for (const [who, id] of riders) { const h = horseById(id); if (h && h.rider !== 'me') h.rider = who; }
 }
 
@@ -474,21 +484,24 @@ export function takeOver(h, authority = localId) {
 	h.track = [];
 }
 
-// Shot: a bullet stops at a horse (it is not hurt). Not at the one its shooter rides
+// Shot: a bullet stops at a horse (it is not hurt). Not at the one its shooter rides. Told: fn(horse, bullet) (npcs.js: its rider
+//		knows it is shot at)
+const shotListeners = [];
+export function onHorseShot(fn) { shotListeners.push(fn); }
 ballistics.addTarget((ax, ay, az, bx, by, bz, bullet) => {
 	const m = metre();
 	let best = null;
 	for (const h of horses) {
-		if (h.rider !== null && (bullet?.remote ? h.rider === bullet.shooter : h.rider === 'me')) continue;
+		if (h.rider !== null && (h.rider === bullet?.shooter || (!bullet?.remote && !bullet?.npc && h.rider === 'me'))) continue;
 		const around = h.frame.toWorld([0, 1.3, 0.3]);
 		if (ballistics.crossSphere(ax, ay, az, bx, by, bz, around[0], around[1], around[2], 1.6 * m) === null) continue;
 		for (const [x, y, z, r] of SPHERES) {
 			const c = h.frame.toWorld([x, y, z]);
 			const t = ballistics.crossSphere(ax, ay, az, bx, by, bz, c[0], c[1], c[2], r * m);
-			if (t !== null && (!best || t < best.t)) best = { t };
+			if (t !== null && (!best || t < best.t)) best = { t, h };
 		}
 	}
-	return best && { t: best.t, what: 'horse', hit: () => {} };
+	return best && { t: best.t, what: 'horse', hit: (velocity, bullet) => { for (const fn of shotListeners) fn(best.h, bullet); } };
 });
 
 // Per frame

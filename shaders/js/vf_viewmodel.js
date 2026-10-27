@@ -10,7 +10,8 @@
 	colours of the quench mottled through it), 6 a scope's black, 7 its lens, 8 nickel, 9 dark rubber, 10 a darker wood, and the
 	plastic of the golf discs: 11 orange, 12 blue, 13 yellow, and 14 the face of a revolver's cylinder (blued, with its six chambers
 	CHAMBER_OUT from its middle: the dark holes of the empty ones, see revolver.js), 15 the pale wood of the wizard's staff, 16 the gem
-	in its head, which shines by itself (staff.js).
+	in its head, which shines by itself (staff.js), 17 the top of a Lewis gun's pan (blued, ribbed out from its middle: the mesh's own
+	origin, see lewis.js), 18 the khaki canvas of a supply pack and 19 its leather straps (plane.js).
 	The glow: a light of its own at the mesh's origin (the staff's gem is there), falling on the rest of the mesh near it.
 	The light is the sun's or the moon's, turned into the camera's space, the same strength as everything else gets.
 */
@@ -102,6 +103,17 @@ export const vf_viewmodel =
 				let shining = VU.glow.rgb * (0.7 + 1.3 * VU.glow.a) * (0.65 + 0.45 * facing) + vec3f(1.0) * pow(saturate(dot(N, H)), 40.0) * 0.6;
 				return vec4f(shining, 1.0);
 			}
+			case 17: {
+				// the pan: ribs out from its middle, the rounds' tiers between them
+				let ribs = abs(fract(atan2(input.shape.x, input.shape.z) / (2.0 * PI) * 25.0) - 0.5);
+				let fromMiddle = length(input.shape.xz);
+				albedo = vec3f(0.055, 0.06, 0.07) * select(1.0, 0.55, ribs < 0.12 && fromMiddle > 0.03); gloss = 0.5; power = 40.0;
+			}
+			case 18: {
+				let weave = 0.92 + 0.08 * sin(input.shape.x * 900.0) * sin(input.shape.y * 900.0 + input.shape.z * 900.0);
+				albedo = vec3f(0.42, 0.38, 0.25) * weave; gloss = 0.04;
+			}
+			case 19: { albedo = vec3f(0.26, 0.15, 0.07); gloss = 0.25; power = 18.0; }
 			case 14: {
 				// the nearest of the six chambers round the cylinder's middle (the mesh's own x, y: it turns with it)
 				let at = input.shape.xy;

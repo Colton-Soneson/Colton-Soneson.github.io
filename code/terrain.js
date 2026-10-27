@@ -84,6 +84,8 @@ function getTerrainParams() {
 		seaLevel: settings.waterWorldPosY,
 		townCount: settings.terrainTownCount,
 		townSize: settings.terrainTownSize,
+		landingStrip: settings.terrainLandingStrip,
+		footpaths: settings.terrainFootpaths,
 	};
 }
 

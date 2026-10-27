@@ -6,7 +6,8 @@
 	THE MESH: 12 numbers a vertex: where (x, y, z) and its material (MATERIALS, coloured in vf_boat.js); a sail's (u, v): up it
 	from the foot and across it from the luff, 0 to 1; its group (what moves it, GROUPS below, -1 for nothing) and its role in
 	the group (ROLE); the control it belongs to (the cleat, the seat, the wheel, the ladder: it glows with the crosshair on it,
-	-1 for none) and the rope it is (ropes, -1 for none).
+	-1 for none), the rope it is (ropes, -1 for none), the piece it falls with once it is shot to pieces (pieces, 0 for none), and
+	the part it is (a gun's, turned as shipGuns.js says: 1 to MAX_PARTS, 0 for none).
 
 	A GROUP is something on the boat that turns about an axis: the rudder, the steering wheel, or a sail with its spars. A sail's
 	group is also hoisted: its cloth (and the gaff that holds its head up) comes down towards ref as it is lowered: mode 0 down
@@ -23,6 +24,10 @@
 	controls, and how hard the hull is to push through the water and to turn. reach: metres from the centre to the furthest of
 	it (the bowsprit, the boom's end), and footprint: places along it (z) where the water under it is looked at before it is put
 	in the sea (spawn.keel: how far its keel goes under the water).
+
+	SHOT TO PIECES (boat.js): health, how much shooting it takes (rifle rounds' hits), and sinkSeconds, how long it takes to go down
+	after. Its PIECES fall: each a mast (or the bowsprit) with whatever it carries, turned over about its foot (the bowsprit with
+	the jib on it rolled over to one side), height: how tall it is, which is how long it takes to fall. Up to MAX_PIECES.
 */
 
 // what each triangle is made of (see the fragment shader in vf_boat.js)
@@ -34,16 +39,18 @@ export const MATERIALS = {
 export const ROLE = { RIGID: 0, CLOTH: 1, HOISTED: 2, ROPE: 3, STOWED: 4 };
 export const MAX_GROUPS = 8;
 export const MAX_ROPES = 8;
+export const MAX_PIECES = 3;
+export const MAX_PARTS = 22;
 const M = MATERIALS;
 
 // A mesh being made. The material, group, role, control and rope set on it go on every triangle made after
 function makeMesh() {
 	const v = [];
 	const mesh = {
-		material: 0, group: -1, role: 0, control: -1, rope: -1,
-		with(style) { Object.assign(mesh, { group: -1, role: 0, control: -1, rope: -1 }, style); return mesh; },
+		material: 0, group: -1, role: 0, control: -1, rope: -1, piece: 0, part: 0,
+		with(style) { Object.assign(mesh, { group: -1, role: 0, control: -1, rope: -1, piece: 0, part: 0 }, style); return mesh; },
 		tri(a, b, c, uv = [[0, 0], [0, 0], [0, 0]]) {
-			[a, b, c].forEach((p, k) => v.push(p[0], p[1], p[2], mesh.material, uv[k][0], uv[k][1], mesh.group, mesh.role, mesh.control, mesh.rope, 0, 0));
+			[a, b, c].forEach((p, k) => v.push(p[0], p[1], p[2], mesh.material, uv[k][0], uv[k][1], mesh.group, mesh.role, mesh.control, mesh.rope, mesh.piece, mesh.part));
 		},
 		quad(a, b, c, d) { mesh.tri(a, b, c); mesh.tri(a, c, d); },
 		// a tube from a to b with any number of sides, radius ra at a and rb at b
@@ -189,8 +196,8 @@ function dinghy() {
 		{ kind: 'sheet', sail: 0, at: MAIN_SHEET_BLOCK, name: 'Main sheet', keys: 'Scroll up to haul in · down to ease out' },
 		{ kind: 'sheet', sail: 1, at: JIB_CLEATS[0], name: 'Jib sheet', keys: 'Scroll up to haul in · down to ease out' },
 		{ kind: 'sheet', sail: 1, at: JIB_CLEATS[1], name: 'Jib sheet', keys: 'Scroll up to haul in · down to ease out' },
-		{ kind: 'helm', at: [0, SEAT.top + 0.05, seatZ], name: 'Helm seat', keys: 'E sit and take the tiller', radius: 0.5 },
-		...SIDES.map((side, k) => ({ kind: 'ladder', ladder: k, at: [side * LADDER.x, 0.1, ladderZ], name: 'Ladder', keys: 'E climb aboard', radius: 0.45 })),
+		{ kind: 'helm', at: [0, SEAT.top + 0.05, seatZ], name: 'Helm seat', keys: 'F sit and take the tiller', radius: 0.5 },
+		...SIDES.map((side, k) => ({ kind: 'ladder', ladder: k, at: [side * LADDER.x, 0.1, ladderZ], name: 'Ladder', keys: 'F climb aboard', radius: 0.45 })),
 		{ kind: 'anchor', at: [0, 0.82, 1.72], name: 'Anchor', keys: 'G drop it or bring it up', radius: 0.3 },
 	]);
 	const control = (kind, sail) => controls.find((c) => c.kind == kind && (sail === undefined || c.sail == sail || c.ladder == sail)).id;
@@ -231,20 +238,20 @@ function dinghy() {
 	mesh.with({ material: M.WOOD, group: 0 });
 	mesh.box([-0.025, 0.025], [0.6, 0.66], [-2.3, -1.2], [4]);
 	// the mast (12), the boom (10), the forestay and the shrouds (18)
-	mesh.with({ material: M.ALUMINIUM });
+	mesh.with({ material: M.ALUMINIUM, piece: 1 });
 	mesh.tube([0, FLOOR, MAST_Z], [0, 6.2, MAST_Z], 0.045, 0.028, 6);
-	mesh.with({ material: M.ALUMINIUM, group: 1 });
+	mesh.with({ material: M.ALUMINIUM, group: 1, piece: 1 });
 	mesh.tube([0, 1.45, MAST_Z], BOOM_END, 0.04, 0.035, 4);
 	mesh.tri([0.03, 1.48, -1.55], [-0.03, 1.48, -1.55], [0, 1.41, -1.55]);
 	mesh.tri([0.03, 1.48, -1.55], [0, 1.41, -1.55], [0.03, 1.42, -1.55]);
-	mesh.with({ material: M.WIRE });
+	mesh.with({ material: M.WIRE, piece: 1 });
 	mesh.tube(BOW_FITTING, [0, 4.62, 0.87], 0.008, 0.008, 3);
 	mesh.tube([0.84, 0.68, 0.5], [0.03, 4.62, 0.85], 0.006, 0.006, 3);
 	mesh.tube([-0.84, 0.68, 0.5], [-0.03, 4.62, 0.85], 0.006, 0.006, 3);
 	// the sails (28)
-	mesh.with({ material: M.DINGHY_MAIN, group: 1, role: ROLE.CLOTH });
+	mesh.with({ material: M.DINGHY_MAIN, group: 1, role: ROLE.CLOTH, piece: 1 });
 	mesh.sail([0, 1.5, 0.81], [0, 6.05, 0.81], [0, 1.5, -1.5], null, 4, 0.32);
-	mesh.with({ material: M.DINGHY_JIB, group: 2, role: ROLE.CLOTH });
+	mesh.with({ material: M.DINGHY_JIB, group: 2, role: ROLE.CLOTH, piece: 2 });
 	mesh.sail(JIB_TACK, JIB_HEAD, JIB_CLEW, null, 4, 0.05);
 	// the ropes (18): thin tubes from z = 0 to 1, laid where they go by the shader
 	[M.ROPE_BLUE, M.ROPE_RED, M.ROPE_TAN].forEach((material, rope) => {
@@ -285,6 +292,8 @@ function dinghy() {
 
 	return {
 		name: 'Dinghy', mesh: mesh.done(),
+		health: 40, sinkSeconds: 12,
+		pieces: [{ foot: [0, FLOOR, MAST_Z], height: 6.2 }, { foot: JIB_TACK, height: 4.6 }],
 		halfBreadth: hull.halfBreadth, sheerHeight: hull.sheer, deckHeight,
 		mass: 130, centre: [0, 0.35, -0.15], inertia: [330, 380, 150],
 		columns, vDepth: 0.2, columnTop: 0.75, heaveDamping: 450,
@@ -322,8 +331,11 @@ function dinghy() {
 }
 
 // THE SCHOONER: a naval topsail schooner of about 1800, something like HMS Pickle. 18 metres on deck, two masts with a gaff
-//		sail on each, a staysail and a jib out on the bowsprit, a square topsail on the foremast, and six carronades. Steered with
-//		a wheel. Her hull is black with a yellow band along her gunports and coppered below the water
+//		sail on each, a staysail and a jib out on the bowsprit, a square topsail on the foremast. Steered with a wheel. Her hull is
+//		black with a yellow band along her gunports and coppered below the water. Armed (shipGuns.js works all of this): six little
+//		80mm howitzers on pivots where her carronades would be, a crow's nest up each mast with a Lewis gun in it (shipGuns.js puts
+//		the gun in her mesh) and a ladder up the front of the mast to it, a stack of rounds aft of the mainmast, a pile of supply
+//		packs by the wheel, and a barrel of wood for mending her
 //-------------------------------------------------
 function schooner() {
 	// keel, garboard, bilge low, bilge, the turn of the side, the deck's edge, the top of the bulwark
@@ -346,10 +358,17 @@ function schooner() {
 	const WHEEL = [0, 5.0, -6.85];
 	const GUNS = [-4.6, -1.0, 2.6];
 	// what stands on the deck: [x0, x1, z0, z1, height over the deck]. The masts, the hatches, the wheel, the guns
+	// the guns (one a side at each of GUNS), the crow's nests (each up its mast: its floor's height), the stack of rounds, the pile of
+	//		supply packs and the barrel of wood (where on the deck)
+	const GUN_SPOTS = GUNS.flatMap((z) => [[z, 1], [z, -1]]);
+	const NESTS = [{ name: 'Foremast', z: FORE, floor: 19.4, piece: 1 }, { name: 'Mainmast', z: MAIN, floor: 19.8, piece: 2 }];
+	const SHELLS = [0.9, -3.3], PACKS = [-1.2, -6.0], BARREL = [-1.2, 0.8];
 	const OBSTACLES = [
 		[-0.35, 0.35, FORE - 0.35, FORE + 0.35, 9], [-0.35, 0.35, MAIN - 0.35, MAIN + 0.35, 9],
 		[-0.8, 0.8, 0.0, 1.6, 0.6], [-0.6, 0.6, -5.0, -4.0, 0.7], [-0.2, 0.2, -7.15, -6.85, 1.2],
-		...GUNS.flatMap((z) => [[1.7, 2.6, z - 0.35, z + 0.35, 0.65], [-2.6, -1.7, z - 0.35, z + 0.35, 0.65]]),
+		...GUNS.flatMap((z) => [[1.6, 2.2, z - 0.3, z + 0.3, 0.7], [-2.2, -1.6, z - 0.3, z + 0.3, 0.7]]),
+		[SHELLS[0] - 0.3, SHELLS[0] + 0.3, SHELLS[1] - 0.25, SHELLS[1] + 0.25, 0.5], [PACKS[0] - 0.3, PACKS[0] + 0.3, PACKS[1] - 0.3, PACKS[1] + 0.3, 0.6],
+		[BARREL[0] - 0.33, BARREL[0] + 0.33, BARREL[1] - 0.33, BARREL[1] + 0.33, 0.85],
 	];
 	const deckHeight = (x, z) => {
 		const half = deckHalf(z);
@@ -360,8 +379,10 @@ function schooner() {
 	};
 
 	// the rig
-	const FORESAIL = { tack: [0, 5.3, 3.85], throat: [0, 13.4, 3.85], peak: [0, 16.9, -0.7], clew: [0, 5.3, -1.5] };
-	const MAINSAIL = { tack: [0, 5.5, -2.4], throat: [0, 14.9, -2.4], peak: [0, 18.9, -7.9], clew: [0, 5.5, -11.3] };
+	// (the booms, along the feet of the fore and main sails, BOOMS over the deck: over the heads of whoever walks it)
+	const BOOMS = { fore: 6.5, main: 6.6 };
+	const FORESAIL = { tack: [0, BOOMS.fore + 0.1, 3.85], throat: [0, 13.4, 3.85], peak: [0, 16.9, -0.7], clew: [0, BOOMS.fore + 0.1, -1.5] };
+	const MAINSAIL = { tack: [0, BOOMS.main + 0.1, -2.4], throat: [0, 14.9, -2.4], peak: [0, 18.9, -7.9], clew: [0, BOOMS.main + 0.1, -11.3] };
 	const STAYSAIL = { tack: [0, 4.45, 8.85], head: [0, 15.5, 4.2], clew: [0, 5.2, 4.7] };
 	const JIB = { tack: [0, 6.2, 15.6], head: [0, 23.5, 4.2], clew: [0, 6.3, 7.5] };
 	const TOPSAIL = { yard: 18.8, foot: 14.8, head: 4.0, footHalf: 4.6 };
@@ -391,13 +412,22 @@ function schooner() {
 		{ kind: 'sheet', sail: 3, at: rail(-1, 1.2), name: 'Jib sheet', keys: 'Scroll up to haul in · down to ease out' },
 		{ kind: 'sheet', sail: 4, at: rail(1, -0.4), name: 'Topsail braces', keys: 'Scroll up to brace up sharp · down to square away' },
 		{ kind: 'sheet', sail: 4, at: rail(-1, -0.4), name: 'Topsail braces', keys: 'Scroll up to brace up sharp · down to square away' },
-		{ kind: 'helm', at: WHEEL, name: 'Wheel', keys: 'E take the wheel', radius: 0.8 },
-		...[-1, 1].map((side, k) => ({ kind: 'ladder', ladder: k, at: [side * 3.0, 3.2, 1.5], name: 'Boarding ladder', keys: 'E climb aboard', radius: 0.7 })),
+		{ kind: 'helm', at: WHEEL, name: 'Wheel', keys: 'F take the wheel', radius: 0.8 },
+		...[-1, 1].map((side, k) => ({ kind: 'ladder', ladder: k, at: [side * 3.0, 3.2, 1.5], name: 'Boarding ladder', keys: 'F climb aboard', radius: 0.7 })),
 		{ kind: 'anchor', at: BOW_FITTING, name: 'Anchor', keys: 'G let go or weigh anchor', radius: 0.6 },
+		// the guns, the stores, the masts' ladders, and up in each nest its gun and the top of its ladder
+		...GUN_SPOTS.map(([z, side], k) => ({ kind: 'gun', gun: k, at: [side * 1.55, deckY(z) + 1.1, z], name: 'Howitzer', keys: 'Middle click: breech · R (held): load · F man it (aim and fire)', radius: 0.45 })),
+		{ kind: 'shells', at: deckAt(SHELLS[0], SHELLS[1], 0.4), name: '80mm rounds', keys: 'F take a round', radius: 0.45 },
+		{ kind: 'packs', at: deckAt(PACKS[0], PACKS[1], 0.5), name: 'Supply packs', keys: 'F take a supply pack', radius: 0.5 },
+		{ kind: 'barrel', at: deckAt(BARREL[0], BARREL[1], 0.85), name: 'Wood', keys: 'F take some planks', radius: 0.45 },
+		...NESTS.map((n, k) => ({ kind: 'mast', mast: k, at: deckAt(0, n.z + 0.45, 1.2), name: n.name, keys: 'F climb to the crow\'s nest · R held with wood: mend her', radius: 0.5 })),
+		...NESTS.map((n, k) => ({ kind: 'nestGun', nest: k, at: [0, n.floor + 1.1, n.z + 1.25], name: 'Lewis gun', keys: 'F man the gun · E with a supply pack: fill its pans', radius: 0.45 })),
+		...NESTS.map((n, k) => ({ kind: 'nestDown', nest: k, at: [0, n.floor + 0.3, n.z + 0.42], name: 'Ladder', keys: 'F climb down', radius: 0.4 })),
 	]);
 	// (the pins and cleats are big enough to find with the crosshair on a deck that rolls)
 	for (const c of controls) if (c.kind == 'halyard' || c.kind == 'sheet') c.radius = 0.3;
 	const control = (kind, k) => controls.find((c) => c.kind == kind && (k === undefined || c.ladder == k)).id;
+	const controlOf = (kind, key, k) => controls.find((c) => c.kind == kind && c[key] == k).id;
 
 	const mesh = makeMesh();
 	// the hull (192), its transom (11) and the keel under it (6)
@@ -420,47 +450,54 @@ function schooner() {
 		mesh.quad(capOut(i, -1), capOut(i + 1, -1), capIn(i + 1, -1), capIn(i, -1));
 	}
 	// the bowsprit (8), the masts and topmasts (40)
-	mesh.with({ material: M.SPAR });
+	mesh.with({ material: M.SPAR, piece: 3 });
 	mesh.tube([0, 4.4, 8.4], [0, 6.35, 16.0], 0.2, 0.1, 4);
+	mesh.with({ material: M.SPAR, piece: 1 });
 	mesh.tube([0, deckY(FORE), FORE], [0, 19.5, FORE], 0.28, 0.2, 6);
 	mesh.tube([0, 18.5, FORE], [0, 25.0, FORE], 0.14, 0.08, 4);
+	mesh.with({ material: M.SPAR, piece: 2 });
 	mesh.tube([0, deckY(MAIN), MAIN], [0, 21.0, MAIN], 0.3, 0.22, 6);
 	mesh.tube([0, 20.0, MAIN], [0, 27.0, MAIN], 0.14, 0.08, 4);
 	// the booms and the gaffs, turned with their sails (32), and the topsail's yard (8)
-	mesh.with({ material: M.SPAR, group: 2 });
-	mesh.tube([0, 5.2, FORE - 0.3], [0, 5.2, -1.6], 0.14, 0.12, 4);
-	mesh.with({ material: M.SPAR, group: 2, role: ROLE.HOISTED });
+	mesh.with({ material: M.SPAR, group: 2, piece: 1 });
+	mesh.tube([0, BOOMS.fore, FORE - 0.3], [0, BOOMS.fore, -1.6], 0.14, 0.12, 4);
+	mesh.with({ material: M.SPAR, group: 2, role: ROLE.HOISTED, piece: 1 });
 	mesh.tube([0, 13.5, FORE - 0.3], [0, 17.0, -0.8], 0.12, 0.09, 4);
-	mesh.with({ material: M.SPAR, group: 3 });
-	mesh.tube([0, 5.4, MAIN - 0.3], [0, 5.4, -11.5], 0.17, 0.13, 4);
-	mesh.with({ material: M.SPAR, group: 3, role: ROLE.HOISTED });
+	mesh.with({ material: M.SPAR, group: 3, piece: 2 });
+	mesh.tube([0, BOOMS.main, MAIN - 0.3], [0, BOOMS.main, -11.5], 0.17, 0.13, 4);
+	mesh.with({ material: M.SPAR, group: 3, role: ROLE.HOISTED, piece: 2 });
 	mesh.tube([0, 15.0, MAIN - 0.3], [0, 19.0, -8.0], 0.13, 0.1, 4);
-	mesh.with({ material: M.SPAR, group: 6 });
+	mesh.with({ material: M.SPAR, group: 6, piece: 1 });
 	mesh.tube([0, TOPSAIL.yard, FORE + TOPSAIL.head], [0, TOPSAIL.yard, FORE - TOPSAIL.head], 0.12, 0.12, 4);
 	// the sails (76)
-	mesh.with({ material: M.CANVAS, group: 2, role: ROLE.CLOTH });
+	mesh.with({ material: M.CANVAS, group: 2, role: ROLE.CLOTH, piece: 1 });
 	mesh.sail(FORESAIL.tack, FORESAIL.throat, FORESAIL.clew, FORESAIL.peak, 4);
-	mesh.with({ material: M.CANVAS, group: 3, role: ROLE.CLOTH });
+	mesh.with({ material: M.CANVAS, group: 3, role: ROLE.CLOTH, piece: 2 });
 	mesh.sail(MAINSAIL.tack, MAINSAIL.throat, MAINSAIL.clew, MAINSAIL.peak, 4);
-	mesh.with({ material: M.CANVAS, group: 4, role: ROLE.CLOTH });
+	mesh.with({ material: M.CANVAS, group: 4, role: ROLE.CLOTH, piece: 1 });
 	mesh.sail(STAYSAIL.tack, STAYSAIL.head, STAYSAIL.clew, null, 4);
-	mesh.with({ material: M.CANVAS, group: 5, role: ROLE.CLOTH });
+	mesh.with({ material: M.CANVAS, group: 5, role: ROLE.CLOTH, piece: 3 });
 	mesh.sail(JIB.tack, JIB.head, JIB.clew, null, 4);
-	mesh.with({ material: M.CANVAS, group: 6, role: ROLE.CLOTH });
+	mesh.with({ material: M.CANVAS, group: 6, role: ROLE.CLOTH, piece: 1 });
 	const T = TOPSAIL;
 	mesh.sail([0, T.foot, FORE + T.footHalf], [0, T.yard - 0.2, FORE + T.head], [0, T.foot, FORE - T.footHalf], [0, T.yard - 0.2, FORE - T.head], 4);
 	// the ensign, flying from the main gaff's peak (2)
-	mesh.with({ material: M.FLAG, group: 3, role: ROLE.HOISTED });
+	mesh.with({ material: M.FLAG, group: 3, role: ROLE.HOISTED, piece: 2 });
 	mesh.quad([0, 18.85, -7.95], [0, 18.85, -9.85], [0, 17.65, -9.85], [0, 17.65, -7.95]);
 	// the standing rigging (72): the shrouds, the forestay, the jib stay, the stay between the masts, the bobstay
-	mesh.with({ material: M.WIRE });
 	for (const side of [1, -1]) {
+		mesh.with({ material: M.WIRE, piece: 1 });
 		for (const z of [FORE, FORE - 1.0]) mesh.tube(rail(side, z, -0.1), [side * 0.25, 18.5, FORE], 0.04, 0.035, 3);
+		mesh.with({ material: M.WIRE, piece: 2 });
 		for (const z of [MAIN, MAIN - 1.0]) mesh.tube(rail(side, z, -0.1), [side * 0.27, 20.0, MAIN], 0.04, 0.035, 3);
 	}
+	mesh.with({ material: M.WIRE, piece: 1 });
 	mesh.tube(STAYSAIL.tack, [0, 16.0, FORE + 0.15], 0.04, 0.04, 3);
+	mesh.with({ material: M.WIRE, piece: 3 });
 	mesh.tube([0, 6.25, 15.8], [0, 24.0, FORE + 0.1], 0.035, 0.035, 3);
+	mesh.with({ material: M.WIRE, piece: 2 });
 	mesh.tube([0, 19.0, FORE - 0.1], [0, 20.5, MAIN + 0.2], 0.035, 0.035, 3);
+	mesh.with({ material: M.WIRE, piece: 3 });
 	mesh.tube([0, 6.25, 15.7], [0, 2.6, 8.8], 0.04, 0.04, 3);
 	// the running rigging (30): the four sheets and the anchor's cable, laid where they go by the shader
 	[M.ROPE_TAN, M.ROPE_TAN, M.ROPE_TAN, M.ROPE_TAN, M.ROPE_TAN].forEach((material, rope) => {
@@ -486,17 +523,70 @@ function schooner() {
 	// the rudder, hung off the sternpost (12)
 	mesh.with({ material: M.TAR, group: 0 });
 	mesh.box([-0.1, 0.1], [0.05, 2.9], [-10.1, -9.0]);
-	// the carronades: a gun on a slide each side at each port (84)
-	for (const z of GUNS) {
-		for (const side of [1, -1]) {
-			const deck = deckY(z);
-			mesh.with({ material: M.RED });
-			mesh.box(side > 0 ? [1.7, 2.5] : [-2.5, -1.7], [deck, deck + 0.4], [z - 0.3, z + 0.3], [2, 4, 5]);
-			mesh.with({ material: M.IRON });
-			mesh.tube([side * 1.85, deck + 0.55, z], [side * 2.85, deck + 0.62, z], 0.19, 0.15, 4);
-			mesh.quad([side * 1.8, deck + 0.4, z - 0.12], [side * 1.8, deck + 0.4, z + 0.12], [side * 1.8, deck + 0.7, z + 0.12], [side * 1.8, deck + 0.7, z - 0.12]);
-		}
+	// THE HOWITZERS (100 each), made pointing out over the side, level: a post on the deck; on it the yoke, turned (part 1 + 3k); in
+	//		the yoke the barrel on its trunnions, raised (2 + 3k); and its breech block, sliding down out of the barrel (3 + 3k)
+	const span = (a, b) => [Math.min(a, b), Math.max(a, b)];
+	GUN_SPOTS.forEach(([z, side], k) => {
+		const deck = deckY(z), px = side * 1.95, py = deck + 1.05, c = controlOf('gun', 'gun', k);
+		mesh.with({ material: M.IRON });
+		mesh.box(span(px - 0.12, px + 0.12), [deck, py - 0.17], [z - 0.12, z + 0.12], [2, 3]);
+		mesh.with({ material: M.IRON, part: 1 + 3 * k, control: c });
+		mesh.box(span(px - 0.22, px + 0.22), [py - 0.17, py - 0.12], [z - 0.22, z + 0.22], [2]);
+		for (const s of [-1, 1]) mesh.box(span(px - 0.16, px + 0.16), [py - 0.12, py + 0.12], span(z + s * 0.16, z + s * 0.2), [2]);
+		mesh.with({ material: M.DARK, part: 2 + 3 * k, control: c });
+		mesh.tube([px - side * 0.35, py, z], [px + side * 1.0, py, z], 0.12, 0.085, 8);
+		mesh.tube([px + side * 0.94, py, z], [px + side * 1.03, py, z], 0.105, 0.105, 8);
+		mesh.tube([px, py, z - 0.21], [px, py, z + 0.21], 0.05, 0.05, 6);
+		mesh.with({ material: M.BRASS, part: 3 + 3 * k, control: c });
+		mesh.box(span(px - side * 0.47, px - side * 0.35), [py - 0.11, py + 0.11], [z - 0.11, z + 0.11]);
+	});
+	// THE STACK OF ROUNDS (144) aft of the mainmast: six standing in a low rack, their brass cases and their noses
+	mesh.with({ material: M.WOOD, control: controlOf('shells', 'kind', 'shells') });
+	const stackDeck = deckY(SHELLS[1]);
+	mesh.box([SHELLS[0] - 0.3, SHELLS[0] + 0.3], [stackDeck, stackDeck + 0.18], [SHELLS[1] - 0.25, SHELLS[1] + 0.25], [2]);
+	for (const dx of [-0.18, 0, 0.18]) for (const dz of [-0.12, 0.12]) {
+		const x = SHELLS[0] + dx, z = SHELLS[1] + dz;
+		mesh.with({ material: M.BRASS, control: controlOf('shells', 'kind', 'shells') });
+		mesh.tube([x, stackDeck + 0.18, z], [x, stackDeck + 0.42, z], 0.042, 0.042, 6);
+		mesh.with({ material: M.IRON, control: controlOf('shells', 'kind', 'shells') });
+		mesh.tube([x, stackDeck + 0.42, z], [x, stackDeck + 0.52, z], 0.042, 0.006, 6);
 	}
+	// THE SUPPLY PACKS (48) by the wheel: a crate, and three canvas packs on and against it
+	const packDeck = deckY(PACKS[1]);
+	mesh.with({ material: M.WOOD, control: controlOf('packs', 'kind', 'packs') });
+	mesh.box([PACKS[0] - 0.3, PACKS[0] + 0.3], [packDeck, packDeck + 0.35], [PACKS[1] - 0.3, PACKS[1] + 0.3], [2]);
+	mesh.with({ material: M.CANVAS, control: controlOf('packs', 'kind', 'packs') });
+	mesh.box([PACKS[0] - 0.26, PACKS[0] + 0.02], [packDeck + 0.35, packDeck + 0.58], [PACKS[1] - 0.25, PACKS[1] - 0.02], [2]);
+	mesh.box([PACKS[0] + 0.0, PACKS[0] + 0.27], [packDeck + 0.35, packDeck + 0.55], [PACKS[1] + 0.0, PACKS[1] + 0.25], [2]);
+	mesh.box([PACKS[0] - 0.24, PACKS[0] + 0.24], [packDeck + 0.58, packDeck + 0.74], [PACKS[1] - 0.2, PACKS[1] + 0.05], [2]);
+	// THE BARREL OF WOOD (84) by the main hatch: bellied out in its middle, and the ends of the planks sticking up out of it
+	const barrelDeck = deckY(BARREL[1]);
+	mesh.with({ material: M.WOOD, control: controlOf('barrel', 'kind', 'barrel') });
+	const hoop = (y, r) => Array.from({ length: 10 }, (_, k) => { const a = (k + 0.5) / 10 * Math.PI * 2; return [BARREL[0] + Math.cos(a) * r, y, BARREL[1] + Math.sin(a) * r]; });
+	const hoops = [hoop(barrelDeck, 0.28), hoop(barrelDeck + 0.4, 0.33), hoop(barrelDeck + 0.8, 0.29)];
+	for (let r = 0; r < 2; r++) for (let k = 0; k < 10; k++) mesh.quad(hoops[r][k], hoops[r][(k + 1) % 10], hoops[r + 1][(k + 1) % 10], hoops[r + 1][k]);
+	for (let k = 1; k < 9; k++) mesh.tri(hoops[2][0], hoops[2][k + 1], hoops[2][k]);
+	mesh.with({ material: M.SPAR, control: controlOf('barrel', 'kind', 'barrel') });
+	for (const [dx, dz, h] of [[-0.1, -0.05, 1.15], [0.08, 0.1, 1.05], [0.05, -0.12, 1.2]]) mesh.box([BARREL[0] + dx - 0.03, BARREL[0] + dx + 0.03], [barrelDeck + 0.6, barrelDeck + h], [BARREL[1] + dz - 0.07, BARREL[1] + dz + 0.07], [2]);
+	// THE CROW'S NESTS (60 each) up each mast: a floor and a wall round it, falling with its mast; and the ladder (86) up the front of
+	//		the mast from the deck to it
+	NESTS.forEach((n, k) => {
+		const octagon = (r, y) => Array.from({ length: 8 }, (_, j) => { const a = (j + 0.5) / 8 * Math.PI * 2; return [Math.cos(a) * r, y, n.z + Math.sin(a) * r]; });
+		mesh.with({ material: M.WOOD, piece: n.piece });
+		const top = octagon(0.95, n.floor), under = octagon(0.95, n.floor - 0.12), rimOut = octagon(0.95, n.floor + 0.95), rimIn = octagon(0.88, n.floor + 0.95), inside = octagon(0.88, n.floor);
+		for (let j = 0; j < 8; j++) {
+			const i = (j + 1) % 8;
+			mesh.quad(under[j], under[i], top[i], top[j]);
+			mesh.quad(top[j], top[i], rimOut[i], rimOut[j]);
+			mesh.quad(inside[j], rimIn[j], rimIn[i], inside[i]);
+			mesh.quad(rimIn[j], rimOut[j], rimOut[i], rimIn[i]);
+		}
+		for (let j = 1; j < 7; j++) { mesh.tri(top[0], top[j], top[j + 1]); mesh.tri(under[0], under[j + 1], under[j]); }
+		mesh.with({ material: M.SPAR, piece: n.piece, control: controlOf('mast', 'mast', k) });
+		const foot = deckY(n.z), lz = n.z + 0.4;
+		for (const s of [-1, 1]) mesh.tube([s * 0.22, foot, lz], [s * 0.22, n.floor + 1.0, lz], 0.025, 0.025, 3);
+		for (let y = foot + 0.35; y < n.floor + 0.9; y += 0.4) mesh.quad([-0.22, y, lz - 0.02], [0.22, y, lz - 0.02], [0.22, y, lz + 0.02], [-0.22, y, lz + 0.02]);
+	});
 	// the boarding ladders, hung over each side (22 each)
 	const ladderSide = 3.0, ladderZ = 1.5;
 	[-1, 1].forEach((side, k) => {
@@ -535,11 +625,22 @@ function schooner() {
 
 	const ring = [];
 	for (const z of [-8.5, -5.5, -2.5, 0.5, 3.5, 6.5]) for (const side of [1, -1]) ring.push([side * hull.widthAt(z, 3.0) * 0.97, 3.0, z]);
-	ring.push([0, 3.4, 8.9], [0, 6.2, 15.6], [0, 5.4, -11.3], [0, 1.0, -9.5]);
+	ring.push([0, 3.4, 8.9], [0, 6.2, 15.6], [0, BOOMS.main, -11.3], [0, 1.0, -9.5]);
 
 	const sailCentre = (...p) => centreOf(...p);
 	return {
 		name: 'Schooner', mesh: mesh.done(),
+		health: 160, sinkSeconds: 30,
+		// the howitzers: which side, where each turns and is raised about, where its gunner sits and looks from, its barrel's length
+		//		out from its pivot, and its first part (the yoke; the barrel and the breech next); its control
+		guns: GUN_SPOTS.map(([z, side], k) => ({ side, z, pivot: [side * 1.95, deckY(z) + 1.05, z], seat: [side * 0.95, deckY(z), z], eye: [side * 0.9, deckY(z) + 1.5, z],
+			muzzle: 1.03, part: 1 + 3 * k, control: controlOf('gun', 'gun', k) })),
+		// the crow's nests: where the walker stands in each (at the top of its ladder), its Lewis gun's pivot and its parts (the gun,
+		//		then its pan), which piece it falls with, the foot of its ladder on the deck; its controls
+		nests: NESTS.map((n, k) => ({ name: n.name, z: n.z, floor: n.floor, piece: n.piece, stand: [0, n.floor, n.z + 0.6], pivot: [0, n.floor + 1.1, n.z + 0.6],
+			eye: [0, n.floor + 1.5, n.z + 0.75], part: 19 + 2 * k, foot: [0, deckY(n.z), n.z + 0.65], climb: 7.5,
+			control: controlOf('nestGun', 'nest', k), mast: controlOf('mast', 'mast', k), down: controlOf('nestDown', 'nest', k) })),
+		pieces: [{ foot: [0, deckY(FORE), FORE], height: 25 }, { foot: [0, deckY(MAIN), MAIN], height: 27 }, { foot: [0, 4.4, 8.4], height: 8 }],
 		halfBreadth: (z) => z < -8.8 || z > 8.4 ? 0 : hull.halfBreadth(z), sheerHeight: hull.sheer, deckHeight,
 		mass: 90000, centre: [0, 2.1, -2.0], inertia: [2.3e6, 2.3e6, 6.0e5],	// (her weight a little aft of where she floats from: she trims down by the stern)
 		columns, vDepth: 1.8, columnTop: 3.8, heaveDamping: 1500,
@@ -551,8 +652,8 @@ function schooner() {
 		groups: [
 			{ kind: 'rudder', pivot: [0, 0, -9.0], axis: [0, 1, 0] },
 			{ kind: 'wheel', pivot: WHEEL, axis: [0, 0, 1], turns: 4 },
-			{ kind: 'sail', sail: 0, pivot: [0, 0, FORE], axis: [0, 1, 0], mode: 0, ref: [0, 5.3, 0], chord: 5.3, taper: 0.1 },
-			{ kind: 'sail', sail: 1, pivot: [0, 0, MAIN], axis: [0, 1, 0], mode: 0, ref: [0, 5.5, 0], chord: 8.5, taper: 0.35 },
+			{ kind: 'sail', sail: 0, pivot: [0, 0, FORE], axis: [0, 1, 0], mode: 0, ref: [0, BOOMS.fore + 0.1, 0], chord: 5.3, taper: 0.1 },
+			{ kind: 'sail', sail: 1, pivot: [0, 0, MAIN], axis: [0, 1, 0], mode: 0, ref: [0, BOOMS.main + 0.1, 0], chord: 8.5, taper: 0.35 },
 			{ kind: 'sail', sail: 2, pivot: STAYSAIL.tack, axis: STAYSAIL.head.map((v, i) => v - STAYSAIL.tack[i]), mode: 1, ref: STAYSAIL.tack, chord: 4.4, taper: 0.9 },
 			{ kind: 'sail', sail: 3, pivot: JIB.tack, axis: JIB.head.map((v, i) => v - JIB.tack[i]), mode: 1, ref: JIB.tack, chord: 8.0, taper: 0.9 },
 			{ kind: 'sail', sail: 4, pivot: [0, 0, FORE], axis: [0, 1, 0], mode: 2, ref: [0, T.yard, 0], chord: 8.6, taper: 0 },
@@ -567,8 +668,8 @@ function schooner() {
 		],
 		mainSail: 1, halyardSeconds: 12, sheetSeconds: 6,
 		ropes: [
-			{ from: [0, 5.2, -1.6], group: 2, role: ROLE.RIGID, to: [deckAt(0, -1.2)], sag: 0.1 },
-			{ from: [0, 5.4, -11.3], group: 3, role: ROLE.RIGID, to: [[0, 4.95, -8.6]], sag: 0.1 },
+			{ from: [0, BOOMS.fore, -1.6], group: 2, role: ROLE.RIGID, to: [deckAt(0, -1.2)], sag: 0.1 },
+			{ from: [0, BOOMS.main, -11.3], group: 3, role: ROLE.RIGID, to: [[0, 4.95, -8.6]], sag: 0.1 },
 			{ from: STAYSAIL.clew, group: 4, role: ROLE.CLOTH, to: [rail(1, 3.4), rail(-1, 3.4)], sag: 0.15 },
 			{ from: JIB.clew, group: 5, role: ROLE.CLOTH, to: [rail(1, 1.2), rail(-1, 1.2)], sag: 0.25 },
 			{ rode: true, sag: 2.0 },

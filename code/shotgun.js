@@ -21,10 +21,14 @@ import * as vm from './viewmodel.js'
 							chamber instead
 	Each shell pushed in is one of those carried (weapons.js: 18 all told), and a live one thrown out by the pump goes back to them.
 
-	THE GUN (SHOTGUN_MESH): no more than 80 triangles, in metres, the bore along +z from the front of the receiver (as the rifle's):
-	the receiver, the barrel and the bead on its rib at the muzzle, the magazine tube under it, the stock, the trigger guard (part 0),
-	the forend that slides (part 1), the trigger (part 2), and two shells (parts 3 and 4: the one in the chamber, pulled back and
-	thrown out or fed up from the tube; the one being pushed into the tube), each a three sided hull with its brass head.
+	THE GUN (SHOTGUN_MESH): SHOTGUN_TRIANGLES (no more than 500), in metres, the bore along +z from the front of the receiver (as the
+	rifle's). Part 0: the receiver, lofted, its edges rounded off, with the dark of the ejection port on its right and the loading
+	port under it, and the safety on its tang; the barrel with the dark of its bore, the vent rib along its top and the two beads on
+	that (the front one at the muzzle is the sight); the magazine tube under the barrel, its cap, and the lug that holds the two
+	together; the stock down from the receiver to its recoil pad; the trigger guard's loop. Part 1, sliding: the forend with its
+	grooves, and the action bars back from it along the receiver's sides. Part 2 the trigger. Parts 3 and 4, two shells (the one in
+	the chamber, pulled back and thrown out or fed up from the tube; the one being pushed into the tube), each a six sided hull with
+	its brass head.
 */
 const SIGHT_HEIGHT = 0.025;			// the bead and the rib over the bore, metres
 const ZERO = 25;					// metres the bead is on at
@@ -52,31 +56,46 @@ const AIM = { x: 0, y: -SIGHT_HEIGHT, z: -0.45, yaw: 0, pitch: 0 };
 
 // The gun (see THE GUN at the top)
 //-------------------------------------------------
-const WOOD = 0, STEEL = 1, BRASS = 2, HULL = 4, RUBBER = 9;
+const WOOD = 0, STEEL = 1, BRASS = 2, HULL = 4, DARK = 9, RUBBER = 9;
 const SHOTGUN_MESH = (() => {
 	const m = vm.meshBuilder();
-	// the receiver: its sides, top and bottom, and its back (10)
-	m.section(-0.2, [0.017, -0.045, 0.025], 0.0, [0.017, -0.045, 0.025], STEEL, 0, [0]);
-	// the barrel (12), the rib's bead at the muzzle (1)
-	m.tube(0, 0, 0.0, 0.0125, MUZZLE, 0.0115, 6, STEEL);
-	m.tri([-0.003, 0.011, MUZZLE - 0.01], [0.003, 0.011, MUZZLE - 0.01], [0, SIGHT_HEIGHT, MUZZLE - 0.006], 0, BRASS);
-	// the magazine tube under it (6)
-	m.tube(0, TUBE_Y, 0.0, 0.0105, 0.42, 0.0105, 3, STEEL, 0, [], 0.25);
-	// the stock: the wrist down from the back of the receiver, the butt, and its pad (18)
-	m.section(-0.2, [0.017, -0.045, 0.016], -0.3, [0.018, -0.085, -0.004], WOOD);
-	m.section(-0.3, [0.018, -0.085, -0.004], -0.56, [0.02, -0.17, -0.02], WOOD);
-	m.quad([-0.02, -0.17, -0.56], [0.02, -0.17, -0.56], [0.02, -0.02, -0.56], [-0.02, -0.02, -0.56], 0, RUBBER);
-	// the trigger guard (2)
-	m.quad([-0.006, -0.068, -0.08], [0.006, -0.068, -0.08], [0.006, -0.068, -0.15], [-0.006, -0.068, -0.15], 0, STEEL);
-	// the forend round the tube, that slides back and forward (12)
-	m.section(0.07, [0.019, -0.048, -0.013], 0.3, [0.018, -0.046, -0.014], WOOD, 1, [0, 1]);
-	// the trigger (2)
-	m.quad([0, -0.045, -0.1], [0, -0.045, -0.112], [0, -0.065, -0.118], [0, -0.065, -0.108], 2, STEEL);
-	// two shells, each made with its head at the origin and its crimp along +z (8 each)
+	// THE RECEIVER: lofted, its top edges rounded off, its back and front closed (44), the dark of the ejection port on the right and
+	//		of the loading port under it (4), the safety on the tang at the back of its top (12)
+	m.loft([m.across(-0.2, [0.016, -0.04, 0.02], 0.009), m.across(-0.17, [0.017, -0.045, 0.025], 0.01), m.across(0.0, [0.017, -0.045, 0.025], 0.01)], STEEL, 0, [0, 1]);
+	m.quad([0.0172, -0.004, -0.11], [0.0172, -0.004, -0.035], [0.0172, 0.017, -0.035], [0.0172, 0.017, -0.11], 0, DARK);
+	m.quad([-0.011, -0.0452, -0.1], [0.011, -0.0452, -0.1], [0.011, -0.0452, -0.02], [-0.011, -0.0452, -0.02], 0, DARK);
+	m.section(-0.193, [0.0045, 0.019, 0.0255], -0.175, [0.0045, 0.02, 0.0262], STEEL, 0, [0, 1]);
+	// the trigger guard's loop under it, from its front round under the trigger and back up (32), and the trigger (12)
+	const bow = [[0, -0.045, -0.07], [0, -0.073, -0.077], [0, -0.079, -0.118], [0, -0.062, -0.152], [0, -0.045, -0.158]];
+	for (let k = 0; k < bow.length - 1; k++) m.strut(bow[k], bow[k + 1], 0.0032, 0.0032, 4, STEEL);
+	m.prismX([[-0.1, -0.045], [-0.111, -0.045], [-0.118, -0.067], [-0.11, -0.068]], -0.002, 0.002, STEEL, 2);
+
+	// THE BARREL: eight sided, the dark of its bore at the muzzle (22), the vent rib along its top (10), the bead at the muzzle (the sight,
+	//		its top SIGHT_HEIGHT) and the middle bead (32)
+	m.tube(0, 0, 0.0, 0.0125, MUZZLE, 0.0115, 8, STEEL);
+	m.disc(0, 0, MUZZLE + 0.0003, 0.0085, 8, DARK);
+	m.section(0.0, [0.0042, 0.011, 0.0175], MUZZLE - 0.003, [0.0042, 0.0105, 0.019], STEEL, 0, [1], [0]);
+	m.ball([0, SIGHT_HEIGHT - 0.003, MUZZLE - 0.008], 0.003, 4, BRASS);
+	m.ball([0, 0.02, MUZZLE * 0.52], 0.0019, 4, BRASS);
+	// the magazine tube under it (12), its cap (22), and the lug that holds the barrel to it (10)
+	m.tube(0, TUBE_Y, 0.0, 0.0105, 0.41, 0.0105, 6, STEEL, 0, [], 0.25);
+	m.tube(0, TUBE_Y, 0.41, 0.0118, 0.445, 0.011, 8, STEEL, 0, [1]);
+	m.section(0.4, [0.0055, TUBE_Y, -0.006], 0.44, [0.0055, TUBE_Y, -0.006], STEEL, 0, [0, 1], [0]);
+
+	// THE STOCK: down from the back of the receiver to the butt (64), and its recoil pad (22)
+	const stock = [[-0.2, [0.016, -0.042, 0.014]], [-0.235, [0.0165, -0.06, 0.006]], [-0.29, [0.0175, -0.083, -0.006]], [-0.42, [0.019, -0.13, -0.014]], [-0.555, [0.0205, -0.168, -0.019]]];
+	m.loft(stock.map(([z, r]) => m.across(z, r, 0.007)), WOOD);
+	m.loft([m.across(-0.555, [0.0205, -0.168, -0.019], 0.007), m.across(-0.58, [0.021, -0.171, -0.018], 0.008)], RUBBER, 0, [1]);
+
+	// THE FOREND round the tube, that slides back and forward, its grooves (76), and the action bars from it back along the receiver (24)
+	const forend = [[0.07, 0.0185], [0.13, 0.0205], [0.17, 0.0188], [0.22, 0.0205], [0.3, 0.0185]];
+	m.loft(forend.map(([z, h]) => m.across(z, [h, -0.05 - (h - 0.0185), -0.012], 0.008)), WOOD, 1, [0, 1]);
+	for (const s of [1, -1]) m.prismZ([[s * 0.0168, -0.041], [s * 0.0188, -0.041], [s * 0.0188, -0.035], [s * 0.0168, -0.035]], -0.03, 0.08, STEEL, 1);
+
+	// two shells, each made with its head at the origin and its crimp along +z: the hull (12) and its crimp closed (4), the brass head (16)
 	for (const part of [3, 4]) {
-		m.tube(0, 0, 0, 0.0105, SHELL, 0.0105, 3, HULL, part);
-		m.tri([0.0105, 0, 0.001], [-0.005, 0.009, 0.001], [-0.005, -0.009, 0.001], part, BRASS);
-		m.tri([0.0105, 0, SHELL], [-0.005, -0.009, SHELL], [-0.005, 0.009, SHELL], part, HULL);
+		m.tube(0, 0, 0.011, 0.0105, SHELL, 0.0105, 6, HULL, part, [1]);
+		m.tube(0, 0, 0, 0.0112, 0.011, 0.0109, 6, BRASS, part, [0]);
 	}
 	return { data: m.done(), triangles: m.count() };
 })();
@@ -172,6 +191,7 @@ function advance(elapsed) {
 				g.kick = 1;
 				settings.camPitch = Math.min(settings.camPitch + 0.035, Math.PI * 0.5 - 0.02);
 			} else {
+				weapons.actionSound('click');
 				say(g.chamber == 'spent' ? 'Click. Work the pump' : 'Click. Nothing in the chamber');
 			}
 			g.state = 'recoil'; g.timer = 0;
@@ -201,6 +221,7 @@ function advance(elapsed) {
 			g.intoChamber = false;
 			g.sinceLoad = 0;
 			shotgunStats.loaded++;
+			weapons.actionSound('load');
 		}
 	}
 	g.sinceLoad += elapsed;
@@ -211,6 +232,7 @@ function advance(elapsed) {
 	wheelPixels = 0;
 	const was = g.pump;
 	g.pump = vm.toward(g.pump, g.pumpWanted, elapsed / PUMP_SECONDS);
+	if ((g.pump == 1 && was < 1) || (g.pump == 0 && was > 0)) weapons.actionSound('pump');
 	if (g.pump == 1 && was < 1) {
 		// all the way back: out comes whatever is in the chamber
 		if (g.chamber != 'empty') {
@@ -322,3 +344,6 @@ export function testShotgun({ fire = false, aim = null, wheel = 0, load = 0, sec
 	showAmmo();
 	return { tube: gun.tube, chamber: gun.chamber, pump: gun.pump, state: gun.state, aimed: gun.aimed, message: gun.message, carried: weapons.carried('shotgun'), ...shotgunStats };
 }
+
+// for testing: the gun drawn where a matrix puts it (in the camera's space), as it is now
+export function inspectShotgun(matrix) { view.draw(matrix, partsNow()); }

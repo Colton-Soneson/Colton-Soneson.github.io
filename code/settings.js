@@ -16,15 +16,20 @@ export const settings = {
     hordeFirstWave: 10,				//deer in the first round of the Horde game mode
     hordeWaveGrowth: 1.35,			//each round this many times the one before
     hordeMaxWave: 400,				//the most deer in one round
-    hordeAliveCap: 120,				//the most out at once (600 at the most): the rest of the round comes as they go down
+    hordeAliveCap: 120,				//the most out at once (1500 at the most): the rest of the round comes as they go down
     hordeSpeed: 2.5,				//times the deer's own paces (a sprinter chases at 6.3 m/s at 1): all of their walking, trotting and running
     hordeDamage: 5,					//health a deer's lunge takes off (of 100). A super deer's is twice it
     hordeBreakSeconds: 10,			//between one round and the next
     huntingWalkSpeed: 3.0,			//metres a second on foot. Shift runs 2.3x
+    buoyancy: 1.15,				//how hard the water pushes up on the boats and a biplane's floats, times what it would (boat.js: FLOATING; plane.js: FLOATS)
+    aiDifficulty: 0.5,			//how well the NPCs aim, in every game mode: 0 badly (their spread three times over), 0.5 as they were made, 1 well (a third of it) (ballistics.js: aimSpread)
+    boatSteadying: 0.15,			//how much the boats (and a floatplane on the water) are held level, against sea sickness: 0 not at all, 1 no roll or pitch at all, only their heading (boat.js: THE STEADYING)
     horseSpeed: 2.5,				//how many times a real horse's pace the horses go at: the walk, the canter and the gallop (horse.js). 1 = a real horse, a 13.5 m/s gallop
     discGolfEnabled: false,			//a disc golf course laid out on the land (discgolf.js): tee pads and baskets, each hole its own colour
     discGolfHoles: 9,				//how many holes it has
     discGolfSeed: 1,				//which course: New Course moves it on
+    enableSound: true,				//the sound: the wind, the sea, the animals, the guns and the engines, all made as it plays (sound.js). It starts once the page is clicked
+    soundVolume: 0.8,				//how loud, 0 to 1
     huntingJumpHeight: 0.5,			//metres
     huntingLookSensitivity: 1.0,	//how far the view turns for the mouse moved
     cameraFlyMode: true,		//WASD + right mouse drag, see cameraControls.js. Off = the camera always looks at the origin
@@ -100,7 +105,10 @@ export const settings = {
 	terrainRockDetail: 1.0,				//how strongly the cracks and ledges the shader draws on bare rock show. 0 = lit by the mesh alone
 	terrainTownCount: 2,				//seaside towns: on the shore where the mountains come down near the sea, up a hill of their own (townLayout.js, town.js). 0 to 4
 	terrainTownSize: 1.0,				//how big each one is: 1 = about 340m along the shore and 165m up the hill
+	terrainLandingStrip: true,			//a landing strip by the first town: a straight, even path of packed earth for the biplane (see THE LANDING STRIP in terrainGenerator.js, plane.js)
+	terrainFootpaths: true,				//worn earth paths between the towns and the strip, over the passes, up to lookouts, through the forests, down to the lakes and the beaches (footpaths.js)
 	enableTownFolk: true,				//the towns' people: one to every building, its trade the building's (townFolk.js)
+	enableNPCs: true,					//the people out in the world: riders between the towns, the airmen of the landing strip, the schooner's crew and the dinghies' sailors (npcs.js)
 	//--------------------GRASS--------------------
 	enableGrass: true,
 	grassTotalBladeCount: 420000,	//blades drawn, shared out over the level of detail rings around the camera. Most are skipped wherever there is no grassland

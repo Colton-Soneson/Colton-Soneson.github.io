@@ -1,6 +1,6 @@
 import { moonShapes } from './f_moon.js';
 import { skyLookupShapes } from './vfc_atmosphere.js';
-import { MAX_GROUPS, MAX_ROPES } from '../../code/vessels.js';
+import { MAX_GROUPS, MAX_ROPES, MAX_PIECES, MAX_PARTS } from '../../code/vessels.js';
 
 /*
 	The vessel being sailed, drawn (vessels.js: its mesh, in metres, +x to port, +y up, +z to the bow; boat.js: where it is).
@@ -15,6 +15,9 @@ import { MAX_GROUPS, MAX_ROPES } from '../../code/vessels.js';
 	The colours: the hull painted as the vessel says (a colour above, a band along it, the bottom below the water, the inside
 	of the bulwarks, and gunports in the band), decks, wood, spars, sailcloth, rope, iron and brass. The control the crosshair
 	is on glows.
+
+	Shot to pieces, each piece that falls (a mast with all it carries) is last turned to where it has fallen (falls: boat.js), and the
+	ropes are gone.
 */
 export const vf_boat =
 `
@@ -29,9 +32,11 @@ export const vf_boat =
 		paintBottom : vec4f,		//		the bottom, w: the band up to
 		paintInside : vec4f,		//		the inside of the bulwarks
 		ports : vec4f,				// gunports in the band: x: the first's z, y: apart, z: how many, w: half their width
-		spare : vec4f,
+		spare : vec4f,				// x: her side in the war (war.js): 0 none (the red ensign), 1 red, 2 blue
 		groups : array<vec4f, ${MAX_GROUPS * 4}>,	// each: pivot (xyz, w: how it is hoisted), axis (xyz, w: turned by), state (hoisted, filled, shaking, chord), towards (xyz, w: taper)
 		ropes : array<vec4f, ${MAX_ROPES * 2}>,		// each: one end (xyz, w: sag), the other end
+		falls : array<mat4x4f, ${MAX_PIECES}>,		// each piece that falls: where it has fallen to, on the boat
+		parts : array<mat4x4f, ${MAX_PARTS}>,		// each part of its guns: where it is turned to, on the boat (shipGuns.js)
 	}
 	@group(0) @binding(0) var<uniform> BU: BoatUniforms;
 
@@ -55,7 +60,7 @@ export const vf_boat =
 	struct VertexInput {
 		@location(0) shape: vec4f,		// xyz: the mesh, in metres. w: its material
 		@location(1) onSail: vec4f,		// x: up a sail, 0 at the foot to 1 at the head, y: across it, 0 at the luff to 1 at the leech. z: its group, w: its role
-		@location(2) extra: vec4f,		// x: the control it is part of, y: the rope it is
+		@location(2) extra: vec4f,		// x: the control it is part of, y: the rope it is, z: the piece it falls with (0 for none), w: its part (0 for none)
 	};
 
 	struct VertexOutput {
@@ -133,6 +138,15 @@ export const vf_boat =
 				p.x += fly * 0.25 * sin(BU.cameraPosition.w * 11.0 + fly * 5.0);
 			}
 			p = pivot.xyz + turnAbout(p - pivot.xyz, axis.xyz, -axis.w);
+		}
+
+		let part = i32(input.extra.w + 0.5);
+		if (part > 0) {
+			p = (BU.parts[part - 1] * vec4f(p, 1.0)).xyz;
+		}
+		let piece = i32(input.extra.z + 0.5);
+		if (piece > 0) {
+			p = (BU.falls[piece - 1] * vec4f(p, 1.0)).xyz;
 		}
 
 		let world = (BU.model * vec4f(p, 1.0)).xyz;
@@ -230,7 +244,8 @@ export const vf_boat =
 				let fly = saturate((-at.z - 7.95) / 1.9);
 				let hoist = saturate((at.y - 17.65) / 1.2);
 				albedo = vec3f(0.65, 0.08, 0.07);
-				if (fly < 0.45 && hoist > 0.5) {
+				if (BU.spare.x > 1.5) { albedo = vec3f(0.1, 0.22, 0.62); }
+				if (BU.spare.x < 0.5 && fly < 0.45 && hoist > 0.5) {
 					let stripe = min(abs(fly - 0.225) * 4.0, abs(hoist - 0.75) * 4.0);
 					albedo = select(vec3f(0.1, 0.12, 0.4), select(vec3f(0.95, 0.95, 0.95), vec3f(0.7, 0.08, 0.07), stripe < 0.08), stripe < 0.2);
 				}

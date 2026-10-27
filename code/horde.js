@@ -11,6 +11,10 @@ import * as town from './town.js'
 import * as townFolk from './townFolk.js'
 import * as pointLights from './pointLights.js'
 import * as help from './controlsHelp.js'
+import * as boat from './boat.js'
+import * as npcs from './npcs.js'
+import { roadsFor } from './npcRiders.js'
+import * as npcShips from './npcShips.js'
 
 /*
 	THE HORDE game mode: the Hunting walker and its guns (hunting.js, weapons.js), against rounds of feral deer, the way Call of
@@ -23,7 +27,22 @@ import * as help from './controlsHelp.js'
 		hordeBreakSeconds, and the next. Each round they are tougher (roundHealth: HEALTH more each round to round 9, then
 		ROUND_HEALTH_LATE times more) and faster: each pack walks, runs or sprints (PACES), more of them running each round
 		(paceShares). A player who is down stays down until the round is over (with others in the game; alone, the run is over).
-		All of them down: the run is over (GAME OVER, how far it got), and a new one starts after OVER_SECONDS.
+		All of them down: the run is over (GAME OVER, how far it got), and a new one starts after OVER_SECONDS. So it is when every
+		one of the townsfolk has turned (THE TOWNSFOLK): the towns are lost, however many players are still up.
+	THE VILLAGES. Each round the horde comes for one of the towns (chooseTargets: the first round one of them, the next the other, then
+		the one or the other or both, and from the fourth round on all of them), said as the round begins (town.js gives them their
+		names): its packs start out past that town's houses (TOWN_SPAWN, away from the players) and make for its middle, and once there
+		go for its townsfolk, or for the players if none of them are out.
+	THE EVACUATION. At round EVAC.round, if a town has a dock (townLayout.js: DOCK), a schooner comes in to it (npcShips.js:
+		berthBeside), and every one of the townsfolk who has not turned makes for the end of the dock along the roads (npcRiders.js:
+		roadsFor), out of doors whatever the hour, the horde after them: each at the pace that has it there within EVAC.seconds (at least
+		EVAC.run, and no faster than a hard run, EVAC.most: from another town far off it takes longer, and she waits for them). Each one
+		that gets there goes aboard (saved: townFolk.boardFolk). When the last of them is aboard or turned (or EVAC.gone after the last
+		should have been there: the rest are left behind) she sails out to sea, and EVAC.sail later the game is over: THE RESULTS.
+	THE RESULTS. For each player: the deer and the super deer it shot down, and the points it earned; the townsfolk saved, of all there
+		were when the run began; the party's points (all of theirs together), and as much again times the share of the townsfolk saved
+		(80% of them saved: 80% more). For RESULTS_SECONDS, and then the game mode is Hunting again, the townsfolk all back and the
+		houses whole (town.restoreHouses).
 	POINTS (each player's own): POINTS_START to begin, HIT_POINTS a hit, KILL_POINTS a kill, HEAD_POINTS a kill in the head,
 		SUPER_POINTS a super deer. They buy the guns from the spawn menu (PRICES, kept until the player is down) and the
 		ammunition from a horse's saddlebags (AMMO_PRICE). The revolver is free, and in the hands at the start.
@@ -78,8 +97,9 @@ import * as help from './controlsHelp.js'
 		doing goes to everyone HUD_RATE times a second (hordeState, hordeHeard), and what happens at once as it happens
 		(hordeEvent: a new run, a round over, a power-up). The host takes the lunges off everyone's health, and gives it back.
 */
-const MAX_HORDE = 600;				// deer alive at once at the most
+const MAX_HORDE = 1500;				// deer alive at once at the most
 const PACK = [6, 40];				// deer in a pack: a third of the round, between these
+const PACK_SHARE = 12;				// (or with more allowed out at once, up to this share of hordeAliveCap: so a big horde fills up in a minute or so)
 const PACK_SECONDS = 5;
 const SPAWN_AWAY = [110, 170];		// metres from the player a pack starts
 const SPAWN_SPREAD = 1.4;			// metres times the square root of its size: how far a new pack is spread round its middle
@@ -92,7 +112,7 @@ const OWN_PACE = 0.1;				// each its own pace, this much either way
 const SIGHT_DAY = 85, SIGHT_NIGHT = 45, SIGHT_COS = 0.42;	// metres; the cosine of the angle either side of its heading it sees (65 degrees)
 const CLOSE_SENSE = 9;				// metres
 const SENSE_SECONDS = 0.5;
-const HEAR = { '7.62x54R': 380, '00 buck': 320, '.45 Colt': 260, '.45-70': 420 };	// metres a shot is heard
+const HEAR = { '7.62x54R': 380, '00 buck': 320, '.45 Colt': 260, '.45-70': 420, '7.63 Mauser': 240, '.303 British': 400, '.303 Vickers': 400 };	// metres a shot is heard
 const FRENZY_HEAR = 0.35;			// of that, the deer that know just where it came from
 const RUN_HEARD = 22;				// metres
 const SPREAD = 16;					// metres
@@ -117,7 +137,7 @@ const GROUND_NEAR = 80;				// metres from the camera or a player: further off, t
 const FIRST_BREAK = 8, OVER_SECONDS = 8;
 const SUPER_SIZE = 4, SUPER_HEALTH = 4, SUPER_PACE = 4.8;
 const POINTS_START = 500, HIT_POINTS = 10, KILL_POINTS = 60, HEAD_POINTS = 100, SUPER_POINTS = 500, NUKE_POINTS = 400;
-const PRICES = { revolver: 0, rifle: 500, shotgun: 1000, sharps: 1500, staff: 5000 };	// (the rest free: the discs, empty hands)
+const PRICES = { revolver: 0, mauser: 750, rifle: 500, shotgun: 1000, sharps: 1500, lewis: 2500, staff: 5000 };	// (the rest free: the discs, empty hands)
 const AMMO_PRICE = 300;
 const POWER_CHANCE = 0.035, POWERS_A_ROUND = 4, POWER_SECONDS = 30, POWER_REACH = 2.2, EFFECT_SECONDS = 30;
 const POWERS = { ammo: 'Max Ammo', insta: 'Insta-Kill', double: 'Double Points', nuke: 'Nuke' };
@@ -132,6 +152,9 @@ const MILITIA_GUNS = {
 };
 const MILITIA_SHARES = [['rifle', 0.35], ['shotgun', 0.25], ['revolver', 0.25], ['sharps', 0.15]];
 const HUD_RATE = 5;
+const TOWN_SPAWN = [60, 120];		// metres out past a town's houses a pack sent at it starts
+const EVAC = { round: 5, seconds: 110, run: 3.4, most: 6.5, gone: 20, sail: 40 };	// see THE EVACUATION at the top: the round; seconds for the last of them to get there; the least pace and the most (metres a second); seconds the late are waited for; seconds she sails before the end
+const RESULTS_SECONDS = 25;
 
 export const hordeStats = { phase: 'off', round: 0, alive: 0, toSpawn: 0, hordes: 0, corpses: 0, kills: 0, frenzied: 0, lunges: 0, hits: 0, best: 0, ms: 0, points: 0, fighting: 0, turned: 0, supers: 0, powers: 0, folkShots: 0, folkHits: 0 };	// for anyone who wants to show it
 
@@ -149,7 +172,8 @@ export const hordeNet = {
 const joined = () => hordeNet.role == 'joined';
 const together = () => hordeNet.role == 'host' && hordeNet.others().length > 0;
 
-const run = { phase: 'off', round: 0, timer: 0, toSpawn: 0, spawnTimer: 0, kills: 0, best: 0, powersThisRound: 0, insta: 0, double: 0 };	// off, break (before a round), round, over
+const run = { phase: 'off', round: 0, timer: 0, toSpawn: 0, spawnTimer: 0, kills: 0, best: 0, powersThisRound: 0, insta: 0, double: 0,	// off, break (before a round), round, over, results
+	targets: [], packs: 0, evac: null, tally: new Map(), folkAll: 0 };		// (THE VILLAGES, THE EVACUATION, THE RESULTS)
 const me = { points: 0, owned: new Set(), hurtAt: -1e9, gained: 0 };
 let shared = null;		// joiner: the host's state of the run, as it last came (hordeState)
 let followed = null;	// joiner: the host's deer, as they are now
@@ -157,6 +181,7 @@ let hordes = [];		// { deer: [], pace, state, goal, lastKnown, prey, unseen, far
 let corpses = [];		// { deer, t, side, roll, sink }
 let powers = [];		// { id, kind, x, y, z, age }
 const militia = new Map();	// townsperson's index -> { gun, x, y, z, heading, pitch, mag, next, drawn, calm, target, look }
+const leading = new Map();	// joiner: townsperson's index -> { at, want } fleeing to the schooner (THE EVACUATION), as the host has it
 const otherHurtAt = new Map();	// host: the others' last lunge, for their health coming back
 let lastTime = performance.now();
 let nextId = 1, nextPower = 1;
@@ -193,7 +218,7 @@ function gatherPreys() {
 	const mine = hunting.hunterPlace();
 	if (mine.active && hunting.hunterLife.alive) {
 		const ground = hunting.meshGroundAt(mine.x, mine.z);
-		const aboard = mine.on == 'deck' || mine.on == 'seat' || mine.on == 'ladder';
+		const aboard = mine.on == 'deck' || mine.on == 'seat' || mine.on == 'ladder' || mine.on == 'aboard';
 		preys.push({ key: 'me', kind: 'player', id: 'me', x: mine.x, y: mine.y, z: mine.z, eye: mine.y + (mine.on == 'saddle' ? 0.9 : 1.6) * m, ground,
 			speed: Math.hypot(mine.vx, mine.vz) / m, reachable: !aboard && !mine.swimming && mine.y - ground < LEAP * m });
 	}
@@ -203,9 +228,10 @@ function gatherPreys() {
 		preys.push({ key: 'p' + other.id, kind: 'player', id: other.id, x: other.x, y: other.y, z: other.z, eye: other.y + 1.6 * m, ground, speed: other.speed,
 			reachable: other.y - ground < LEAP * m && other.y > settings.waterWorldPosY - 0.8 * m });
 	}
+	const towns = terrain.land.towns ?? [];
 	townFolk.folkOut((person) => {
 		const p = person.place;
-		preys.push({ key: 'f' + person.index, kind: 'folk', id: person.index, x: p.x, y: p.y, z: p.z, eye: p.y + 1.6 * m, ground: p.y, speed: 0, reachable: true });
+		preys.push({ key: 'f' + person.index, kind: 'folk', id: person.index, x: p.x, y: p.y, z: p.z, eye: p.y + 1.6 * m, ground: p.y, speed: 0, reachable: true, town: towns.indexOf(person.town) });
 	});
 	preyByKey = new Map(preys.map((prey) => [prey.key, prey]));
 }
@@ -253,8 +279,12 @@ function clearHordes() {
 // a new run: from the first round, the points and the guns as they start, the towns whole again
 function startRun() {
 	clearHordes();
-	Object.assign(run, { phase: 'break', round: 0, timer: FIRST_BREAK, toSpawn: 0, spawnTimer: 0, kills: 0, powersThisRound: 0, insta: 0, double: 0 });
+	endEvac();
+	Object.assign(run, { phase: 'break', round: 0, timer: FIRST_BREAK, toSpawn: 0, spawnTimer: 0, kills: 0, powersThisRound: 0, insta: 0, double: 0, why: null,
+		targets: [], packs: 0, tally: new Map() });
 	event({ k: 'start' });
+	run.folkAll = townFolk.folkCount().all;		// (with them all back: event's start)
+	town.restoreHouses();
 }
 function beginRound() {
 	run.round++;
@@ -262,8 +292,174 @@ function beginRound() {
 	run.toSpawn = roundSize(run.round);
 	run.spawnTimer = 0;
 	run.powersThisRound = 0;
-	event({ k: 'round', round: run.round });
+	run.targets = chooseTargets(run.round);
+	const evac = run.round == EVAC.round && startEvac();
+	event({ k: 'round', round: run.round, towns: run.targets.map(town.townName), evac: evac ? town.townName(run.evac.town) : null });
 }
+// THE VILLAGES (see the top): the towns the round's horde comes for (their numbers in the land's towns)
+function chooseTargets(round) {
+	const all = (terrain.land.towns ?? []).map((t, i) => t.buildings?.length ? i : -1).filter((i) => i >= 0);
+	if (all.length <= 1) return all;
+	const pick = (list) => list[Math.floor(Math.random() * list.length)];
+	const other = all.filter((i) => !run.targets.includes(i));
+	if (round == 1) return [pick(all)];
+	if (round >= 4 || (round > 2 && Math.random() < 0.5)) return all;
+	return [other.length ? pick(other) : pick(all)];
+}
+// a town as where a pack is sent: its middle
+function townPrey(t) {
+	const mid = town.townMiddle(terrain.land.towns[t]);
+	return { key: 'town' + t, kind: 'town', x: mid.x, z: mid.z };
+}
+// where a pack sent at a town starts: out past its houses, walkable, not in a town, and not on top of a player
+function townSpawnSpot(t) {
+	const mid = town.townMiddle(terrain.land.towns[t]), m = metre();
+	for (let attempt = 0; attempt < 60; attempt++) {
+		const a = Math.random() * Math.PI * 2, out = mid.reach + between(TOWN_SPAWN) * m * (attempt < 40 ? 1 : 1.6);
+		const x = mid.x + Math.sin(a) * out, z = mid.z + Math.cos(a) * out;
+		if (walkable(x, z) && terrain.land.zoneAt(x, z) != terrain.ZONE_TOWN && playerPreys().every((p) => Math.hypot(p.x - x, p.z - z) > 50 * m)) return [x, z];
+	}
+	return null;
+}
+// a horde on its way to its town, or there: not lost
+function nearItsTown(horde, lead) {
+	if (!(horde.town >= 0)) return false;
+	const mid = town.townMiddle(terrain.land.towns[horde.town]);
+	return Math.hypot(lead.x - mid.x, lead.z - mid.z) < mid.reach + (Math.max(TOWN_SPAWN[1], 200) + 60) * metre();
+}
+// THE EVACUATION (see the top)
+//-------------------------------------------------
+// the schooner in at the dock, and a way to the end of it for every one of the townsfolk left. false if there is no dock, or no room
+function startEvac() {
+	const land = terrain.land, t = (land.towns ?? []).findIndex((x) => x.dock);
+	if (t < 0) return false;
+	const D = npcShips.dockOf(land.towns[t]), berth = npcShips.berthBeside(D);
+	if (!berth) return false;
+	const m = metre();
+	const b = boat.spawnBoat(berth.x, berth.z, 'Schooner', { yaw: Math.atan2(Math.sin(berth.course), -Math.cos(berth.course)), owner: 'npc', authority: 0 });
+	b.vessel.sails.forEach((sail, i) => { b.sails[i].hoistWant = 0; b.sails[i].hoist = 0; });
+	npcs.announce('boat', b, null);
+	// (to the foot of the dock along the roads, and out along it to its end)
+	const dock = land.towns[t].dock, foot = [dock.a[0], dock.a[1] + 0.25, dock.a[2]], end = [dock.b[0] - D.out[0] * 1.5 * m, dock.b[1] + 0.25, dock.b[2] - D.out[1] * 1.5 * m];
+	const roads = roadsFor(land), to = roads.nearest(foot[0], foot[2]), ways = new Map();
+	townFolk.folkEach((person) => {
+		if (person.turned || person.gone) return;
+		const p = person.place ?? { x: person.home.at[0], y: person.home.at[1], z: person.home.at[2] };
+		const from = roads.nearest(p.x, p.z), nodes = from >= 0 && to >= 0 ? townFolk.wayBetween(roads, from, to) : null;
+		const points = [[p.x, p.y, p.z], ...(nodes ?? []).map((k) => [roads.nodes[k].x, roads.nodes[k].y, roads.nodes[k].z]), foot, end];
+		const along = [0];
+		for (let j = 1; j < points.length; j++) along.push(along[j - 1] + Math.hypot(points[j][0] - points[j - 1][0], points[j][2] - points[j - 1][2]));
+		const length = along[along.length - 1];
+		ways.set(person.index, { points, along, length, s: 0, pace: clamp(length / EVAC.seconds, EVAC.run * m, EVAC.most * m) });
+		if (militia.has(person.index)) { militia.delete(person.index); townFolk.setFight(person.index, null); }
+	});
+	const last = Math.max(EVAC.seconds, ...[...ways.values()].map((w) => w.length / w.pace));
+	run.evac = { town: t, boat: b, ways, saved: 0, lost: 0, phase: 'walking', timer: 0, clock: 0, last, moored: { x: b.p[0], z: b.p[2], q: [...b.q] }, out: Math.atan2(D.out[0], D.out[1]), sail: {} };
+	run.targets = [t];
+	return true;
+}
+// a frame of it: each on its way, aboard as it gets there; then she sails, and the results
+function advanceEvac(elapsed) {
+	const E = run.evac, land = terrain.land;
+	E.timer += elapsed;
+	E.clock += elapsed;
+	if (E.phase == 'walking') {
+		holdMoored(E);
+		for (const [index, w] of E.ways) {
+			const person = townFolk.folkPerson(index);
+			if (!person || person.turned) { E.ways.delete(index); E.lost++; continue; }
+			w.s += w.pace * elapsed;
+			if (w.s >= w.length) { E.ways.delete(index); E.saved++; townFolk.boardFolk(index); continue; }
+			townFolk.setLed(index, placeOn(w, land));
+		}
+		if (E.ways.size == 0 || E.timer > E.last + EVAC.gone) {
+			for (const index of E.ways.keys()) { townFolk.setLed(index, null); E.lost++; }
+			E.ways.clear();
+			E.phase = 'sailing';
+			E.timer = 0;
+			event({ k: 'sail', saved: E.saved });
+		}
+	} else {
+		sailAway(E, elapsed);
+		if (E.timer > EVAC.sail && run.phase == 'round') results();
+	}
+}
+// where one is, s along its way (on the ground off the streets, as the land is there)
+function placeOn(w, land) {
+	const m = metre();
+	const at = (d) => {
+		d = clamp(d, 0, w.length);
+		let j = 0;
+		while (j < w.along.length - 2 && w.along[j + 1] < d) j++;
+		const f = (d - w.along[j]) / Math.max(w.along[j + 1] - w.along[j], 1e-6), a = w.points[j], b = w.points[j + 1];
+		return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+	};
+	const p = at(w.s), ahead = at(w.s + 1.2 * m), behind = at(w.s - 1.2 * m);
+	const ground = land.heightAt(p[0], p[2]);
+	if (ground > settings.waterWorldPosY && land.zoneAt(p[0], p[2]) != terrain.ZONE_TOWN) p[1] = ground;
+	return { x: p[0], y: p[1], z: p[2], heading: Math.atan2(ahead[0] - behind[0], ahead[2] - behind[2]), stride: w.s / (1.4 * m) * Math.PI, walking: 1 };
+}
+// waiting at the dock: held there, her sails furled
+function holdMoored(E) {
+	const b = E.boat;
+	if (!b?.exists) return;
+	b.p[0] = E.moored.x; b.p[2] = E.moored.z; b.v[0] = b.v[2] = 0;
+	b.q = [...E.moored.q]; b.w = [0, 0, 0];
+	npcShips.trim(b, { luff: true, furl: b.vessel.sails.map((sail) => sail.name) });
+}
+// out to sea, every sail set
+function sailAway(E, elapsed) {
+	const b = E.boat;
+	if (!b?.exists || b.destroyed >= 0) return;
+	npcShips.steerFor(b, npcShips.chooseCourse(E.sail, b, E.out, b.vessel.spawn.keel, E.clock), elapsed);
+	npcShips.trim(b, {});
+	npcShips.warpOff(E.sail, b, elapsed);
+}
+// she is gone, and the game with her: THE RESULTS, for everyone
+function results() {
+	const E = run.evac;
+	const ids = ['me', ...hordeNet.others().map((o) => o.id)];
+	for (const id of run.tally.keys()) if (!ids.includes(id)) ids.push(id);
+	const rows = ids.map((id) => { const t = run.tally.get(id) ?? { deer: 0, supers: 0, points: 0 }; return { name: hordeNet.nameOf?.(id) ?? (id == 'me' ? 'You' : 'Player ' + id), deer: t.deer, supers: t.supers, points: t.points }; });
+	const party = rows.reduce((s, r) => s + r.points, 0), saved = E?.saved ?? 0, spawned = run.folkAll;
+	const bonus = Math.round(party * saved / Math.max(spawned, 1));
+	clearHordes();
+	run.phase = 'results';
+	run.timer = RESULTS_SECONDS;
+	event({ k: 'results', rows, saved, spawned, party, bonus, final: party + bonus, town: E ? town.townName(E.town) : '' });
+}
+// the game over: Hunting again, everyone back, the houses whole
+function endMode() {
+	endEvac();
+	run.phase = 'off';
+	event({ k: 'end' });
+	town.restoreHouses();
+	if (modeHook.set) modeHook.set('Hunting');
+	else settings.gameMode = 'Hunting';
+}
+// how the game mode is changed (imguiLoader.js: settings and its control both)
+export const modeHook = { set: null };
+// the schooner gone, and no one led any more
+function endEvac() {
+	const E = run.evac;
+	if (!E) return;
+	for (const index of E.ways.keys()) townFolk.setLed(index, null);
+	if (E.boat?.exists) { boat.removeBoat(E.boat); npcs.announce('boat', null, E.boat); }
+	run.evac = null;
+}
+// a player's own count (THE RESULTS): by 'me' or one of the others' ids
+function tally(by) {
+	let t = run.tally.get(by);
+	if (!t) run.tally.set(by, t = { deer: 0, supers: 0, points: 0 });
+	return t;
+}
+// what the HUD says of it: { town, phase, saved, walking, left (seconds) }
+function evacShown() {
+	const E = run.evac;
+	return E && { town: town.townName(E.town), phase: E.phase, saved: E.saved, walking: E.ways.size, left: Math.round(E.last - E.timer) };
+}
+const goneList = () => { const list = []; townFolk.folkEach((p) => { if (p.gone) list.push(p.index); }); return list; };
+
 function endRound() {
 	run.phase = 'break';
 	run.timer = settings.hordeBreakSeconds;
@@ -284,7 +480,7 @@ export function hordeEvent(e) {
 		if (hunting.hunterLife.alive) startingGun();
 		help.toast('The horde is coming', 3);
 	} else if (e.k == 'round') {
-		announce(`ROUND ${e.round}`, '#c01818');
+		announce(`ROUND ${e.round}`, '#c01818', e.evac ? `The schooner is in at ${e.evac}: get the townsfolk to the dock!` : e.towns?.length ? `The horde is coming for ${nameList(e.towns)}` : '');
 	} else if (e.k == 'roundOver') {
 		announce(`ROUND ${e.round} SURVIVED`, '#e8e8e8');
 	} else if (e.k == 'power') {
@@ -295,8 +491,18 @@ export function hordeEvent(e) {
 		players.addFeed('A townsperson has turned');
 	} else if (e.k == 'over') {
 		announce('GAME OVER', '#c01818');
+		if (e.why == 'folk') players.addFeed('The townsfolk have all turned');
+	} else if (e.k == 'sail') {
+		announce('SHE SAILS', '#9fd8ff', `${e.saved} of the townsfolk aboard`);
+	} else if (e.k == 'results') {
+		showResults(e);
+	} else if (e.k == 'end') {
+		townFolk.restoreFolk();
+		for (const index of leading.keys()) townFolk.setLed(index, null);
+		leading.clear();
 	}
 }
+const nameList = (names) => names.length > 1 ? names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1] : names[0] ?? '';
 // the guns as they start (the revolver in the hands), and nothing bought
 function startingGun() {
 	weapons.resetWeapons();
@@ -343,7 +549,7 @@ function newDeer(x, z, prey, size = 1) {
 }
 function newHorde(count, at, prey, pace) {
 	const m = metre();
-	const horde = { deer: [], pace, state: 'hunt', goal: null, lastKnown: [prey.x, prey.z], prey: prey.key, unseen: 0, far: 0, timer: 0, trail: [], nearest: Infinity, stuck: STUCK_SECONDS, milling: false, files: 1 };
+	const horde = { deer: [], pace, state: 'hunt', goal: null, lastKnown: [prey.x, prey.z], prey: prey.key, unseen: 0, far: 0, timer: 0, trail: [], nearest: Infinity, stuck: STUCK_SECONDS, milling: false, files: 1, town: -1 };
 	const spread = SPAWN_SPREAD * Math.sqrt(count) * m;
 	for (let k = 0; k < count; k++) {
 		let x = at[0], z = at[1];
@@ -359,17 +565,20 @@ function newHorde(count, at, prey, pace) {
 }
 // a pack of the round, round one of the players
 function spawnPack() {
-	const targets = playerPreys();
-	if (targets.length == 0) return;
-	const prey = targets[Math.floor(Math.random() * targets.length)];
-	const size = Math.min(run.toSpawn, clamp(Math.round(roundSize(run.round) / 3), PACK[0], PACK[1]), Math.min(settings.hordeAliveCap, MAX_HORDE) - living());
+	const targets = playerPreys(), toTown = run.targets.length > 0;
+	if (targets.length == 0 && !toTown) return;
+	const t = toTown ? run.targets[run.packs++ % run.targets.length] : -1;
+	const prey = toTown ? townPrey(t) : targets[Math.floor(Math.random() * targets.length)];
+	const size = Math.min(run.toSpawn, clamp(Math.round(roundSize(run.round) / 3), PACK[0], Math.max(PACK[1], Math.round(settings.hordeAliveCap / PACK_SHARE))), Math.min(settings.hordeAliveCap, MAX_HORDE) - living());
 	if (size <= 0) return;
-	const at = spawnSpot(prey, behind(prey));
+	const at = toTown ? townSpawnSpot(t) : spawnSpot(prey, behind(prey));
 	if (!at) return;
 	const shares = paceShares(run.round);
 	let r = Math.random(), kind = 0;
 	while (kind < 2 && r > shares[kind]) { r -= shares[kind]; kind++; }
-	hordes.push(newHorde(size, at, prey, PACES[kind]));
+	const horde = newHorde(size, at, prey, PACES[kind]);
+	horde.town = t;
+	hordes.push(horde);
 	run.toSpawn -= size;
 }
 // the horde on a player's scent: going to about where it is
@@ -590,7 +799,7 @@ function advanceHorde(horde, elapsed) {
 	}
 	prey = preyByKey.get(horde.prey) ?? null;
 	const anyPlayer = playerPreys().some((p) => Math.hypot(p.x - lead.x, p.z - lead.z) < sight);
-	horde.far = anyPlayer ? 0 : horde.far + elapsed;
+	horde.far = anyPlayer || nearItsTown(horde, lead) ? 0 : horde.far + elapsed;
 	if (horde.far > LOST_SECONDS && horde.state != 'chase') { bringRound(horde); return; }
 
 	// what the horde as a whole is doing
@@ -607,8 +816,10 @@ function advanceHorde(horde, elapsed) {
 	} else if (horde.state == 'search') {
 		horde.goal = horde.lastKnown;
 		if (horde.milling && (horde.timer -= elapsed) <= 0) {
-			const targets = playerPreys();
-			if (targets.length) scent(horde, nearestPrey(lead.x, lead.z, true));
+			// (sent at a town: its townsfolk first, if any of them are out)
+			const folk = horde.town >= 0 ? preys.filter((p) => p.kind == 'folk' && p.town == horde.town) : [];
+			const targets = folk.length ? folk : playerPreys();
+			if (targets.length) scent(horde, targets.reduce((a, b) => Math.hypot(a.x - lead.x, a.z - lead.z) <= Math.hypot(b.x - lead.x, b.z - lead.z) ? a : b));
 			else horde.timer = SEARCH_SECONDS;
 		}
 	}
@@ -740,6 +951,15 @@ ballistics.addTarget((ax, ay, az, bx, by, bz) => {
 });
 
 // a hit: by 'me', 'folk' (a townsperson) or one of the others (its id: it says so, hordeShot)
+// a shell bursting (shipGuns.js) at (world units), fired here: every one of the horde within radius (world units) of it hit, in the
+//		head near it, further off as in the chest (a joiner says so to the host, as a shot would)
+export function blast(at, radius) {
+	const hit = (one) => { const d = Math.hypot(one.x - at[0], one.y - at[1], one.z - at[2]); return d < radius ? (d < radius * 0.5 ? 'head' : 'chest') : null; };
+	const away = (one) => [one.x - at[0], 0, one.z - at[2]];
+	if (followed) { for (const one of followed) { const part = one.alive && hit(one); if (part) hordeShot.report?.(one.id, away(one), part, '80mm'); } return; }
+	for (const horde of hordes) for (const one of [...horde.deer]) { const part = hit(one); if (part) hitDeer(horde, one, part, '80mm', away(one), 'me'); }
+}
+
 function hitDeer(horde, one, part, round, velocity, by) {
 	if (!horde || !horde.deer.includes(one)) return;
 	if (by == 'folk') hordeStats.folkHits++;
@@ -757,6 +977,7 @@ function hitDeer(horde, one, part, round, velocity, by) {
 		return;
 	}
 	killDeer(horde, one, velocity);
+	if (by != 'folk') tally(by)[one.size > 1 ? 'supers' : 'deer']++;
 	givePoints(by, one.size > 1 ? SUPER_POINTS : part == 'head' ? HEAD_POINTS : KILL_POINTS);
 	// now and then a power-up where it fell
 	if (run.powersThisRound < POWERS_A_ROUND && Math.random() < POWER_CHANCE) {
@@ -780,6 +1001,7 @@ function killDeer(horde, one, velocity) {
 function givePoints(by, points) {
 	if (by == 'folk') return;
 	points *= run.double > 0 ? 2 : 1;
+	tally(by).points += points;
 	if (by == 'me') hordePoints(points);
 	else hordeNet.points?.(by, points);
 }
@@ -831,6 +1053,7 @@ function advanceMilitia(elapsed) {
 	};
 	let fighting = 0;
 	townFolk.folkOut((person) => {
+		if (run.evac?.ways.has(person.index)) return;
 		const p = person.place;
 		let f = militia.get(person.index);
 		if (!f) {
@@ -859,7 +1082,8 @@ function advanceMilitia(elapsed) {
 				const muzzle = [f.x + Math.sin(f.heading) * 0.9 * m, f.y + 1.35 * m, f.z + Math.cos(f.heading) * 0.9 * m];
 				const aim = [t.x - muzzle[0], ty - muzzle[1], t.z - muzzle[2]], length = Math.hypot(...aim);
 				const dirs = [];
-				for (let k = 0; k < G.pellets; k++) dirs.push(aim.map((v) => v / length + (Math.random() - 0.5) * 2 * G.spread));
+				const spread = G.spread * ballistics.aimSpread();
+				for (let k = 0; k < G.pellets; k++) dirs.push(aim.map((v) => v / length + (Math.random() - 0.5) * 2 * spread));
 				for (const dir of dirs) ballistics.fire(muzzle, dir, { round: G.round, quiet: true, shooter: 'folk' });
 				hordeNet.shot?.(muzzle, dirs, G.round);
 				hordeStats.folkShots++;
@@ -919,7 +1143,8 @@ function takePower(id) {
 		for (const horde of hordes) for (const one of [...horde.deer]) killDeer(horde, one, [Math.random() - 0.5, 0, Math.random() - 0.5]);
 		hordes = [];
 		hordePoints(NUKE_POINTS);
-		for (const other of hordeNet.others()) hordeNet.points?.(other.id, NUKE_POINTS);
+		tally('me').points += NUKE_POINTS;
+		for (const other of hordeNet.others()) { hordeNet.points?.(other.id, NUKE_POINTS); tally(other.id).points += NUKE_POINTS; }
 	}
 	event({ k: 'power', kind: power.kind });
 }
@@ -943,7 +1168,7 @@ export function simulateHorde(total) {
 function advance(elapsed) {
 	const on = hordeMode() && terrain.land && hunting.hunterPlace().active;
 	if (!on || joined()) {
-		if (run.phase != 'off') { clearHordes(); run.phase = 'off'; }
+		if (run.phase != 'off') { clearHordes(); endEvac(); run.phase = 'off'; }
 		if (on) joinerFrame(elapsed);
 		show(elapsed);
 		return;
@@ -953,15 +1178,22 @@ function advance(elapsed) {
 	run.insta = Math.max(run.insta - elapsed, 0);
 	run.double = Math.max(run.double - elapsed, 0);
 
-	// the run: a break, the round, the next. All the players down: over, and again
+	// the run: a break, the round, the next. All the players down, or all the townsfolk turned: over, and again
 	const anyoneUp = hunting.hunterLife.alive || hordeNet.others().some((other) => other.alive && other.hunting);
+	const folk = townFolk.folkCount();
+	const townsLost = folk.all > 0 && folk.left == 0;
 	if (run.phase == 'over') {
 		if ((run.timer -= elapsed) <= 0) startRun();
-	} else if (!anyoneUp && run.phase == 'round') {
+	} else if (run.phase == 'results') {
+		if (run.evac) { run.evac.clock += elapsed; sailAway(run.evac, elapsed); }
+		if ((run.timer -= elapsed) <= 0) { endMode(); return; }
+	} else if ((!anyoneUp || townsLost) && run.phase == 'round') {
+		endEvac();
 		run.phase = 'over';
 		run.timer = OVER_SECONDS;
 		run.best = Math.max(run.best, run.round);
-		event({ k: 'over', round: run.round });
+		run.why = townsLost ? 'folk' : 'players';
+		event({ k: 'over', round: run.round, why: run.why });
 	} else if (run.phase == 'break') {
 		if ((run.timer -= elapsed) <= 0) beginRound();
 	} else if (run.phase == 'round') {
@@ -969,7 +1201,8 @@ function advance(elapsed) {
 			spawnPack();
 			run.spawnTimer = PACK_SECONDS;
 		}
-		if (run.toSpawn <= 0 && living() == 0) endRound();
+		if (run.evac) advanceEvac(elapsed);
+		if (run.toSpawn <= 0 && living() == 0 && !run.evac && run.phase == 'round') endRound();
 	}
 
 	hordes = hordes.filter((horde) => horde.deer.length > 0);
@@ -1024,12 +1257,18 @@ export function hordeState() {
 	const fights = [...militia.entries()].map(([index, f]) => [index, ...[f.x, f.y, f.z, f.heading, f.pitch].map((v) => Math.round(v * 100) / 100), f.drawn > 0.25 ? f.gun : 'none']);
 	return { on: true, phase: run.phase, round: run.round, timer: Math.round(run.timer * 10) / 10, left: run.toSpawn + living(), best: run.best, kills: run.kills,
 		insta: Math.round(run.insta), double: Math.round(run.double), chase: hudWord(), powers: powers.map((p) => [p.id, p.kind, Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10, Math.round(p.z * 10) / 10, Math.round(p.age)]),
-		fights, turned: townFolk.turnedList() };
+		fights, turned: townFolk.turnedList(), folk: townFolk.folkCount(), why: run.why, targets: run.targets.map(town.townName), evac: evacShown(), gone: goneList(),
+		led: run.evac ? [...run.evac.ways.keys()].map((i) => { const p = townFolk.folkPerson(i)?.led; return p && [i, ...[p.x, p.y, p.z, p.heading].map((v) => Math.round(v * 100) / 100)]; }).filter(Boolean) : [] };
 }
 // joiner: the host's word on the run
 export function hordeHeard(state) {
 	shared = state;
-	if (!state.on) { inRun = false; return; }
+	if (!state.on) {
+		inRun = false;
+		for (const index of leading.keys()) townFolk.setLed(index, null);
+		leading.clear();
+		return;
+	}
 	// (come into a run that was already going: the points and the guns as a run starts)
 	if (!inRun) { inRun = true; me.points = POINTS_START; me.owned = new Set(['revolver']); }
 	// the townsfolk's fight, as the host has it (and the ones it is over for go home)
@@ -1041,6 +1280,16 @@ export function hordeHeard(state) {
 		else Object.assign(f, { x, y, z, gun, want: [heading, pitch] });
 	}
 	townFolk.setTurned(state.turned);
+	// the townsfolk on their way to the schooner, and aboard
+	townFolk.setBoarded(state.gone ?? []);
+	const ledNow = new Set();
+	for (const [index, x, y, z, heading] of state.led ?? []) {
+		ledNow.add(index);
+		const l = leading.get(index);
+		if (l) l.want = { x, y, z, heading };
+		else leading.set(index, { at: { x, y, z, heading, stride: 0, walking: 1 }, want: { x, y, z, heading } });
+	}
+	for (const index of leading.keys()) if (!ledNow.has(index)) { leading.delete(index); townFolk.setLed(index, null); }
 }
 // joiner, each frame: the townsfolk's fight eased towards what the host said, the power-ups walked into
 function joinerFrame(elapsed) {
@@ -1048,6 +1297,14 @@ function joinerFrame(elapsed) {
 		f.heading = turnTo(f.heading, f.want[0], Math.min(elapsed * 8, 1));
 		f.pitch += (f.want[1] - f.pitch) * Math.min(elapsed * 8, 1);
 		townFolk.setFight(index, { x: f.x, y: f.y, z: f.z, heading: f.heading, pitch: f.pitch, gun: f.gun });
+	}
+	// (each one fleeing eased on to where the host last had it, its legs going as far as it went)
+	for (const [index, l] of leading) {
+		const a = l.at, k = Math.min(elapsed * 6, 1), was = [a.x, a.z];
+		a.x += (l.want.x - a.x) * k; a.y += (l.want.y - a.y) * k; a.z += (l.want.z - a.z) * k;
+		a.heading = turnTo(a.heading, l.want.heading, k);
+		a.stride += Math.hypot(a.x - was[0], a.z - was[1]) / (1.4 * metre()) * Math.PI;
+		townFolk.setLed(index, { ...a });
 	}
 	const mine = hunting.hunterPlace(), m = metre();
 	if (!hunting.hunterLife.alive || !shared?.powers) return;
@@ -1123,8 +1380,9 @@ document.body.appendChild(hud);
 let bannerTimer = 0, nukeFlash = 0, shownKey = '';
 const powerEls = new Map();		// power id -> element
 
-function announce(text, colour) {
+function announce(text, colour, under = '') {
 	bannerBox.textContent = text;
+	if (under) { const line = document.createElement('div'); line.style.cssText = 'font: 600 18px system-ui, sans-serif; letter-spacing: 0.02em; margin-top: 8px; color: #f2e6c4;'; line.textContent = under; bannerBox.appendChild(line); }
 	bannerBox.style.color = colour;
 	bannerBox.style.opacity = '1';
 	clearTimeout(bannerTimer);
@@ -1152,7 +1410,8 @@ function roundMarks(round) {
 }
 function show(elapsed) {
 	const s = joined() ? shared : hordeMode() && run.phase != 'off' ? { on: true, phase: run.phase, round: run.round, timer: run.timer, left: run.toSpawn + living(), best: run.best, kills: run.kills,
-		insta: run.insta, double: run.double, chase: hudWord(), powers: powers.map((p) => [p.id, p.kind, p.x, p.y, p.z, p.age]) } : null;
+		insta: run.insta, double: run.double, chase: hudWord(), powers: powers.map((p) => [p.id, p.kind, p.x, p.y, p.z, p.age]), folk: townFolk.folkCount(), why: run.why,
+		targets: run.targets.map(town.townName), evac: evacShown() } : null;
 	const on = !!(s && s.on && hordeMode() && hunting.hunterPlace().active);
 	hud.style.display = on ? '' : 'none';
 	nukeFlash = Math.max(nukeFlash - elapsed * 1.2, 0);
@@ -1165,7 +1424,12 @@ function show(elapsed) {
 	let top = '';
 	if (s.phase == 'break') top = `<div style="font-size: 15px; font-weight: 600;">Round ${s.round + 1} in ${Math.max(Math.ceil(s.timer), 0)} s · ${roundSize(s.round + 1)} deer</div>`;
 	else if (s.phase == 'round') top = `<div style="font-size: 15px; font-weight: 600;">${s.left} left</div>${word ? `<div style="font-size: 12px;">${word}</div>` : ''}`;
-	else if (s.phase == 'over') top = `<div style="font-size: 15px; font-weight: 600; color: #ff6a4d;">You survived ${Math.max(s.round - 1, 0)} round${s.round == 2 ? '' : 's'} · ${s.kills} deer down</div><div style="font-size: 12px; color: rgba(232, 232, 232, 0.7);">Best: round ${s.best} · again in ${Math.max(Math.ceil(s.timer), 0)} s</div>`;
+	else if (s.phase == 'over') top = `<div style="font-size: 15px; font-weight: 600; color: #ff6a4d;">${s.why == 'folk' ? 'The townsfolk have all turned · ' : ''}You survived ${Math.max(s.round - 1, 0)} round${s.round == 2 ? '' : 's'} · ${s.kills} deer down</div><div style="font-size: 12px; color: rgba(232, 232, 232, 0.7);">Best: round ${s.best} · again in ${Math.max(Math.ceil(s.timer), 0)} s</div>`;
+	// the town it is coming for, or the evacuation
+	if (s.evac) top += `<div style="font-size: 13px; color: #9fd8ff;">${s.evac.phase == 'walking' ? `To the schooner at ${s.evac.town}: ${s.evac.saved} aboard · ${s.evac.walking} on their way · ${Math.max(s.evac.left, 0)} s` : `She sails with ${s.evac.saved} aboard`}</div>`;
+	else if (s.targets?.length && s.phase == 'round') top += `<div style="font-size: 12px; color: #ffb38a;">Coming for ${nameList(s.targets)}</div>`;
+	// how many of the townsfolk are left (the run is lost with the last of them)
+	if (s.folk?.all > 0 && s.phase != 'over') top += `<div style="font-size: 12px; color: ${s.folk.left <= Math.max(3, s.folk.all * 0.15) ? '#ff6a4d' : 'rgba(232, 232, 232, 0.75)'};">${s.folk.left} of ${s.folk.all} townsfolk left</div>`;
 	if (effects) top += `<div style="font-size: 12px; margin-top: 2px;">${effects}</div>`;
 	const key = [top, s.round, me.points].join('|');
 	if (key != shownKey) {
@@ -1177,6 +1441,28 @@ function show(elapsed) {
 	}
 	showPowers(s.powers ?? []);
 }
+// THE RESULTS (see the top): each player's deer, super deer and points, the townsfolk saved, and the score
+const resultsBox = document.createElement('div');
+resultsBox.style.cssText = 'position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 7; pointer-events: none; display: none; width: min(460px, calc(100vw - 32px)); box-sizing: border-box; padding: 18px 22px; border-radius: 10px; background: rgba(12, 10, 8, 0.88); color: #f2e6c4; font-family: system-ui, sans-serif; box-shadow: 0 6px 30px rgba(0, 0, 0, 0.6);';
+document.body.appendChild(resultsBox);
+let resultsTimer = 0;
+function showResults(e) {
+	const esc = (text) => String(text).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+	const share = e.spawned ? Math.round(e.saved / e.spawned * 100) : 0;
+	const cell = 'padding: 3px 0 3px 12px; text-align: right;';
+	resultsBox.innerHTML = '<div style="font: 700 30px Georgia, serif; text-align: center;">THE EVACUATION</div>'
+		+ `<div style="text-align: center; font-size: 13px; color: rgba(242, 230, 196, 0.75); margin: 4px 0 12px;">The schooner got away from ${esc(e.town)}</div>`
+		+ `<table style="width: 100%; border-collapse: collapse; font-size: 14px;"><tr style="font-size: 12px; color: rgba(242, 230, 196, 0.7);"><th style="text-align: left;">Player</th><th style="${cell}">Deer</th><th style="${cell}">Super deer</th><th style="${cell}">Points</th></tr>`
+		+ e.rows.map((r) => `<tr><td style="padding: 3px 0;">${esc(r.name)}</td><td style="${cell}">${r.deer}</td><td style="${cell}">${r.supers}</td><td style="${cell}">${r.points}</td></tr>`).join('')
+		+ '</table><div style="margin-top: 12px; border-top: 1px solid rgba(242, 230, 196, 0.2); padding-top: 10px; font-size: 14px; display: grid; grid-template-columns: 1fr auto; row-gap: 4px;">'
+		+ `<span>Townsfolk saved</span><span>${e.saved} of ${e.spawned} (${share}%)</span><span>The party's points</span><span>${e.party}</span>`
+		+ `<span>For the townsfolk saved (${share}% more)</span><span>+${e.bonus}</span>`
+		+ `<span style="font-weight: 700; font-size: 18px; color: #ffd24a;">Final score</span><span style="font-weight: 700; font-size: 18px; color: #ffd24a;">${e.final}</span></div>`;
+	resultsBox.style.display = '';
+	clearTimeout(resultsTimer);
+	resultsTimer = setTimeout(() => { resultsBox.style.display = 'none'; }, (RESULTS_SECONDS + 6) * 1000);
+}
+
 // the power-ups where they lie: a green glow on the ground (pointLights.js) and their name over it, blinking as they run out
 function showPowers(list) {
 	const seen = new Set(), viewProj = transformations.getViewProj(), m = metre();
@@ -1210,9 +1496,20 @@ export function hordeList() {
 }
 export function hordeRun() { return { ...run, points: me.points, owned: [...me.owned] }; }
 export function hordeFollowed() { return followed; }
+// every deer of the horde within reach of (x, z) world units: each(x, y, z, in a frenzy) (sound.js: their growls)
+export function hordeNear(x, z, reach, each) {
+	if (followed) { for (const one of followed) if (one.alive && Math.abs(one.x - x) < reach && Math.abs(one.z - z) < reach) each(one.x, one.y, one.z, one.frenzy, one.size); return; }
+	for (const horde of hordes) for (const one of horde.deer) if (Math.abs(one.x - x) < reach && Math.abs(one.z - z) < reach) each(one.x, one.y, one.z, !!one.frenzy, one.size);
+}
 export function hordePowers() { return powers.map((p) => ({ ...p })); }
 export function hordeShared() { return shared; }
 export function skipBreak() { if (run.phase == 'break') run.timer = 0; }
+// for testing: the next round to be this one, the evacuation as it is, and the results last shown
+export function nextRoundForTest(round) { if (run.phase == 'break' || run.phase == 'round') { clearHordes(); run.round = round - 1; run.phase = 'break'; run.timer = 0; } }
+export function evacForTest() { const E = run.evac; return E && { ...evacShown(), lost: E.lost, boat: E.boat?.id, ways: [...E.ways.values()].map((w) => ({ length: Math.round(w.length / metre()), pace: Math.round(w.pace / metre() * 10) / 10, s: Math.round(w.s / metre()) })) }; }
+export function resultsShown() { return resultsBox.style.display == 'none' ? null : resultsBox.innerText; }
+export function tallyForTest() { return Object.fromEntries(run.tally); }
+export function hordeIdsForTest() { return hordes.flatMap((x) => x.deer.map((one) => one.id)); }
 // for testing: a power-up at (x, z), and points
 export function dropPower(kind, x, z) { powers.push({ id: nextPower++, kind, x, y: terrain.land.heightAt(x, z), z, age: 0 }); }
 export function givePointsForTest(points) { me.points += points; }

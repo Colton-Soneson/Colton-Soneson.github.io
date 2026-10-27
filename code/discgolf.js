@@ -42,9 +42,12 @@ import {uniformBufferLights} from './rotatingCube.js'
 
 	THE COURSE (off unless settings.discGolfEnabled; the Disc Golf folder under Game Modes): settings.discGolfHoles holes, laid out on
 	the land from settings.discGolfSeed (New Course moves it on), each a tee pad and a basket in the hole's own colour, the next tee a
-	little way on from the last basket. A hole is no shorter than SHORTEST and no longer than LONGEST_THROWS of the fairway driver's
-	longest throw (its flight, on flat ground at full power: flight.flatThrow), over dry land, its basket on level ground. Its par
-	from its length. The seed and the number are the world's (net.js), and the land is the same, so everyone in a game has the
+	short walk on from the last basket (TEE_WALK), the way the next hole goes. The holes go round in a ring, so the last basket comes
+	back by the first tee: each hole along a chord of a circle round the course's middle, its arc its share of the way round, turned
+	off it by up to RING_SLACK where the ground needs it. Where no ring fits on the land (water, mountains, the edge of the world) they
+	go on in a line instead, then any way they can, but always each tee by the last basket. A hole is no shorter than SHORTEST and no
+	longer than LONGEST_THROWS of the fairway driver's longest throw (its flight, on flat ground at full power: flight.flatThrow), over
+	dry land, its basket on level ground. Its par from its length. The seed and the number are the world's (net.js), and the land is the same, so everyone in a game has the
 	same course. A marker over each tee and each basket says which hole it is (MARKER_REACH), the hole being played with how far it is.
 	A hole is played from its tee: a disc thrown from within TEE_REACH of a tee begins that hole, every throw after counts, and a disc
 	in its basket ends it (its score: throws against par).
@@ -73,6 +76,12 @@ const CATCH_SPEED = 14;				// metres a second
 const BASKET = { radius: 0.32, trayBottom: 0.62, trayTop: 0.86, chainTop: 1.36, poleTop: 1.45 };
 const SHORTEST = 55;				// metres, a hole
 const LONGEST_THROWS = 2.5;			// of the fairway driver's longest throw
+const TEE_WALK = [10, 13, 7, 16];	// metres from a basket to the next tee, the first tried first
+const RING_TRIES = 12;				// starting places tried for the ring, and for the line
+const RING_SHRINK = [1, 0.8, 0.65];	// the ring tried at its holes' lengths, then shorter
+const RING_SLACK = 0.7;				// radians a hole can be turned off the ring (off the line: LINE_SLACK) to find ground for it
+const LINE_SLACK = 1.05, LINE_BEND = 0.35;	// (and how far each hole of a line bends off the way the course goes)
+const HOLE_TURN_STEP = 0.14;
 const MARKER_REACH = 900;			// metres
 const GLOW_REACH = 400;				// metres
 const NAME_REACH = 150;
@@ -98,6 +107,7 @@ export function onThrow(fn) { listeners.throw.push(fn); }
 export function onRest(fn) { listeners.rest.push(fn); }
 export function onGone(fn) { listeners.gone.push(fn); }
 export function onScore(fn) { listeners.score.push(fn); }
+export const courseStats = { shape: null };	// how the course was laid out: 'ring', 'line' or 'any' (see THE COURSE at the top)
 export const discStats = { thrown: 0, landed: 0, caught: 0, bounced: 0, holes: 0, lastFlight: null };
 
 const holdingDisc = () => KINDS.find((kind) => weapons.holding(kind)) ?? null;
@@ -351,51 +361,111 @@ function layCourse() {
 	const level = (x, z, most) => { const h = land.heightAt(x, z), step = 2 * m; return Math.abs(land.heightAt(x + step, z) - h) < most * step && Math.abs(land.heightAt(x, z + step) - h) < most * step; };
 	const half = settings.terrainWorldSize * 0.5 - 100 * m;
 	const inside = (x, z) => Math.abs(x) < half && Math.abs(z) < half;
-	const used = [];
-	const clear = (x, z) => used.every(([ux, uz]) => Math.hypot(ux - x, uz - z) > 25 * m);
+	const along = (x, z, angle, d) => [x + Math.sin(angle) * d * m, z - Math.cos(angle) * d * m];
 	// the first tee: somewhere on the open grassland
 	const starts = land.findSpawnPoints(terrain.ZONE_GRASSLAND, 60, { seed: Math.round(settings.discGolfSeed) * 31 + 5, minSpacing: 200, maxSlope: 0.15 }).filter((s) => dry(s.x, s.z) && level(s.x, s.z, 0.2));
 	if (!starts.length) return;
-	let tee = starts[Math.floor(rand() * starts.length)];
-	for (let k = 0; k < count; k++) {
-		let made = null;
-		for (let attempt = 0; attempt < 80 && !made; attempt++) {
-			const angle = rand() * Math.PI * 2;
-			const length = SHORTEST + Math.pow(rand(), 1.4) * (longest - SHORTEST);
-			const bx = tee.x + Math.sin(angle) * length * m, bz = tee.z - Math.cos(angle) * length * m;
-			if (!inside(bx, bz) || !dry(bx, bz) || !level(bx, bz, 0.25) || !clear(bx, bz)) continue;
-			// over dry land most of the way, and not over a mountain
-			let wet = 0, rise = 0;
-			for (let t = 0.1; t < 1; t += 0.1) {
-				const x = tee.x + (bx - tee.x) * t, z = tee.z + (bz - tee.z) * t;
-				if (!dry(x, z)) wet++;
-				rise = Math.max(rise, Math.abs(land.heightAt(x, z) - land.heightAt(tee.x, tee.z)) / m);
+	// each hole's length, and its share of the ring (see THE COURSE at the top)
+	const lengths = Array.from({ length: count }, () => SHORTEST + Math.pow(rand(), 1.4) * (longest - SHORTEST));
+
+	// a hole from a tee: its basket on dry level ground, clear of the rest of the course, over dry land most of the way and not over a
+	//		mountain. laid: the holes so far
+	const far = (x, z, laid, gap, except = null) => laid.every((h) => [h.tee, h.basket].every((p) => p === except || Math.hypot(p.x - x, p.z - z) > gap * m));
+	const holeFrom = (tee, angle, length, laid) => {
+		const [bx, bz] = along(tee.x, tee.z, angle, length);
+		if (!inside(bx, bz) || !dry(bx, bz) || !level(bx, bz, 0.25) || !far(bx, bz, laid, 25)) return null;
+		let wet = 0, rise = 0;
+		for (let t = 0.1; t < 1; t += 0.1) {
+			const x = tee.x + (bx - tee.x) * t, z = tee.z + (bz - tee.z) * t;
+			if (!dry(x, z)) wet++;
+			rise = Math.max(rise, Math.abs(land.heightAt(x, z) - land.heightAt(tee.x, tee.z)) / m);
+		}
+		if (wet > 1 || rise > 35) return null;
+		return { x: bx, z: bz };
+	};
+	// the next tee: a short walk on from the last basket (TEE_WALK), the way the next hole goes
+	const teeAfter = (basket, angle, laid) => {
+		for (const turn of [0, 0.5, -0.5, 1, -1, 1.6, -1.6, 2.4, -2.4, Math.PI]) {
+			for (const d of TEE_WALK) {
+				const [x, z] = along(basket.x, basket.z, angle + turn, d);
+				if (inside(x, z) && dry(x, z) && level(x, z, 0.2) && far(x, z, laid, 20, basket)) return { x, z };
 			}
-			if (wet > 1 || rise > 35) continue;
-			made = { bx, bz, angle, length };
 		}
-		if (!made) {
-			// nowhere from this tee: another tee, somewhere else on the grassland
-			tee = starts[Math.floor(rand() * starts.length)];
-			continue;
+		return null;
+	};
+	// the course walked hole by hole, each from the tee by the last basket: plan(k, tee) the way hole k is meant to go from that tee and
+	//		how long it is, turned off that by up to most (radians) to find ground for it, and made a little shorter or longer. The holes
+	//		laid, as far as it got
+	const walk = (start, plan, most) => {
+		const laid = [];
+		let tee = { x: start.x, z: start.z };
+		for (let k = 0; k < count; k++) {
+			const [heading, wanted] = plan(k, tee);
+			let made = null;
+			for (let turn = 0; turn <= most + 1e-6 && !made; turn += HOLE_TURN_STEP) {
+				for (const side of turn ? [1, -1] : [1]) {
+					for (const stretch of [1, 0.85, 1.15, 0.7]) {
+						const angle = heading + side * turn, length = clamp(wanted * stretch, SHORTEST, longest);
+						const basket = holeFrom(tee, angle, length, laid);
+						if (basket) { made = { tee, basket, angle, length }; break; }
+					}
+					if (made) break;
+				}
+			}
+			if (!made) break;
+			laid.push(made);
+			if (k == count - 1) break;
+			const next = teeAfter(made.basket, plan(k + 1, made.basket)[0], laid);
+			if (!next) break;
+			tee = next;
 		}
-		const number = holes.length + 1;
+		return laid;
+	};
+	const bearing = (from, x, z) => Math.atan2(x - from.x, -(z - from.z));
+	// THE RING: a circle as long round as the holes and the walks between them, through the first tee. Each hole's basket is meant
+	//		for its place on it (each hole's arc its share of the way round), and each hole is aimed at that from wherever its tee
+	//		came to be, so a hole turned off the ring is brought back by the next, and the last basket comes back by the first tee.
+	//		Tried from a few of the starting places, either way round; the one that lays the most holes is kept. A ring too big for the
+	//		land is tried again smaller, its holes shorter (RING_SHRINK). Then in a line (each hole about the way the last went), then
+	//		any way at all from each tee
+	let best = [];
+	const keep = (laid, shape) => { laid.shape = shape; if (laid.length > best.length) best = laid; };
+	for (const shrink of count >= 3 ? RING_SHRINK : []) {
+		const sized = lengths.map((l) => Math.max(l * shrink, SHORTEST));
+		const total = sized.reduce((sum, l) => sum + l, 0) + TEE_WALK[0] * count;
+		const radius = total / (Math.PI * 2) * m;
+		for (let attempt = 0; attempt < RING_TRIES && best.length < count; attempt++) {
+			const start = starts[Math.floor(rand() * starts.length)], out = rand() * Math.PI * 2, way = rand() < 0.5 ? 1 : -1;
+			const middle = { x: start.x - Math.sin(out) * radius, z: start.z + Math.cos(out) * radius };
+			const aims = [];
+			let so = 0;
+			for (let k = 0; k < count; k++) {
+				so += (sized[k] + TEE_WALK[0]) / total * Math.PI * 2;
+				const a = out + way * (so - TEE_WALK[0] / total * Math.PI * 2);
+				aims.push({ x: middle.x + Math.sin(a) * radius, z: middle.z - Math.cos(a) * radius });
+			}
+			keep(walk(start, (k, tee) => [bearing(tee, aims[k].x, aims[k].z), Math.hypot(aims[k].x - tee.x, aims[k].z - tee.z) / m], RING_SLACK), 'ring');
+		}
+	}
+	for (let attempt = 0; attempt < RING_TRIES && best.length < count; attempt++) {
+		const start = starts[Math.floor(rand() * starts.length)], first = rand() * Math.PI * 2;
+		const bends = lengths.map(() => (rand() * 2 - 1) * LINE_BEND);
+		keep(walk(start, (k) => [first + bends[k], lengths[k]], LINE_SLACK), 'line');
+	}
+	for (let attempt = 0; attempt < 6 && best.length < count; attempt++) {
+		const start = starts[Math.floor(rand() * starts.length)], first = rand() * Math.PI * 2;
+		keep(walk(start, (k) => [first, lengths[k]], Math.PI), 'any');
+	}
+	best.forEach((made, k) => {
+		const number = k + 1;
 		holes.push({
 			number, colour: hueColour((number - 1) / Math.max(count, 1) * 0.92),
-			tee: { x: tee.x, z: tee.z, y: land.groundAt(tee.x, tee.z), heading: made.angle },
-			basket: { x: made.bx, z: made.bz, y: land.groundAt(made.bx, made.bz) },
+			tee: { x: made.tee.x, z: made.tee.z, y: land.groundAt(made.tee.x, made.tee.z), heading: made.angle },
+			basket: { x: made.basket.x, z: made.basket.z, y: land.groundAt(made.basket.x, made.basket.z) },
 			length: made.length, par: made.length < 100 ? 3 : made.length < 170 ? 4 : 5,
 		});
-		used.push([tee.x, tee.z], [made.bx, made.bz]);
-		// the next tee: a little way on from this basket
-		let next = null;
-		for (let attempt = 0; attempt < 30 && !next; attempt++) {
-			const a = rand() * Math.PI * 2, d = (15 + rand() * 20) * m;
-			const x = made.bx + Math.sin(a) * d, z = made.bz - Math.cos(a) * d;
-			if (inside(x, z) && dry(x, z) && level(x, z, 0.2) && clear(x, z)) next = { x, z };
-		}
-		tee = next ?? starts[Math.floor(rand() * starts.length)];
-	}
+	});
+	courseStats.shape = best.shape;
 	makeMarkers();
 }
 

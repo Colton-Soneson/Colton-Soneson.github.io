@@ -25,8 +25,12 @@
 		marsh		the wet ground round a lake. The sea has beaches, a lake has marsh
 		town		a seaside town (townLayout.js): on the shore where the mountains come down near the sea, its own hill rising from a
 					quay in terraces, with its streets cut into it
+	Laid on top of the zones, not one of them: the landing strip (see THE LANDING STRIP), and the footpaths (footpaths.js). The land
+	under them is made as it would be, then laid flat for the strip, with banks no steeper than STRIP.bank where it is cut into the
+	land or built up over it, and level across each path.
 */
 import { findTownSites, planTownGround, layoutTowns, makeRoadFlattener } from './townLayout.js'
+import { planFootpaths, makePathFlattener, PATHS } from './footpaths.js'
 
 // index = the tag stored for every grid point. name and color are what the rest of the engine reads
 export const TERRAIN_ZONES = [
@@ -49,6 +53,17 @@ export const ZONE_SNOW = 5;
 export const ZONE_LAKE = 6;
 export const ZONE_MARSH = 7;
 export const ZONE_TOWN = 8;
+
+// The landing strip (world units, 2 to the metre): how long and how wide its packed earth is, how far out either side of the middle
+//		the ground is laid flat (flat: so its edges are on the flat), how far out from that its short turf fades into the land (edge),
+//		how far out past that the ground is kept level before its banks start (shoulder: past a cell of the data grid, so that is level
+//		all over the flat too), how steep its banks may be where it is cut into the land or built up over it (bank, rise over run), how
+//		much they are rounded
+//		where they meet the land (round), how far out the trees are kept off it (clear), how far from the town it can be (reach), how
+//		much it may climb end to end, how much it may be cut in or built up at the most (cut), how far out its banks may run before they
+//		meet the land (banks) and how far one that has not met it by then fades out over (fade: see THE EARTHWORKS in planStrip), and
+//		how far past each end the trees are kept off its approach
+export const STRIP = { length: 480, width: 44, flat: 30, edge: 12, shoulder: 12, bank: 1 / 3, round: 10, clear: 35, reach: [520, 2400], grade: 0.025, cut: 40, banks: 160, fade: 200, approach: 420 };
 
 // where in a mountain range (0 at its edge to 1 at its heart) the forest starts and where bare mountain takes over
 export const FOREST_THRESHOLD = 0.16;
@@ -643,6 +658,46 @@ function bedFall(params, out) {
 	return Math.max(params.seaBedGrade ?? 0, 0) * out * out / (out + 60);
 }
 
+// The landing strip (see THE LANDING STRIP in generateTerrain): where a world position is along it (u) and across it (v)
+function stripPlace(s, x, z) {
+	const dx = x - s.x, dz = z - s.z;
+	return [dx * s.ax + dz * s.az, -dx * s.az + dz * s.ax];
+}
+// how far (u, v) on it is off its flat
+const stripOut = (s, u, v) => Math.hypot(Math.max(Math.abs(u) - s.half, 0), Math.max(Math.abs(v) - s.flat, 0));
+// how much the ground at (x, z) is the strip's: 1 on its flat, out to 0 over its edge (its turf; plane.js: a plane on it)
+export function stripWeight(s, x, z) {
+	const [u, v] = stripPlace(s, x, z);
+	const out = stripOut(s, u, v);
+	return out >= s.edge ? 0 : 1 - smoothstep(0, s.edge, out);
+}
+// the ground at (x, z) with the strip laid on the land there (natural: how high the land is, over the sea). On the flat, the strip's
+//		level. Off it, the land, moved up or down as much as its earthworks moved it there (s.work, see THE EARTHWORKS in planStrip)
+export function stripGround(s, x, z, natural) {
+	const [u, v] = stripPlace(s, x, z);
+	const out = stripOut(s, u, v);
+	if (out >= s.reach) return natural;
+	if (out <= 0) return s.h0 + s.grade * Math.min(Math.max(u, -s.half), s.half);
+	const W = s.work, d = W.offset;
+	const gu = Math.min(Math.max((u - W.u0) / W.step, 0), W.nu - 1.0001), gv = Math.min(Math.max((v - W.v0) / W.step, 0), W.nv - 1.0001);
+	const i = Math.floor(gu), j = Math.floor(gv), fu = gu - i, fv = gv - j, k = j * W.nu + i;
+	const near = d[k] + (d[k + 1] - d[k]) * fu, far = d[k + W.nu] + (d[k + W.nu + 1] - d[k + W.nu]) * fu;
+	return natural + near + (far - near) * fv;
+}
+// the land (natural) held to within a bank of the strip's level, out from its flat (level over its shoulder, then rising or falling
+//		away): the nearer of the land and the bank, rounded (a smooth minimum, never below nothing, so it never comes out the far side)
+function bankOf(natural, level, out) {
+	const room = STRIP.bank * Math.max(out - STRIP.shoulder, 0), off = Math.abs(natural - level);
+	return level + Math.sign(natural - level) * -smoothMax(-off, -room, Math.min(STRIP.round, room));
+}
+// 1 where no tree or boulder may be: on it, and on the ways in over each end (widening out from it)
+function stripClear(s, x, z) {
+	const [u, v] = stripPlace(s, x, z);
+	const past = Math.max(Math.abs(u) - s.half, 0);
+	if (past > s.approach) return 0;
+	return Math.abs(v) < s.flat + STRIP.clear + past * 0.35 ? 1 : 0;
+}
+
 //-------------------------------THE MESH-------------------------------
 /*
 	What makes the mesh of the land, apart from the rest of it: the grids it reads are passed in (chunkGrids, from generateTerrain),
@@ -656,6 +711,7 @@ export function makeChunkBuilder(params, grids, sampler = createTerrainSampler(p
 	const { ridges, marshes, footings, beyondDrop } = grids;		// (and the towns' grids, read as they are when wanted: generateTerrain fills them in after making this)
 	// the streets of the towns, cut into the land (made when they are first wanted: they are laid out after the builder is made)
 	let roads = null, roadsFrom = null;
+	let paths = null, pathsFrom = null;		// (and the footpaths, the same way)
 	const cells = params.dataResolution ?? 1024;
 	const points = cells + 1;
 	const cellSize = params.worldSize / cells;
@@ -702,6 +758,17 @@ export function makeChunkBuilder(params, grids, sampler = createTerrainSampler(p
 			}
 			if (grids.townRoads !== roadsFrom) { roadsFrom = grids.townRoads; roads = makeRoadFlattener(roadsFrom); }
 			if (roads && town > 0) height = roads.flatten(x, z, height + params.seaLevel) - params.seaLevel;
+		}
+		// the landing strip: laid on the land, flat at its grade, with banks down or up to the land round it. Its ground is short turf
+		if (grids.strip) {
+			height = stripGround(grids.strip, x, z, height);
+			const k = stripWeight(grids.strip, x, z);
+			if (k > 0) landAtCover += (0.02 - landAtCover) * k;
+		}
+		// the footpaths: pressed into it, level across each (see footpaths.js)
+		if (grids.paths) {
+			if (grids.paths !== pathsFrom) { pathsFrom = grids.paths; paths = makePathFlattener(pathsFrom); }
+			height = paths.flatten(x, z, height);
 		}
 		return height;
 	}
@@ -1004,6 +1071,177 @@ export function generateTerrain(params) {
 	}
 	const roadAt = makeRoadFlattener(town.segments).nearest;
 
+	/*
+		THE LANDING STRIP (params.landingStrip): one, by the first town (by the middle of the world without one), for the biplane
+		(plane.js). The best stretch of open ground STRIP.reach from the town is found: every heading round every place on rings out
+		from it, sampled along and across, kept to the grassland and the woods, out of the town and the water, the straight line through
+		its heights fitted, and the one with the least to cut and fill (and the least climb end to end, and the nearest, and the least
+		ground under its banks) wins. Its banks are followed out from all round the flat until they meet the land (where the land is
+		within STRIP.bank of the strip's level). A site whose banks would run out further than STRIP.banks, or into a town, or off the
+		world, counts for far less (it is still had, if there is nothing better). Then THE EARTHWORKS (below) are worked out for it,
+		the land is laid flat along that line with them (stripGround in makeChunkBuilder), and the grid worked out again over it. The
+		zones are left as they were
+	*/
+	const strip = params.landingStrip ? planStrip() : null;
+	function planStrip() {
+		const site = townSites[0] ?? { x: 0, z: 0 };
+		const hAt = (x, z) => gridValue(aboveSea, x, z);
+		const zoneHere = (x, z) => { const gx = Math.round((x + half) / cellSize), gz = Math.round((z + half) / cellSize); return gx < 0 || gz < 0 || gx > cells || gz > cells ? ZONE_OCEAN : zones[gz * points + gx]; };
+		const dryEnough = params.beachHeight + params.bankHeight + 2;
+		const half2 = STRIP.length / 2 + 20;
+		let best = null;
+		for (let r = STRIP.reach[0]; r <= STRIP.reach[1]; r += 140) {
+			for (let a = 0; a < 32; a++) {
+				const around = a / 32 * Math.PI * 2, cx = site.x + Math.sin(around) * r, cz = site.z + Math.cos(around) * r;
+				if (Math.abs(cx) > half - 800 || Math.abs(cz) > half - 800) continue;
+				for (let h = 0; h < 16; h++) {
+					const ax = Math.cos(h / 16 * Math.PI), az = Math.sin(h / 16 * Math.PI);
+					let ok = true, su = 0, sh = 0, suu = 0, suh = 0, n = 0, woods = 0;
+					const samples = [];
+					for (let i = 0; i <= 12 && ok; i++) {
+						const u = (i / 12 * 2 - 1) * half2;
+						for (const v of [-STRIP.flat, 0, STRIP.flat]) {
+							const x = cx + ax * u - az * v, z = cz + az * u + ax * v;
+							const zone = zoneHere(x, z), height = hAt(x, z);
+							if ((zone != ZONE_GRASSLAND && zone != ZONE_FOREST) || height < dryEnough || townAt(x, z) > 0.02) { ok = false; break; }
+							if (zone == ZONE_FOREST) woods++;
+							samples.push([u, height]);
+							if (v == 0) { su += u; sh += height; suu += u * u; suh += u * height; n++; }
+						}
+					}
+					if (!ok) continue;
+					const grade = (suh - su * sh / n) / (suu - su * su / n), middle = sh / n - grade * su / n;
+					const kept = Math.max(Math.min(grade, STRIP.grade), -STRIP.grade);
+					let cut = 0;
+					for (const [u, height] of samples) cut = Math.max(cut, Math.abs(height - (middle + kept * u)));
+					if (cut >= STRIP.cut) continue;
+					// the banks: out from the flat's edge, along each side and off each end, to where each meets the land
+					const halfLength = STRIP.length / 2;
+					const starts = [];
+					for (let i = 0; i <= 12; i++) for (const side of [-1, 1]) starts.push([(i / 12 * 2 - 1) * halfLength, side * STRIP.flat, 0, side]);
+					for (const end of [-1, 1]) for (const v of [-STRIP.flat, 0, STRIP.flat]) starts.push([end * halfLength, v, end, 0]);
+					// (and out from each corner, between the two)
+					for (const end of [-1, 1]) for (const side of [-1, 1]) for (const a of [0.35, 0.79, 1.22]) starts.push([end * halfLength, side * STRIP.flat, end * Math.cos(a), side * Math.sin(a)]);
+					let meets = true, banks = 0;
+					for (const [u0, v0, du, dv] of starts) {
+						const level = middle + kept * u0;
+						let met = Infinity;
+						for (let out = 8; out <= STRIP.banks && met == Infinity; out += 8) {
+							const u = u0 + du * out, v = v0 + dv * out, x = cx + ax * u - az * v, z = cz + az * u + ax * v;
+							if (Math.abs(x) > half - 50 || Math.abs(z) > half - 50 || townAt(x, z) > 0.02) break;
+							if (Math.abs(hAt(x, z) - level) <= STRIP.bank * out - STRIP.round) met = out;
+						}
+						if (met == Infinity) { meets = false; met = STRIP.banks; }
+						banks = Math.max(banks, met);
+					}
+
+					// the ways in and out over each end: the ground no higher than a gentle climb from the end of the strip
+					let climb = 0;
+					for (const end of [-1, 1]) for (let out = 60; out <= STRIP.approach * 1.5; out += 60) {
+						const x = cx + ax * end * (half2 + out), z = cz + az * end * (half2 + out);
+						climb = Math.max(climb, (hAt(x, z) - (middle + kept * end * half2)) / out);
+					}
+					const score = cut + 300 * Math.abs(grade - kept) + 100 * Math.abs(kept) + woods * 0.6 + r / 300 + 600 * Math.max(climb - 0.02, 0);
+					const scored = score + banks / 20 + (meets ? 0 : 1000);
+					if (climb < 0.06 && (!best || scored < best.score)) best = { score: scored, x: cx, z: cz, ax, az, h0: middle, grade: kept };
+				}
+			}
+		}
+		if (!best) return null;
+		// THE EARTHWORKS, on a grid along and across it (work): what laying it on the land does to the land round it. Each point's
+		//		bank (bankOf) is followed out from the flat, point to point, for as long as it changes the land: so where a bank meets the
+		//		land it ends, and a hill further on is left alone. What it changes is kept, as how far it moves the land up or down. A bank
+		//		that has not met the land by STRIP.banks fades out over STRIP.fade, and all of it is blurred a little, to round it off
+		const halfLength = STRIP.length / 2, step = 4, most = STRIP.banks + STRIP.fade;
+		const s = { x: best.x, z: best.z, ax: best.ax, az: best.az, half: halfLength, flat: STRIP.flat };
+		const u0 = -halfLength - most, v0 = -STRIP.flat - most;
+		const nu = Math.ceil(2 * (halfLength + most) / step) + 1, nv = Math.ceil(2 * (STRIP.flat + most) / step) + 1;
+		// (the land is only looked at where the flood comes to: the flat, its shoulder, the banks and the points just past them)
+		let offset = new Float32Array(nu * nv).fill(NaN);
+		const outs = new Float32Array(nu * nv), worked = new Uint8Array(nu * nv), queue = [];
+		const offsetAt = (k) => {
+			if (Number.isNaN(offset[k])) {
+				const i = k % nu, j = (k - i) / nu, u = u0 + i * step, v = v0 + j * step;
+				const natural = landAt(best.x + best.ax * u - best.az * v, best.z + best.az * u + best.ax * v);
+				offset[k] = bankOf(natural, best.h0 + best.grade * Math.min(Math.max(u, -halfLength), halfLength), outs[k]) - natural;
+			}
+			return offset[k];
+		};
+		for (let j = 0; j < nv; j++) {
+			for (let i = 0; i < nu; i++) {
+				const k = j * nu + i;
+				outs[k] = stripOut(s, u0 + i * step, v0 + j * step);
+				if (outs[k] <= STRIP.shoulder) { worked[k] = 1; queue.push(k); offsetAt(k); }
+			}
+		}
+		while (queue.length) {
+			const k = queue.pop(), i = k % nu, j = (k - i) / nu;
+			for (const [a, b] of [[i + 1, j], [i - 1, j], [i, j + 1], [i, j - 1]]) {
+				const n = b * nu + a;
+				if (a < 0 || b < 0 || a >= nu || b >= nv || worked[n] || Math.abs(offsetAt(n)) < 0.25) continue;
+				worked[n] = 1;
+				queue.push(n);
+			}
+		}
+		for (let k = 0; k < nu * nv; k++) offset[k] = worked[k] ? offset[k] * (1 - smoothstep(STRIP.banks, most, outs[k])) : 0;
+		const flat = Float32Array.from(offset);
+		// (blurred: along, then across, twice over)
+		for (let repeat = 0; repeat < 2; repeat++) {
+			for (const [n, m, stride, across] of [[nu, nv, 1, nu], [nv, nu, nu, 1]]) {
+				const next = new Float32Array(nu * nv);
+				for (let line = 0; line < m; line++) {
+		for (let p = 0; p < n; p++) {
+			let sum = 0, count = 0;
+			for (let q = Math.max(p - 2, 0); q <= Math.min(p + 2, n - 1); q++) { sum += offset[line * across + q * stride]; count++; }
+			next[line * across + p * stride] = sum / count;
+		}
+				}
+				offset = next;
+			}
+		}
+		// (the flat and its shoulder kept level, as they were before the blur)
+		for (let k = 0; k < nu * nv; k++) if (outs[k] <= STRIP.shoulder) offset[k] = flat[k];
+		let reach = 0;
+		for (let k = 0; k < nu * nv; k++) if (Math.abs(offset[k]) > 0.01) reach = Math.max(reach, outs[k]);
+		return { x: best.x, z: best.z, ax: best.ax, az: best.az, half: halfLength, width: STRIP.width, flat: STRIP.flat, edge: STRIP.edge,
+			work: { u0, v0, step, nu, nv, offset }, reach: reach + 2 * step, h0: best.h0, grade: best.grade, approach: STRIP.approach };
+	}
+	if (strip) {
+		chunkGrids.strip = strip;
+		const reach = strip.half + strip.flat + strip.reach + cellSize;
+		const c0 = Math.max(Math.floor((strip.x - reach + half) / cellSize), 0), c1 = Math.min(Math.ceil((strip.x + reach + half) / cellSize), cells);
+		const r0 = Math.max(Math.floor((strip.z - reach + half) / cellSize), 0), r1 = Math.min(Math.ceil((strip.z + reach + half) / cellSize), cells);
+		for (let row = r0; row <= r1; row++) {
+			for (let col = c0; col <= c1; col++) {
+				const x = col * cellSize - half, z = row * cellSize - half, [u, v] = stripPlace(strip, x, z);
+				if (stripOut(strip, u, v) >= strip.reach) continue;
+				heights[row * points + col] = params.seaLevel + landAt(x, z);
+			}
+		}
+	}
+
+	/*
+		THE FOOTPATHS (params.footpaths, see footpaths.js): planned over the land as it is now (the towns and the landing strip in it),
+		pressed into it (landAt), and the grid worked out again under them
+	*/
+	const footpaths = params.footpaths ? planFootpaths({
+		worldSize: params.worldSize, ground: landAt, heightAt: (x, z) => gridValue(heights, x, z) - params.seaLevel,
+		zoneAt: (x, z) => zones[Math.min(Math.max(Math.round((z + half) / cellSize), 0), cells) * points + Math.min(Math.max(Math.round((x + half) / cellSize), 0), cells)],
+		Z: { OCEAN: ZONE_OCEAN, BEACH: ZONE_BEACH, GRASSLAND: ZONE_GRASSLAND, FOREST: ZONE_FOREST, MOUNTAIN: ZONE_MOUNTAIN, SNOW: ZONE_SNOW, LAKE: ZONE_LAKE, MARSH: ZONE_MARSH, TOWN: ZONE_TOWN },
+		townAt, onRoad: (x, z) => roadAt(x, z) !== null, towns: town.towns, strip, stripAt: strip ? (x, z) => stripWeight(strip, x, z) : () => 0,
+	}) : null;
+	if (footpaths) {
+		chunkGrids.paths = { segments: footpaths.segments, clearings: footpaths.clearings };
+		const s = footpaths.segments, reach = PATHS.half + PATHS.reach + cellSize, redone = new Set();
+		for (let o = 0; o < s.length; o += 6) {
+			const c0 = Math.max(Math.floor((Math.min(s[o], s[o + 3]) - reach + half) / cellSize), 0), c1 = Math.min(Math.ceil((Math.max(s[o], s[o + 3]) + reach + half) / cellSize), cells);
+			const r0 = Math.max(Math.floor((Math.min(s[o + 1], s[o + 4]) - reach + half) / cellSize), 0), r1 = Math.min(Math.ceil((Math.max(s[o + 1], s[o + 4]) + reach + half) / cellSize), cells);
+			for (let row = r0; row <= r1; row++) for (let col = c0; col <= c1; col++) redone.add(row * points + col);
+		}
+		for (const i of redone) heights[i] = params.seaLevel + landAt((i % points) * cellSize - half, Math.floor(i / points) * cellSize - half);
+	}
+	const pathsLaid = footpaths ? makePathFlattener(chunkGrids.paths) : null, pathClear = pathsLaid?.clear;
+
 	// normals from the heights either side of each point
 	for (let row = 0; row < points; row++) {
 		for (let col = 0; col < points; col++) {
@@ -1102,7 +1340,10 @@ export function generateTerrain(params) {
 	const groundAt = (x, z) => params.seaLevel + landAt(x, z);
 
 	return { cells, points, cellSize, heights, mountains, woodlands, covers, marshes, lakes, zones, normals, shoreDistances, ridgeCrests, heightAt, groundAt, zoneAt, normalAt, findSpawnPoints, buildChunk, chunkGrids,
-		towns: town.towns, townStrength: townGround.strength, townAt, roadAt };
+		towns: town.towns, townStrength: townGround.strength, roadAt, strip, paths: footpaths?.paths ?? [], pathPlaces: footpaths?.places ?? null, fireTowers: footpaths?.towers ?? [],
+		onPath: pathsLaid ? (x, z) => pathsLaid.on(x, z) : () => false,
+		// (kept clear of trees and boulders: the towns, the landing strip and its approaches, and the footpaths and their clearings)
+		townAt: strip || pathClear ? (x, z) => Math.max(townAt(x, z), strip ? stripClear(strip, x, z) : 0, pathClear ? pathClear(x, z) : 0) : townAt };
 }
 
 // The triangles of a chunk (see buildChunk), as a list of vertex numbers. The same for every chunk with that many cells:

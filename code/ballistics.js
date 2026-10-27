@@ -17,8 +17,10 @@ import * as boulders from './boulders.js'
 
 	THE ROUNDS (ROUNDS): each gun's: how fast it leaves the barrel, how hard the air slows it, and how much harm it does (a share of
 	DAMAGE in net.js). The 7.62x54mmR of the Mosin-Nagant, a pellet of the shotgun's 00 buckshot (nine to a shell, slowed fast: a
-	round ball is a poor shape to fly), the .45 Colt of the revolver (slow and heavy), and the .45-70 of the Sharps (heavy, and
-	slower than the Mosin's, so it drops a long way at range: see the reticle in sharps.js). Two things act on one in flight:
+	round ball is a poor shape to fly), the .45 Colt of the revolver (slow and heavy), the .45-70 of the Sharps (heavy, and
+	slower than the Mosin's, so it drops a long way at range: see the reticle in sharps.js), and the little 7.63 Mauser of the
+	broomhandle pistol (mauser.js: quick for a pistol round, and light), and the .303 British of the Lewis gun (lewis.js) and the
+	biplane's guns (plane.js). Two things act on one in flight:
 		gravity		9.81 metres a second, a second, down
 		the air		drag, slowing it by its drag times the square of its speed: dv/dt = -drag * v^2. That is the same as losing
 					the same share of its speed for every metre it goes, so at 400 metres the Mosin's has lost about 30% (820 down to
@@ -26,7 +28,8 @@ import * as boulders from './boulders.js'
 	It is moved on in steps of STEP_SECONDS (a little over 3 metres at the muzzle), each step a straight line, and that line is
 	tested against everything it could hit. The nearest thing it crosses stops it:
 		the ground		read along the line every metre or so (land.heightAt)
-		the water		its surface, where the ground under it is lower
+		the water		its surface, where the ground under it is lower: flat, but round a boat as high as the waves it rides are there
+					(setSeaHeight: boat.js), or a hull down in a trough would be under the flat sea and could not be hit
 		tree trunks		upright cylinders (forest.trunksNear), only the ones round the line
 		boulders		boxes (boulders.bouldersNear), the same as the walker bumps into
 		anything else	that has asked to be shot at (addTarget: the animals, the other players)
@@ -44,9 +47,21 @@ export const ROUNDS = {
 	'00 buck': { velocity: 400, drag: 0.0055, damage: 0.24 },
 	'.45 Colt': { velocity: 270, drag: 0.0025, damage: 0.65 },
 	'.45-70': { velocity: 400, drag: 0.0011, damage: 1.35 },
+	'7.63 Mauser': { velocity: 430, drag: 0.0024, damage: 0.55 },
+	'.303 British': { velocity: 745, drag: 0.0009, damage: 0.9 },
+	// the biplane's Vickers (plane.js): the same round, falling less on its way (gravity, of the rest's)
+	'.303 Vickers': { velocity: 745, drag: 0.0009, damage: 0.9, gravity: 0.6 },
+	// the schooner's howitzers' shell (shipGuns.js): slow and heavy, lobbed; it bursts where it stops (onBurst), and flies as long as life
+	'80mm': { velocity: 135, drag: 0.00015, damage: 1, burst: true, life: 40 },
+	// a biplane's bomb (plane.js): no gun, so carried: it leaves as fast as it is let go (the length of its direction, world units a
+	//		second), and bursts as the shell does
+	'bomb': { velocity: 0, drag: 0.0001, damage: 1, burst: true, life: 60, carried: true },
 };
 const GRAVITY = 9.81;
 const STEP_SECONDS = 1 / 240;
+// an NPC's round (not a shell or a bomb): each step tested against everything along its whole length, so a longer step misses nothing; the
+//		ground sampled NPC_SAMPLE metres apart (instead of 1.2), and gone after NPC_LIFE seconds (far out of reach of anything by then)
+const NPC_STEP = 1 / 60, NPC_SAMPLE = 2.5, NPC_LIFE = 2.5;
 const MAX_SECONDS = 4;
 const TRAIL_SPACING = 3;			// metres
 const TRAIL_SECONDS = 1.4;
@@ -63,36 +78,65 @@ const fireListeners = [];	// see onLocalFire
 /*
 	Something else that can be hit. test(ax, ay, az, bx, by, bz, bullet) is asked about each step of a bullet's flight: the straight line
 	from a to b. It answers null, or { t, hit } for the first thing on that line it is hit by: t from 0 at a to 1 at b, and hit(
-	velocity) what to do about it (called if it is the nearest thing the line crosses). The animals add themselves
+	velocity) what to do about it (called if it is the nearest thing the line crosses; for someone else's round too if it says remoteToo).
+	The animals add themselves
 */
 export function addTarget(test) {
 	targets.push(test);
 }
 
+// the sea's height somewhere: fn(x, z) world units, or null where it is flat (boat.js)
+let seaHeight = null;
+export function setSeaHeight(fn) { seaHeight = fn; }
+
+// told where a round that bursts (a shell) stops, fired here or by someone else: fn(at (world units), bullet, what it hit)
+const burstListeners = [];
+export function onBurst(fn) { burstListeners.push(fn); }
+
 // told of every shot fired here (not the ones that are someone else's): fn(from, directions (one, or a shell's pellets), round)
 export function onLocalFire(fn) {
 	fireListeners.push(fn);
 }
+// told of every shot at all, here or someone else's or a townsperson's, once for a shell's pellets: fn(from, round, { remote, shooter })
+//		(sound.js: its report)
+const shotListeners = [];
+export function onAnyShot(fn) {
+	shotListeners.push(fn);
+}
 
 // Fires a round: from (world units) along a direction (any length), at its muzzle velocity. remote: someone else's (net.js),
-//		flown for its trail only. shooter: who fired it, so it does not hit them. round: which (ROUNDS)
-export function fire(from, direction, { remote = false, shooter = null, round = '7.62x54R', quiet = false } = {}) {
+//		flown for its trail only. shooter: who fired it, so it does not hit them. round: which (ROUNDS). npc: one of npcs.js's people fired it
+//		(shooter is its id): it says what it hits of the players
+export function fire(from, direction, { remote = false, shooter = null, round = '7.62x54R', quiet = false, volley = false, npc = false } = {}) {
 	const metre = settings.forestUnitsPerMetre;
 	const R = ROUNDS[round] ?? ROUNDS['7.62x54R'];
 	const length = Math.hypot(...direction);
-	const speed = R.velocity * metre;
+	const speed = R.carried ? length : R.velocity * metre;
 	bullets.push({
 		x: from[0], y: from[1], z: from[2],
 		vx: direction[0] / length * speed, vy: direction[1] / length * speed, vz: direction[2] / length * speed,
-		age: 0, trailFrom: [from[0], from[1], from[2]], trailAge: seconds, gone: false, remote, shooter, round, drag: R.drag,
+		age: 0, trailFrom: [from[0], from[1], from[2]], trailAge: seconds, gone: false, remote, shooter, npc, round, drag: R.drag, gravity: R.gravity ?? 1, burst: !!R.burst, trail: !R.carried, life: npc && !R.burst ? Math.min(R.life ?? MAX_SECONDS, NPC_LIFE) : R.life ?? MAX_SECONDS,
 	});
 	ballisticStats.fired++;
 	if (!remote && !quiet) for (const fn of fireListeners) fn([...from], [[...direction]], round);
+	if (!volley) for (const fn of shotListeners) fn(from, round, { remote, shooter });
 }
+// the rounds of a kind in the air now: [{ at (world units), v (world units a second) }] (plane.js draws its bombs falling)
+export function flyingOf(round) {
+	return bullets.filter((b) => b.round == round && !b.gone).map((b) => ({ at: [b.x, b.y, b.z], v: [b.vx, b.vy, b.vz] }));
+}
+// told of every step of every round in the air that is not an NPC's (npcs.js: a near miss): fn(ax, ay, az, bx, by, bz, bullet), the line it
+//		went along (world units)
+const passListeners = [];
+export function onPass(fn) { passListeners.push(fn); }
+// how far off the NPCs aim (npcs.js, and the townsfolk's, horde.js), times their own spread: settings.aiDifficulty 0 three times as far,
+//		0.5 as they are, 1 a third as far
+export const aimSpread = () => Math.pow(3, 1 - 2 * Math.min(Math.max(settings.aiDifficulty ?? 0.5, 0), 1));
 // several at once from the same place (a shotgun's pellets): told as one shot
 export function fireVolley(from, directions, { round = '7.62x54R' } = {}) {
-	for (const direction of directions) fire(from, direction, { round, quiet: true });
+	for (const direction of directions) fire(from, direction, { round, quiet: true, volley: true });
 	for (const fn of fireListeners) fn([...from], directions.map((d) => [...d]), round);
+	for (const fn of shotListeners) fn(from, round, { remote: false, shooter: null });
 }
 
 // The trail
@@ -142,16 +186,17 @@ function firstHit(ax, ay, az, bx, by, bz, bullet) {
 	const land = terrain.land;
 	const metre = settings.forestUnitsPerMetre;
 	let best = null;
-	const take = (t, what, hit = null) => { if (t !== null && t >= 0 && t <= 1 && (!best || t < best.t)) best = { t, what, hit }; };
+	const take = (t, what, hit = null, remoteToo = false) => { if (t !== null && t >= 0 && t <= 1 && (!best || t < best.t)) best = { t, what, hit, remoteToo }; };
 
 	// the ground and the water, read along the line
 	const length = Math.hypot(bx - ax, by - ay, bz - az);
-	const samples = Math.max(Math.ceil(length / (1.2 * metre)), 1);
-	const water = settings.waterWorldPosY;
-	let lastAbove = ay - Math.max(land.heightAt(ax, az), water);
+	const samples = Math.max(Math.ceil(length / ((bullet?.npc && !bullet.burst ? NPC_SAMPLE : 1.2) * metre)), 1);
+	const flat = settings.waterWorldPosY;
+	const seaAt = (x, z) => seaHeight?.(x, z) ?? flat;
+	let lastAbove = ay - Math.max(land.heightAt(ax, az), seaAt(ax, az));
 	for (let k = 1; k <= samples; k++) {
 		const t = k / samples, x = ax + (bx - ax) * t, y = ay + (by - ay) * t, z = az + (bz - az) * t;
-		const ground = land.heightAt(x, z);
+		const ground = land.heightAt(x, z), water = seaAt(x, z);
 		const above = y - Math.max(ground, water);
 		if (above <= 0) {
 			const at = (k - 1 + lastAbove / Math.max(lastAbove - above, 1e-6)) / samples;	// (where between the two samples it went under)
@@ -173,7 +218,7 @@ function firstHit(ax, ay, az, bx, by, bz, bullet) {
 	// and anything else that can be shot
 	for (const test of targets) {
 		const found = test(ax, ay, az, bx, by, bz, bullet);
-		if (found) take(found.t, found.what ?? 'target', found.hit);
+		if (found) take(found.t, found.what ?? 'target', found.hit, found.remoteToo);
 	}
 	return best;
 }
@@ -201,13 +246,13 @@ function moveBullets(elapsed) {
 	for (const bullet of bullets) {
 		let left = elapsed;
 		while (left > 1e-6 && !bullet.gone) {
-			const dt = Math.min(left, STEP_SECONDS);
+			const dt = Math.min(left, bullet.npc && !bullet.burst ? NPC_STEP : STEP_SECONDS);
 			left -= dt;
 			// the air slows it, gravity pulls it down (in metres, then back to world units)
 			const speed = Math.hypot(bullet.vx, bullet.vy, bullet.vz) / metre;
 			const slow = Math.max(1 - bullet.drag * speed * dt, 0);
 			bullet.vx *= slow; bullet.vz *= slow;
-			bullet.vy = bullet.vy * slow - GRAVITY * metre * dt;
+			bullet.vy = bullet.vy * slow - GRAVITY * bullet.gravity * metre * dt;
 			const bx = bullet.x + bullet.vx * dt, by = bullet.y + bullet.vy * dt, bz = bullet.z + bullet.vz * dt;
 
 			const hit = firstHit(bullet.x, bullet.y, bullet.z, bx, by, bz, bullet);
@@ -217,19 +262,21 @@ function moveBullets(elapsed) {
 
 			// the trail, up to here
 			const lastPoint = bullet.trailFrom;
-			if (bullet.age < TRAIL_SECONDS && (hit || Math.hypot(ex - lastPoint[0], ey - lastPoint[1], ez - lastPoint[2]) >= trailStep)) {
+			if (bullet.trail && bullet.age < TRAIL_SECONDS && (hit || Math.hypot(ex - lastPoint[0], ey - lastPoint[1], ez - lastPoint[2]) >= trailStep)) {
 				leaveTrail([lastPoint[0], lastPoint[1], lastPoint[2], bullet.trailAge], [ex, ey, ez, seconds - left]);
 				bullet.trailFrom = [ex, ey, ez];
 				bullet.trailAge = seconds - left;
 			}
 
+			if (!bullet.npc && passListeners.length) for (const fn of passListeners) fn(bullet.x, bullet.y, bullet.z, ex, ey, ez, bullet);
 			bullet.x = ex; bullet.y = ey; bullet.z = ez;
 			if (hit) {
 				bullet.gone = true;
 				ballisticStats.hits[hit.what] = (ballisticStats.hits[hit.what] ?? 0) + 1;
 				ballisticStats.lastHit = { what: hit.what, x: ex, y: ey, z: ez, metres: null, seconds: bullet.age, speed: Math.hypot(bullet.vx, bullet.vy, bullet.vz) / metre };
-				if (hit.hit && !bullet.remote) hit.hit([bullet.vx, bullet.vy, bullet.vz], bullet);
-			} else if (bullet.age > MAX_SECONDS || bullet.y < settings.waterWorldPosY - 500) {
+				if (hit.hit && (!bullet.remote || hit.remoteToo)) hit.hit([bullet.vx, bullet.vy, bullet.vz], bullet);
+				if (bullet.burst) for (const fn of burstListeners) fn([ex, ey, ez], bullet, hit.what);
+			} else if (bullet.age > bullet.life || bullet.y < settings.waterWorldPosY - 500) {
 				bullet.gone = true;
 			}
 		}

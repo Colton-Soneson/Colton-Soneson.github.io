@@ -27,9 +27,11 @@ import * as vm from './viewmodel.js'
 	far to hold over: the scope's line of sight and the bore cross at ZERO, and further off the heavy, slow bullet drops below it.
 	Each row is marked with the range it is for, worked out from the bullet's own flight (holdovers: the same sums as ballistics.js).
 
-	THE GUN (SHARPS_MESH): no more than 120 triangles, the scope with it, in metres, the bore along +z (as the rifle's): the octagonal
-	barrel, the receiver, the stock, the forend, the scope on its mounts with its bells and lenses (part 0); the breech block (1),
-	the lever (2), the side hammer (3), the trigger (4), a round's case (5) and its bullet (7).
+	THE GUN (SHARPS_MESH): SHARPS_TRIANGLES (no more than 500), the scope with it, in metres, the bore along +z (as the rifle's). Part 0:
+	the octagonal barrel and the dark of its bore; the case hardened receiver, lofted, its edges taken off, and the tang back from it;
+	the stock, lofted down to its butt plate; the forend and its pewter cap; the scope, its eyepiece's bell, the ring that sets its
+	power, its tube and its objective's bell, the lenses, the turrets on top and on the right, its two rings and their bases. Then the
+	breech block (1), the lever and its loop (2), the side hammer (3), the double set triggers (4), a round's case (5) and its bullet (7).
 */
 const SCOPE_Y = 0.055;				// the scope's line of sight over the bore, metres
 const ZERO = 100;
@@ -57,38 +59,53 @@ const AIM = { x: 0, y: -SCOPE_Y, z: -0.25, yaw: 0, pitch: 0 };
 
 // The gun (see THE GUN at the top)
 //-------------------------------------------------
-const WOOD = 0, BLUED = 1, BRASS = 2, LEAD = 3, HARDENED = 5, SCOPE = 6, GLASS = 7, RUBBER = 9;
+const WOOD = 0, BLUED = 1, BRASS = 2, LEAD = 3, HARDENED = 5, SCOPE = 6, GLASS = 7, NICKEL = 8, DARK = 9;
 const SHARPS_MESH = (() => {
 	const m = vm.meshBuilder();
-	// the octagonal barrel (16)
+	// THE BARREL: octagonal (16), the dark of its bore (4)
 	m.tube(0, 0, 0.0, 0.017, MUZZLE, 0.014, 8, BLUED, 0, [], 0.5);
-	// the receiver, case hardened (10)
-	m.section(-0.11, [0.017, -0.052, 0.02], 0.0, [0.017, -0.052, 0.02], HARDENED, 0, [0]);
-	// the stock, from the back of the receiver down to the butt, and its plate (10)
-	m.section(-0.11, [0.016, -0.05, 0.016], -0.6, [0.021, -0.16, -0.01], WOOD);
-	m.quad([-0.021, -0.16, -0.6], [0.021, -0.16, -0.6], [0.021, -0.01, -0.6], [-0.021, -0.01, -0.6], 0, RUBBER);
-	// the forend under the barrel (8)
-	m.section(0.02, [0.02, -0.04, -0.008], 0.4, [0.017, -0.034, -0.008], WOOD);
-	// the scope: its two mounts (4), and its tube from the eyepiece's bell back to the objective's in front (30), its lenses (6)
-	for (const z of [-0.06, 0.14]) m.quad([-0.004, 0.012, z], [0.004, 0.012, z], [0.004, SCOPE_Y - 0.01, z + 0.01], [-0.004, SCOPE_Y - 0.01, z + 0.01], 0, SCOPE);
-	const rings = [[-0.17, 0.019], [-0.1, 0.0135], [0.16, 0.0135], [0.24, 0.022]];
-	for (let i = 0; i < rings.length - 1; i++) m.tube(0, SCOPE_Y, rings[i][0], rings[i][1], rings[i + 1][0], rings[i + 1][1], 5, SCOPE);
-	m.disc(0, SCOPE_Y, -0.17, 0.019, 5, GLASS);
-	m.disc(0, SCOPE_Y, 0.24, 0.022, 5, GLASS);
-	// the breech block, falling in its mortise (8)
-	m.section(-0.075, [0.0125, -0.055, 0.016], -0.02, [0.0125, -0.055, 0.016], HARDENED, 1);
-	// the lever, its loop the trigger guard, swung down about its pivot (4)
-	m.quad([-0.005, -0.055, -0.03], [0.005, -0.055, -0.03], [0.005, -0.085, -0.12], [-0.005, -0.085, -0.12], 2, HARDENED);
-	m.quad([-0.005, -0.085, -0.12], [0.005, -0.085, -0.12], [0.005, -0.07, -0.2], [-0.005, -0.07, -0.2], 2, HARDENED);
-	// the side hammer on the right (4), the trigger (2)
-	m.quad([0.018, -0.02, -0.06], [0.018, -0.005, -0.06], [0.02, 0.018, -0.095], [0.02, 0.006, -0.1], 3, HARDENED);
-	m.quad([0.02, 0.018, -0.095], [0.02, 0.006, -0.1], [0.021, 0.012, -0.115], [0.021, 0.024, -0.112], 3, HARDENED);
-	m.quad([0, -0.05, -0.085], [0, -0.05, -0.093], [0, -0.072, -0.1], [0, -0.072, -0.09], 4, BLUED);
-	// a round: its case (7) and its bullet (3), its base at the origin along +z
-	m.tube(0, 0, 0, 0.0065, CASE, 0.0062, 3, BRASS, 5, [0]);
-	m.tri([0.0062, 0, CASE], [-0.0031, 0.0054, CASE], [0, 0, BULLET], 7, LEAD);
-	m.tri([-0.0031, 0.0054, CASE], [-0.0031, -0.0054, CASE], [0, 0, BULLET], 7, LEAD);
-	m.tri([-0.0031, -0.0054, CASE], [0.0062, 0, CASE], [0, 0, BULLET], 7, LEAD);
+	m.disc(0, 0, MUZZLE + 0.0003, 0.0058, 6, DARK);
+	// THE RECEIVER: case hardened, lofted, its edges taken off, its back closed (38), and the tang back from the top of it along the wrist (12)
+	m.loft([m.across(-0.11, [0.017, -0.052, 0.018], 0.006), m.across(-0.03, [0.017, -0.052, 0.02], 0.006), m.across(0.0, [0.0175, -0.05, 0.021], 0.007)], HARDENED, 0, [0]);
+	m.prismZ([[-0.006, 0.012], [0.006, 0.012], [0.005, 0.0165], [-0.005, 0.0165]], -0.175, -0.108, HARDENED);
+	// THE STOCK: from the back of the receiver down to the butt (48), and its plate (22)
+	const stock = [[-0.11, [0.016, -0.05, 0.016]], [-0.22, [0.0165, -0.083, -0.006]], [-0.4, [0.019, -0.128, -0.008]], [-0.6, [0.021, -0.162, -0.01]]];
+	m.loft(stock.map(([z, r]) => m.across(z, r, 0.007)), WOOD);
+	m.loft([m.across(-0.6, [0.021, -0.162, -0.01], 0.007), m.across(-0.61, [0.0212, -0.166, -0.009], 0.007)], HARDENED, 0, [1]);
+	// THE FOREND under the barrel (32), its pewter cap, closed at the front (22)
+	m.loft([m.across(0.02, [0.02, -0.04, -0.006], 0.008), m.across(0.3, [0.018, -0.035, -0.007], 0.008), m.across(0.38, [0.017, -0.033, -0.008], 0.007)], WOOD);
+	m.loft([m.across(0.38, [0.017, -0.033, -0.008], 0.007), m.across(0.4, [0.016, -0.031, -0.008], 0.007)], NICKEL, 0, [1]);
+	// THE SCOPE: from its eyepiece's bell back to its objective's in front, the ring that sets its power raised on it (80), its lenses (12)
+	const rings = [[-0.19, 0.0195], [-0.165, 0.0195], [-0.12, 0.0145], [-0.095, 0.0145], [0.165, 0.0135], [0.215, 0.022], [0.245, 0.022]];
+	for (let i = 0; i < rings.length - 1; i++) if (i != 3) m.tube(0, SCOPE_Y, rings[i][0], rings[i][1], rings[i + 1][0], rings[i + 1][1], 8, SCOPE);
+	m.tube(0, SCOPE_Y, -0.095, 0.0135, 0.165, 0.0135, 8, SCOPE);
+	m.disc(0, SCOPE_Y, -0.19, 0.0195, 8, GLASS);
+	m.disc(0, SCOPE_Y, 0.245, 0.022, 8, GLASS);
+	// the turrets: elevation on top, windage on the right (32)
+	const turret = (c, along, u, w) => m.loft([m.ringAt(c, u, w, Array.from({ length: 6 }, (_, k) => { const a = k / 6 * Math.PI * 2; return [Math.cos(a) * 0.009, Math.sin(a) * 0.009]; })),
+		m.ringAt([c[0] + along[0] * 0.018, c[1] + along[1] * 0.018, c[2] + along[2] * 0.018], u, w, Array.from({ length: 6 }, (_, k) => { const a = k / 6 * Math.PI * 2; return [Math.cos(a) * 0.0085, Math.sin(a) * 0.0085]; }))], SCOPE, 0, [1]);
+	turret([0, SCOPE_Y + 0.011, 0.035], [0, 1, 0], [1, 0, 0], [0, 0, 1]);
+	turret([0.011, SCOPE_Y, 0.035], [1, 0, 0], [0, 1, 0], [0, 0, 1]);
+	// its two rings round the tube (24), and their bases down on the barrel and the receiver (24)
+	for (const z of [-0.06, 0.12]) {
+		m.tube(0, SCOPE_Y, z - 0.008, 0.0158, z + 0.008, 0.0158, 6, BLUED);
+		m.section(z - 0.007, [0.0055, z < 0 ? 0.019 : 0.015, SCOPE_Y - 0.013], z + 0.007, [0.0055, z < 0 ? 0.019 : 0.015, SCOPE_Y - 0.013], BLUED, 0, [0, 1], [2]);
+	}
+
+	// THE MOVING PARTS
+	// the breech block, falling in its mortise (12)
+	m.section(-0.075, [0.0125, -0.055, 0.016], -0.02, [0.0125, -0.055, 0.016], HARDENED, 1, [0, 1]);
+	// the lever, from its pivot down and back round the triggers to its loop, swung down about its pivot (32)
+	const lever = [[0, -0.055, -0.03], [0, -0.075, -0.052], [0, -0.084, -0.112], [0, -0.072, -0.15], [0, -0.084, -0.2]];
+	for (let k = 0; k < lever.length - 1; k++) m.strut(lever[k], lever[k + 1], 0.0034, 0.0034, 4, HARDENED, 2);
+	// the side hammer on the right: its body and its spur (24)
+	m.prismX([[-0.06, -0.022], [-0.06, -0.004], [-0.088, 0.012], [-0.08, -0.02]], 0.018, 0.0215, HARDENED, 3);
+	m.prismX([[-0.088, 0.012], [-0.096, 0.026], [-0.112, 0.027], [-0.104, 0.014]], 0.0185, 0.0215, HARDENED, 3);
+	// the double set triggers (24)
+	for (const z of [-0.082, -0.1]) m.prismX([[z, -0.05], [z - 0.008, -0.05], [z - 0.014, -0.072], [z - 0.007, -0.073]], -0.0017, 0.0017, BLUED, 4);
+	// a round, its base at the origin along +z: its case (16) and its bullet (10)
+	m.tube(0, 0, 0, 0.0065, CASE, 0.0062, 6, BRASS, 5, [0]);
+	m.tube(0, 0, CASE, 0.0062, BULLET, 0.0012, 5, LEAD, 7);
 	return { data: m.done(), triangles: m.count() };
 })();
 export const SHARPS_TRIANGLES = SHARPS_MESH.triangles;
@@ -187,6 +204,7 @@ function advance(elapsed) {
 				g.kick = 1;
 				settings.camPitch = Math.min(settings.camPitch + 0.03, Math.PI * 0.5 - 0.02);
 			} else {
+				weapons.actionSound('click');
 				say(g.chamber == 'spent' ? 'Click. Open the breech and put in a round' : 'Click. The chamber is empty');
 			}
 			g.cock = 0;
@@ -207,6 +225,7 @@ function advance(elapsed) {
 	middleAsked = false;
 	const was = g.lever;
 	g.lever = vm.toward(g.lever, g.open ? 1 : 0, elapsed / LEVER_SECONDS);
+	if ((g.lever == 1 && was < 1) || (g.lever == 0 && was > 0)) weapons.actionSound('lever');
 	if (g.lever == 1 && was < 1 && g.chamber != 'empty') {
 		const live = g.chamber == 'live';
 		g.eject = { t: 0, live };
@@ -225,7 +244,7 @@ function advance(elapsed) {
 	}
 	if (g.loading >= 0) {
 		g.loading += elapsed;
-		if (g.loading >= LOAD_SECONDS) { g.loading = -1; g.chamber = 'live'; sharpsStats.loaded++; }
+		if (g.loading >= LOAD_SECONDS) { g.loading = -1; g.chamber = 'live'; sharpsStats.loaded++; weapons.actionSound('load'); }
 	}
 
 	// the wheel: in the scope, the magnification; out of it, the hammer
@@ -238,7 +257,7 @@ function advance(elapsed) {
 		}
 		if (!scoped) wheelPixels = 0;
 	} else if (!g.open && g.state == 'ready') {
-		if (wheelPixels > 0 && g.cock < 1) { g.cock = vm.clamp01(g.cock + wheelPixels / COCK_PIXELS); g.fired = false; }
+		if (wheelPixels > 0 && g.cock < 1) { g.cock = vm.clamp01(g.cock + wheelPixels / COCK_PIXELS); g.fired = false; if (g.cock >= 1) weapons.actionSound('cock'); }
 		else if (wheelPixels < 0) g.cock = vm.clamp01(g.cock + wheelPixels / COCK_PIXELS);
 		wheelPixels = 0;
 	} else {
@@ -440,3 +459,6 @@ export function testSharps({ fire = false, aim = null, middle = false, wheel = 0
 	showAmmo();
 	return { chamber: gun.chamber, open: gun.open, lever: gun.lever, cock: gun.cock, aimed: gun.aimed, magnification: gun.magnification, state: gun.state, message: gun.message, carried: weapons.carried('sharps'), ...sharpsStats };
 }
+
+// for testing: the gun drawn where a matrix puts it (in the camera's space), as it is now
+export function inspectSharps(matrix) { view.draw(matrix, partsNow()); }

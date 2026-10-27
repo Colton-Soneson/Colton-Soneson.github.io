@@ -12,12 +12,16 @@ import * as birds from './birds.js'
 import * as geese from './geese.js'
 import * as boat from './boat.js'
 import * as horse from './horse.js'
+import * as plane from './plane.js'
 import * as discgolf from './discgolf.js'
 import * as water from './water.js'
 import * as weapons from './weapons.js'
 import * as staff from './staff.js'
 import * as townFolk from './townFolk.js'
 import * as horde from './horde.js'
+import * as npcs from './npcs.js'
+import * as town from './town.js'
+import * as war from './war.js'
 import { onSpawn } from './radialMenu.js'
 import { PRESETS } from './graphicsPresets.js';
 
@@ -50,12 +54,16 @@ import { PRESETS } from './graphicsPresets.js';
 		the horde			(horde.js, the Horde game mode) joiner to host: hpick (a power-up walked into). Host to joiners: horde
 							(the run, HORDE_RATE times a second: its round, the power-ups, the townsfolk fighting and turned), hfx (what
 							just happened: a new run, a round, a power-up taken), hpts (points earned), shove (a deer's lunge)
+		the NPCs			(npcs.js and its kinds) joiner to host: npcHit (one of them hit: the part, the round), npcAttack (one of their
+							vehicles hit). Host to joiners: npcs (the people, PEOPLE_RATE times a second, on the fast channel), npcShots
+							(their rounds this frame, for their trails). Their vehicles go as everyone's do (owned by 'npc', sailed by the
+							host), and their harm to a player as hp and down, by 'npc'
 	A state is [x, y, z (its feet), heading, pitch, speed, alive, out hunting, the vehicle it is on (its id, or ''), where on it
 	(x, y, z, metres in the vehicle's own directions), sitting (0 standing, 1 sitting, 2 astride), what it holds], STATE_RATE
 	times a second, on the fast channel (no waiting for what was lost: the next one is newer anyway). So are the vehicles' states.
 	Everything else on the game channel, in order.
 
-	THE VEHICLES (boats, boat.js; and the horses): everyone's. Each is sailed (or ridden) on one machine, its authority: whoever
+	THE VEHICLES (boats, boat.js; the horses; and the biplanes, plane.js, flown by their pilot's machine): everyone's. Each is sailed (or ridden) on one machine, its authority: whoever
 	put it out, until someone takes its helm (claim: the host says so, auth). The authority sends its state VEHICLE_RATE times a
 	second, and everyone else draws it from those (see WHO SAILS IT in boat.js). Who is on board, and where, comes with each
 	player's own state, so the authority has their weight on the boat as well. A rope hauled or the anchor let go by someone
@@ -117,6 +125,7 @@ const ANIMAL_NEAR = 600;				// metres
 const ANIMAL_FAR_EVERY = 10;
 const ANIMAL_DELAY = 0.2;			// seconds
 const HORDE_RATE = 5;				// a second
+const PEOPLE_RATE = 10;				// a second: the NPCs' people (npcs.js)
 const VEHICLE_RATE = 15;			// a second
 const WAVE_SLACK = 0.12;			// step time (water.js): a joiner whose waves are further out than this from the host's is put right
 const FOLK_SLACK = 0.5;				// seconds: the same for the townsfolk's clock (townFolk.js)
@@ -129,6 +138,7 @@ export const DAMAGE = { head: 100, chest: 70, belly: 55, leg: 30 };
 const LOCAL_KEYS = new Set([
 	...Object.values(PRESETS).flatMap((preset) => Object.keys(preset)),
 	'step', 'sunCycleCount', 'forestYear', 'forestTreeCount', 'seasonNow', 'snowCover', 'weatherNow', 'shadowMapCenter',
+	'enableSound', 'soundVolume',
 	'camPosX', 'camPosY', 'camPosZ', 'camFarPlane', 'camNearPlane', 'gameMode', 'huntingLookSensitivity', 'cameraFlyMode', 'cameraFlySpeed', 'camYaw', 'camPitch',
 	'heightMapResolution', 'topDownCameraHeight', 'shadowMapSize', 'shadowMapPCFKernelSize', 'shadowMapAcneBias',
 	'enablePostEffects', 'enableScreenShadows', 'screenShadowStrength', 'screenShadowThickness', 'screenShadowContrast', 'enableSSAO', 'ssaoRadius',
@@ -395,7 +405,8 @@ let courseSent = '';			// host: the last disc golf course it sent
 const names = new Map();		// id -> name, everyone's, this player too
 const health = new Map();		// host: id -> health
 const scores = new Map();		// id -> { kills, deaths }
-let lastState = 0, lastClock = 0, lastWorldCheck = 0, lastTrees = 0, lastHorde = 0;
+let lastState = 0, lastClock = 0, lastWorldCheck = 0, lastTrees = 0, lastHorde = 0, lastPeople = 0, lastWar = 0;
+let npcShots = [];		// host: the NPCs' rounds since the last were sent: [from, direction, round]
 let treesSent = 0;		// host: the number of the last lot of trees sent. The whole forest says which it already has in it
 // joiner: the forest (see the forest above). asked: waiting for it. have: it has the host's, from the host's planting
 //		hostPlanting, while its own was planted localPlanting. queue: changes that came while the forest was on its way
@@ -458,8 +469,19 @@ const VEHICLES = {
 		takeOver: (h, authority) => horse.takeOver(h, authority),
 		local: () => horse.setLocalId(myId),
 	},
+	plane: {
+		list: () => plane.planes,
+		byId: (id) => plane.planeById(id),
+		share: (p) => plane.planeShare(p),
+		heard: (s) => plane.planeHeard(s),
+		spawn: (s) => plane.planeFromShare(s),
+		remove: (p) => plane.removePlane(p),
+		takeOver: (p, authority) => plane.takeOver(p, authority),
+		local: () => plane.setLocalId(myId),
+	},
 };
 players.addVehicleFrames((id) => horse.horseById(id)?.frame);
+players.addVehicleFrames((id) => plane.planeById(id)?.frame);
 const kindOf = (id) => Object.keys(VEHICLES).find((kind) => VEHICLES[kind].byId(id));
 const allVehicles = () => Object.entries(VEHICLES).flatMap(([kind, V]) => V.list().map((v) => ({ kind, v })));
 let lastVehicles = 0;
@@ -501,16 +523,18 @@ function claimVehicle(v) {
 	else if (role == 'joined') hostLink.sendGame({ t: 'claim', id: v.id });
 }
 hunting.onTakeHelm((b) => claimVehicle(b));
+plane.onTakeControls((p) => claimVehicle(p));
 // a control worked on a vehicle sailed somewhere else: to its authority, through the host
 function routeControl(id, what) {
 	const kind = kindOf(id);
 	if (!kind) return;
 	const v = VEHICLES[kind].byId(id);
-	if (v.authority === myId) { if (kind == 'boat') boat.workControl(v, what); return; }
+	if (v.authority === myId) { if (kind == 'boat') boat.workControl(v, what); if (kind == 'plane') plane.workControl(v, what); return; }
 	if (role == 'host') joiners.get(v.authority)?.link.sendGame({ t: 'vctl', id, what });
 	else if (role == 'joined') hostLink.sendGame({ t: 'vctl', id, what });
 }
 boat.onRemoteControl((b, what) => routeControl(b.id, what));
+plane.onRemoteControl((p, what) => routeControl(p.id, what));
 // the states of the vehicles sailed here, VEHICLE_RATE times a second
 function sendVehicles() {
 	const mine = allVehicles().filter(({ v }) => v.authority === myId).map(({ kind, v }) => ({ ...VEHICLES[kind].share(v), vk: kind }));
@@ -525,9 +549,10 @@ function vehicleStates(list) {
 function crewFromStates() {
 	const aboard = players.othersAboard();
 	horse.setOtherRiders(aboard.filter((other) => horse.horseById(other.vehicle)).map((other) => [other.id, other.vehicle]));
+	plane.setOtherCrew(aboard.filter((other) => plane.planeById(other.vehicle)));
 	for (const b of boat.boats) {
 		if (!boat.sailedHere(b)) continue;
-		for (const who of [...b.crew.keys()]) if (who !== 'me') b.crew.delete(who);
+		for (const who of [...b.crew.keys()]) if (who !== 'me' && !String(who).startsWith('npc:')) b.crew.delete(who);
 		for (const other of aboard) if (other.vehicle === b.id) boat.setCrew(b, other.id, [other.local[0], other.local[1] + (other.sit ? 0.35 : 0.9), other.local[2]]);
 	}
 }
@@ -535,6 +560,8 @@ function crewFromStates() {
 function vehiclesAfterLeaving() {
 	for (const { kind, v } of allVehicles()) {
 		const V = VEHICLES[kind];
+		// (the host's NPCs' own stay with it: npcs.js still runs them)
+		if (v.owner === 'npc' && role == 'host') { V.takeOver(v, 0); continue; }
 		if (v.owner !== myId) { V.remove(v); continue; }
 		v.owner = 0;
 		V.takeOver(v, 0);
@@ -622,7 +649,7 @@ function takeJoiner(link, invite = null) {
 			health.set(id, players.HEALTH);
 			players.addOther(id, joiner.name);
 			link.sendGame({ t: 'welcome', id, players: everyone(), world: worldNow(), clock: [atmosphere.sunCycles, settings.sunCycleAngle], waves: water.waveClock(), folk: townFolk.folkClock(), scores: scoreList(),
-				vehicles: allVehicles().map(({ kind, v }) => ({ kind, s: VEHICLES[kind].share(v) })), course: discgolf.courseShare() });
+				vehicles: allVehicles().map(({ kind, v }) => ({ kind, s: VEHICLES[kind].share(v) })), course: discgolf.courseShare(), houses: town.housesShare(true) });
 			toAll({ t: 'join', id, name: joiner.name }, id);
 			players.addFeed(joiner.name + ' joined');
 			say('Hosting');
@@ -684,6 +711,12 @@ function fromJoiner(joiner, message) {
 		setAuthority(message.id, joiner.id);
 	} else if (message.t == 'vctl') {
 		routeControl(message.id, message.what);
+	} else if (message.t == 'npcHit') {
+		npcs.shotHeard(message.id, message.part, message.r, joiner.id);
+	} else if (message.t == 'npcAttack') {
+		npcs.attackHeard(message.v, joiner.id);
+	} else if (message.t == 'selfHurt') {
+		npcs.npcNet.hurt(joiner.id, Math.min(Math.max(Number(message.a) || 0, 0), 200), String(message.how ?? '').slice(0, 60));
 	}
 }
 // the host's word on a hit: DAMAGE off the target's health (the round's share of it), and at 0 it is down
@@ -776,6 +809,7 @@ function heard(message) {
 			discgolf.setLocalId(myId);
 			discgolf.discsForNewGame();
 			discgolf.courseFromHost(message.course ?? []);
+			town.housesHeard(message.houses ?? [], true);
 			staff.setLocalId(myId);
 			if (message.waves !== undefined) water.setWaveClock(message.waves);
 			if (message.folk !== undefined) townFolk.setFolkClock(message.folk);
@@ -811,6 +845,9 @@ function heard(message) {
 			break;
 		case 'course':
 			discgolf.courseFromHost(message.holes);
+			break;
+		case 'houses':
+			town.housesHeard(message.l);
 			break;
 		case 'tp':
 			if (!hunting.hunterPlace().active) break;
@@ -852,11 +889,12 @@ function heard(message) {
 			if (message.id !== myId) for (const dir of message.dirs) ballistics.fire(message.from, dir, { remote: true, shooter: message.id, round: message.r });
 			break;
 		case 'hp':
-			if (message.id === myId) players.setLocalHealth(message.hp, message.by === myId || message.by === 'horde' ? '' : nameOf(message.by), message.by === 'horde' ? 'Overrun by the horde' : '');
+			if (message.id === myId) players.setLocalHealth(message.hp, message.by === myId || message.by === 'horde' || message.by === 'npc' ? '' : nameOf(message.by), message.by === 'horde' ? 'Overrun by the horde' : message.by === 'npc' ? message.part : '');
 			else if (message.part) players.otherHit(message.id);
 			break;
 		case 'down':
-			players.addFeed(message.by === 'horde' ? nameOf(message.id) + ' was overrun' : nameOf(message.by) + ' shot ' + nameOf(message.id) + (message.part == 'head' ? ' (head)' : ''));
+			players.addFeed(message.by === 'horde' ? nameOf(message.id) + ' was overrun' : message.by === 'npc' ? nameOf(message.id) + ': ' + String(message.part).toLowerCase()
+				: nameOf(message.by) + ' shot ' + nameOf(message.id) + (message.part == 'head' ? ' (head)' : ''));
 			break;
 		case 'score':
 			setScores(message.list);
@@ -892,6 +930,15 @@ function heard(message) {
 			if (message.s.on != (settings.gameMode == 'Horde')) { settings.gameMode = message.s.on ? 'Horde' : 'Hunting'; imguiParams.gameMode = settings.gameMode; }
 			horde.hordeHeard(message.s);
 			break;
+		case 'war':
+			// the host's war, and its game mode: in the War game mode while the host is (war.js)
+			if (role != 'joined') break;
+			if (message.s.on != (settings.gameMode == 'War')) { settings.gameMode = message.s.on ? 'War' : 'Hunting'; imguiParams.gameMode = settings.gameMode; }
+			war.warHeard(message.s);
+			break;
+		case 'wfx':
+			if (role == 'joined') war.warEventHeard(message.e);
+			break;
 		case 'hfx':
 			if (role == 'joined') horde.hordeEvent(message.e);
 			break;
@@ -900,6 +947,12 @@ function heard(message) {
 			break;
 		case 'shove':
 			hunting.shoveHunter(message.v[0], message.v[1]);
+			break;
+		case 'npcs':
+			if (role == 'joined') npcs.peopleHeard(message.l);
+			break;
+		case 'npcShots':
+			if (role == 'joined') for (const [from, dir, round] of message.l) ballistics.fire(from, dir, { remote: true, shooter: 'npc', round });
 			break;
 	}
 }
@@ -1035,9 +1088,9 @@ function myState() {
 	const r = (v) => Math.round(v * 1000) / 1000;
 	const on = place.vehicle ?? place.boat ?? '';
 	const b = place.boat ? boat.boatById(place.boat) : null;
-	const sit = place.on == 'saddle' ? 2 : place.on == 'seat' && b && boat.helm(b).seated ? 1 : 0;
+	const sit = place.on == 'saddle' ? 2 : place.on == 'seat' && b && boat.helm(b).seated ? 1 : place.on == 'aboard' ? place.sit : 0;
 	return [...[place.x, place.y, place.z, Math.atan2(forward[0], forward[2]), settings.camPitch, Math.hypot(place.vx ?? 0, place.vz ?? 0) / metre,
-		hunting.hunterLife.alive ? 1 : 0, place.active ? 1 : 0].map(r), on, ...(on ? place.local.map(r) : [0, 0, 0]), sit, weapons.weaponState.current];
+		hunting.hunterLife.alive ? 1 : 0, place.active ? 1 : 0].map(r), on, ...(on ? place.local.map(r) : [0, 0, 0]), sit, weapons.weaponState.current, place.chute ? 1 : 0, war.mySideNow() ?? 0];
 }
 ballistics.onLocalFire((from, directions, round) => {
 	const r3 = (v) => Math.round(v * 1000) / 1000;
@@ -1088,9 +1141,47 @@ horde.hordeNet.shot = (from, directions, round) => {
 };
 horde.hordeNet.pick = (id) => { if (role == 'joined') hostLink.sendGame({ t: 'hpick', id }); };
 
+// The NPCs (see the NPCs at the top): what npcs.js asks of the game
+npcs.npcNet.roleNow = () => role;
+town.townNet.roleNow = () => role;
+horde.hordeNet.nameOf = (id) => id == 'me' || id === myId ? myName : nameOf(id);
+// the war's news (war.js: who won) to everyone
+war.warEvents.send = (e) => { if (role == 'host') toAll({ t: 'wfx', e }); };
+const HOUSES_SECONDS = 0.5;		// (town.js's SHARE_SECONDS)
+let lastHouses = 0;
+npcs.npcNet.others = () => {
+	if (role != 'host') return [];
+	const aboard = new Map(players.othersAboard().map((other) => [other.id, other.vehicle]));
+	return players.otherList().filter((other) => other.view?.hunting).map((other) => ({ id: other.id, x: other.view.x, y: other.view.y, z: other.view.z, alive: other.view.alive,
+		heading: other.view.heading, sit: other.view.sit, vehicle: aboard.get(other.id) ?? null }));
+};
+// a round of theirs that hit a player (by 'npc', how: what is said)
+npcs.npcNet.hurt = (id, amount, how) => {
+	if (role != 'host') return;
+	if (id == 'me') id = myId;
+	const before = health.get(id);
+	if (before === undefined || before <= 0) return;
+	const after = Math.max(Math.round(before - amount), 0);
+	setHealth(id, after, 'npc', how);
+	if (after <= 0) {
+		const down = { t: 'down', id, by: 'npc', part: how };
+		toAll(down);
+		heard(down);
+	}
+};
+npcs.npcNet.shot = (id, part, round) => { if (role == 'joined') hostLink.sendGame({ t: 'npcHit', id, part, r: round }); };
+npcs.npcNet.attack = (vehicle) => { if (role == 'joined') hostLink.sendGame({ t: 'npcAttack', v: vehicle }); };
+// this player hurt by its own doing (a fall): the host takes it off, as an NPC's round
+players.selfHurt.send = (amount, how) => {
+	if (role == 'host') npcs.npcNet.hurt('me', amount, how);
+	else if (role == 'joined') hostLink.sendGame({ t: 'selfHurt', a: amount, how });
+};
+npcs.npcNet.fired = (from, dir, round) => { const r3 = (v) => Math.round(v * 1000) / 1000; if (joiners.size) npcShots.push([from.map(r3), dir.map(r3), round]); };
+
 export function netUpdate() {
 	if (!buttonAdded) addButton();
 	horde.hordeNet.role = role;
+	war.warNet.role = role;
 	if (role == 'joined') applyWorld();
 	if (role != 'host' && role != 'joined') { netStats.role = role; return; }
 	const now = performance.now() / 1000;
@@ -1120,6 +1211,18 @@ export function netUpdate() {
 		lastHorde = now;
 		toAll({ t: 'horde', s: horde.hordeState() });
 	}
+	if (role == 'host' && joiners.size > 0 && now - lastWar >= 1 / HORDE_RATE) {
+		lastWar = now;
+		toAll({ t: 'war', s: war.warState() });
+	}
+	if (role == 'host' && joiners.size > 0 && now - lastPeople >= 1 / PEOPLE_RATE) {
+		lastPeople = now;
+		toAllFast({ t: 'npcs', l: npcs.peopleShare() });
+	}
+	if (role == 'host' && npcShots.length) {
+		if (joiners.size > 0) toAll({ t: 'npcShots', l: npcShots });
+		npcShots = [];
+	}
 	if (role == 'joined' && forestSync.need && !forestSync.asked && forest.forestReady()) {
 		forestSync.asked = true;
 		hostLink.sendGame({ t: 'forest?' });
@@ -1146,6 +1249,12 @@ export function netUpdate() {
 			const world = worldNow(), text = JSON.stringify(world);
 			if (text != worldSent) { worldSent = text; toAll({ t: 'world', world }); }
 		}
+		// the houses whose damage has changed (town.js)
+		if (now - lastHouses >= HOUSES_SECONDS) {
+			lastHouses = now;
+			const changed = town.housesShare();
+			if (changed.length && joiners.size) toAll({ t: 'houses', l: changed });
+		}
 		// the course, as soon as it is laid out again (turned on or off, a new one)
 		const holes = discgolf.courseShare(), course = JSON.stringify(holes);
 		if (course != courseSent) {
@@ -1160,7 +1269,7 @@ export function netUpdate() {
 
 // for testing
 export function netStatus() {
-	return { role, id: myId, vehicles: allVehicles().map(({ kind, v }) => ({ kind, id: v.id, owner: v.owner, authority: v.authority, crew: v.crew ? [...v.crew.keys()] : [] })), waves: water.waveClock(), name: myName, names: Object.fromEntries(names), health: Object.fromEntries(health), scores: Object.fromEntries(scores), roomCode: netStats.roomCode, status: netStats.status, others: players.otherList(), forest: { ...forestSync, queue: forestSync.queue.length },
+	return { role, id: myId, vehicles: allVehicles().map(({ kind, v }) => ({ kind, id: v.id, owner: v.owner, authority: v.authority, crew: v.crew instanceof Map ? [...v.crew.keys()] : Object.values(v.crew ?? {}).filter(Boolean) })), waves: water.waveClock(), name: myName, names: Object.fromEntries(names), health: Object.fromEntries(health), scores: Object.fromEntries(scores), roomCode: netStats.roomCode, status: netStats.status, others: players.otherList(), forest: { ...forestSync, queue: forestSync.queue.length },
 		animals: Object.fromEntries(ANIMALS.map((animal) => [animal.kind, [...tracks.get(animal.kind).entries()].map(([id, samples]) => { const r = samples[samples.length - 1].r; return { id, x: r[1], y: r[2], z: r[3], alive: r[11] > 0.5 }; })])) };
 }
 

@@ -155,6 +155,7 @@ export function plantTownTrees(land, params, variants) {
 	const out = [];
 	for (const town of land.towns ?? []) {
 		for (const [x, z, kind] of town.trees) {
+			if (land.onPath?.(x, z)) continue;		// (not on a footpath through the town's ground: footpaths.js)
 			const species = kind == 'birch' ? BIRCH : OAK;
 			const tree = makeTree(x, z, species, TREE_SPECIES[species].fullGrownAge * (1.1 + 0.6 * random()), { quality: 0.1 * random() }, land, params, random, variants);
 			tree.planted = true;

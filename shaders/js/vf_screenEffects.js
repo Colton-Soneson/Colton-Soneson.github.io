@@ -203,7 +203,13 @@ export const vf_screenShade =
 
 		// far off the picture has faded into the horizon, and the haze is not in anything's shadow
 		let clear = exp(-pow(away / SU.amounts.w, 2.0));
-		left = mix(1.0, left, clear);
+		// and further off than the depth texture can tell one depth from the next across a pixel (it keeps 24 bits: the step between two of
+		//		its depths grows as the square of the distance), the slope worked out from it is noise, flickering from frame to frame. So
+		//		the shading that hangs on it fades out where a step of depth is more than a few tenths of a pixel's width
+		let step = viewDistance(min(depth + 1.0 / 16777216.0, 0.99999994)) - hereDistance;
+		let footprint = away * 2.0 / (SU.projection.y * SU.size.y);
+		let sure = 1.0 - smoothstep(0.08, 0.3, step / footprint);
+		left = mix(1.0, left, clear * sure);
 
 		return vec4f(left, left, left, 1.0);
 	}

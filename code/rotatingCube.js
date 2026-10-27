@@ -48,14 +48,26 @@ import * as net from './net.js'
 import * as players from './players.js'
 import * as boat from './boat.js'
 import * as horse from './horse.js'
+import * as plane from './plane.js'
+import * as shipGuns from './shipGuns.js'
+import * as sound from './sound.js'
 import * as weapons from './weapons.js'
 import * as shotgun from './shotgun.js'
 import * as revolver from './revolver.js'
+import * as mauser from './mauser.js'
+import * as lewis from './lewis.js'
 import * as sharps from './sharps.js'
 import * as discgolf from './discgolf.js'
 import * as staff from './staff.js'
 import * as town from './town.js'
+import * as smoke from './smoke.js'
 import * as townFolk from './townFolk.js'
+import * as npcs from './npcs.js'
+import * as npcRiders from './npcRiders.js'
+import * as npcPlanes from './npcPlanes.js'
+import * as npcShips from './npcShips.js'
+import * as war from './war.js'
+import * as npcDinghies from './npcDinghies.js'
 import * as pointLights from './pointLights.js'
 import { settings } from './settings.js';
 import * as userInterface from './imguiLoader.js';
@@ -366,19 +378,42 @@ export function updateRotatingCubePass() {
 
 	// fly camera: after the controls have written their values (so the Pos sliders still work), before anything reads the camera
 	cameraControls.updateCamera();
+	profiler.cpuMark('NPCs');
+	const npcSeconds = npcs.npcUpdate();	//the people out in the world decide what to do (their horses, planes and boats then go on with the rest)
+	profiler.cpuMark('NPCs: War');
+	war.warUpdate();				//(and in the War game mode, the two towns' forces put out, and the townsfolk at it)
+	profiler.cpuMark('NPCs: Riders');
+	npcRiders.ridersUpdate(npcSeconds);
+	profiler.cpuMark('NPCs: Airmen');
+	npcPlanes.planesUpdate(npcSeconds);
+	profiler.cpuMark('NPCs: Sailors');
+	npcShips.shipsUpdate(npcSeconds);
+	npcDinghies.dinghiesUpdate(npcSeconds);
+	profiler.cpuMark('Boats');
 	boat.boatUpdate();			//the boats sail on, before the walker on one is carried along
+	profiler.cpuMark('Horses and Biplanes');
 	horse.horseUpdate();		//and the horses go on, before their riders
+	plane.planeUpdate();		//and the biplanes fly on, before whoever is in them
+	shipGuns.shipGunsUpdate();	//(and the schooner's guns and stores)
+	profiler.cpuMark('Walker and Guns');
 	hunting.updateHunter();		//on foot instead, in the Hunting and Sailing game mode
 	rifle.rifleUpdate();		//and the gun in the hunter's hands: the rifle, or one of the others
 	shotgun.shotgunUpdate();
 	revolver.revolverUpdate();
+	mauser.mauserUpdate();
+	lewis.lewisUpdate();
 	sharps.sharpsUpdate();		//(and the view through its scope)
 	discgolf.discUpdate();		//the golf discs fly on, and the course is laid out (when it is on)
 	staff.staffUpdate();		//the wizard's staff: its spells, and the beams of light going on
 	weapons.weaponsUpdate();	//(and the controls of whatever is in them, on the left)
+	profiler.cpuMark('Network and Players');
 	net.netUpdate();			//in a game with others: what this player is doing goes out, the host's world and clock come in
 	players.playersUpdate();	//and the others move on
+	profiler.cpuMark('Bullets');
 	ballistics.bulletUpdate();	//the rounds in the air
+	profiler.cpuMark('Sound');
+	sound.soundUpdate();		//and what all of it sounds like, from where the camera is now
+	profiler.cpuMark('Wind and Controls');
 	wind.windUpdate();		//the air moves on, before anything reads it
 	userInterface.refreshEntityFolder();
 	
@@ -395,8 +430,11 @@ export function updateRotatingCubePass() {
 	forest.forestUpdate();		//after the land: the forest is planted again whenever the land under it changes
 	profiler.cpuMark('Boulders, Particles, Birds Update');
 	boulders.boulderUpdate();	//and the boulders laid out again
-	town.townUpdate();			//and the seaside towns built again (their layout comes with the land)
+	profiler.cpuMark('Towns, Smoke, Townsfolk');
+	town.townUpdate();			//and the seaside towns built again (their layout comes with the land), the houses that are hurt smoking
+	smoke.smokeUpdate();		//(the smoke, the fire and the dust drift on)
 	townFolk.townFolkUpdate();	//and their people about their day
+	profiler.cpuMark('Particles, Birds, Deer, Horde');
 	particles.particleUpdate();		//what the leaves, the spray and the rain all need to know this frame
 	birds.birdUpdate();				//the hawks fly on
 	geese.geeseUpdate();			//and the geese
@@ -550,6 +588,7 @@ export function updateRotatingCubePass() {
 		players.playersPass(encoder, depthTexture);	//(and the other players, in a game with others)
 		boat.boatPass(encoder, depthTexture);		//(and the boats)
 		horse.horsePass(encoder, depthTexture);		//(and the horses)
+		plane.planePass(encoder, depthTexture);		//(and the biplanes)
 		town.townPass(encoder, depthTexture);		//(and the seaside towns)
 		townFolk.townFolkPass(encoder, depthTexture);	//(and their people)
 		discgolf.discGolfPass(encoder, depthTexture);	//(and the disc golf course, and the discs)
@@ -588,6 +627,7 @@ export function updateRotatingCubePass() {
 	profiler.section('Light Shafts', () => lightShafts.lightShaftPass(context.getCurrentTexture(), depthTexture));
 
 	//spray off the waves and rain: see-through, so last, over everything that is behind them
+	profiler.section('Smoke', () => smoke.smokePass(depthTexture));		//(the smoke, the fire and the dust: smoke.js)
 	profiler.section('Spray, Rain and Snow', () => particles.weatherParticlePass(depthTexture));
 
 	//the wisps the bullets leave, and the rifle in front of everything (in the Hunting game mode)
@@ -595,6 +635,8 @@ export function updateRotatingCubePass() {
 		ballistics.trailPass(depthTexture);
 		rifle.riflePass();
 		weapons.weaponsPass();	//(the gun held, if it is not the rifle)
+		plane.gunnerPass();		//(or the Lewis gun on a biplane's ring, in the gunner's seat)
+		shipGuns.gunnerPass();	//(or in a schooner's crow's nest)
 	});
 
 	profiler.cpuMark('Anti-Aliasing, Debug Views');

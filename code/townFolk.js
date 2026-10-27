@@ -51,10 +51,14 @@ import {uniformBufferLights} from './rotatingCube.js'
 
 	THE HORDE (horde.js). A person fighting the horde (setFight: where it stands, which way it aims, the gun in its hands) stands there
 	instead of where its day has it, and when the fight is over runs home from there. One a deer got to (turnFolk) is gone, turned,
-	until the towns are whole again (restoreFolk). In a game with others the host says who is fighting and who has turned.
+	until the towns are whole again (restoreFolk). In a game with others the host says who is fighting and who has turned. Fleeing to
+	the schooner (horde.js: THE EVACUATION) a person is wherever the horde leads it (setLed: out of doors, whatever the hour), and once
+	aboard it is gone (boardFolk) until the towns are whole again. THE WAR (war.js) kills them (killFolk), and is told of every hit on
+	one (folkHit), and the townsfolk's own rounds (theirs: 'folk' and 'folk:' and a number) do not hit them.
 
 	THE DRAWING: one draw for every trade (the dummy and its hat), of the people out of doors within DRAW_DISTANCE. One with a gun
-	in its hands is the dummy with the players' gun (players.js), held where it aims.
+	in its hands is the dummy with the players' gun (players.js), held where it aims. The people of npcs.js (the riders, the airmen,
+	the sailors) are drawn with them (addFolkSource), in the hats made for them here.
 */
 const ERRAND_SECONDS = [70, 140];
 const WALK = 1.25;					// metres a second
@@ -62,7 +66,7 @@ const STRIDE = 1.4;					// metres a stride takes
 const REST = [4, 10];				// seconds indoors between errands, at least
 const DRAW_DISTANCE = 900;			// world units
 const MAX_DRAWN = 640;
-const DUMMY_FLOATS = 16;			// (as players.js)
+const DUMMY_FLOATS = 20;			// (as players.js)
 const MAKE_ROOM = 1.6;				// metres
 const LOOK_AT = 7;					// metres
 const RUN = 3.4;					// metres a second, home when shot
@@ -208,11 +212,32 @@ const HATS = {
 		band(t, ring(1.785, 0.113, 4, { from: -1.0, to: 1.0 }), ring(1.765, 0.2, 4, { from: -0.9, to: 0.9 }), C.black, true);
 		box(t, 1.81, [0.025, 0.12, 0.128], 1.84, [0.025, 0.12, 0.128], C.gold);
 	},
+	// (the people of npcs.js) the airman's leather flying helmet: close round the head and down over the ears, its goggles up on the brow
+	aviator(t) {
+		const A = ring(1.68, 0.152, 8), B = ring(1.8, 0.15, 8), T = ring(1.86, 0.09, 8);
+		band(t, A, B, C.brown); band(t, B, T, C.brown); cap(t, T, C.brown);
+		for (const s of [1, -1]) box(t, 1.6, [0.03, -0.04, 0.04], 1.7, [0.03, -0.045, 0.045], C.brown, s * 0.125);
+		band(t, ring(1.78, 0.156, 8), ring(1.805, 0.156, 8), C.black);
+		for (const s of [1, -1]) box(t, 1.77, [0.032, 0.1, 0.135], 1.815, [0.032, 0.1, 0.135], C.gold, s * 0.048);
+	},
+	// the sailor's white cap, round, its brim turned up all round
+	sailor(t) {
+		const A = ring(1.76, 0.118, 8), T = ring(1.86, 0.1, 8);
+		band(t, A, T, C.white); cap(t, T, C.white);
+		band(t, ring(1.76, 0.12, 8), ring(1.81, 0.15, 8), C.white);
+	},
+	// the rider's broad-brimmed hat: a creased crown, a wide brim turned up a little at the sides
+	stetson(t) {
+		const A = ring(1.78, 0.115, 8), B = ring(1.9, 0.1, 8), T = ring(1.93, 0.07, 8);
+		band(t, A, B, C.brown); band(t, B, T, C.brown); cap(t, T, C.brown);
+		band(t, ring(1.79, 0.118, 8), ring(1.82, 0.118, 8), C.black);
+		band(t, ring(1.785, 0.115, 10), ring(0, 0, 10, { deep: 1, shape: (a) => [0.26, 1.8 + 0.035 * Math.sin(a) ** 2] }), C.brown);
+	},
 };
 
 //-------------------------------THE WAYS-------------------------------
 // A town's ways as a net: nodes { x, y, z, ways: [[to, length, width, pace]] }. nearest(x, z): the node nearest a place
-function makeWays(town) {
+export function makeWays(town) {
 	const nodes = [], index = new Map();
 	const node = (p) => {
 		const key = Math.round(p[0] * 10) + ',' + Math.round(p[2] * 10);
@@ -244,7 +269,7 @@ function makeWays(town) {
 }
 
 // The way from node a to node b (A*): a list of nodes, or null
-function wayBetween(ways, a, b) {
+export function wayBetween(ways, a, b) {
 	const { nodes } = ways;
 	if (a == b) return [a];
 	const cost = new Map([[a, 0]]), from = new Map();
@@ -501,7 +526,7 @@ export function folkShotHeard(index, at) {
 }
 // the townsfolk's hitboxes, for the bullets fired here (not their own, horde.js)
 ballistics.addTarget((ax, ay, az, bx, by, bz, bullet) => {
-	if (!settings.enableTownFolk || folk.length == 0 || bullet?.shooter == 'folk') return null;
+	if (!settings.enableTownFolk || folk.length == 0 || String(bullet?.shooter).startsWith('folk')) return null;
 	const m = metre(), mx = (ax + bx) / 2, mz = (az + bz) / 2, reach = Math.hypot(bx - ax, bz - az) / 2 + 2 * m;
 	let best = null;
 	for (const person of folk) {
@@ -514,7 +539,8 @@ ballistics.addTarget((ax, ay, az, bx, by, bz, bullet) => {
 			if (t !== null && (!best || t < best.t)) best = { t, person };
 		}
 	}
-	return best && { t: best.t, what: 'townsperson', hit: () => {
+	return best && { t: best.t, what: 'townsperson', remoteToo: true, hit: (velocity, bullet) => {
+		if (folkHit.take?.(best.person, bullet) || bullet?.remote) return;
 		if (best.person.flee) return;
 		townFolkStats.shot++;
 		folkShotHeard(best.person.index, folkSeconds);
@@ -561,12 +587,27 @@ export function turnFolk(index) {
 	const person = folk[index];
 	if (person) { person.turned = true; person.fight = null; person.place = null; }
 }
-export function restoreFolk() { for (const person of folk) { person.turned = false; person.fight = null; } }
+export function restoreFolk() { for (const person of folk) { person.turned = false; person.fight = null; person.led = null; person.gone = false; person.dead = false; } }
+// THE WAR (war.js): killed (it does not come back until the towns are whole again), and who is
+export function killFolk(index) { const person = folk[index]; if (person) { person.dead = true; person.fight = null; person.led = null; person.place = null; } }
+export function setDead(list) { const dead = new Set(list); for (const person of folk) { person.dead = dead.has(person.index); if (person.dead) person.fight = null; } }
+export function deadList() { return folk.filter((person) => person.dead).map((person) => person.index); }
+// a hit on one, for the war (war.js): take(person, bullet) true if it has seen to it (anyone's: the host sees the joiners' rounds too)
+export const folkHit = { take: null };
+// led (see THE HORDE at the top): where the horde has it now, { x, y, z, heading, stride, walking }, or null to let it go its own way again
+export function setLed(index, place) { const person = folk[index]; if (person) person.led = place; }
+export function boardFolk(index) { const person = folk[index]; if (person) { person.gone = true; person.led = null; person.fight = null; person.place = null; } }
+export function setBoarded(list) { const gone = new Set(list); for (const person of folk) { person.gone = gone.has(person.index); if (person.gone) person.led = null; } }
+// for the horde: fn(person) for every one, out of doors or not ({ index, town, home, place, turned, gone })
+export function folkEach(fn) { for (const person of folk) fn(person); }
+export const folkPerson = (index) => folk[index];
 export function setTurned(list) {
 	const turned = new Set(list);
 	for (const person of folk) { person.turned = turned.has(person.index); if (person.turned) person.fight = null; }
 }
 export function turnedList() { return folk.filter((person) => person.turned).map((person) => person.index); }
+// how many there are, and how many of them have not turned (the Horde game mode is lost when none are left, horde.js)
+export function folkCount() { return settings.enableTownFolk ? { all: folk.length, left: folk.filter((person) => !person.turned).length } : { all: 0, left: 0 }; }
 
 let lastTime = performance.now();
 export function townFolkUpdate() {
@@ -583,7 +624,7 @@ export function townFolkUpdate() {
 		if (k != person.k) { person.k = k; person.errand = planErrand(person, k); }
 		if (person.flee && person.flee.k != k) person.flee = null;		// (out again with the next errand)
 		const f = person.fight;
-		const place = person.turned ? null : f ? { x: f.x, y: f.y, z: f.z, heading: f.heading, stride: 0, walking: 0 }
+		const place = person.turned || person.gone || person.dead ? null : person.led ? { ...person.led } : f ? { x: f.x, y: f.y, z: f.z, heading: f.heading, stride: 0, walking: 0 }
 			: person.flee ? fleeingAt(person.flee, folkSeconds - person.flee.t0) : placeAt(person, time - k * person.period);
 		person.hit = Math.max(person.hit - elapsed * 2, 0);
 		if (!place) { person.place = null; person.push = [0, 0]; person.look = 0; continue; }
@@ -637,7 +678,7 @@ function makeGpu() {
 			module, entryPoint: "vertexMain",
 			buffers: [
 				{ arrayStride: 16, attributes: [{ format: "float32x4", offset: 0, shaderLocation: 0 }] },
-				{ arrayStride: DUMMY_FLOATS * 4, stepMode: 'instance', attributes: [1, 2, 3, 4].map((k) => ({ format: "float32x4", offset: (k - 1) * 16, shaderLocation: k })) },
+				{ arrayStride: DUMMY_FLOATS * 4, stepMode: 'instance', attributes: [1, 2, 3, 4, 5].map((k) => ({ format: "float32x4", offset: (k - 1) * 16, shaderLocation: k })) },
 			],
 		},
 		fragment: { module, entryPoint: "fragmentMain", targets: [{ format: canvasFormat }] },
@@ -652,34 +693,42 @@ function makeGpu() {
 }
 export const HAT_TRIANGLES = () => gpu ? Object.fromEntries(Object.entries(gpu.meshes).filter(([name]) => !name.endsWith('+')).map(([name, m]) => [name, m.hatTriangles])) : null;
 
+// the others drawn as townsfolk (npcs.js): fn(each) calls each({ x, y, z, heading, pitch, stride, walking, fallen, hit, hue, sit, gun (HELD_LENGTH's
+//		names), armsDown (with no gun: 1 at its sides, 0 held out in front), look, hat, tilt ([forward, rolled]: see vf_dummy.js) }) for every one of them to draw
+const extraFolk = [];
+export function addFolkSource(fn) { extraFolk.push(fn); }
+
 // with the solid things
 export function townFolkPass(aEncoder, mainpassDepthTexture) {
 	townFolkStats.drawn = 0;
-	if (!settings.enableTownFolk || !settings.enableTerrain || folk.length == 0) return;
+	if (!settings.enableTerrain || (folk.length == 0 && extraFolk.length == 0)) return;
 	if (!gpu) gpu = makeGpu();
-	// the ones out of doors and near enough, by hat
+	// the ones out of doors and near enough, by hat: each its instance
 	const byHat = new Map();
 	let count = 0;
-	for (const person of folk) {
-		const p = person.place;
-		if (!p || count >= MAX_DRAWN || Math.hypot(p.x - settings.camPosX, p.z - settings.camPosZ) > DRAW_DISTANCE) continue;
-		const hat = person.profession.hat + (HELD_LENGTH[person.fight?.gun] ? '+' : '');
+	const take = (hat, p, row) => {
+		if (count >= MAX_DRAWN || Math.hypot(p.x - settings.camPosX, p.z - settings.camPosZ) > DRAW_DISTANCE || !gpu.meshes[hat]) return;
 		if (!byHat.has(hat)) byHat.set(hat, []);
-		byHat.get(hat).push(person);
+		byHat.get(hat).push(row);
 		count++;
+	};
+	if (settings.enableTownFolk) for (const person of folk) {
+		const p = person.place;
+		if (!p) continue;
+		const held = HELD_LENGTH[person.fight?.gun] ?? 0;
+		take(person.profession.hat + (held ? '+' : ''), p, [p.x, p.y, p.z, metre(), p.heading, held ? person.fight.pitch : 0, p.stride, p.walking, p.lean ?? 0, person.hit, person.hue, 0, held, held ? 0 : 1, person.look, 0, 0, 0, 0, 0]);
 	}
+	for (const source of extraFolk) source((o) => {
+		const held = HELD_LENGTH[o.gun] ?? 0;
+		take(o.hat + (held ? '+' : ''), o, [o.x, o.y, o.z, metre(), o.heading, o.pitch ?? 0, o.stride ?? 0, o.walking ?? 0, o.fallen ?? 0, o.hit ?? 0, o.hue ?? 0, o.sit ?? 0, held, held ? 0 : o.armsDown ?? 1, o.look ?? 0, 0, o.tilt?.[0] ?? 0, o.tilt?.[1] ?? 0, o.side ?? 0, 0]);
+	});
 	if (count == 0) return;
 	const draws = [];
 	let n = 0, triangles = 0;
-	for (const [hat, people] of byHat) {
-		draws.push([gpu.meshes[hat], n, people.length]);
-		triangles += gpu.meshes[hat].vertices / 3 * people.length;
-		for (const person of people) {
-			const p = person.place;
-			const held = HELD_LENGTH[person.fight?.gun] ?? 0;
-			gpu.instanceData.set([p.x, p.y, p.z, metre(), p.heading, held ? person.fight.pitch : 0, p.stride, p.walking, p.lean ?? 0, person.hit, person.hue, 0, held, held ? 0 : 1, person.look, 0], n * DUMMY_FLOATS);
-			n++;
-		}
+	for (const [hat, rows] of byHat) {
+		draws.push([gpu.meshes[hat], n, rows.length]);
+		triangles += gpu.meshes[hat].vertices / 3 * rows.length;
+		for (const row of rows) gpu.instanceData.set(row, n++ * DUMMY_FLOATS);
 	}
 	device.queue.writeBuffer(gpu.instanceBuffer, 0, gpu.instanceData, 0, n * DUMMY_FLOATS);
 	device.queue.writeBuffer(gpu.uniformBuffer, 0, new Float32Array([...transformations.getViewProj(), settings.camPosX, settings.camPosY, settings.camPosZ, 0,

@@ -57,7 +57,7 @@ import {uniformBufferLights} from './rotatingCube.js'
 const MAX_GROUPS = 200;
 const MAX_IN_GROUP = 3;
 const MAX_DEER = MAX_GROUPS * MAX_IN_GROUP;
-const MAX_DRAWN = MAX_DEER * 2 + 1400;	// the living and the shot ones still going into the ground, and the others drawn with them (addDrawn: the horde)
+const MAX_DRAWN = MAX_DEER * 2 + 3400;	// the living and the shot ones still going into the ground, and the others drawn with them (addDrawn: the horde)
 const HOME_SPACINGS = [250, 180, 120];	// world units between homes: the widest first, closer only when they do not all fit
 const REHERD_SECONDS = 0.4;		// a new number of groups is made once it has held this long (a dragged slider goes through every number)
 const DEER_FLOATS = 12;				// one deer as the shader gets it: place (4), pose (4), state (4)
@@ -207,6 +207,16 @@ ballistics.addTarget((ax, ay, az, bx, by, bz) => {
 	const found = ballistics.crossAnimals(ax, ay, az, bx, by, bz, living, (one) => deerSpheres(one.deer), (one) => deerAround(one.deer));
 	return found && { t: found.t, what: 'deer', hit: (velocity) => killDeer(found.animal.deer, found.animal.group, velocity) };
 });
+
+// a shell bursting (shipGuns.js) at (world units), fired here: every deer within radius (world units) of it dead (a joiner says so to
+//		the host, as a shot would)
+export function blast(at, radius) {
+	if (!settings.enableDeer || hidden()) return;
+	const near = (one) => Math.hypot(one.x - at[0], one.y - at[1], one.z - at[2]) < radius;
+	const away = (one) => [one.x - at[0], 0, one.z - at[2]];
+	if (followed) { for (const one of followed) if (one.alive && near(one)) deerShot.report?.(one.id, away(one)); return; }
+	for (const group of groups) for (const deer of [...group.deer]) if (near(deer)) killDeer(deer, group, away(deer));
+}
 
 function killDeer(deer, group, velocity) {
 	const at = group.deer.indexOf(deer);
@@ -599,6 +609,12 @@ function advanceDeer(elapsed) {
 	deerStats.day = dayClock;
 }
 
+// every deer within reach of (x, z) world units: each(x, y, z) (sound.js: a snort now and then)
+export function deerNear(x, z, reach, each) {
+	if (!settings.enableDeer || hidden()) return;
+	const list = followed ? followed.filter((one) => one.alive) : groups.flatMap((group) => group.deer);
+	for (const one of list) if (Math.abs(one.x - x) < reach && Math.abs(one.z - z) < reach) each(one.x, one.y, one.z);
+}
 // for testing: the groups as they are now
 export function deerGroups() {
 	return groups.map((group) => ({ state: group.state, home: group.home, spot: group.spot, visits: { ...group.visits }, trips: [...group.trips], deer: group.deer.map((deer) => ({ x: deer.x, y: deer.y, z: deer.z, heading: deer.heading, headDown: deer.headDown, walking: deer.walking })) }));

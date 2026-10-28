@@ -60,7 +60,7 @@ const BRUSH_FLUTTER = [[4.7, 0.13], [7.9, 0.1], [12.3, 0.08]];	// its flutter: w
 const BRUSH_PACE = 4;				// metres a second: walking this fast it is as loud as it gets (running, a little louder still)
 const WAVE_SECONDS = [6.5, 10];
 const ENGINES = 3;
-const MOST_SHOTS = 24;				// reports at once, at the most (a Lewis gun and a few others)
+const MOST_SHOTS = 48;				// reports at once, at the most (a few Lewis guns, the Vickers of a dogfight or two)
 // each round's report: the crack (its bandpass, how loud), the boom (the sweep down, how loud, how long it rings) and the rumble after
 const REPORTS = {
 	'7.62x54R': { crack: [3400, 1.0], boom: [170, 48, 0.9, 0.13], rumble: [900, 0.6, 0.35] },
@@ -189,23 +189,18 @@ function tone({ to, when, f0, f1 = f0, sweep = 0.1, type = 'sine', peak = 1, att
 
 // THE GUNS (see the top)
 //-------------------------------------------------
-let recent = [];
-ballistics.onAnyShot((from, round) => {
+//		(a shell's pellets come as one shot: ballistics.js's volleys; someone else's with the delay that keeps them as far apart as they were
+//		fired: net.js)
+ballistics.onAnyShot((from, round, { delay = 0 } = {}) => {
 	if (!ctx || ctx.state != 'running' || ballistics.ROUNDS[round]?.carried) return;		// (a bomb let go is no report)
-	const now = ctx.currentTime;
-	const at = toMetres(from);
-	// (the others' shells come as nine pellets, each fired here for its trail: one report)
-	recent = recent.filter((r) => now - r.t < 0.05);
-	if (recent.some((r) => Math.hypot(r.at[0] - at[0], r.at[1] - at[1], r.at[2] - at[2]) < 0.5)) return;
-	recent.push({ t: now, at });
 	if (shotsPlaying >= MOST_SHOTS) return;
-	report(at, REPORTS[round] ?? REPORTS['7.62x54R']);
+	report(toMetres(from), REPORTS[round] ?? REPORTS['7.62x54R'], delay);
 });
 let shotsPlaying = 0;
-function report(at, R) {
+function report(at, R, later = 0) {
 	const way = placed(at, { ref: 10, echo: 1.2 });
 	if (way.distance > 3000) return;
-	const when = ctx.currentTime + way.delay + 0.005;
+	const when = ctx.currentTime + way.delay + 0.005 + later;
 	const loud = ctx.createGain(); loud.gain.value = 0.9; loud.connect(way.input);
 	noise({ to: loud, when, peak: R.crack[1], decay: 0.018, length: 0.15, frequency: R.crack[0], Q: 0.7 });
 	noise({ to: loud, when, peak: R.crack[1] * 0.5, decay: 0.008, length: 0.06, type: 'highpass', frequency: 5000 });
@@ -213,7 +208,7 @@ function report(at, R) {
 	noise({ to: loud, when: when + 0.004, peak: R.rumble[1], attack: 0.01, decay: R.rumble[2], length: R.rumble[2] * 5, type: 'lowpass', frequency: R.rumble[0], Q: 0.5, buffer: brown });
 	soundStats.shots++;
 	shotsPlaying++;
-	setTimeout(() => { shotsPlaying--; }, (way.delay + 1.2) * 1000);
+	setTimeout(() => { shotsPlaying--; }, (way.delay + later + 1.2) * 1000);
 }
 
 // a plane or a boat shot to pieces (plane.js, boat.js): a crack, a deep thump that rolls on, and the bits of it coming apart after
@@ -464,12 +459,12 @@ export function soundUpdate() {
 	const ride = place.vehicle ? plane.planeById(place.vehicle) : null;
 	const rush = ride ? clamp(ride.airspeed / 50, 0, 1.5) : 0;
 	const set = (node, value, k = 0.3) => node.gain.setTargetAtTime(value, t, k);
-	set(beds.grass, 0.4 * blow * (0.55 + 0.9 * gust) * around.grass * ground);
+	set(beds.grass, 0.2 * blow * (0.55 + 0.9 * gust) * around.grass * ground);
 	// through the undergrowth, on foot off the paths: as loud as the walker is going fast
 	const onFoot = place.active && place.on == 'land' && place.grounded && !place.swimming && hunting.hunterLife.alive && around.undergrowth;
 	const pace = onFoot ? Math.hypot(place.vx ?? 0, place.vz ?? 0) / metre() : 0;
-	set(beds.brush, 0.35 * clamp(pace / BRUSH_PACE, 0, 1.3), 0.12);
-	set(beds.leaves, 0.12 * blow * (0.3 + 1.2 * gust) * around.forest * ground);
+	set(beds.brush, 0.175 * clamp(pace / BRUSH_PACE, 0, 1.3), 0.12);
+	set(beds.leaves, 0.06 * blow * (0.3 + 1.2 * gust) * around.forest * ground);
 	set(beds.roar, 0.05 * blow * blow * (0.5 + gust) + 0.3 * rush * rush);
 	// the beach: as near as the shore is, a wave at a time
 	const shoreGain = around.shore > 1e8 ? 0 : (0.5 + 0.5 * around.beach) / (1 + Math.pow(around.shore / 22, 1.5));

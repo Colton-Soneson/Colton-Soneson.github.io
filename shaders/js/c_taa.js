@@ -12,7 +12,8 @@ import { reversedDepth } from '../../code/depthMode.js';
 							their colours (in YCoCg: brightness and two colour differences, a tighter box than red, green and blue),
 							the box no wider than TU.look.z standard deviations from their mean. What was there and is no longer
 							(something moved off it, it is lit differently) is let go of at once, and nothing smears behind what moves
-		4. blended			TU.look.y of this frame, the rest the history (more of this frame the faster it moves: the history read
+		   (a REACTIVE pixel, see motionShapes.js, is not taken as the nearest: its motion is its own)
+		4. blended			TU.look.y of this frame (TU.look2.x at the least where it is REACTIVE), the rest the history (more of this frame the faster it moves: the history read
 							between its pixels is softer), each weighed by one over its brightness so a single bright pixel does
 							not flicker
 	Nothing to go on (just started, the camera jumped, or it was off the screen the frame before): this frame as it is.
@@ -25,6 +26,7 @@ export const c_taa =
 	{
 		size : vec4f,		// the frame's pixels across and down, and one over each
 		look : vec4f,		// x: 1 to start again (no history), y: how much of this frame goes in, z: the box's half width (standard deviations), w: more of this frame for every pixel it moved
+		look2 : vec4f,		// x: how much of this frame goes in where it is reactive (see motionShapes.js)
 	}
 	@group(0) @binding(0) var<uniform> TU: TaaUniforms;
 	@group(0) @binding(1) var frame: texture_2d<f32>;
@@ -100,7 +102,8 @@ export const c_taa =
 				lo = min(lo, c);
 				hi = max(hi, c);
 				let d = textureLoad(depthTexture, q, 0);
-				if (d ${NEARER} nearestDepth) {
+				// (not a reactive one's: its motion is its own, and what is seen through its holes has another)
+				if (d ${NEARER} nearestDepth && textureLoad(motion, q, 0).z < 0.5) {
 					nearestDepth = d;
 					nearest = q;
 				}
@@ -113,7 +116,8 @@ export const c_taa =
 			let mean = sum / 9.0;
 			let spread = sqrt(max(squares / 9.0 - mean * mean, vec3f(0.0)));
 			let past = fromYCoCg(intoBox(toYCoCg(historyAt(back)), max(lo, mean - TU.look.z * spread), min(hi, mean + TU.look.z * spread)));
-			let now = clamp(TU.look.y + TU.look.w * length(moved * TU.size.xy), TU.look.y, 0.5);
+			let reactive = textureLoad(motion, p, 0).z;
+			let now = max(clamp(TU.look.y + TU.look.w * length(moved * TU.size.xy), TU.look.y, 0.5), reactive * TU.look2.x);
 			let wNow = now / (1.0 + luma(here));
 			let wPast = (1.0 - now) / (1.0 + luma(past));
 			result = (here * wNow + past * wPast) / (wNow + wPast);

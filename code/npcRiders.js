@@ -29,11 +29,13 @@ import * as npcs from './npcs.js'
 	rides at them (CHASE) until they are within reach.
 	DOWN: off its horse on to the ground beside it. The horse stands there (anyone can ride it). Back at its inn RESPAWN_SECONDS
 	later on a new horse; the old one goes if no one is on it (and the walker is not by it).
-	THE WAR (war.js: addWarRider): each side's horsemen, out of its town's inn, ride over to the other's and about its streets from one
-		house's door to another's, after its townsfolk (and the other side's players and horsemen, on the land: not up in the air nor out
-		on the water). Down, each is back at its own inn on a new horse in time, and rides over again. While it is on, the others are put up.
-		ACROSS COUNTRY: with no way by the roads to where it is going, or one more than OFF_ROAD.detour times as long as straight
-		there, it goes across country (landRoute: A* over a grid of OFF_ROAD.cell, dry land not too steep, the steeper the dearer).
+	THE WAR (war.js: addWarRider): each side's horsemen, mustered in lines (MUSTER) just outside their own town on the side towards the
+		other, ride over to the other's and about it from one house's door to another's, after its townsfolk (and the other side's players
+		and horsemen, on the land: not up in the air nor out on the water). Down, each is back at the muster on a new horse in time, and
+		rides over again. While it is on, the others are put up.
+		ACROSS COUNTRY: they keep to no road: every way is across country (landRoute: A* over a grid of OFF_ROAD.cell, dry land, the steeper the
+		dearer (too steep, OFF_ROAD.steepCost times), and round the houses' walls: OFF_ROAD.walls times as dear by one). Only OFF_ROAD.perFrame ways are found a frame, so many at once (the
+		war beginning) are spread over a few frames: one waiting for its way stands.
 		THE FLANK: riding over from its own town, it has a chance (FLANK.chance) of going round: across country out to a point FLANK.out
 		off to one side of the way there, half way, then in to the edge of the town on that side, and on along its streets.
 	World units (2 to the metre) for places, metres a second for paces
@@ -52,7 +54,8 @@ const CHASE = 180;					// metres: further than RANGE, as far as this, it rides a
 const FIRE_EVERY = [1.8, 3.0];		// seconds
 const SPREAD = 0.014;				// radians, and as much again every 200 metres
 const GIVE_UP = 12;
-const OFF_ROAD = { cell: 20, pad: 400, steep: 0.7, climb: 4, detour: 2.2, most: 25000 };	// ACROSS COUNTRY: metres a cell, round the two ends, too steep (rise over run), how dear a climb is, how long a way round is too long
+const OFF_ROAD = { cell: 12, pad: 300, steep: 0.7, climb: 4, most: 60000, clear: 1.5, walls: 4, steepCost: 5, greed: 2, perFrame: 1 };	// ACROSS COUNTRY: metres a cell, round the two ends, too steep (rise over run) and how many times as dear, how dear a climb is, A*'s most steps, metres kept off a wall, how many times as dear a cell by a wall is, the A*'s heuristic weighted (quicker, a little less straight), ways found a frame
+const MUSTER = { out: 25, apart: 8, rows: 5 };	// THE WAR: metres out past the edge of its own town, apart in a row, horsemen to a row
 const FLANK = { chance: 0.35, out: [500, 400, 300, 200] };	// THE FLANK: a chance of it, and metres off to the side (the furthest on dry land; its side first)
 const LOOK = 0.3;					// seconds between looks round for who to fight (each rider at its own moment)					// seconds out of sight before it goes on its way
 
@@ -186,17 +189,18 @@ function setOff(r) {
 }
 function planRoute(r) {
 	const h = r.horse;
-	r.route = r.war ? warRoute(r) : roadWay([h.x, h.z], [r.going.x, r.going.z]) ?? [[r.going.x, r.going.z]];
 	r.along = 0;
 	riderStats.routes++;
+	if (r.war) { r.replan = true; r.route = []; return; }
+	r.route = roadWay([h.x, h.z], [r.going.x, r.going.z]) ?? [[r.going.x, r.going.z]];
 }
+let routeBudget = 0;		// ways that can still be found this frame (OFF_ROAD.perFrame)
 // the way by the roads from a place to another (world units, [x, z]): its points, the last the place itself; none: null
 function roadWay(from, to) {
 	const a = roads.nearest(from[0], from[1]), b = roads.nearest(to[0], to[1]);
 	const way = a >= 0 && b >= 0 ? townFolk.wayBetween(roads, a, b) : null;
 	return way && [...way.map((k) => [roads.nodes[k].x, roads.nodes[k].z]), to];
 }
-const lengthOf = (from, P) => P.reduce((sum, p, k) => sum + Math.hypot(p[0] - (k ? P[k - 1][0] : from[0]), p[1] - (k ? P[k - 1][1] : from[1])), 0);
 // THE WAR: a horseman's way (see ACROSS COUNTRY and THE FLANK at the top)
 function warRoute(r) {
 	const h = r.horse, m = metre(), from = [h.x, h.z], goal = [r.going.x, r.going.z];
@@ -213,14 +217,12 @@ function warRoute(r) {
 		if (P) {
 			const s = Math.hypot(P[0] - E.x, P[1] - E.z), edge = [E.x + (P[0] - E.x) / s * E.reach * 0.85, E.z + (P[1] - E.z) / s * E.reach * 0.85];
 			const out1 = landRoute(from, P), in1 = out1 && landRoute(P, edge);
-			if (in1) { riderStats.flanks++; return [...out1, ...in1, ...(roadWay(edge, goal) ?? [goal])]; }
+			if (in1) { riderStats.flanks++; return [...out1, ...in1, ...(landRoute(edge, goal) ?? [goal])]; }
 		}
 	}
-	const road = roadWay(from, goal), straight = Math.hypot(goal[0] - from[0], goal[1] - from[1]);
-	if (road && lengthOf(from, road) < OFF_ROAD.detour * straight + 60 * m) return road;
 	const across = landRoute(from, goal);
 	if (across) { riderStats.offRoad++; return across; }
-	return road ?? [goal];
+	return [goal];
 }
 // ACROSS COUNTRY (see the top): A* over a grid of OFF_ROAD.cell round from and to (world units, [x, z]), through dry land not too steep, the
 //		steeper the dearer; its points (world units), the last to itself. None: null
@@ -231,20 +233,43 @@ function landRoute(from, to) {
 	const cellOf = (x, z) => [clamp(Math.floor((x - x0) / C), 0, nx - 1), clamp(Math.floor((z - z0) / C), 0, nz - 1)];
 	const height = new Float32Array(nx * nz).fill(NaN);
 	const heightOf = (i, j) => { const k = i * nz + j; if (Number.isNaN(height[k])) height[k] = land.heightAt(x0 + (i + 0.5) * C, z0 + (j + 0.5) * C); return height[k]; };
-	const dry = settings.waterWorldPosY + 0.3 * m;
-	const [si, sj] = cellOf(...from), [ti, tj] = cellOf(...to), goal = ti * nz + tj;
-	const cost = new Float32Array(nx * nz).fill(Infinity), came = new Int32Array(nx * nz).fill(-1);
+	const dry = settings.waterWorldPosY + 0.3 * m, clear = OFF_ROAD.clear * m;
+	const shut = new Uint8Array(nx * nz);		// (0 not looked at yet, 1 open, 2 a wall)
+	const walled = (i, j) => {
+		const k = i * nz + j;
+		if (!shut[k]) {
+			const x = x0 + (i + 0.5) * C, z = z0 + (j + 0.5) * C, ground = heightOf(i, j);
+			let wall = false;
+			town.boxesNear(x, z, clear, (bx, bz, half, bottom, top) => { if (!wall && top > ground + 1.2 * m && Math.abs(x - bx) < half + clear && Math.abs(z - bz) < half + clear) wall = true; });
+			shut[k] = wall ? 2 : 1;
+		}
+		return shut[k] == 2;
+	};
+	// (either end in the water, or too near it: a dock, a door on the sea front: the nearest dry cell to it instead)
+	const dryNear = ([i, j]) => {
+		if (heightOf(i, j) >= dry) return [i, j];
+		for (let r = 1; r <= 6; r++) for (let a = i - r; a <= i + r; a++) for (let c = j - r; c <= j + r; c++) {
+			if (Math.max(Math.abs(a - i), Math.abs(c - j)) == r && a >= 0 && c >= 0 && a < nx && c < nz && heightOf(a, c) >= dry) return [a, c];
+		}
+		return [i, j];
+	};
+	const [si, sj] = dryNear(cellOf(...from)), [ti, tj] = dryNear(cellOf(...to)), goal = ti * nz + tj;
+	const cost = new Float64Array(nx * nz).fill(Infinity), came = new Int32Array(nx * nz).fill(-1);
 	cost[si * nz + sj] = 0;
-	const heap = [[Math.hypot(ti - si, tj - sj), si, sj]];
+	const heap = [[Math.hypot(ti - si, tj - sj), si, sj, 0]];
 	const push = (item) => { heap.push(item); let i = heap.length - 1; while (i > 0) { const p = (i - 1) >> 1; if (heap[p][0] <= heap[i][0]) break; [heap[p], heap[i]] = [heap[i], heap[p]]; i = p; } };
 	const pop = () => {
 		const top = heap[0], last = heap.pop();
 		if (heap.length) { heap[0] = last; let i = 0; for (;;) { const l = 2 * i + 1, rr = l + 1; let k = i; if (l < heap.length && heap[l][0] < heap[k][0]) k = l; if (rr < heap.length && heap[rr][0] < heap[k][0]) k = rr; if (k == i) break; [heap[k], heap[i]] = [heap[i], heap[k]]; i = k; } }
 		return top;
 	};
-	let found = false, steps = 0;
-	while (heap.length && steps++ < OFF_ROAD.most) {
-		const [, i, j] = pop(), here = i * nz + j;
+	let found = false, steps = 0, closest = Infinity;
+	const t0 = performance.now();
+	while (heap.length && steps < OFF_ROAD.most) {
+		const [, i, j, g0] = pop(), here = i * nz + j;
+		if (g0 > cost[here]) continue;		// (one put in before a cheaper way to it was found)
+		steps++;
+		closest = Math.min(closest, Math.hypot(ti - i, tj - j));
 		if (here == goal) { found = true; break; }
 		const h0 = heightOf(i, j);
 		for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) {
@@ -252,13 +277,16 @@ function landRoute(from, to) {
 			const a = i + di, c = j + dj;
 			if (a < 0 || c < 0 || a >= nx || c >= nz) continue;
 			const next = a * nz + c, h1 = heightOf(a, c), run = Math.hypot(di, dj) * C, rise = Math.abs(h1 - h0) / run;
-			if (next != goal && (h1 < dry || rise > OFF_ROAD.steep)) continue;
-			const g = cost[here] + Math.hypot(di, dj) * (1 + OFF_ROAD.climb * rise);
-			if (g < cost[next]) { cost[next] = g; came[next] = here; push([g + Math.hypot(ti - a, tj - c), a, c]); }
+			if (next != goal && h1 < dry) continue;
+			// (a house's walls and ground too steep dear, not shut: a town's streets are narrower than a cell, and the banks of the
+			//		terraces it is built on steeper than its ramps look at this size; the way has to get through them)
+			const g = cost[here] + Math.hypot(di, dj) * (1 + OFF_ROAD.climb * Math.min(rise, OFF_ROAD.steep)) * (walled(a, c) ? OFF_ROAD.walls : 1) * (rise > OFF_ROAD.steep ? OFF_ROAD.steepCost : 1);
+			if (g < cost[next]) { cost[next] = g; came[next] = here; push([g + OFF_ROAD.greed * Math.hypot(ti - a, tj - c), a, c, g]); }
 		}
 	}
 	riderStats.landSteps = Math.max(riderStats.landSteps ?? 0, steps);
-	if (!found) { riderStats.landFailed = (riderStats.landFailed ?? 0) + 1; return null; }
+	riderStats.landMs = Math.max(riderStats.landMs ?? 0, Math.round(performance.now() - t0));
+	if (!found) { riderStats.landFailed = (riderStats.landFailed ?? 0) + 1; riderStats.lastFail = { nx, nz, from: [si, sj], to: [ti, tj], closest: Math.round(closest), steps, heap: heap.length }; return null; }
 	const path = [];
 	for (let k = came[goal]; k >= 0 && k != si * nz + sj; k = came[k]) path.unshift([x0 + (Math.floor(k / nz) + 0.5) * C, z0 + (k % nz + 0.5) * C]);
 	return [...path, to];
@@ -332,6 +360,8 @@ function stepRider(r, dt) {
 	} else if (r.rest > 0) {
 		r.rest -= dt;
 		if (r.rest <= 0) setOff(r);
+	} else if (r.replan) {
+		if (routeBudget > 0) { routeBudget--; r.replan = false; r.route = warRoute(r); r.along = 0; }
 	} else {
 		// along its way: the point LOOK_AHEAD on from the nearest it has come to
 		const route = r.route;
@@ -406,6 +436,7 @@ export function ridersUpdate(dt) {
 	// (in THE WAR only the sides' ride: the others are put up until it is over)
 	if (npcs.war.on) { if (riders.some((r) => !r.war)) clearRiders(); builtFor = null; }
 	else if (land !== builtFor) { builtFor = land; makeRiders(land); }
+	routeBudget = OFF_ROAD.perFrame;
 	for (const r of [...riders]) stepRider(r, dt);
 }
 // (the riders between the towns, or which)
@@ -425,8 +456,19 @@ export function addWarRider(side, home, enemy, k = 0) {
 	roads = roadsFor(terrain.land);
 	const group = npcs.makeGroup();
 	group.side = side;
-	const inn = innOf(home), a = k * 2.4, out = (3 + (k % 5) * 2.5) * metre();
-	const start = { ...inn, x: inn.x + Math.cos(a) * out, z: inn.z + Math.sin(a) * out };
+	const m = metre(), H = town.townMiddle(home), E = town.townMiddle(enemy);
+	const dx = E.x - H.x, dz = E.z - H.z, d = Math.max(Math.hypot(dx, dz), 1), across = [-dz / d, dx / d];
+	const lateral = ((k % MUSTER.rows) - (MUSTER.rows - 1) / 2) * MUSTER.apart * m, back = Math.floor(k / MUSTER.rows) * MUSTER.apart * m;
+	const at = (more) => ({ x: H.x + dx / d * (H.reach + MUSTER.out * m + more - back) + across[0] * lateral, z: H.z + dz / d * (H.reach + MUSTER.out * m + more - back) + across[1] * lateral });
+	const fit = (p) => {
+		if (terrain.land.heightAt(p.x, p.z) < settings.waterWorldPosY + 0.5 * m) return false;
+		let wall = false;
+		town.boxesNear(p.x, p.z, 3 * m, (bx, bz, half) => { if (Math.abs(p.x - bx) < half + 3 * m && Math.abs(p.z - bz) < half + 3 * m) wall = true; });
+		return !wall;
+	};
+	let spot = at(0);
+	for (let more = 10 * m; more < 300 * m && !fit(spot); more += 10 * m) spot = at(more);
+	const start = { ...spot, heading: Math.atan2(dx, dz), town: home };
 	const person = npcs.makePerson('rider', { hat: 'stetson', gun: 'revolver', home: start, group, name: 'horseman' });
 	const r = { person, inn: start, horse: null, going: null, route: [], along: 0, rest: 0, wanted: 0, think: 0, stuck: 0, backing: 0, fire: 1, unseen: 0, turnSign: 1, war: { side, enemy } };
 	riders.push(r);
@@ -445,10 +487,15 @@ export function warRidersToForTest(side, at) {
 }
 export function warRiderList() { return riders.filter((r) => r.war).map((r) => ({ side: r.war.side, flank: r.war.flank ?? 0, alive: r.person.alive, at: r.horse ? [Math.round(r.horse.x), Math.round(r.horse.z)] : null, fighting: r.person.fighting })); }
 // somewhere in the other town to ride to: before the door of one of its houses, at random
+//		(on dry land: a door on the sea front may open over the water)
 function warSpot(t) {
-	const list = t.buildings.filter((b) => !b.onPier), b = list[Math.floor(Math.random() * list.length)];
-	const out = b.depth / 2 + 4 * metre();
-	return { x: b.x + Math.sin(b.yaw) * out, z: b.z + Math.cos(b.yaw) * out, heading: b.yaw };
+	const list = t.buildings.filter((b) => !b.onPier), dry = settings.waterWorldPosY + 0.5 * metre();
+	let spot = null;
+	for (let k = 0; k < 12 && (!spot || terrain.land.heightAt(spot.x, spot.z) < dry); k++) {
+		const b = list[Math.floor(Math.random() * list.length)], out = b.depth / 2 + 4 * metre();
+		spot = { x: b.x + Math.sin(b.yaw) * out, z: b.z + Math.cos(b.yaw) * out, heading: b.yaw };
+	}
+	return spot;
 }
 // whether one of theirs is somewhere a horseman can get at it: on the land, not up in the air nor out on the water
 function onLand(e) {

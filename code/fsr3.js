@@ -103,7 +103,7 @@ function upscale(encoder, { color, depth, motion, output, reset, jitter, phases 
 		['downsample', { 18: M.spdViews[1], 19: M.spdViews[0] }, groups(M.H.map((v) => Math.max(v >> 1, 1)))],
 		['downsample', { 18: M.spdViews[2], 19: M.spdViews[1] }, groups(M.H.map((v) => Math.max(v >> 2, 1)))],
 		['shadingChangePass', { 0: { buffer: uniforms }, 1: linearClamp, 20: M.spd, 21: M.shadingChange }, groups(M.H)],
-		['prepareReactivity', { 0: { buffer: uniforms }, 1: linearClamp, 6: M.dilatedMotion, 8: M.dilatedDepth, 12: M.luma[a], 15: M.recon, 22: M.shadingChange, 23: M.masks, 25: M.accumulation[b], 26: M.accumulation[a], 27: M.newLocks }, groups(R)],
+		['prepareReactivity', { 0: { buffer: uniforms }, 1: linearClamp, 3: motionTexture, 6: M.dilatedMotion, 8: M.dilatedDepth, 12: M.luma[a], 15: M.recon, 22: M.shadingChange, 23: M.masks, 25: M.accumulation[b], 26: M.accumulation[a], 27: M.newLocks }, groups(R)],
 		['lumaInstabilityPass', { 0: { buffer: uniforms }, 1: linearClamp, 6: M.dilatedMotion, 12: M.luma[a], 24: M.masks, 28: M.lumaHistory[b], 29: M.lumaHistory[a], 30: M.lumaInstability }, groups(R)],
 		['accumulate', { 0: { buffer: uniforms }, 1: linearClamp, 4: colorTexture, 6: M.dilatedMotion, 17: M.farthestMip1, 24: M.masks, 27: M.newLocks, 31: M.lumaInstability, 32: M.upscaled[b], 33: M.upscaled[a] }, groups(U)],
 		['rcas', { 0: { buffer: uniforms }, 33: M.upscaled[b], 34: output }, groups(U)],

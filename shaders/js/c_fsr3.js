@@ -14,7 +14,7 @@ import { reversedDepth } from '../../code/depthMode.js';
 														and this frame is already tone mapped (exposure 1)
 		the shading change pyramid						SPD's first three mips made one dispatch each (shadingMip0, downsample twice)
 		textures read with a linear sampler				rgba16float or rgba8unorm (r16float and r8unorm cannot be written as storage)
-	No reactive mask or transparency and composition mask is given (AMD's defaults: none), and the motion is in UV already (scale 1),
+	The reactive mask is the motion's z (motionShapes.js: the propeller's blur, the puffs), and no transparency and composition mask is given, and the motion is in UV already (scale 1),
 	without the jitter (no jitter cancellation). The motion vectors are at the size the frame is drawn at (LOW_RESOLUTION_MOTION_VECTORS).
 
 	Copyright (C) 2024 Advanced Micro Devices, Inc.
@@ -197,7 +197,7 @@ export const c_fsr3 =
 		var nearestCoord = p;
 		for (var k = 1; k < 9; k++) {
 			let q = p + offsets[k];
-			if (IsOnScreen(q, RenderSize())) {
+			if (IsOnScreen(q, RenderSize()) && textureLoad(inputMotion, q, 0).z < 0.5) {
 				let d = LoadInputDepth(q);
 				if ((INVERTED_DEPTH && d > nearest) || (!INVERTED_DEPTH && d < nearest)) {
 					farthest = select(max(farthest, d), min(farthest, d), INVERTED_DEPTH);
@@ -408,10 +408,14 @@ export const c_fsr3 =
 		let motionVector = textureLoad(dilatedMotion, p, 0).xy;
 		let depth = textureLoad(dilatedDepth, p, 0).r;
 		let disocclusion = ComputeDisocclusions(uv, motionVector, GetViewSpaceDepth(depth));
-		// (the shading change: no reactive mask given)
+		// (the reactive mask, AMD's DilateReactiveMasks: the most of the 3 x 3; given in the motion's z, motionShapes.js)
+		var reactiveMask = 0.0;
+		for (var k = 0; k < 9; k++) {
+			reactiveMask = max(reactiveMask, textureLoad(inputMotion, ClampLoad(p, vec2i(k % 3 - 1, k / 3 - 1), RenderSize()), 0).z);
+		}
 		let shadingUv = ClampUv(uv - Jitter() / FC.sizes.xy, ShadingChangeRenderSize(), ShadingChangeRenderSize());
-		let change = saturate(textureSampleLevel(shadingChange, linearClamp, shadingUv, 0.0).r);
-		let reactive = ComputeMotionDivergence(uv, motionVector, depth);
+		let change = max(reactiveMask, saturate(textureSampleLevel(shadingChange, linearClamp, shadingUv, 0.0).r));
+		let reactive = max(ComputeMotionDivergence(uv, motionVector, depth), reactiveMask);
 		// the accumulation (UpdateAccumulation)
 		let reprojected = uv + motionVector;
 		var accumulated = 0.0;

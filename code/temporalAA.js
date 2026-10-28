@@ -34,7 +34,7 @@ export const MODES = {
 	'fsr-performance': { ratio: 2.0, fsr: true },
 };
 const JITTER = { taa: 8, fsr: 8 };
-const TAA = { now: 0.1, box: 1.25, moving: 0.006 };	// c_taa.js: how much of this frame goes in, the box's half width, more for every pixel it moved
+const TAA = { now: 0.1, box: 1.25, moving: 0.006, reactive: 0.7 };	// c_taa.js: how much of this frame goes in, the box's half width, more for every pixel it moved, and where it is reactive
 const JUMP = 50;
 export const MOTION_FORMAT = 'rgba16float';
 
@@ -153,10 +153,10 @@ function motionPass(encoder, depthTexture) {
 // TAA (c_taa.js)
 const taaModule = device.createShaderModule({ label: 'c_taa', code: c_taa });
 const taaPipeline = device.createComputePipeline({ label: 'taa pipeline', layout: 'auto', compute: { module: taaModule, entryPoint: 'computeMain' } });
-const taaUniforms = device.createBuffer({ label: 'taa Uniform', size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+const taaUniforms = device.createBuffer({ label: 'taa Uniform', size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 const linearSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear', addressModeU: 'clamp-to-edge', addressModeV: 'clamp-to-edge' });
 function taaPass(encoder, depthTexture) {
-	device.queue.writeBuffer(taaUniforms, 0, new Float32Array([drawn.width, drawn.height, 1 / drawn.width, 1 / drawn.height, reset ? 1 : 0, TAA.now, TAA.box, TAA.moving]));
+	device.queue.writeBuffer(taaUniforms, 0, new Float32Array([drawn.width, drawn.height, 1 / drawn.width, 1 / drawn.height, reset ? 1 : 0, TAA.now, TAA.box, TAA.moving, TAA.reactive, 0, 0, 0]));
 	const bindGroup = device.createBindGroup({ label: 'taa bind group', layout: taaPipeline.getBindGroupLayout(0), entries: [
 		{ binding: 0, resource: { buffer: taaUniforms } },
 		{ binding: 1, resource: frameTexture().createView() },

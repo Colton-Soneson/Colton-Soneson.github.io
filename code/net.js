@@ -47,6 +47,7 @@ import { PRESETS } from './graphicsPresets.js';
 							host calls up itself),
 							veh+ and veh- (a vehicle it put out, or took away), vs (the states of the vehicles it sails), claim (it
 							took a vehicle's helm), vctl (a control worked on a vehicle someone else sails)
+		(a shot comes with the clock it was fired by, w: see THE SHOTS HEARD)
 		host to joiners		welcome (its id, who is there, the world, the clock, the scores, the vehicles, the disc golf course), join,
 							leave, world, clock, course (the disc golf course's holes, when they change), sts (everyone's states), shot,
 							hp (someone's health), down (someone was shot dead), score, and veh+, veh-, vs, vctl passed on, auth (who
@@ -55,7 +56,7 @@ import { PRESETS } from './graphicsPresets.js';
 							(the run, HORDE_RATE times a second: its round, the power-ups, the townsfolk fighting and turned), hfx (what
 							just happened: a new run, a round, a power-up taken), hpts (points earned), shove (a deer's lunge)
 		the NPCs			(npcs.js and its kinds) joiner to host: npcHit (one of them hit: the part, the round), npcAttack (one of their
-							vehicles hit). Host to joiners: npcs (the people, PEOPLE_RATE times a second, on the fast channel), npcShots
+							vehicles hit), npcBlast (its own shell or bomb burst: the NPCs and the war's townsfolk round it, on the host). Host to joiners: npcs (the people, PEOPLE_RATE times a second, on the fast channel), npcShots
 							(their rounds this frame, for their trails). Their vehicles go as everyone's do (owned by 'npc', sailed by the
 							host), and their harm to a player as hp and down, by 'npc'
 	A state is [x, y, z (its feet), heading, pitch, speed, alive, out hunting, the vehicle it is on (its id, or ''), where on it
@@ -678,8 +679,9 @@ function fromJoiner(joiner, message) {
 		players.otherState(joiner.id, message.s);
 		netStats.statesHeard++;
 	} else if (message.t == 'shot') {
-		for (const dir of message.dirs) ballistics.fire(message.from, dir, { remote: true, shooter: joiner.id, round: message.r });
-		toAll({ t: 'shot', id: joiner.id, from: message.from, dirs: message.dirs, r: message.r }, joiner.id);
+		const delay = heardDelay('j' + joiner.id, message.w);
+		ballistics.fireRemote(message.from, message.dirs, { shooter: joiner.id, round: message.r, delay });
+		toAll({ t: 'shot', id: joiner.id, from: message.from, dirs: message.dirs, r: message.r, w: clockNow() + delay }, joiner.id);
 		horde.heardShot(message.from, message.r, 'p' + joiner.id);
 	} else if (message.t == 'hit') {
 		applyHit(joiner.id, message.target, message.part, message.r);
@@ -715,6 +717,11 @@ function fromJoiner(joiner, message) {
 		npcs.shotHeard(message.id, message.part, message.r, joiner.id);
 	} else if (message.t == 'npcAttack') {
 		npcs.attackHeard(message.v, joiner.id);
+	} else if (message.t == 'npcBlast' && Array.isArray(message.at)) {
+		// (a joiner's shell or bomb: the NPCs and the war's townsfolk round it, by it)
+		const at = message.at.map(Number), radius = Math.min(Math.max(Number(message.r) || 0, 0), 60 * settings.forestUnitsPerMetre);
+		npcs.blast(at, radius, joiner.id);
+		npcs.war.blastFolk?.(at, radius);
 	} else if (message.t == 'selfHurt') {
 		npcs.npcNet.hurt(joiner.id, Math.min(Math.max(Number(message.a) || 0, 0), 200), String(message.how ?? '').slice(0, 60));
 	}
@@ -886,7 +893,7 @@ function heard(message) {
 			for (const [id, ...s] of message.l) if (id !== myId) { players.otherState(id, s); netStats.statesHeard++; }
 			break;
 		case 'shot':
-			if (message.id !== myId) for (const dir of message.dirs) ballistics.fire(message.from, dir, { remote: true, shooter: message.id, round: message.r });
+			if (message.id !== myId) ballistics.fireRemote(message.from, message.dirs, { shooter: message.id, round: message.r, delay: heardDelay('host', message.w) });
 			break;
 		case 'hp':
 			if (message.id === myId) players.setLocalHealth(message.hp, message.by === myId || message.by === 'horde' || message.by === 'npc' ? '' : nameOf(message.by), message.by === 'horde' ? 'Overrun by the horde' : message.by === 'npc' ? message.part : '');
@@ -952,7 +959,7 @@ function heard(message) {
 			if (role == 'joined') npcs.peopleHeard(message.l);
 			break;
 		case 'npcShots':
-			if (role == 'joined') for (const [from, dir, round] of message.l) ballistics.fire(from, dir, { remote: true, shooter: 'npc', round });
+			if (role == 'joined') for (const [from, dir, round, w] of message.l) ballistics.fireRemote(from, [dir], { shooter: 'npc', round, delay: heardDelay('host', w) });
 			break;
 	}
 }
@@ -1095,8 +1102,8 @@ function myState() {
 ballistics.onLocalFire((from, directions, round) => {
 	const r3 = (v) => Math.round(v * 1000) / 1000;
 	const dirs = directions.map((d) => d.map(r3));
-	if (role == 'host') toAll({ t: 'shot', id: myId, from, dirs, r: round });
-	else if (role == 'joined') hostLink.sendGame({ t: 'shot', from, dirs, r: round });
+	if (role == 'host') toAll({ t: 'shot', id: myId, from, dirs, r: round, w: clockNow() });
+	else if (role == 'joined') hostLink.sendGame({ t: 'shot', from, dirs, r: round, w: clockNow() });
 });
 players.onShot((target, part, round) => {
 	if (role == 'host') applyHit(myId, target, part, round);
@@ -1137,7 +1144,7 @@ horde.hordeNet.points = (id, points) => { if (role == 'host') joiners.get(id)?.l
 horde.hordeNet.event = (e) => { if (role == 'host') toAll({ t: 'hfx', e }); };
 horde.hordeNet.shot = (from, directions, round) => {
 	const r3 = (v) => Math.round(v * 1000) / 1000;
-	if (role == 'host' && joiners.size > 0) toAll({ t: 'shot', id: 'folk', from: from.map(r3), dirs: directions.map((d) => d.map(r3)), r: round });
+	if (role == 'host' && joiners.size > 0) toAll({ t: 'shot', id: 'folk', from: from.map(r3), dirs: directions.map((d) => d.map(r3)), r: round, w: clockNow() });
 };
 horde.hordeNet.pick = (id) => { if (role == 'joined') hostLink.sendGame({ t: 'hpick', id }); };
 
@@ -1171,12 +1178,29 @@ npcs.npcNet.hurt = (id, amount, how) => {
 };
 npcs.npcNet.shot = (id, part, round) => { if (role == 'joined') hostLink.sendGame({ t: 'npcHit', id, part, r: round }); };
 npcs.npcNet.attack = (vehicle) => { if (role == 'joined') hostLink.sendGame({ t: 'npcAttack', v: vehicle }); };
+npcs.npcNet.blast = (at, radius) => { const r3 = (v) => Math.round(v * 1000) / 1000; if (role == 'joined') hostLink.sendGame({ t: 'npcBlast', at: at.map(r3), r: r3(radius) }); };
 // this player hurt by its own doing (a fall): the host takes it off, as an NPC's round
 players.selfHurt.send = (amount, how) => {
 	if (role == 'host') npcs.npcNet.hurt('me', amount, how);
 	else if (role == 'joined') hostLink.sendGame({ t: 'selfHurt', a: amount, how });
 };
-npcs.npcNet.fired = (from, dir, round) => { const r3 = (v) => Math.round(v * 1000) / 1000; if (joiners.size) npcShots.push([from.map(r3), dir.map(r3), round]); };
+npcs.npcNet.fired = (from, dir, round) => { const r3 = (v) => Math.round(v * 1000) / 1000; if (joiners.size) npcShots.push([from.map(r3), dir.map(r3), round, clockNow()]); };
+/*
+	THE SHOTS HEARD: a shot comes with the clock of the machine it was fired on (w, seconds). Messages do not come evenly (several frames'
+	at once, now and then), and a burst heard as it comes would be bunched up, its rounds on top of each other. So each is heard a little
+	later: at its own time on the other machine's clock, plus the most it has lately taken any of that machine's to get here (a jitter
+	buffer: SHOT_BUFFER at the most). The rounds of a burst are heard as far apart as they were fired
+*/
+const SHOT_BUFFER = 0.25;			// seconds
+const clockNow = () => Math.round(performance.now()) / 1000;
+const lateness = new Map();			// where from -> the most its shots lately took to get here (seconds, the clocks' difference with it)
+function heardDelay(source, w) {
+	if (typeof w != 'number') return 0;
+	const gap = performance.now() / 1000 - w;
+	const most = Math.max(gap, (lateness.get(source) ?? gap) - 0.01);
+	lateness.set(source, most);
+	return Math.min(Math.max(most - gap, 0), SHOT_BUFFER);
+}
 
 export function netUpdate() {
 	if (!buttonAdded) addButton();

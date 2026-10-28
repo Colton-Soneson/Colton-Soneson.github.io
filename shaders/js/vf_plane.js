@@ -241,6 +241,8 @@ export const vf_plane =
 	${motionShapes}
 	@fragment
 	fn fragmentMain(input: VertexOutput) -> FrameOut {
-		return FrameOut(shade(input), motionOf(input.nowClip, input.prevClip));
+		// (the propeller's blur and the puffs, drawn with holes in them: REACTIVE)
+		let reactive = select(0.0, 1.0, i32(input.what.x + 0.5) == 32 || PU.state.z > 0.0);
+		return FrameOut(shade(input), reactiveMotionOf(input.nowClip, input.prevClip, reactive));
 	}
 `;

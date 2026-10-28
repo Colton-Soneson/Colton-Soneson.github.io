@@ -104,7 +104,8 @@ export function onBurst(fn) { burstListeners.push(fn); }
 export function onLocalFire(fn) {
 	fireListeners.push(fn);
 }
-// told of every shot at all, here or someone else's or a townsperson's, once for a shell's pellets: fn(from, round, { remote, shooter })
+// told of every shot at all, here or someone else's or a townsperson's, once for a shell's pellets: fn(from, round, { remote, shooter,
+//		delay: seconds from now it is to be heard (someone else's, as far apart as they were fired) })
 //		(sound.js: its report)
 const shotListeners = [];
 export function onAnyShot(fn) {
@@ -114,7 +115,7 @@ export function onAnyShot(fn) {
 // Fires a round: from (world units) along a direction (any length), at its muzzle velocity. remote: someone else's (net.js),
 //		flown for its trail only. shooter: who fired it, so it does not hit them. round: which (ROUNDS). npc: one of npcs.js's people fired it
 //		(shooter is its id): it says what it hits of the players
-export function fire(from, direction, { remote = false, shooter = null, round = '7.62x54R', quiet = false, volley = false, npc = false } = {}) {
+export function fire(from, direction, { remote = false, shooter = null, round = '7.62x54R', quiet = false, volley = false, npc = false, delay = 0 } = {}) {
 	const metre = settings.forestUnitsPerMetre;
 	const R = ROUNDS[round] ?? ROUNDS['7.62x54R'];
 	const length = Math.hypot(...direction);
@@ -126,7 +127,12 @@ export function fire(from, direction, { remote = false, shooter = null, round = 
 	});
 	ballisticStats.fired++;
 	if (!remote && !quiet) for (const fn of fireListeners) fn([...from], [[...direction]], round);
-	if (!volley) for (const fn of shotListeners) fn(from, round, { remote, shooter });
+	if (!volley) for (const fn of shotListeners) fn(from, round, { remote, shooter, delay });
+}
+// someone else's shot (net.js): its rounds (one, or a shell's pellets) flown for their trails, and heard once, delay seconds from now
+export function fireRemote(from, directions, { shooter = null, round = '7.62x54R', delay = 0 } = {}) {
+	for (const direction of directions) fire(from, direction, { remote: true, shooter, round, volley: true });
+	for (const fn of shotListeners) fn(from, round, { remote: true, shooter, delay });
 }
 // the rounds of a kind in the air now: [{ at (world units), v (world units a second) }] (plane.js draws its bombs falling)
 export function flyingOf(round) {

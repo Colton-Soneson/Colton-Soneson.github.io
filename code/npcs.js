@@ -8,6 +8,7 @@ import * as townFolk from './townFolk.js'
 import * as horse from './horse.js'
 import * as plane from './plane.js'
 import * as boat from './boat.js'
+import * as town from './town.js'
 import { announceSpawn } from './radialMenu.js'
 
 /*
@@ -39,6 +40,8 @@ import { announceSpawn } from './radialMenu.js'
 		anchor, or on the ground), and it draws them on its own vehicles as it draws them (peopleHeard, follow). Their rounds go to it too,
 		for their trails and their reports (npcNet.fired). A joiner's hit on one, or on its horse, its plane or its boat, goes to the host
 		(npcNet.shot, npcNet.attack), which does the rest.
+	FRIENDS IN THE WAY (the war): none of them fires with one of its own side near the line of fire, short of what it is shooting at
+		(friendInTheWay): it waits for a clear shot.
 	THE WAR (war.js: war): every one of them on one of two sides (person.side, its group's), hostile to everyone on the other: the players
 		by the side each chose (war.sideOf), the other side's people, and what war.js adds (addTargets: the townsfolk). Their rounds hit the
 		other side's people and not their own (and the players, either side's: team damage). Each is drawn bright red if it is on the other
@@ -60,7 +63,7 @@ export const on = () => settings.enableNPCs && settings.enableTerrain && !!terra
 // What the game asks of it (net.js, see MULTIPLAYER at the top): what this machine is in a game ('off' alone, 'host', 'joined'), the others
 //		in the game, the harm to one of them, and what a joiner tells the host (a hit on one of them, on their vehicles) and the host the
 //		joiners (their rounds)
-export const npcNet = { roleNow: () => 'off', others: () => [], hurt: null, shot: null, attack: null, fired: null };
+export const npcNet = { roleNow: () => 'off', others: () => [], hurt: null, shot: null, attack: null, fired: null, blast: null };
 // THE WAR (see the top, war.js): whether it is on; a player's side ('me' or another's id: 'red', 'blue', or null for none chosen yet); the
 //		side of a shooter npcs.js does not know (a townsperson's: 'folk:' and its number); the nearest house of the other side's still standing
 //		(houseFor(side, from, world units): { x, y (its middle), z }); and the townsfolk round a shell's burst hurt (blastFolk(at, radius))
@@ -82,7 +85,7 @@ export function announce(kind, added, removed) { if (runsHere()) announceSpawn(k
 // a round of theirs fired (from, along dir, world units; round): to the joiners, for its trail
 export function shotFired(from, dir, round) { if (npcNet.roleNow() == 'host') npcNet.fired?.(from, dir, round); }
 
-export const npcStats = { people: 0, alive: 0, drawn: 0, shots: 0, hits: 0, playerHits: 0, killed: 0, respawned: 0 };
+export const npcStats = { people: 0, alive: 0, drawn: 0, shots: 0, hits: 0, playerHits: 0, killed: 0, respawned: 0, atPlayers: {}, heldFire: 0 };
 
 // The people
 //-------------------------------------------------
@@ -241,7 +244,9 @@ export function shotHeard(id, part, round, who) {
 	if (person && part in HARM) harm(person, HARM[part] * (ballistics.ROUNDS[round]?.damage ?? 1), who);
 }
 // a shell bursting (shipGuns.js) at (world units), fired here: each of them within radius (world units) hurt by how near
+//		(on a joiner, its own: told to the host, where they are: npcNet.blast)
 export function blast(at, radius, who = 'me') {
+	if (!runsHere()) { if (who === 'me') npcNet.blast?.(at, radius); return; }
 	for (const person of people) {
 		const p = person.place;
 		if (!person.alive || !p) continue;
@@ -300,6 +305,7 @@ export function fireAt(person, muzzle, target, { round = '7.62x54R', spread = 0.
 	const m = metre(), R = ballistics.ROUNDS[round] ?? ballistics.ROUNDS['7.62x54R'];
 	const dir = aimAt ?? leadDirection(muzzle, target, R);
 	const d = Math.hypot(target.x - muzzle[0], target.y - muzzle[1], target.z - muzzle[2]) / m;
+	if (war.on && friendInTheWay(person, muzzle, dir, d)) { npcStats.heldFire++; return null; }
 	const off = (spread + spreadFar * d / 100) * ballistics.aimSpread();
 	// (off to a side, across the line, by a random amount)
 	const side = norm(cross(dir, Math.abs(dir[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0])), up = cross(side, dir);
@@ -308,7 +314,26 @@ export function fireAt(person, muzzle, target, { round = '7.62x54R', spread = 0.
 	ballistics.fire(muzzle, shot, { round, shooter: person.id, npc: true, quiet: true });
 	shotFired(muzzle, shot, round);
 	npcStats.shots++;
+	if (target.kind == 'player') npcStats.atPlayers[target.id] = (npcStats.atPlayers[target.id] ?? 0) + 1;
 	return shot;
+}
+// (FRIENDS IN THE WAY: one of its own side, a player or one of theirs, ahead of the muzzle and short of the target (d, metres), within
+//		FRIEND_CLEAR of the line (or more round a vehicle: the plane or the boat it is in), and a little more the further out it is (the spread).
+//		Not the thing the shooter is in itself: the crew of its own boat)
+const FRIEND_CLEAR = { person: 2, vehicle: 9, spread: 0.03 };	// metres, and metres more for every metre out
+function friendInTheWay(person, muzzle, dir, d) {
+	const side = person.side ?? sideOfShooter(person.id);
+	if (!side) return false;
+	const m = metre(), mine = person.anchor?.vehicle ?? null;
+	for (const t of targetList) {
+		if (!t.alive || t.side != side || t.id === person.id || (mine && t.vehicle === mine)) continue;
+		const to = [t.x - muzzle[0], t.y - muzzle[1], t.z - muzzle[2]];
+		const along = dot(to, dir) / m;
+		if (along <= 0 || along > d + 5) continue;
+		const off = Math.hypot(to[0] / m - dir[0] * along, to[1] / m - dir[1] * along, to[2] / m - dir[2] * along);
+		if (off < (t.vehicle ? FRIEND_CLEAR.vehicle : FRIEND_CLEAR.person) + along * FRIEND_CLEAR.spread) return true;
+	}
+	return false;
 }
 // the way to point to hit a target from muzzle: where it will be when the round gets there, and up for how far the round drops (a
 //		round leaves at its own speed whichever way the gun is going: ballistics.js)
@@ -331,12 +356,16 @@ export const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 export const norm = (a) => { const l = Math.hypot(...a) || 1; return a.map((v) => v / l); };
 
 // whether the land is in the way between two places (world units)
+//		(the land, and the walls of the towns' houses: town.js's boxes)
 export function clearLine(a, b, steps = 16) {
 	const land = terrain.land;
 	if (!land) return true;
 	for (let k = 1; k < steps; k++) {
 		const t = k / steps, x = a[0] + (b[0] - a[0]) * t, y = a[1] + (b[1] - a[1]) * t, z = a[2] + (b[2] - a[2]) * t;
 		if (land.heightAt(x, z) > y) return false;
+		let wall = false;
+		town.boxesNear(x, z, 0, (bx, bz, half, bottom, top) => { if (!wall && Math.abs(x - bx) < half && Math.abs(z - bz) < half && y > bottom && y < top) wall = true; });
+		if (wall) return false;
 	}
 	return true;
 }

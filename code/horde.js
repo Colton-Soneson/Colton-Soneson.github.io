@@ -85,7 +85,7 @@ import * as npcShips from './npcShips.js'
 		(ballistics.ROUNDS), and staggers it (STAGGER_SECONDS, pushed back). Down, it falls on to its side, lies there and sinks
 		into the ground (FALL_SECONDS, LIE_SECONDS, SINK_SECONDS).
 
-	THE TOWNSFOLK (townFolk.js) fight. One out of doors with a deer within MILITIA_SIGHT takes out a gun (its own, of the players':
+	THE TOWNSFOLK (townFolk.js) fight. One out of doors with a deer within MILITIA_SIGHT (in sight: not through a wall) takes out a gun (its own, of the players':
 		MILITIA_GUNS, the same rounds), stands where it is and shoots at the nearest (MILITIA aims a little off, waits between shots,
 		and reloads), and once there have been none about for CALM_SECONDS goes home. Its shots are heard by the horde. A deer that
 		gets to it turns it: in its place a SUPER deer, SUPER_SIZE times as big, its health SUPER_HEALTH times, its lunge twice the
@@ -1046,9 +1046,11 @@ function militiaGun(index) {
 function advanceMilitia(elapsed) {
 	const m = metre();
 	const all = hordes.flatMap((horde) => horde.deer);
-	const nearestDeer = (x, z, reach) => {
+	// (one it can see: not through a wall, npcs.clearLine)
+	const nearestDeer = (x, z, reach, y = null) => {
 		let best = null, bestD = reach;
-		for (const one of all) { const d = Math.hypot(one.x - x, one.z - z); if (d < bestD) { bestD = d; best = one; } }
+		const eye = y === null ? null : [x, y + 1.5 * m, z];
+		for (const one of all) { const d = Math.hypot(one.x - x, one.z - z); if (d < bestD && (!eye || npcs.clearLine(eye, [one.x, one.y + (1.0 * one.size) * m, one.z]))) { bestD = d; best = one; } }
 		return best;
 	};
 	let fighting = 0;
@@ -1058,7 +1060,7 @@ function advanceMilitia(elapsed) {
 		let f = militia.get(person.index);
 		if (!f) {
 			if (all.length == 0 || (person.index + Math.floor(performance.now() / 300)) % 4 != 0) return;		// (each looks round now and then)
-			const seen = nearestDeer(p.x, p.z, MILITIA_SIGHT * m);
+			const seen = nearestDeer(p.x, p.z, MILITIA_SIGHT * m, p.y);
 			if (!seen) return;
 			const gun = militiaGun(person.index);
 			f = { gun, x: p.x, y: p.y, z: p.z, heading: p.heading, pitch: 0, mag: MILITIA_GUNS[gun].holds, next: 0, drawn: 0, calm: 0, target: seen, look: 0 };
@@ -1066,7 +1068,7 @@ function advanceMilitia(elapsed) {
 		}
 		fighting++;
 		const G = MILITIA_GUNS[f.gun];
-		if (!all.includes(f.target) || (f.look -= elapsed) <= 0) { f.target = nearestDeer(f.x, f.z, MILITIA_SIGHT * 1.3 * m); f.look = 0.3; }
+		if (!all.includes(f.target) || (f.look -= elapsed) <= 0) { f.target = nearestDeer(f.x, f.z, MILITIA_SIGHT * 1.3 * m, f.y); f.look = 0.3; }
 		if (!f.target) {
 			if ((f.calm += elapsed) > CALM_SECONDS) { militia.delete(person.index); townFolk.setFight(person.index, null, true); return; }
 		} else {

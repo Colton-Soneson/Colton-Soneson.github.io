@@ -27,7 +27,7 @@ import * as npcShips from './npcShips.js'
 		THE TOWNSFOLK are on their own town's side. They are not killed by a round of their own side's townsfolk, but by anything else of
 			FOLK_HEALTH (a hit in the chest of FOLK_HARM, times the round's), a shell, a bomb; killed, they do not come back until it is over.
 			They fight as the horde's townsfolk do (horde.js: MILITIA): one out of doors with one of the other side's within MILITIA.sight
-			(on the land) takes out its gun, stands and shoots at it, and goes home once there have been none about for MILITIA.calm. And
+			(on the land, and in sight: not through a wall) takes out its gun, stands and shoots at it, and goes home once there have been none about for MILITIA.calm. And
 			every REPAIR.every seconds each house of theirs that is hurt and still standing is mended by REPAIR.amount if one of them is out
 			within REPAIR.near of it (town.js: mendHouse).
 		THE PLAYERS choose their side (THE CHOICE, as it begins: a button for each side, or 1 and 2). One with none chosen is no one's
@@ -142,7 +142,8 @@ function fightBack(dt) {
 		let f = militia.get(person.index);
 		const nearest = (x, z, reach) => {
 			let best = null, bestD = reach;
-			for (const e of enemies) { if (e.side == side) continue; const d = Math.hypot(e.x - x, e.z - z); if (d < bestD) { bestD = d; best = e; } }
+			const eye = [x, p.y + 1.5 * m, z];
+			for (const e of enemies) { if (e.side == side) continue; const d = Math.hypot(e.x - x, e.z - z); if (d < bestD && npcs.clearLine(eye, [e.x, e.y, e.z])) { bestD = d; best = e; } }
 			return best;
 		};
 		if (!f) {

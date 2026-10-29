@@ -47,7 +47,8 @@ import {uniformBufferLights} from './rotatingCube.js'
 
 	SHOT (rifle.js, ballistics.js). Each deer's hitbox is DEER_SPHERES, 7 balls: rump, middle and chest, neck and head (which go
 		down with the head), and the front and the hind legs. A deer that is hit falls over on to its side, away from the shot
-		(FALL_SECONDS), lies there (LIE_SECONDS), sinks into the ground (SINK_SECONDS) and is gone. RESPAWN_SECONDS later another
+		(FALL_SECONDS), lies there (LIE_SECONDS; in the Survival mode SURVIVAL_LIE_SECONDS, with MEAT cuts of venison on it for a hatchet
+		or a knife: butcher, survivalTools.js, and it goes once they are all cut), sinks into the ground (SINK_SECONDS) and is gone. RESPAWN_SECONDS later another
 		joins its group, at its home in the forest (or somewhere else in the forest round it), never nearer the camera than
 		RESPAWN_AWAY.
 
@@ -74,6 +75,8 @@ const STEEPEST = 1.0;				// rise over run a deer will walk up: 45 degrees
 const STUCK_SECONDS = 6;			// going to the water and getting no nearer for this long, it tries somewhere else to drink
 const GROUND_AGAIN = 0.5;			// metres
 const FALL_SECONDS = 0.7, LIE_SECONDS = 6, SINK_SECONDS = 4;
+const SURVIVAL_LIE_SECONDS = 600, MEAT = 4;
+const lieOf = (corpse) => corpse.lie ?? (settings.gameMode == 'Hunting' ? SURVIVAL_LIE_SECONDS : LIE_SECONDS);
 const SINK_DEPTH = 0.7;				// metres it goes down into the ground
 const RESPAWN_SECONDS = 120;
 const RESPAWN_AWAY = 60;			// metres
@@ -232,7 +235,7 @@ function killDeer(deer, group, velocity) {
 	group.deer.splice(at, 1);
 	// over on to the side the shot pushed it to (its right is (cos, -sin) of its heading)
 	const side = velocity[0] * Math.cos(deer.heading) - velocity[2] * Math.sin(deer.heading) > 0 ? 1 : -1;
-	corpses.push({ deer: deer, t: 0, side: side });
+	corpses.push({ deer: deer, t: 0, side: side, meat: MEAT });
 	group.respawns.push(herdSeconds + RESPAWN_SECONDS);
 	deerStats.killed++;
 }
@@ -488,9 +491,9 @@ function advanceDeer(elapsed) {
 		deer.walking = 0;
 		deer.headDown += (0.35 - deer.headDown) * Math.min(elapsed * 4, 1);
 		corpse.roll = -corpse.side * 1.45 * ease(corpse.t / FALL_SECONDS);
-		corpse.sink = SINK_DEPTH * ease((corpse.t - FALL_SECONDS - LIE_SECONDS) / SINK_SECONDS);
+		corpse.sink = SINK_DEPTH * ease((corpse.t - FALL_SECONDS - lieOf(corpse)) / SINK_SECONDS);
 	}
-	corpses = corpses.filter((corpse) => corpse.t < FALL_SECONDS + LIE_SECONDS + SINK_SECONDS);
+	corpses = corpses.filter((corpse) => corpse.t < FALL_SECONDS + lieOf(corpse) + SINK_SECONDS);
 	// and the ones that take their places
 	for (const group of groups) {
 		while (group.respawns.length > 0 && group.respawns[0] <= herdSeconds) {
@@ -627,8 +630,29 @@ export function deerNear(x, z, reach, each) {
 export function deerGroups() {
 	return groups.map((group) => ({ state: group.state, home: group.home, spot: group.spot, visits: { ...group.visits }, trips: [...group.trips], deer: group.deer.map((deer) => ({ x: deer.x, y: deer.y, z: deer.z, heading: deer.heading, headDown: deer.headDown, walking: deer.walking })) }));
 }
+// the dead one the eye (world units) is on, looking along look, within reach (world units): its id, or null. The host's own still with
+//		meat on them; a joiner's, any the host has lying (it says whether there is any left: butcher)
+export function corpseInReach(eye, look, reach) {
+	if (!settings.enableDeer || hidden()) return null;
+	const s = settings.forestUnitsPerMetre * settings.deerSize;
+	const list = followed ? followed.filter((one) => !one.alive) : corpses.filter((corpse) => corpse.meat > 0).map((corpse) => corpse.deer);
+	let best = null, bestD = reach;
+	for (const one of list) {
+		const to = [one.x - eye[0], one.y + 0.4 * s - eye[1], one.z - eye[2]], d = Math.hypot(...to);
+		if (d < bestD && (to[0] * look[0] + to[1] * look[1] + to[2] * look[2]) / (d || 1) > 0.75) { best = one; bestD = d; }
+	}
+	return best ? best.id : null;
+}
+// host: a cut of venison off the dead one id, if there is any left on it (true); the last one taken, it sinks away
+export function butcher(id) {
+	const corpse = corpses.find((one) => one.deer.id == id);
+	if (!corpse || !(corpse.meat > 0)) return false;
+	if (--corpse.meat == 0) corpse.lie = Math.max(corpse.t - FALL_SECONDS, 0);
+	deerStats.butchered = (deerStats.butchered ?? 0) + 1;
+	return true;
+}
 export function deerCorpses() {
-	return corpses.map((corpse) => ({ t: corpse.t, roll: corpse.roll, sink: corpse.sink, x: corpse.deer.x, z: corpse.deer.z }));
+	return corpses.map((corpse) => ({ id: corpse.deer.id, t: corpse.t, roll: corpse.roll, sink: corpse.sink, x: corpse.deer.x, y: corpse.deer.y, z: corpse.deer.z, meat: corpse.meat }));
 }
 export function deerDay() {
 	return { clock: dayClock, shoreSpots: shoreSpots.length };

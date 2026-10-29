@@ -179,8 +179,10 @@ const HORSE_VERTICES = HORSE_MESH.length / 4;
 export const HORSE_TRIANGLES = HORSE_VERTICES / 3;
 // where the crosshair can find it: the saddle (to get on) and the saddlebags (the ammunition)
 const CONTROLS = [{ kind: 'saddle', at: [0, 1.62, 0.05], radius: 0.45, name: 'Horse', keys: 'F get in the saddle' },
-	{ kind: 'bags', at: [0.32, 1.25, -0.42], radius: 0.25, name: 'Saddlebags', keys: 'F fill up your ammunition' },
-	{ kind: 'bags', at: [-0.32, 1.25, -0.42], radius: 0.25, name: 'Saddlebags', keys: 'F fill up your ammunition' }];
+	{ kind: 'bags', at: [0.32, 1.25, -0.42], radius: 0.25, name: 'Saddlebags', get keys() { return bagKeys(); } },
+	{ kind: 'bags', at: [-0.32, 1.25, -0.42], radius: 0.25, name: 'Saddlebags', get keys() { return bagKeys(); } }];
+// (in the Survival mode the saddlebags carry the camp, too: camp.js)
+const bagKeys = () => settings.gameMode == 'Hunting' ? 'E the camp in them · F fill up your ammunition' : 'F fill up your ammunition';
 // the hitbox: the quarters, the barrel, the chest, the neck and the head
 const SPHERES = [[0, 1.2, -0.5, 0.36], [0, 1.2, 0.1, 0.38], [0, 1.27, 0.62, 0.33], [0, 1.68, 0.95, 0.17], [0, 1.75, 1.38, 0.15]];
 
@@ -289,7 +291,7 @@ export function removeHorse(h) {
 export const horseById = (id) => horses.find((h) => h.id === id) ?? null;
 
 // a horse where the crosshair points (the spawn menu): the player's own old one goes
-function bringHorse() {
+export function bringHorse() {
 	const spot = spawnSpot([settings.camPosX, settings.camPosY, settings.camPosZ], transformations.getCameraForward());
 	if (spot.reason) { help.toast(spot.reason); return false; }
 	for (const old of horses.filter((h) => isMine(h))) {

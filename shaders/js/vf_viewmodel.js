@@ -1,4 +1,5 @@
 import { motionShapes } from './motionShapes.js';
+import { itemMaterials } from './f_itemMaterials.js';
 /*
 	A gun in the hunter's hands (viewmodel.js: the shotgun, the revolver, the Sharps rifle), drawn the way the rifle is (see vf_rifle.js):
 	in the camera's own space, in metres, with its own near plane and its own depth, over the finished frame.
@@ -30,6 +31,7 @@ export const vf_viewmodel =
 	@group(0) @binding(0) var<uniform> VU: ViewmodelUniforms;
 
 	const PI: f32 = 3.14159265;
+	${itemMaterials}
 	const CHAMBER_OUT: f32 = 0.0125;	// metres from a revolver cylinder's middle to a chamber's (CHAMBER_RADIUS in revolver.js)
 	const CHAMBER_HOLE: f32 = 0.0058;	// a chamber's radius
 
@@ -124,11 +126,14 @@ export const vf_viewmodel =
 				if (off < CHAMBER_HOLE) { albedo = vec3f(0.006, 0.006, 0.007); gloss = 0.0; }
 				else if (off < CHAMBER_HOLE + 0.0007) { albedo = vec3f(0.12, 0.12, 0.13); }
 			}
-			default: {}
+			default: {
+				// (the items of the Survival mode: f_itemMaterials.js)
+				if (m >= 20) { let im = itemMaterial(m, input.shape); albedo = im.rgb; gloss = im.a; metal = m == 29; }
+			}
 		}
 		let shine = pow(saturate(dot(N, H)), power) * gloss;
 		let lit = VU.ambient.x + VU.light.w * diffuse;
-		var color = albedo * lit + select(vec3f(0.7, 0.75, 0.85), albedo, metal) * shine * VU.light.w + albedo * 0.4 * VU.ambient.x;
+		var color = albedo * lit + select(vec3f(0.7, 0.75, 0.85), albedo, metal) * shine * VU.light.w + albedo * 0.4 * VU.ambient.x + itemGlow(m);
 		// the glow's light, on whatever is near it
 		if (VU.glow.a > 0.0) {
 			let d = length(input.shape);

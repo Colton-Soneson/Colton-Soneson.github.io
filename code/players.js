@@ -15,6 +15,7 @@ import * as ballistics from './ballistics.js'
 import * as hunting from './hunting.js'
 import * as weapons from './weapons.js'
 import * as boat from './boat.js'
+import * as outfits from './outfits.js'
 
 //the dummies fade into the horizon color, read from the sky view LUT (same as everything else)
 import {skyViewLUTtexture} from './atmosphere.js'
@@ -26,7 +27,7 @@ import {uniformBufferLights} from './rotatingCube.js'
 	The players in a game of Hunting with others (net.js connects them): the others, drawn as crash test dummies, and this
 	one's own health.
 
-	THE DUMMY (DUMMY_MESH): 90 triangles, in metres, 1.82 tall, standing on y = 0 and facing +z, made of boxes and three sided
+	THE DUMMY (DUMMY_MESH, dressed in what it wears in the Survival mode: outfits.js): 90 triangles, in metres, 1.82 tall, standing on y = 0 and facing +z, made of boxes and three sided
 		tubes: the pelvis (12), the chest (12), the head (12) and the neck (6), the arms (24: upper arm and forearm, each side)
 		and the legs (24: thigh and shin). It carries a rifle: a long box (12), at the chest, pointing where the player looks.
 		vf_dummy.js moves the parts: the legs walk, the head, the arms and the rifle follow the look up and down, a dead one goes
@@ -58,9 +59,10 @@ const FEED_SECONDS = 6;
 const MAX_DRAWN = 16;
 const DUMMY_FLOATS = 20;				// one dummy as the shader gets it: place (4), pose (4), state (4), what it holds (4), tilt (4)
 // how long what each one holds is (the box it carries, see vf_dummy.js), as the long gun it was made with is 1: nothing, a disc: 0
-export const HELD_LENGTH = { rifle: 1, shotgun: 0.9, sharps: 1.1, revolver: 0.3, mauser: 0.32, lewis: 1.25, staff: 1.6, none: 0 };
+export const HELD_LENGTH = { rifle: 1, shotgun: 0.9, sharps: 1.1, revolver: 0.3, mauser: 0.32, lewis: 1.25, staff: 1.6, hatchet: 0.36, knife: 0.18, none: 0 };
 const STRIDE = 1.5;					// metres a stride takes
 // the hitbox, in the dummy's own metres: x, y, z, radius, and which part it is (see DAMAGE in net.js)
+const CROUCH_DROP = 0.44;			// metres the hips come down, crouched (as vf_dummy.js draws it)
 const DUMMY_SPHERES = [[0, 1.71, 0.01, 0.13, 'head'], [0, 1.33, 0, 0.21, 'chest'], [0, 1.0, 0, 0.19, 'belly'],
 	[-0.1, 0.72, 0, 0.1, 'leg'], [0.1, 0.72, 0, 0.1, 'leg'], [-0.1, 0.3, 0, 0.09, 'leg'], [0.1, 0.3, 0, 0.09, 'leg']];
 
@@ -247,7 +249,8 @@ function viewOf(other, now) {
 	const mix = (i) => a.s[i] + (b.s[i] - a.s[i]) * f;
 	let turn = b.s[3] - a.s[3];
 	turn -= Math.PI * 2 * Math.round(turn / (Math.PI * 2));
-	const view = { x: mix(0), y: mix(1), z: mix(2), heading: a.s[3] + turn * f, pitch: mix(4), speed: mix(5), alive: b.s[6] > 0.5, hunting: b.s[7] > 0.5, sit: b.s[12] ?? 0, holds: b.s[13] ?? 'rifle', chute: b.s[14] > 0.5, side: b.s[15] || null };
+	const view = { x: mix(0), y: mix(1), z: mix(2), heading: a.s[3] + turn * f, pitch: mix(4), speed: mix(5), alive: b.s[6] > 0.5, hunting: b.s[7] > 0.5, sit: b.s[12] ?? 0, holds: b.s[13] ?? 'rifle', chute: b.s[14] > 0.5, side: b.s[15] || null,
+		crouch: (Number(a.s[16]) || 0) + ((Number(b.s[16]) || 0) - (Number(a.s[16]) || 0)) * f };
 	// on a vehicle: where it is on it, on the vehicle as it is drawn here
 	const frame = b.s[8] ? vehicleFrame(b.s[8]) : null;
 	if (frame) {
@@ -261,9 +264,10 @@ function viewOf(other, now) {
 export function dummySpheres(view, fallen, sit = 0) {
 	const s = metre(), c = Math.cos(view.heading), sn = Math.sin(view.heading);
 	if (fallen > 0.5) return [];		// (on the ground: nothing to hit)
-	const down = 0.9 * Math.min(sit, 1);
+	const down = 0.9 * Math.min(sit, 1), crouched = sit > 0.5 ? 0 : view.crouch ?? 0;
 	return DUMMY_SPHERES.map(([x, y, z, r, part]) => {
 		if (part == 'leg' && sit > 0.5) { z += (0.95 - y) * 0.9; y = 0.95 - 0.12; }
+		y -= CROUCH_DROP * crouched * Math.min(y / 0.95, 1);		// (crouched: down, the legs folded under)
 		return [view.x + (x * c + z * sn) * s, view.y + (y - down) * s, view.z + (z * c - x * sn) * s, r * s, part];
 	});
 }
@@ -506,8 +510,10 @@ export function playersPass(aEncoder, mainpassDepthTexture) {
 		const view = other.view;
 		if (!view || !view.hunting || count >= MAX_DRAWN) continue;
 		const fall = other.fallen * other.fallen * (3 - 2 * other.fallen);
-		instanceData.set([view.x, view.y, view.z, metre(), view.heading, view.pitch, other.stride, other.walking * (1 - fall) * (other.sit > 0.5 ? 0 : 1), fall, other.hit, other.hue, other.sit,
-			HELD_LENGTH[view.holds] ?? 0, 0, 0, 0, 0, 0, 0, 0], count * DUMMY_FLOATS);
+		const row = [view.x, view.y, view.z, metre(), view.heading, view.pitch, other.stride, other.walking * (1 - fall) * (other.sit > 0.5 ? 0 : 1), fall, other.hit, other.hue, other.sit,
+			HELD_LENGTH[view.holds] ?? 0, 0, 0, view.crouch ?? 0, 0, 0, 0, 0];
+		instanceData.set(row, count * DUMMY_FLOATS);
+		outfits.wear(row, outfits.outfitOf(other.id));		// (what it has on: the Survival mode)
 		count++;
 	}
 	playerStats.drawn = count;

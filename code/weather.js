@@ -195,6 +195,7 @@ function drawHalfDay(halfDay) {
 
 	let lot = random();
 	let mode = WEATHER_NAMES.length - 1;
+	if (halfDay <= 0) lot = 0;		// (the first half day, and before it: sunny, to start the world in)
 	for (let i = 0; i < rules.chance.length; i++) {
 		if (lot < rules.chance[i]) {
 			mode = i;

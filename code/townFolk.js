@@ -18,6 +18,7 @@ import { DUMMY_MESH, HELD_LENGTH, box, tube } from './players.js'
 import { BUILDING_TYPES } from './townLayout.js'
 import { seededRandom } from './terrainGenerator.js'
 import { lightNow } from './lighting.js'
+import * as outfits from './outfits.js'
 
 //the townsfolk fade into the horizon color, read from the sky view LUT (same as everything else)
 import {skyViewLUTtexture} from './atmosphere.js'
@@ -29,7 +30,9 @@ import {uniformBufferLights} from './rotatingCube.js'
 	THE TOWNSFOLK: the people of the seaside towns (townLayout.js, town.js). One to every building, its trade the building's
 	(PROFESSIONS): a baker to every bakery, a fisherman to the shack on the pier, a priest to every chapel, and the houses' people
 	trades of the kind of house they live in. They are the players' crash test dummies (players.js, vf_dummy.js), their arms down
-	at their sides, each in the hat of its trade (HATS, made here, coloured from HAT_COLOURS in vf_dummy.js).
+	at their sides, each in the hat of its trade (HATS, made here, coloured from HAT_COLOURS in vf_dummy.js), and dressed for it (outfits.js).
+	In the Survival mode the baker, the butcher, the fisherman and the innkeeper trade food, the tailor and the outfitter clothes and gear,
+	and the banker keeps money (shops.js: E at one).
 
 	THE WAYS (makeWays): every town's streets, lanes, stairs, bridges, the plaza and the pier, as one net of points and the ways
 	between them. A person walks along them, a little to the right of the middle, and straight across from them to a door, a rose
@@ -84,15 +87,15 @@ export const PROFESSIONS = {
 	bakery: { name: 'baker', hat: 'toque', errands: { door: 0.6, plaza: 0.2, inn: 0.2 } },
 	library: { name: 'librarian', hat: 'mortarboard', errands: { door: 0.5, plaza: 0.4, shop: 0.1 } },
 	shack: { name: 'fisherman', hat: 'souwester', errands: { pierEnd: 0.6, inn: 0.2, promenade: 0.2 } },
-	shop: { name: 'shopkeeper', hat: 'boater', errands: { door: 0.7, warehouse: 0.15, plaza: 0.15 } },
+	shop: { name: 'outfitter', hat: 'boater', errands: { door: 0.7, warehouse: 0.15, plaza: 0.15 } },
 	chapel: { name: 'priest', hat: 'saturno', errands: { door: 0.5, plaza: 0.3, street: 0.2 } },
 	hotel: { name: 'bellhop', hat: 'pillbox', errands: { door: 0.7, plaza: 0.15, street: 0.15 } },
 	inn: { name: 'innkeeper', hat: 'tricorn', errands: { door: 0.7, bakery: 0.15, warehouse: 0.15 }, hours: 'always' },
 	warehouse: { name: 'dockworker', hat: 'beanie', errands: { promenade: 0.4, pierEnd: 0.2, door: 0.4 } },
 	tower: { name: 'lamplighter', hat: 'peaked', errands: { lamps: 0.85, door: 0.15 }, hours: 'night' },
-	townhouse: { name: 'merchant', hat: 'topHat', errands: { shop: 0.35, plaza: 0.3, hotel: 0.15, street: 0.2 } },
+	townhouse: { name: 'tailor', hat: 'topHat', errands: { shop: 0.35, plaza: 0.3, hotel: 0.15, street: 0.2 } },
 	mansard: { name: 'banker', hat: 'bowler', errands: { plaza: 0.4, hotel: 0.3, street: 0.3 } },
-	timbered: { name: 'carpenter', hat: 'flatCap', errands: { warehouse: 0.4, door: 0.3, street: 0.3 } },
+	timbered: { name: 'butcher', hat: 'flatCap', errands: { warehouse: 0.4, door: 0.3, street: 0.3 } },
 	turret: { name: 'painter', hat: 'beret', errands: { promenade: 0.55, plaza: 0.25, street: 0.2 } },
 	cottages: { name: 'gardener', hat: 'strawHat', errands: { garden: 0.75, street: 0.25 } },
 	gabled: { name: 'sea captain', hat: 'captain', errands: { promenade: 0.4, pierEnd: 0.3, inn: 0.3 } },
@@ -718,16 +721,19 @@ export function townFolkPass(aEncoder, mainpassDepthTexture) {
 		if (!byHat.has(hat)) byHat.set(hat, []);
 		byHat.get(hat).push(row);
 		count++;
+		return true;
 	};
 	if (settings.enableTownFolk) for (const person of folk) {
 		const p = person.place;
 		if (!p) continue;
 		const held = HELD_LENGTH[person.fight?.gun] ?? 0;
-		take(person.profession.hat + (held ? '+' : ''), p, [p.x, p.y, p.z, metre(), p.heading, held ? person.fight.pitch : 0, p.stride, p.walking, p.lean ?? 0, person.hit, person.hue, 0, held, held ? 0 : 1, person.look, 0, 0, 0, 0, 0]);
+		const row = [p.x, p.y, p.z, metre(), p.heading, held ? person.fight.pitch : 0, p.stride, p.walking, p.lean ?? 0, person.hit, person.hue, 0, held, held ? 0 : 1, person.look, 0, 0, 0, 0, 0];
+		if (take(person.profession.hat + (held ? '+' : ''), p, row)) outfits.wear(row, outfits.npcOutfit(person.profession.name, person.index));
 	}
 	for (const source of extraFolk) source((o) => {
 		const held = HELD_LENGTH[o.gun] ?? 0;
-		take(o.hat + (held ? '+' : ''), o, [o.x, o.y, o.z, metre(), o.heading, o.pitch ?? 0, o.stride ?? 0, o.walking ?? 0, o.fallen ?? 0, o.hit ?? 0, o.hue ?? 0, o.sit ?? 0, held, held ? 0 : o.armsDown ?? 1, o.look ?? 0, 0, o.tilt?.[0] ?? 0, o.tilt?.[1] ?? 0, o.side ?? 0, 0]);
+		const row = [o.x, o.y, o.z, metre(), o.heading, o.pitch ?? 0, o.stride ?? 0, o.walking ?? 0, o.fallen ?? 0, o.hit ?? 0, o.hue ?? 0, o.sit ?? 0, held, held ? 0 : o.armsDown ?? 1, o.look ?? 0, 0, o.tilt?.[0] ?? 0, o.tilt?.[1] ?? 0, o.side ?? 0, 0];
+		if (take(o.hat + (held ? '+' : ''), o, row)) outfits.wear(row, o.outfit);
 	});
 	if (count == 0) return;
 	const draws = [];

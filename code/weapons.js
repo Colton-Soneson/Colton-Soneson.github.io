@@ -52,9 +52,14 @@ export function holding(name) {
 
 // The ammunition (see THE AMMUNITION at the top)
 //-------------------------------------------------
-export const carried = (name) => reserve.get(name) ?? 0;
+// (in the Survival game mode the rounds carried are the inventory's: inventory.js sets where they come from, setAmmoSource)
+let ammoSource = null;
+export function setAmmoSource(source) { ammoSource = source; }
+const fromSource = () => !!ammoSource?.active();
+export const carried = (name) => fromSource() ? ammoSource.carried(name) : reserve.get(name) ?? 0;
 // a round out of the carried ones, to load: false if there are none
 export function takeRound(name) {
+	if (fromSource()) return ammoSource.take(name);
 	const left = carried(name);
 	if (left <= 0) return false;
 	reserve.set(name, left - 1);
@@ -62,10 +67,12 @@ export function takeRound(name) {
 }
 // a live round taken back out of the gun
 export function giveRound(name, count = 1) {
+	if (fromSource()) { ammoSource.give(name, count); return; }
 	reserve.set(name, Math.min(carried(name) + count, AMMO[name] - (weapons.get(name)?.loaded?.() ?? 0)));
 }
 // every gun back up to its whole
 export function refill() {
+	if (fromSource()) return;
 	for (const [name, weapon] of weapons) if (name in AMMO) reserve.set(name, AMMO[name] - (weapon.loaded?.() ?? 0));
 }
 hunting.onRefill(refill);

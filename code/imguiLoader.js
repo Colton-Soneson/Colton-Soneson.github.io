@@ -77,6 +77,7 @@ export const imguiParams = {
     dynamicResolution: settings.dynamicResolution,
     dynamicResolutionTarget: settings.dynamicResolutionTarget,
     antiAliasing: settings.antiAliasing,
+    survivalGodMode: settings.survivalGodMode,
     reversedDepth: settings.reversedDepth,
     fxaaSubpixel: settings.fxaaSubpixel,
     anisotropicFiltering: settings.anisotropicFiltering,
@@ -341,8 +342,10 @@ gui.add(imguiParams, 'atmosphereSunRotationDemo').name('Sun Cycle (days and seas
 // how the scene is seen: Observe flies round it (see the Camera folder), Hunting and Sailing walks it on foot (hunting.js), with boats and
 //		the rest from the spawn menu (T, radialMenu.js)
 const modeFolder = gui.addFolder('Game Modes');
-modeFolder.add(imguiParams, 'gameMode', { 'Observe': 'Observe', 'Hunting and Sailing': 'Hunting', 'Horde': 'Horde', 'War': 'War' }).name('Mode');
-const huntingFolder = modeFolder.addFolder('Hunting and Sailing');	//click the picture to look round, WASD walk, Shift run, Space jump, T the spawn menu, hold Tab or Esc for the menus
+modeFolder.add(imguiParams, 'gameMode', { 'Observe': 'Observe', 'Survival': 'Hunting', 'Horde': 'Horde', 'War': 'War' }).name('Mode');
+const huntingFolder = modeFolder.addFolder('Survival');
+// god mode (survival.js): every equippable on T. The host's, or alone: greyed out for a joiner
+huntingFolder.add(imguiParams, 'survivalGodMode').name('God Mode (T: everything)');	//click the picture to look round, WASD walk, Shift run, Space jump, T the spawn menu, hold Tab or Esc for the menus
 huntingFolder.add(imguiParams, 'huntingWalkSpeed', 1, 8, 0.1).name('Walk Speed (m/s)');
 huntingFolder.add(imguiParams, 'horseSpeed', 0.5, 5, 0.1).name('Horse Speed (x real)');
 huntingFolder.add(imguiParams, 'boatSteadying', 0, 1, 0.01).name('Boat Steadying (0 off, 1 level)');

@@ -321,6 +321,9 @@ export function sunCycle(cycleSpeed)
 	settings.moonPosY = (-Math.sin(settings.sunCycleAngle) * 50.0) + 25.0;
 }
 
+// the clock run faster for a while, on top of the time multiplier (the Survival mode's night slept away: survival.js)
+export const timeBoost = { factor: 1 };
+
 // for multiplayer (net.js): a joiner takes the host's clock, in days, and the sun's angle with it
 export function setSunClock(cycles, angle)
 {
@@ -335,7 +338,7 @@ export function atmospherePass(mainpassDepthTexture)
 	const seconds = Math.min((now - sunLastTime) / 1000, 0.1);		// (a long pause, the page hidden, is not caught up on)
 	sunLastTime = now;
 	if(settings.atmosphereSunRotationDemo) {
-		sunCycle(2 * Math.PI * seconds * settings.timeCycleMultiplier / Math.max(settings.dayLengthSeconds, 1));
+		sunCycle(2 * Math.PI * seconds * settings.timeCycleMultiplier * timeBoost.factor / Math.max(settings.dayLengthSeconds, 1));
 	}
 
 	updateSkyUniforms();

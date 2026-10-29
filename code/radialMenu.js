@@ -16,7 +16,8 @@ import * as help from './controlsHelp.js'
 						takes the place of the first
 		Weapons			what is in the hands
 		Magic			the wizard's staff, and its spells (staff.js)
-	What each choice does is said by whoever adds it (addChoice): the horse, the guns and the discs add their own.
+	What each choice does is said by whoever adds it (addChoice): the horse, the guns and the discs add their own. In the Survival mode it
+	has only what is in the hands instead (survival.js: setRootSource), but in god mode.
 
 	SPAWNED (onSpawn): told of each boat put in the sea here, for net.js to tell the others.
 */
@@ -77,8 +78,10 @@ addChoice('Vehicles', { label: 'Schooner', detail: 'A topsail schooner, 18 m, ab
 //-------------------------------------------------
 const locked = () => document.pointerLockElement == canvas;
 const usable = () => settings.gameMode != 'Observe' && hunting.hunterPlace().active && hunting.hunterLife.alive;
+let rootSource = (top) => top;
+export function setRootSource(fn) { rootSource = fn; }
 const ring = () => {
-	let at = root;
+	let at = rootSource(root);
 	for (const k of menu.path) at = at.items.filter((item) => !item.shown || item.shown())[k] ?? at;
 	return at;
 };

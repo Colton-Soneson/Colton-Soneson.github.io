@@ -65,6 +65,7 @@ export const vf_grass =
 		clump : vec4f,				// x: how far apart the clumps are, y: pull, z: height, w: facing (see CLUMPS above)
 		clumpLook : vec4f,			// x: color. And the season: y: how far the grass has gone to hay, z: how much snow is lying on it (both 0 to 1, see weather.js)
 		rings : array<vec4f, ${GRASS_MAX_RINGS}>,	// a ring's x: blades along one side of its grid, y: cell size, z: how far out it reaches, w: pieces in a blade
+		flats : array<vec4f, 8>,	// where the grass is pressed flat (a bedroll laid out, a campfire: setGrassFlats): x, z (world units), radius, 0 for none
 	}
 	@group(0) @binding(0) var<uniform> UBO: GrassUniforms;
 
@@ -290,7 +291,12 @@ export const vf_grass =
 		// how tall: its own height, or its clump's, and a clump stands tallest in its middle
 		let tall = mix(random(seed + 4u), random(clump.id + 2u), 0.8 * UBO.clump.z);
 		let tuft = mix(1.0, 1.2 - 0.5 * saturate(clump.apart / (0.6 * UBO.clump.x)), UBO.clump.z * clumped);
-		let height = UBO.blade.x * (0.55 + 0.9 * tall) * tuft * (0.5 + 0.5 * grassland) * (1.0 + 1.2 * reed) * (1.0 - smoothstep(0.7, 1.0, distant));	// reeds stand over twice as tall
+		var pressed = 1.0;		// (pressed flat under something lying on it: UBO.flats)
+		for (var f = 0; f < 8; f++) {
+			let flat = UBO.flats[f];
+			if (flat.z > 0.0) { pressed = min(pressed, mix(0.08, 1.0, smoothstep(flat.z * 0.7, flat.z * 1.15, distance(root, flat.xy)))); }
+		}
+		let height = UBO.blade.x * (0.55 + 0.9 * tall) * tuft * (0.5 + 0.5 * grassland) * (1.0 + 1.2 * reed) * (1.0 - smoothstep(0.7, 1.0, distant)) * pressed;	// reeds stand over twice as tall
 		// further rings have fewer blades for the same ground, so each one is wider to keep it covered
 		let width = UBO.blade.y * (0.75 + 0.5 * random(seed + 5u)) * min(pow(cellSize / UBO.rings[0].y, 0.77), 16.0);
 		// the way it leans: its own way, or out from the middle of its clump and the way the whole clump leans

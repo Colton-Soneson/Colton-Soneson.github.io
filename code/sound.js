@@ -192,7 +192,7 @@ function tone({ to, when, f0, f1 = f0, sweep = 0.1, type = 'sine', peak = 1, att
 //		(a shell's pellets come as one shot: ballistics.js's volleys; someone else's with the delay that keeps them as far apart as they were
 //		fired: net.js)
 ballistics.onAnyShot((from, round, { delay = 0 } = {}) => {
-	if (!ctx || ctx.state != 'running' || ballistics.ROUNDS[round]?.carried) return;		// (a bomb let go is no report)
+	if (!ctx || ctx.state != 'running' || ballistics.ROUNDS[round]?.carried || ballistics.ROUNDS[round]?.silent) return;		// (a bomb let go, a thing thrown, a blow: no report)
 	if (shotsPlaying >= MOST_SHOTS) return;
 	report(toMetres(from), REPORTS[round] ?? REPORTS['7.62x54R'], delay);
 });
@@ -244,6 +244,10 @@ const ACTIONS = {
 	pan: [[0, 'thud', 260, 0.6], [0.05, 'tick', 1800, 0.45]],
 	deploy: [[0, 'thud', 180, 0.5], [0.15, 'slide', 700, 0.35, 0.2], [0.4, 'tick', 1500, 0.35]],
 	knock: [[0, 'thud', 420, 0.7], [0.005, 'tick', 1300, 0.45]],
+	chop: [[0, 'thud', 300, 0.9], [0.004, 'tick', 900, 0.6]],
+	swish: [[0, 'slide', 700, 0.35, 0.12]],
+	flick: [[0, 'tick', 2900, 0.5], [0.03, 'slide', 2200, 0.3, 0.05]],
+	eat: [[0, 'slide', 500, 0.3, 0.2], [0.25, 'slide', 450, 0.25, 0.2]],
 	shell: [[0, 'slide', 700, 0.45, 0.22], [0.24, 'thud', 160, 0.75], [0.27, 'tick', 2100, 0.35]],
 };
 weapons.setSoundHook((kind) => {

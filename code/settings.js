@@ -12,7 +12,7 @@ export const settings = {
     camPosZ: 150.0,
     camFarPlane: 12000.0,	//far enough to see the other land masses
     camNearPlane: 1.0,
-    gameMode: 'Observe',			//Observe: fly round (cameraControls.js). Hunting (Hunting and Sailing): on foot, first person (hunting.js), with boats to sail (boat.js) and the rest from the spawn menu, T (radialMenu.js). Horde: the same, against waves of feral deer (horde.js)
+    gameMode: 'Observe',			//Observe: fly round (cameraControls.js). Hunting (the menu calls it Survival, survival.js): on foot, first person (hunting.js), with boats to sail (boat.js) and the rest from the spawn menu, T (radialMenu.js). Horde: the same, against waves of feral deer (horde.js)
     hordeFirstWave: 10,				//deer in the first round of the Horde game mode
     hordeWaveGrowth: 1.35,			//each round this many times the one before
     hordeMaxWave: 400,				//the most deer in one round
@@ -42,7 +42,8 @@ export const settings = {
     sunPosZ: -210.0,
     sunColor: vec3.create(0.992, 0.37, 0.325),
     sunIntensity: 75000.0,
-	sunCycleAngle: 0.0,
+	sunCycleAngle: 0.52,				//where the sun is round its circle: 0 is six in the morning, so it starts at eight
+	survivalGodMode: false,				//the Survival mode: every equippable in the game on T (the host's, or alone: survival.js)
     sunPadding: 1.0,
 	//-----------------MOON SETTINGS---------------
 	enableMoon: true,

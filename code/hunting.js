@@ -17,9 +17,12 @@ import * as vm from './viewmodel.js'
 	HUNTING: on foot. A first person walker on the land, in place of the fly camera (Observe, cameraControls.js).
 		mouse				look around (the mouse is held by the page: pointer lock. Click the picture to take it)
 		W / A / S / D		walk, Shift to run
+		C					crouch, and again to stand (CROUCH: lower, and slower; a jump or a run stands it up). Others see it (net.js:
+							the state's crouch, players.js, vf_dummy.js)
 		Space				jump
 		T					the spawn menu (radialMenu.js): a boat or a horse where the crosshair is, or something else in the hands
 		Tab (held) or Esc	let go of the mouse, to use the controls. Letting go of Tab takes it back, after Esc click the picture
+							(in the Survival mode Tab is the inventory instead: inventoryUI.js)
 	The walker is a box (BODY_WIDTH across, BODY_HEIGHT tall) with its eyes EYE_HEIGHT up, all in metres: the world is
 	settings.forestUnitsPerMetre units to the metre. Earth's gravity pulls it down.
 
@@ -93,6 +96,7 @@ const ROPE_NOTCH = 0.08;			// of a halyard's or sheet's whole way, for a notch o
 const LADDER_REACH = 1.6;			// metres from a ladder that a swimmer can take hold of it
 const PROBE_REACH = 8;				// metres: see surfaceAt
 const KNOCK_FADE = 6;				// how quickly a shove dies away (a second, to e to the minus this)
+const CROUCH = { eye: 0.62, pace: 0.5, seconds: 0.25 };	// metres the eyes come down crouched, the pace kept, seconds to go down or up
 const LYING_EYE = 0.38;				// metres up the eyes are, lying behind a gun on its bipod (see LYING DOWN)
 const LIE_SECONDS = 0.6;			// to get down, or up
 const FALL = { safe: 8.5, deadly: 17 };	// metres a second coming down: see FALLING at the top
@@ -107,6 +111,9 @@ export const hunterLife = { alive: true };	// shot dead in a game with others (p
 export const hunterStats = { boxes: 0, gathers: 0, cornerReads: 0, grounded: false, swimming: false };	// for anyone who wants to show it
 // what else is taking the input: the spawn menu has the mouse while it is open (radialMenu.js), and a scope turns the view slower (lookScale)
 export const input = { menuOpen: false, lookScale: 1 };
+export const crouch = { on: false, amount: 0 };		// C (see the top): crouching, and how far down, 0 to 1
+// (the Survival mode, survival.js: pace, how much of its walking pace it has; frozen, asleep: it does not move)
+export const effects = { pace: 1, frozen: false };
 
 const hunter = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, grounded: false, swimming: false,
 	on: 'land',					// land, ladder, deck or seat (see SAILING at the top), mast or nest (THE MASTS), saddle (RIDING), or aboard (SEATS)
@@ -132,7 +139,7 @@ const knock = [0, 0];						// a shove (shoveHunter), world units a second: on to
 
 // Input
 //-------------------------------------------------
-const hunting = () => settings.gameMode != 'Observe';		// (Hunting and Sailing, and Horde: horde.js)
+const hunting = () => settings.gameMode != 'Observe';		// (Survival, Horde and War: horde.js, war.js)
 const locked = () => document.pointerLockElement == canvas;
 
 // a box being typed in (not a checkbox, a button or a slider: those only have the focus because they were clicked)
@@ -160,7 +167,7 @@ function takeMouse() {
 // the mouse taken: the keyboard too, and a slider still being dragged in the menus let go of (its button came up off the page,
 //		or after the mouse was taken, so lil-gui never heard it: it would go on following the mouse)
 document.addEventListener('pointerlockchange', () => {
-	if (!locked()) return;
+	if (!locked()) { releaseKeys(); return; }		// (a key let go while the mouse was free might never be heard: walking on and on)
 	takeKeyboard();
 	if (document.body.classList.contains('lil-gui-dragging')) window.dispatchEvent(new MouseEvent('mouseup', { button: 0 }));
 });
@@ -168,9 +175,11 @@ document.addEventListener('pointerlockchange', () => {
 // (heard on the way down, before anything on the page can stop them: see takeKeyboard)
 window.addEventListener('keydown', (event) => {
 	if (!hunting()) return;
+	// (the browser's own Ctrl shortcuts, while the mouse is held: Ctrl+D's bookmark box takes the key let go, and the walker walks on)
+	if (locked() && (event.ctrlKey || event.metaKey) && /^(Key|Digit)/.test(event.code)) event.preventDefault();
 	if (event.code == 'Tab') {
 		event.preventDefault();		// (Tab would move the focus round the page's controls)
-		if (locked()) document.exitPointerLock();
+		if (locked() && settings.gameMode != 'Hunting') document.exitPointerLock();
 		return;
 	}
 	if (locked()) takeKeyboard();
@@ -181,6 +190,7 @@ window.addEventListener('keydown', (event) => {
 	}
 	if (event.code == 'KeyE' && !event.repeat) usePressed = true;
 	if (event.code == 'KeyF' && !event.repeat) vehiclePressed = true;
+	if (event.code == 'KeyC' && !event.repeat) crouch.on = !crouch.on;
 	if ((event.code == 'ShiftLeft' || event.code == 'ShiftRight') && !event.repeat) burstPressed = true;
 	if (event.code == 'KeyG' && !event.repeat) anchorPressed = true;
 	keysDown.add(event.code);
@@ -191,10 +201,16 @@ window.addEventListener('keyup', (event) => {
 	if (event.code == 'Space' && !typingInAField()) event.preventDefault();		// (a button or a checkbox is pressed when Space comes up)
 	if (event.code == 'Tab') {
 		event.preventDefault();
-		takeMouse();
+		if (settings.gameMode != 'Hunting') takeMouse();
 	}
 }, true);
 window.addEventListener('blur', () => keysDown.clear());
+document.addEventListener('visibilitychange', () => releaseKeys());
+// every key let go, and every press not yet acted on spent (a menu opened or shut over the walker: shops.js, survivalMap.js)
+export function releaseKeys() {
+	keysDown.clear();
+	jumpPressed = usePressed = anchorPressed = burstPressed = vehiclePressed = false;
+}
 // the scroll wheel, for the ropes on the boat (otherwise the gun in the hands has it: see rifle.js)
 window.addEventListener('wheel', (event) => {
 	if (!hunting() || !locked()) return;
@@ -224,7 +240,8 @@ const dot = document.createElement('div');
 dot.style.cssText = 'position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px 0 0 -2px; border-radius: 50%; background: rgba(255, 255, 255, 0.8); box-shadow: 0 0 2px rgba(0, 0, 0, 0.8);';
 const hint = document.createElement('div');
 hint.style.cssText = 'position: absolute; left: 50%; bottom: 8%; transform: translateX(-50%); padding: 6px 12px; border-radius: 4px; background: rgba(0, 0, 0, 0.55); color: #e8e8e8; font-size: 13px; white-space: nowrap;';
-hint.textContent = 'Click to look around · T spawn menu · hold Tab or Esc for the menus';
+const HINTS = { usual: 'Click to look around · T spawn menu · hold Tab or Esc for the menus', survival: 'Click to look around · T the wheel · Tab or I inventory · M map · Esc for the menus' };
+hint.textContent = HINTS.usual;
 // what the crosshair is on, on the boat: what it is, which keys work it, and how far it is set
 const prompt = document.createElement('div');
 prompt.style.cssText = 'position: absolute; left: 50%; top: calc(50% + 18px); transform: translateX(-50%); padding: 4px 10px; border-radius: 4px; background: rgba(0, 0, 0, 0.55); color: #e8e8e8; font-size: 12px; white-space: nowrap; text-align: center; display: none;';
@@ -578,6 +595,8 @@ export function updateHunter() {
 	wheelPixels = 0;
 	dot.style.display = locked() && !crosshair.hidden && hunterLife.alive && !input.menuOpen ? '' : 'none';
 	hint.style.display = locked() ? 'none' : '';
+	const hintNow = settings.gameMode == 'Hunting' ? HINTS.survival : HINTS.usual;
+	if (hint.textContent != hintNow) hint.textContent = hintNow;
 
 	if (hunter.on == 'aboard') {
 		if (aboard(seconds)) {
@@ -671,10 +690,13 @@ export function updateHunter() {
 	if (keysDown.has('KeyA')) side -= 1;
 	// lying behind a gun: it does not move (see LYING DOWN at the top)
 	stance.lying = Math.min(Math.max(stance.lying + (stance.hold ? 1 : -1) * seconds / LIE_SECONDS, 0), 1);
-	if (stance.hold || stance.lying > 0) { ahead = side = 0; jumpPressed = false; }
+	if (stance.hold || stance.lying > 0 || effects.frozen) { ahead = side = 0; jumpPressed = false; }
 	const length = Math.hypot(ahead, side) || 1;
 	const running = keysDown.has('ShiftLeft') || keysDown.has('ShiftRight');
-	const pace = settings.huntingWalkSpeed * metre * (running ? RUN : 1) * (hunter.swimming ? SWIM_PACE : 1);
+	// crouched (see C at the top): only on its feet on the land; up again to jump or to run
+	if (running && (ahead || side) || jumpPressed || hunter.swimming || hunter.on != 'land' || stance.hold || !hunterLife.alive) crouch.on = false;
+	crouch.amount = Math.min(Math.max(crouch.amount + (crouch.on ? 1 : -1) * seconds / CROUCH.seconds, 0), 1);
+	const pace = settings.huntingWalkSpeed * metre * (running ? RUN : 1) * (hunter.swimming ? SWIM_PACE : 1) * effects.pace * (1 - (1 - CROUCH.pace) * crouch.amount);
 	const wantX = (forward[0] * ahead + right[0] * side) / length * pace;
 	const wantZ = (forward[1] * ahead + right[2] * side) / length * pace;
 
@@ -757,7 +779,8 @@ export function updateHunter() {
 
 	settings.camPosX = hunter.x;
 	const lying = stance.lying * stance.lying * (3 - 2 * stance.lying);
-	settings.camPosY = hunter.y + (EYE_HEIGHT + (LYING_EYE - EYE_HEIGHT) * lying) * metre;
+	const low = crouch.amount * crouch.amount * (3 - 2 * crouch.amount);
+	settings.camPosY = hunter.y + (EYE_HEIGHT + (LYING_EYE - EYE_HEIGHT) * lying - CROUCH.eye * low * (1 - lying)) * metre;
 	settings.camPosZ = hunter.z;
 	showControls();
 }
@@ -1100,10 +1123,12 @@ function showControls() {
 		help.showHelp('On foot', [
 			['W A S D', 'walk · Shift run'],
 			['Space', 'jump'],
-			['T', 'spawn menu: vehicles and weapons'],
+			['C', 'crouch, and again to stand'],
+			...(settings.gameMode == 'Hunting' ? [['T', 'what you have equipped, and the map'], ['Tab / I', 'inventory'], ['M', 'map'], ['E', 'search a crate, a body, a pile · at a lake: drink · at a villager: trade'], ['X', 'at a burning campfire or stove: cook venison'], ['V (held)', 'what is what: names over things and people']]
+				: [['T', 'spawn menu: vehicles and weapons'], ['E', 'by your disc: pick it up']]),
 			['F', 'at a horse: get on · at its saddlebags: fill up your ammunition · at a biplane\'s cockpit: climb in · at its wheels: floats or wheels'],
-			['E', 'by your disc: pick it up'],
-			['Tab / Esc', 'let go of the mouse'],
+			settings.gameMode == 'Hunting' ? ['Esc', 'let go of the mouse'] : ['Tab / Esc', 'let go of the mouse'],
+			...(settings.gameMode == 'Hunting' ? [] : [['V (held)', 'who is who: names over the heads']]),
 		]);
 	}
 }
@@ -1114,7 +1139,8 @@ export function hunterPlace() {
 	const seat = hunter.on == 'aboard' ? hunter.ride.rides.local(hunter.ride.vehicle, hunter.ride.seat) : null;
 	return { x: hunter.x, y: hunter.y, z: hunter.z, vx: hunter.vx, vz: hunter.vz, grounded: hunter.grounded && hunter.on != 'saddle', swimming: hunter.swimming, boxes: boxCount, active: active, on: hunter.on,
 		boat: hunter.on != 'land' && hunter.on != 'saddle' && hunter.on != 'aboard' && hunter.boat ? hunter.boat.id : null,
-		vehicle: hunter.on == 'saddle' && hunter.horse ? hunter.horse.id : seat ? hunter.ride.vehicle.id : null, local: seat ? seat.local : [...hunter.local], sit: seat?.sit ?? 0, seat: seat ? hunter.ride.seat : null, chute: hunter.chute };
+		vehicle: hunter.on == 'saddle' && hunter.horse ? hunter.horse.id : seat ? hunter.ride.vehicle.id : null, local: seat ? seat.local : [...hunter.local], sit: seat?.sit ?? 0, seat: seat ? hunter.ride.seat : null, chute: hunter.chute,
+		crouch: crouch.amount };
 }
 // what is taken from a boat's stores with F (shipGuns.js: a round, a supply pack, planks)
 const STORES = new Set(['shells', 'packs', 'barrel']);

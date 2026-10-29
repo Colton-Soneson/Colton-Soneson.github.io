@@ -14,9 +14,15 @@ import { skyLookupShapes } from './vfc_atmosphere.js';
 		9, 10		the right thigh and shin			the leg comes forward
 		11			the rifle
 		12 and up	a hat (the townsfolk's, townFolk.js): HAT_COLOURS[part - 12], tipped with the head
+	THE CLOTHES (outfits.js: the Survival mode's, on the players and the NPCs) are drawn with this too (vf_dummyClothes: each instance's
+	colour as well, cloth): a vertex's w is its part (moved as the dummy's is) and 32 times its TONE, what it is coloured:
+		1 the colour		2 the colour darker (a trim)	3 leather			4 steel			5 brass
+		6 cream (linen)		7 fur, of the colour			8 checked, of the colour (flannel, a mackinaw)		9 a sole, black
 	Sitting (state.w, 0 to 1: at a dinghy's helm), the thighs come up level and the shins hang down from the knees, and it is let
 	down so its hips are on its place (the seat). Astride a horse (state.w from 1 to 2) the legs go apart round the saddle as well.
 	One that holds nothing (held.y: the townsfolk) has its arms down at its sides, swinging against its legs as it walks.
+	Crouched (held.w, 0 to 1: a player's C, hunting.js), the thighs come forward, the shins back under them, the hips come down
+	CROUCH_DROP and the body leans forward over its knees.
 	Then the whole dummy is tipped (tilt: forward, and rolled, as the cockpit or the deck it is on is: npcs.js) and turned to its
 	heading, made its size and put in its place. A dead one has gone over on to its back,
 	about its feet. A hit one flashes red for a moment.
@@ -32,7 +38,7 @@ export const HAT_COLOURS = {
 export const HAT_PART = Object.fromEntries(Object.keys(HAT_COLOURS).map((name, k) => [name, 12 + k]));
 const hatColours = Object.values(HAT_COLOURS).map(([r, g, b]) => `vec3f(${r}, ${g}, ${b})`).join(', ');
 
-export const vf_dummy =
+const dummyShader = (clothes) =>
 `
 	struct DummyUniforms
 	{
@@ -64,9 +70,10 @@ export const vf_dummy =
 		@location(1) place: vec4f,		// this player: xyz where its feet are, w: world units to the metre
 		@location(2) pose: vec4f,		// x: heading (radians, round from +z towards +x), y: pitch (radians, up), z: where it is in its stride (radians), w: walking, 0 to 1
 		@location(3) state: vec4f,		// x: gone over, 0 standing to 1 flat on its back, y: hit, 1 just hit fading to 0, z: its colour (0 to 1 round the hues), w: sitting (0 to 1), astride (1 to 2)
-		@location(4) held: vec4f,		// x: how long what it holds is, the rifle it was made with 1 (0: nothing in its hands), y: 1 arms down at its sides, z: its head turned (radians, as heading)
+		@location(4) held: vec4f,		// x: how long what it holds is, the rifle it was made with 1 (0: nothing in its hands), y: 1 arms down at its sides, z: its head turned (radians, as heading), w: crouched, 0 to 1
 		@location(5) tilt: vec4f,		// x: tipped about its own x (radians: + its front down), y: rolled about its own z (radians), before it is turned to its heading,
 										//		z: in the war, 1 the other side (bright red) or 2 this one's (bright blue)
+		${clothes ? '@location(6) cloth: vec4f,		// the clothes: rgb the colour of what is drawn' : ''}
 	};
 
 	struct VertexOutput {
@@ -75,6 +82,7 @@ export const vf_dummy =
 		@location(1) onDummy: vec4f,		// xyz: where on the mesh as it was made, w: the part
 		@location(2) @interpolate(flat) state: vec4f,
 		@location(3) @interpolate(flat) side: f32,
+		@location(4) @interpolate(flat) cloth: vec4f,
 	};
 
 	fn turnX(v: vec3f, angle: f32) -> vec3f { return vec3f(v.x, v.y * cos(angle) - v.z * sin(angle), v.y * sin(angle) + v.z * cos(angle)); }
@@ -115,13 +123,15 @@ export const vf_dummy =
 	const SHOULDERS: vec3f = vec3f(0.0, 1.45, 0.0);
 	const HIP_Y: f32 = 0.95;
 	const KNEE_Y: f32 = 0.5;
+	const CROUCH_DROP: f32 = 0.44;
 
 	@vertex
 	fn vertexMain(input: VertexInput) -> VertexOutput {
 		var p = input.shape.xyz;
-		let part = i32(input.shape.w + 0.5);
+		let part = i32(input.shape.w + 0.5) % 32;
 		let pitch = input.pose.y;
 		let sit = min(input.state.w, 1.0);
+		let crouch = input.held.w * (1.0 - sit);
 		let astride = clamp(input.state.w - 1.0, 0.0, 1.0);
 
 		if (part == 11) {
@@ -144,11 +154,16 @@ export const vf_dummy =
 			let hip = vec3f(select(-0.1, 0.1, left), HIP_Y, 0.0);
 			if (part == 8 || part == 10) {
 				let knee = vec3f(p.x, KNEE_Y, 0.0);
-				p = knee + turnX(p - knee, -max(sin(phase), 0.0) * 0.9 * walking + 1.45 * sit);
+				p = knee + turnX(p - knee, -max(sin(phase), 0.0) * 0.9 * walking + 1.45 * sit + 2.0 * crouch);
 			}
-			p = hip + turnX(p - hip, cos(phase) * 0.5 * walking - 1.45 * sit);
+			p = hip + turnX(p - hip, cos(phase) * 0.5 * walking * (1.0 - 0.5 * crouch) - 1.45 * sit - 1.1 * crouch);
 			p = hip + turnZ(p - hip, select(-0.45, 0.45, left) * astride);
 		}
+		// crouched: everything above the legs leaning forward over them, and all of it down
+		if (part < 7 || part > 10) {
+			p = vec3f(0.0, HIP_Y, 0.0) + turnX(p - vec3f(0.0, HIP_Y, 0.0), 0.35 * crouch);
+		}
+		p.y -= CROUCH_DROP * crouch;
 		// sitting: down on to the seat
 		p.y -= (HIP_Y - 0.05) * sit;
 
@@ -160,9 +175,10 @@ export const vf_dummy =
 		var output: VertexOutput;
 		output.pos = DU.viewProjectionMatrix * vec4f(position, 1.0);
 		output.worldPos = position;
-		output.onDummy = vec4f(input.shape.xyz, f32(part));
+		output.onDummy = input.shape;
 		output.state = input.state;
 		output.side = input.tilt.z;
+		output.cloth = ${clothes ? 'input.cloth' : 'vec4f(0.0)'};
 		return output;
 	}
 
@@ -191,7 +207,27 @@ export const vf_dummy =
 		@location(1) onDummy: vec4f,
 		@location(2) @interpolate(flat) state: vec4f,
 		@location(3) @interpolate(flat) side: f32,
+		@location(4) @interpolate(flat) cloth: vec4f,
 	};
+
+	// the clothes (see the top): the tone's colour, at a place on the dummy as it was made
+	fn clothColour(tone: i32, colour: vec3f, at: vec3f) -> vec3f {
+		switch (tone) {
+			case 2: { return colour * 0.55; }
+			case 3: { return vec3f(0.28, 0.17, 0.09); }
+			case 4: { return vec3f(0.52, 0.54, 0.57); }
+			case 5: { return vec3f(0.62, 0.48, 0.2); }
+			case 6: { return vec3f(0.82, 0.77, 0.66); }
+			case 7: { return colour * (0.75 + 0.35 * fract(sin(dot(floor(at * 140.0), vec3f(12.9898, 78.233, 37.719))) * 43758.5453)); }
+			case 8: {
+				let check = step(0.5, fract(at.x * 9.0 + at.z * 9.0)) + step(0.5, fract(at.y * 9.0));
+				let line = step(0.92, fract(at.y * 9.0 + 0.25)) + step(0.92, fract((at.x + at.z) * 9.0 + 0.25));
+				return mix(colour * mix(1.0, 0.45, check * 0.5), vec3f(0.07), saturate(line) * 0.6);
+			}
+			case 9: { return vec3f(0.07, 0.06, 0.05); }
+			default: { return colour; }
+		}
+	}
 
 	@fragment
 	fn fragmentMain(input: FragInput) -> @location(0) vec4f {
@@ -203,7 +239,9 @@ export const vf_dummy =
 		}
 
 		let at = input.onDummy.xyz;
-		let part = i32(input.onDummy.w + 0.5);
+		let code = i32(input.onDummy.w + 0.5);
+		let part = code % 32;
+		let tone = code / 32;
 		let sideColour = select(vec3f(0.95, 0.1, 0.07), vec3f(0.12, 0.38, 1.0), input.side > 1.5);
 		let yellow = select(vec3f(0.86, 0.66, 0.08), sideColour, input.side > 0.5);
 		let black = vec3f(0.035, 0.035, 0.04);
@@ -225,6 +263,10 @@ export const vf_dummy =
 		} else if (part == 1 && at.z > 0.105) {
 			albedo = mix(yellow, black, quartered(at.x - 0.08, at.y - 1.36, 0.06));			// the chest
 		}
+		if (tone > 0) {
+			albedo = clothColour(tone, input.cloth.rgb, at);
+			if (input.side > 0.5) { albedo = mix(albedo, sideColour, 0.55); }		// (in the war: which side, over the clothes too)
+		}
 
 		// the same light as everything else
 		let L = normalize(Lights.sunPos.xyz);
@@ -243,3 +285,5 @@ export const vf_dummy =
 		return vec4f(color, 1.0);
 	}
 `;
+export const vf_dummy = dummyShader(false);
+export const vf_dummyClothes = dummyShader(true);

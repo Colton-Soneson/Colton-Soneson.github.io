@@ -61,7 +61,17 @@ export const ROUNDS = {
 	// a biplane's bomb (plane.js): no gun, so carried: it leaves as fast as it is let go (the length of its direction, world units a
 	//		second), and bursts as the shell does
 	'bomb': { velocity: 0, drag: 0.0001, damage: 1, burst: true, life: 60, carried: true },
+	// the Survival mode's (survivalTools.js): a thing thrown (carried: as fast as it is thrown), told where it stops (onStop: it lies there
+	//		to be picked up), and a blow of a hatchet or a knife (a short reach, no trail, no report: silent), told what it hit
+	'hatchet': { velocity: 0, drag: 0.002, damage: 1.25, carried: true, tell: true, life: 8 },
+	'knife': { velocity: 0, drag: 0.002, damage: 0.8, carried: true, tell: true, life: 8 },
+	'stone': { velocity: 0, drag: 0.003, damage: 0.3, carried: true, tell: true, life: 8 },
+	'chop': { velocity: 30, drag: 0, damage: 1.0, life: 0.065, silent: true, noTrail: true, tell: true, gravity: 0 },
+	'stab': { velocity: 30, drag: 0, damage: 0.7, life: 0.06, silent: true, noTrail: true, tell: true, gravity: 0 },
 };
+// told where a round that says so (tell) stopped, fired here: fn(at (world units), bullet, what it hit or null) (survivalTools.js)
+const stopListeners = [];
+export function onStop(fn) { stopListeners.push(fn); }
 const GRAVITY = 9.81;
 const STEP_SECONDS = 1 / 120;
 const GRID = 40;					// metres a cell of THE BROAD PHASE's grid
@@ -115,7 +125,7 @@ export function onAnyShot(fn) {
 // Fires a round: from (world units) along a direction (any length), at its muzzle velocity. remote: someone else's (net.js),
 //		flown for its trail only. shooter: who fired it, so it does not hit them. round: which (ROUNDS). npc: one of npcs.js's people fired it
 //		(shooter is its id): it says what it hits of the players
-export function fire(from, direction, { remote = false, shooter = null, round = '7.62x54R', quiet = false, volley = false, npc = false, delay = 0 } = {}) {
+export function fire(from, direction, { remote = false, shooter = null, round = '7.62x54R', quiet = false, volley = false, npc = false, delay = 0, extra = null } = {}) {
 	const metre = settings.forestUnitsPerMetre;
 	const R = ROUNDS[round] ?? ROUNDS['7.62x54R'];
 	const length = Math.hypot(...direction);
@@ -123,7 +133,7 @@ export function fire(from, direction, { remote = false, shooter = null, round = 
 	bullets.push({
 		x: from[0], y: from[1], z: from[2],
 		vx: direction[0] / length * speed, vy: direction[1] / length * speed, vz: direction[2] / length * speed,
-		age: 0, trailFrom: [from[0], from[1], from[2]], trailAge: seconds, gone: false, remote, shooter, npc, round, drag: R.drag, gravity: R.gravity ?? 1, burst: !!R.burst, trail: !R.carried, life: npc && !R.burst ? Math.min(R.life ?? MAX_SECONDS, NPC_LIFE) : R.life ?? MAX_SECONDS,
+		age: 0, trailFrom: [from[0], from[1], from[2]], trailAge: seconds, gone: false, remote, shooter, npc, round, drag: R.drag, gravity: R.gravity ?? 1, burst: !!R.burst, trail: !R.carried && !R.noTrail, extra, life: npc && !R.burst ? Math.min(R.life ?? MAX_SECONDS, NPC_LIFE) : R.life ?? MAX_SECONDS,
 	});
 	ballisticStats.fired++;
 	if (!remote && !quiet) for (const fn of fireListeners) fn([...from], [[...direction]], round);
@@ -332,8 +342,10 @@ function moveBullets(elapsed) {
 				ballisticStats.lastHit = { what: hit.what, x: ex, y: ey, z: ez, metres: null, seconds: bullet.age, speed: Math.hypot(bullet.vx, bullet.vy, bullet.vz) / metre };
 				if (hit.hit && (!bullet.remote || hit.remoteToo)) hit.hit([bullet.vx, bullet.vy, bullet.vz], bullet);
 				if (bullet.burst) for (const fn of burstListeners) fn([ex, ey, ez], bullet, hit.what);
+				if (ROUNDS[bullet.round]?.tell && !bullet.remote) for (const fn of stopListeners) fn([ex, ey, ez], bullet, hit.what);
 			} else if (bullet.age > bullet.life || bullet.y < settings.waterWorldPosY - 500) {
 				bullet.gone = true;
+				if (ROUNDS[bullet.round]?.tell && !bullet.remote) for (const fn of stopListeners) fn([ex, ey, ez], bullet, null);
 			}
 		}
 	}

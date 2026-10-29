@@ -440,6 +440,40 @@ export function trunksNear(x, z, reach, each) {
 	}
 }
 
+/*
+	FELLED (the Survival mode's hatchet, survivalTools.js): the standing tree whose trunk is nearest (x, z) within reach (world units), as
+	{ index, height (metres), x, z }, or null; and one of them brought down there and then: dead, and falling at once the way it is
+	pushed (direction: radians, 0 = +x), lying a while and going as any dead tree goes (forestLife.js). Its height in metres, or 0 if it
+	could not be (gone, dead already, or one of the towns' planted ones). Only where the forest lives (alone, or the host: see
+	MULTIPLAYER): the change goes out to the others as any death does
+*/
+export function treeNear(x, z, reach) {
+	let best = null, bestD = reach;
+	for (let cx = Math.floor((x - reach) / CELL_SIZE); cx <= Math.floor((x + reach) / CELL_SIZE); cx++) {
+		for (let cz = Math.floor((z - reach) / CELL_SIZE); cz <= Math.floor((z + reach) / CELL_SIZE); cz++) {
+			const cell = cellsByKey.get(cx + "," + cz);
+			if (!cell) continue;
+			for (const i of cell.trees) {
+				const tree = trees[i];
+				if (!tree || !tree.height || tree.dead) continue;
+				const d = Math.hypot(tree.x - x, tree.z - z);
+				if (d < bestD) { bestD = d; best = { index: i, height: tree.height / settings.forestUnitsPerMetre, x: tree.x, z: tree.z, planted: !!tree.planted }; }
+			}
+		}
+	}
+	return best;
+}
+export function fellTree(index, direction) {
+	const tree = trees[index];
+	if (!life || following || !tree || tree.dead || tree.planted) return 0;
+	life.kill(tree, clock);
+	tree.dryYears = 0.0001;
+	tree.fallStart = clock;
+	tree.fallDirection = ((direction % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);		// (0 to a whole turn: packTree keeps it in hundredths)
+	life.changed(index);
+	return tree.height / settings.forestUnitsPerMetre;
+}
+
 function removeFromCell(index, tree) {
 	const members = tree.cell.trees;
 	const at = members.indexOf(index);

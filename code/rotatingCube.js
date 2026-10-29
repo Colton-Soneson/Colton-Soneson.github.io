@@ -56,6 +56,18 @@ import * as plane from './plane.js'
 import * as shipGuns from './shipGuns.js'
 import * as sound from './sound.js'
 import * as weapons from './weapons.js'
+import * as survival from './survival.js'
+import * as loot from './loot.js'
+import * as inventoryUI from './inventoryUI.js'
+import * as survivalTools from './survivalTools.js'
+import * as bedrolls from './bedrolls.js'
+import * as campfires from './campfires.js'
+import * as survivalMap from './survivalMap.js'
+import * as props from './props.js'
+import * as outfits from './outfits.js'
+import * as shops from './shops.js'
+import * as camp from './camp.js'
+import * as highlights from './highlights.js'
 import * as shotgun from './shotgun.js'
 import * as revolver from './revolver.js'
 import * as mauser from './mauser.js'
@@ -403,7 +415,7 @@ export function updateRotatingCubePass() {
 	plane.planeUpdate();		//and the biplanes fly on, before whoever is in them
 	shipGuns.shipGunsUpdate();	//(and the schooner's guns and stores)
 	profiler.cpuMark('Walker and Guns');
-	hunting.updateHunter();		//on foot instead, in the Hunting and Sailing game mode
+	hunting.updateHunter();		//on foot instead, in the Survival game mode
 	rifle.rifleUpdate();		//and the gun in the hunter's hands: the rifle, or one of the others
 	shotgun.shotgunUpdate();
 	revolver.revolverUpdate();
@@ -413,6 +425,18 @@ export function updateRotatingCubePass() {
 	discgolf.discUpdate();		//the golf discs fly on, and the course is laid out (when it is on)
 	staff.staffUpdate();		//the wizard's staff: its spells, and the beams of light going on
 	weapons.weaponsUpdate();	//(and the controls of whatever is in them, on the left)
+	//the Survival mode: the needs, the loot, the tools and the campfires, the map, the inventory screen
+	survival.survivalUpdate();
+	loot.lootUpdate();
+	survivalTools.survivalToolsUpdate();
+	bedrolls.bedrollsUpdate();
+	campfires.campfiresUpdate();
+	survivalMap.mapUpdate();
+	inventoryUI.inventoryUIUpdate();
+	outfits.outfitsUpdate();
+	shops.shopsUpdate();
+	camp.campUpdate();
+	highlights.highlightsUpdate();
 	profiler.cpuMark('Network and Players');
 	net.netUpdate();			//in a game with others: what this player is doing goes out, the host's world and clock come in
 	players.playersUpdate();	//and the others move on
@@ -600,6 +624,8 @@ export function updateRotatingCubePass() {
 		town.townPass(encoder, depthTexture);		//(and the seaside towns)
 		townFolk.townFolkPass(encoder, depthTexture);	//(and their people)
 		discgolf.discGolfPass(encoder, depthTexture);	//(and the disc golf course, and the discs)
+		props.propsPass(encoder, depthTexture);			//(and the Survival mode's crates, piles and campfires)
+		outfits.outfitsPass(encoder, depthTexture);		//(and what the dummies above have on: the Survival mode's clothes)
 	});
 
 	//screen space shadows and ambient occlusion over everything solid, and the copies of the frame the water finds its reflections in.
@@ -644,6 +670,7 @@ export function updateRotatingCubePass() {
 		rifle.riflePass();
 		weapons.weaponsPass();	//(the gun held, if it is not the rifle)
 		plane.gunnerPass();		//(or the Lewis gun on a biplane's ring, in the gunner's seat)
+		survivalMap.mapPass();	//(or the map, pulled out: the Survival mode)
 		shipGuns.gunnerPass();	//(or in a schooner's crow's nest)
 	});
 

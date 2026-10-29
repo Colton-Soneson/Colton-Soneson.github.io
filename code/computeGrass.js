@@ -43,7 +43,7 @@ const grassShaderModule = device.createShaderModule({
 
 const grassUniformBuffer = device.createBuffer({
   label: "grass Uniform",
-  size: 512,
+  size: 1024,
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 });
 
@@ -141,9 +141,17 @@ function grassUniformBufferUpdates() {
 		}
 	}
 
+	//where it is pressed flat: the nearest few to the camera
+	const flats = [...grassFlats.values()].flat().map(([x, z, r]) => [x, z, r, Math.hypot(x - settings.camPosX, z - settings.camPosZ)]).sort((a, b) => a[3] - b[3]);
+	for (let k = 0; k < 8; k++) bufferResult.push(...(flats[k] ? [flats[k][0], flats[k][1], flats[k][2], 0] : [0, 0, 0, 0]));
+
 	const result = new Float32Array(bufferResult);
 	device.queue.writeBuffer(grassUniformBuffer, 0, result.buffer, result.byteOffset, result.byteLength);
 }
+// where the grass is pressed flat under something lying on it (bedrolls.js, survivalTools.js: a bedroll laid out, a campfire): for each owner a
+//		list of [x, z, radius] (world units), made again when it changes
+const grassFlats = new Map();
+export function setGrassFlats(owner, list) { grassFlats.set(owner, list); }
 
 // Layouts
 //-------------------------------------------------

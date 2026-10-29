@@ -22,6 +22,8 @@ import * as horde from './horde.js'
 import * as npcs from './npcs.js'
 import * as town from './town.js'
 import * as war from './war.js'
+import * as survivalNet from './survivalNet.js'
+import * as outfits from './outfits.js'
 import { onSpawn } from './radialMenu.js'
 import { PRESETS } from './graphicsPresets.js';
 
@@ -55,6 +57,7 @@ import { PRESETS } from './graphicsPresets.js';
 		the horde			(horde.js, the Horde game mode) joiner to host: hpick (a power-up walked into). Host to joiners: horde
 							(the run, HORDE_RATE times a second: its round, the power-ups, the townsfolk fighting and turned), hfx (what
 							just happened: a new run, a round, a power-up taken), hpts (points earned), shove (a deer's lunge)
+		the survival		(the Survival game mode: survivalNet.js) sv, both ways: what is in the containers, the campfires
 		the NPCs			(npcs.js and its kinds) joiner to host: npcHit (one of them hit: the part, the round), npcAttack (one of their
 							vehicles hit), npcBlast (its own shell or bomb burst: the NPCs and the war's townsfolk round it, on the host). Host to joiners: npcs (the people, PEOPLE_RATE times a second, on the fast channel), npcShots
 							(their rounds this frame, for their trails). Their vehicles go as everyone's do (owned by 'npc', sailed by the
@@ -652,6 +655,7 @@ function takeJoiner(link, invite = null) {
 			link.sendGame({ t: 'welcome', id, players: everyone(), world: worldNow(), clock: [atmosphere.sunCycles, settings.sunCycleAngle], waves: water.waveClock(), folk: townFolk.folkClock(), scores: scoreList(),
 				vehicles: allVehicles().map(({ kind, v }) => ({ kind, s: VEHICLES[kind].share(v) })), course: discgolf.courseShare(), houses: town.housesShare(true) });
 			toAll({ t: 'join', id, name: joiner.name }, id);
+			survivalNet.joined(id);
 			players.addFeed(joiner.name + ' joined');
 			say('Hosting');
 			return;
@@ -717,6 +721,8 @@ function fromJoiner(joiner, message) {
 		npcs.shotHeard(message.id, message.part, message.r, joiner.id);
 	} else if (message.t == 'npcAttack') {
 		npcs.attackHeard(message.v, joiner.id);
+	} else if (message.t == 'sv') {
+		survivalNet.heard(message, joiner.id);
 	} else if (message.t == 'npcBlast' && Array.isArray(message.at)) {
 		// (a joiner's shell or bomb: the NPCs and the war's townsfolk round it, by it)
 		const at = message.at.map(Number), radius = Math.min(Math.max(Number(message.r) || 0, 0), 60 * settings.forestUnitsPerMetre);
@@ -730,7 +736,8 @@ function fromJoiner(joiner, message) {
 function applyHit(shooter, target, part, round) {
 	const before = health.get(target);
 	if (before === undefined || before <= 0 || !(part in DAMAGE) || shooter === target) return;
-	const after = Math.max(before - Math.round(DAMAGE[part] * (ballistics.ROUNDS[round]?.damage ?? 1)), 0);
+	const shield = outfits.armourOf(target === myId ? 'me' : target);		// (the clothes: the Survival mode's armour)
+	const after = Math.max(before - Math.round(DAMAGE[part] * (ballistics.ROUNDS[round]?.damage ?? 1) * (1 - shield)), 0);
 	setHealth(target, after, shooter, part);
 	if (after <= 0) {
 		const killer = scores.get(shooter) ?? { kills: 0, deaths: 0 };
@@ -806,6 +813,9 @@ function joinWith(link) {
 // what the host says (and the host says it to itself as well, for the ones it handles the same way)
 function heard(message) {
 	switch (message.t) {
+		case 'sv':
+			if (role == 'joined') survivalNet.heard(message, 'host');
+			break;
 		case 'welcome':
 			role = 'joined';
 			myId = message.id;
@@ -1097,7 +1107,7 @@ function myState() {
 	const b = place.boat ? boat.boatById(place.boat) : null;
 	const sit = place.on == 'saddle' ? 2 : place.on == 'seat' && b && boat.helm(b).seated ? 1 : place.on == 'aboard' ? place.sit : 0;
 	return [...[place.x, place.y, place.z, Math.atan2(forward[0], forward[2]), settings.camPitch, Math.hypot(place.vx ?? 0, place.vz ?? 0) / metre,
-		hunting.hunterLife.alive ? 1 : 0, place.active ? 1 : 0].map(r), on, ...(on ? place.local.map(r) : [0, 0, 0]), sit, weapons.weaponState.current, place.chute ? 1 : 0, war.mySideNow() ?? 0];
+		hunting.hunterLife.alive ? 1 : 0, place.active ? 1 : 0].map(r), on, ...(on ? place.local.map(r) : [0, 0, 0]), sit, weapons.weaponState.current, place.chute ? 1 : 0, war.mySideNow() ?? 0, r(place.crouch ?? 0)];
 }
 ballistics.onLocalFire((from, directions, round) => {
 	const r3 = (v) => Math.round(v * 1000) / 1000;
@@ -1178,6 +1188,12 @@ npcs.npcNet.hurt = (id, amount, how) => {
 };
 npcs.npcNet.shot = (id, part, round) => { if (role == 'joined') hostLink.sendGame({ t: 'npcHit', id, part, r: round }); };
 npcs.npcNet.attack = (vehicle) => { if (role == 'joined') hostLink.sendGame({ t: 'npcAttack', v: vehicle }); };
+// THE SURVIVAL game mode's messages (survivalNet.js)
+survivalNet.link.role = () => role;
+survivalNet.link.myId = () => role == 'off' ? 0 : myId;
+survivalNet.link.toHost = (message) => hostLink?.sendGame(message);
+survivalNet.link.toAll = (message) => toAll(message);
+survivalNet.link.toOne = (id, message) => joiners.get(id)?.link.sendGame(message);
 npcs.npcNet.blast = (at, radius) => { const r3 = (v) => Math.round(v * 1000) / 1000; if (role == 'joined') hostLink.sendGame({ t: 'npcBlast', at: at.map(r3), r: r3(radius) }); };
 // this player hurt by its own doing (a fall): the host takes it off, as an NPC's round
 players.selfHurt.send = (amount, how) => {
@@ -1393,11 +1409,11 @@ export function movePlayer(action, id) {
 	if (!joiner) throw new Error('That player has gone');
 	if (action == 'bring') {
 		const place = hunting.hunterPlace();
-		if (!place.active) throw new Error('Go out hunting first (Hunting and Sailing)');
+		if (!place.active) throw new Error('Go out first (Survival)');
 		joiner.link.sendGame({ t: 'tp', to: [place.x, place.y, place.z] });
 		say('Brought ' + joiner.name + ' to you');
 	} else {
-		if (!joiner.state || !hunting.hunterPlace().active) throw new Error(joiner.state ? 'Go out hunting first (Hunting and Sailing)' : 'Not heard from them yet');
+		if (!joiner.state || !hunting.hunterPlace().active) throw new Error(joiner.state ? 'Go out first (Survival)' : 'Not heard from them yet');
 		hunting.teleportHunter(joiner.state[0], joiner.state[1], joiner.state[2]);
 		say('Went to ' + joiner.name);
 	}

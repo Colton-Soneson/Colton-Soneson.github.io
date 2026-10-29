@@ -4,6 +4,7 @@ import * as terrain from './terrain.js'
 import * as ballistics from './ballistics.js'
 import * as hunting from './hunting.js'
 import * as players from './players.js'
+import * as outfits from './outfits.js'
 import * as townFolk from './townFolk.js'
 import * as horse from './horse.js'
 import * as plane from './plane.js'
@@ -403,6 +404,7 @@ export function blastPlayers(at, radius) {
 }
 // harm to a player: this one alone, here; in a game, through the host
 export function hurtPlayer(id, amount, how) {
+	amount *= 1 - outfits.armourOf(id);		// (the Survival mode's clothes)
 	if (npcNet.roleNow() == 'host') { npcNet.hurt?.(id, amount, how); return; }
 	if (id !== 'me') return;
 	const life = players.localLife();
@@ -419,7 +421,7 @@ townFolk.addFolkSource((each) => {
 		if (!p || person.gone) continue;
 		each({ x: p.x, y: p.y, z: p.z, heading: p.heading, tilt: p.tilt, pitch: person.fighting ? person.aim : 0, stride: person.stride, walking: person.walking, fallen: person.alive ? 0 : Math.min(person.down / 0.6, 1),
 			hit: person.hit, hue: person.hue, sit: person.alive ? p.sit ?? 0 : 0, gun: person.fighting && person.alive ? person.gun : 'none', armsDown: person.armsDown, look: person.look, hat: person.hat,
-			side: war.on && person.side ? sideTint(person.side) : 0 });
+			side: war.on && person.side ? sideTint(person.side) : 0, outfit: outfits.npcOutfit(war.on && person.side ? 'soldier' : person.kind, Math.round(person.hue * 1000)) });
 		drawn++;
 	}
 	npcStats.drawn = drawn;

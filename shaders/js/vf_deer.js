@@ -2,7 +2,7 @@ import { moonShapes } from './f_moon.js';
 import { skyLookupShapes } from './vfc_atmosphere.js';
 
 /*
-	The deer drawn. See deer.js for the deer itself (its 77 triangles, in metres) and how they live.
+	The deer drawn. See deer.js for the deer itself (under 400 triangles, in metres) and how they live.
 
 	One mesh, drawn once for every deer (instancing). What moves is done here, from each vertex's part (shape.w):
 		0		the body, the tail
@@ -10,6 +10,7 @@ import { skyLookupShapes } from './vfc_atmosphere.js';
 				drinking), 0 up to 1 at the ground
 		2 to 5	the legs: left front, right front, left hind, right hind. Each swings from the hip with the walk, and the lower
 				leg bends back at the knee as it comes forward. The four take turns (a walk: hind, front, other hind, other front)
+	(part 6 is a buck's antlers: with the head; on any other, a doe or one whose antlers have been cut off (state.x: deer.js: own), nothing.)
 	Then the whole deer is tipped to the slope it stands on, turned to its heading, made its size and put in its place.
 	The light comes from the faces as they are after all that (dpdx, dpdy), as for the geese.
 
@@ -73,7 +74,9 @@ export const vf_deer =
 		var p = input.shape.xyz;
 		let part = input.shape.w;
 
-		if (part > 1.5) {
+		if (part > 5.5) {
+			p = select(NECK_FOOT, NECK_FOOT + turnX(p - NECK_FOOT, 1.25 * input.pose.z), input.state.x >= 1.0 && input.state.x < 2.0);
+		} else if (part > 1.5) {
 			// a leg: its turn in the walk, its swing from the hip, and the knee bending as it comes forward
 			let leg = i32(part + 0.5) - 2;
 			let turnIn = select(select(0.5, 0.0, leg == 2), select(0.75, 0.25, leg == 0), leg < 2);	// left front, right front, left hind, right hind
@@ -101,7 +104,7 @@ export const vf_deer =
 		output.pos = DU.viewProjectionMatrix * vec4f(position, 1.0);
 		output.worldPos = position;
 		output.onDeer = vec4f(input.shape.xyz, part);
-		output.tone = input.state.x;
+		output.tone = fract(input.state.x);
 		output.feral = input.state.w;
 		return output;
 	}
@@ -133,7 +136,9 @@ export const vf_deer =
 		let at = input.onDeer.xyz;
 		let tone = mix(0.85, 1.12, input.tone);
 		var albedo = vec3f(0.42, 0.28, 0.17) * tone;
-		if (input.onDeer.w > 1.5) {
+		if (input.onDeer.w > 5.5) {
+			albedo = vec3f(0.5, 0.42, 0.3);					// the antlers
+		} else if (input.onDeer.w > 1.5) {
 			albedo = mix(vec3f(0.12, 0.09, 0.07), albedo, smoothstep(0.08, 0.5, at.y));
 		} else if (input.onDeer.w > 0.5) {
 			if (at.z > 0.88) {

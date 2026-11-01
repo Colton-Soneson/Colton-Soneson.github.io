@@ -188,8 +188,9 @@ window.addEventListener('keydown', (event) => {
 		event.preventDefault();		// (Space would press whichever control has the focus)
 		if (!event.repeat) jumpPressed = true;
 	}
-	if (event.code == 'KeyE' && !event.repeat) usePressed = true;
-	if (event.code == 'KeyF' && !event.repeat) vehiclePressed = true;
+	// (E and F shut a menu that is open: then they are not presses in the world as well)
+	if (event.code == 'KeyE' && !event.repeat && !input.menuOpen) usePressed = true;
+	if (event.code == 'KeyF' && !event.repeat && !input.menuOpen) vehiclePressed = true;
 	if (event.code == 'KeyC' && !event.repeat) crouch.on = !crouch.on;
 	if ((event.code == 'ShiftLeft' || event.code == 'ShiftRight') && !event.repeat) burstPressed = true;
 	if (event.code == 'KeyG' && !event.repeat) anchorPressed = true;
@@ -298,7 +299,7 @@ function surfaceAt(x, z) {
 
 // The things in the way (see THE THINGS IN THE WAY at the top)
 //-------------------------------------------------
-const MOST_BOXES = 1024;
+const MOST_BOXES = 4096;
 const boxes = new Float32Array(MOST_BOXES * 6);		// min x, min y, min z, max x, max y, max z
 let boxCount = 0, stillBoxes = 0;		// (the still ones first, then the moving ones, gathered again every frame)
 let gatheredAt = null, gatheredWhen = 0;
@@ -315,12 +316,19 @@ function gather(now) {
 	if (settings.enableForest) forest.trunksNear(hunter.x, hunter.z, reach, add);
 	if (settings.enableBoulders) boulders.bouldersNear(hunter.x, hunter.z, reach, add);
 	town.boxesNear(hunter.x, hunter.z, reach, add);		// (the houses, the walls, the pier, the lamps of the towns)
+	for (const near of stills) near(hunter.x, hunter.z, reach, add);	// (what stands in the rooms inside them: interiors.js)
 	gatheredAt = [hunter.x, hunter.z];
 	gatheredWhen = now;
 	stillBoxes = boxCount;
 	hunterStats.boxes = boxCount;
 	hunterStats.gathers++;
 }
+// More things in the way that stand still: each one's fn(x, z, reach, add) gives the boxes within reach
+const stills = [];
+export function addStill(near) { stills.push(near); }
+// Floors over the ground (a house's: interiors.js): fn(x, z, highest) the height of the floor at (x, z), if there is one no higher than highest, or -Infinity
+const floors = [];
+export function addFloor(fn) { floors.push(fn); }
 // Things in the way that move (the townsfolk): each one's fn(x, z, reach, add) gives the boxes within reach, where they are now
 const movers = [];
 export function addMovers(near) { movers.push(near); }
@@ -345,6 +353,7 @@ function pushOut(axis, moved, half, step) {
 function supportUnder(step) {
 	const half = BODY_WIDTH * 0.5 * settings.forestUnitsPerMetre;
 	let highest = groundUnder(hunter.x, hunter.z);
+	for (const fn of floors) highest = Math.max(highest, fn(hunter.x, hunter.z, hunter.y + step));
 	for (let b = 0; b < boxCount; b++) {
 		const o = b * 6;
 		if (boxes[o + 4] > hunter.y + step || boxes[o + 4] <= highest) continue;
@@ -1124,7 +1133,7 @@ function showControls() {
 			['W A S D', 'walk · Shift run'],
 			['Space', 'jump'],
 			['C', 'crouch, and again to stand'],
-			...(settings.gameMode == 'Hunting' ? [['T', 'what you have equipped, and the map'], ['Tab / I', 'inventory'], ['M', 'map'], ['E', 'search a crate, a body, a pile · at a lake: drink · at a villager: trade'], ['X', 'at a burning campfire or stove: cook venison'], ['V (held)', 'what is what: names over things and people']]
+			...(settings.gameMode == 'Hunting' ? [['T', 'what you have equipped, and the map'], ['Tab / I', 'inventory'], ['M', 'map'], ['E', 'search a crate, a body, a pile, a snare · at a lake: drink · at a villager: trade'], ['X', 'at a burning campfire or stove: cook meat'], ['V (held)', 'what is what: names over things and people']]
 				: [['T', 'spawn menu: vehicles and weapons'], ['E', 'by your disc: pick it up']]),
 			['F', 'at a horse: get on · at its saddlebags: fill up your ammunition · at a biplane\'s cockpit: climb in · at its wheels: floats or wheels'],
 			settings.gameMode == 'Hunting' ? ['Esc', 'let go of the mouse'] : ['Tab / Esc', 'let go of the mouse'],
@@ -1143,7 +1152,7 @@ export function hunterPlace() {
 		crouch: crouch.amount };
 }
 // what is taken from a boat's stores with F (shipGuns.js: a round, a supply pack, planks)
-const STORES = new Set(['shells', 'packs', 'barrel']);
+const STORES = new Set(['shells', 'packs', 'barrel']);	// (and F at a harpoon gun: seatOnBoat, whaling.js)
 // the boat control the walker would work now: { kind, ladder, boat (its id), id (its place in the vessel's controls) } or null
 //		(shipGuns.js: the howitzer stood at; and testing)
 export function controlNow() {
@@ -1218,6 +1227,7 @@ export function placeHunter(x, z) {
 	if (hunter.on != 'land') leaveBoat();
 	hunter.x = x; hunter.z = z;
 	hunter.y = groundUnder(x, z);
+	for (const fn of floors) hunter.y = Math.max(hunter.y, fn(x, z, Infinity));
 	hunter.vx = hunter.vy = hunter.vz = 0;
 	hunter.grounded = true;
 	hunter.chute = false;

@@ -15,6 +15,7 @@ import * as transformations from './transformations.js'
 import * as terrain from './terrain.js'
 import { BUILDING_TYPES, VARIANTS, variantSize, FLOOR_HEIGHT, GROUND_FLOOR } from './townLayout.js'
 import { buildingMeshes, townMeshBuilder } from './townBuildings.js'
+import { planOf } from './interiorMeshes.js'
 import { lightNow } from './lighting.js'
 import { seasonNow, weatherNow, SEASON_SPRING, SEASON_SUMMER, SEASON_FALL } from './weather.js'
 import { setStillLights } from './pointLights.js'
@@ -60,10 +61,13 @@ import {uniformBufferLights} from './rotatingCube.js'
 	coming down and all as they would have.
 
 	IN THE WAY (boxesNear): what the walker, the horses and the discs bump into, as the trunks and boulders are given (square boxes
-	that do not turn): a ring of them round every house's walls (the inside is not reachable), along the walls of the streets, under
-	the pier's deck (to stand on), and at each lamp.
+	that do not turn): a thin ring of them round every house's walls with a gap at each door, the walls between its rooms (what else is in them: interiors.js), along the
+	walls of the streets, under the pier's deck (to stand on), and at each lamp.
+	GOING IN: within NEAR_OPEN of the camera a house is drawn from its open version, with the way in cut through it (townBuildings.js), and what is inside is drawn with it (interiors.js).
 */
 const NEAR_HOUSES = 520;		// world units
+export const NEAR_OPEN = 115;
+const WALL = { half: 0.4, step: 0.6, inset: 0.2 };	// a house's walls in the way: a box's half width, how far apart, how far inside the wall
 const DRAW_HOUSES = 6000;
 // THE DAMAGE (see the top): a burst's radius (metres) and what it does to a house of DAMAGE.size (cubic world units) right by it
 const BURSTS = { '80mm': { radius: 8, amount: 0.16 }, 'bomb': { radius: 14, amount: 1.0 } };
@@ -493,7 +497,7 @@ const meshBuffer = (label, data) => {
 
 // the houses' meshes, made once: [type][variant] -> { full, plain } (see townBuildings.js)
 const HOUSES = buildingMeshes();
-const houseBuffers = HOUSES.map((variants, t) => variants.map((mesh, v) => ({ full: meshBuffer(`town ${BUILDING_TYPES[t].name} ${v}`, mesh.full), plain: meshBuffer(`town ${BUILDING_TYPES[t].name} ${v} plain`, mesh.plain), height: mesh.height })));
+const houseBuffers = HOUSES.map((variants, t) => variants.map((mesh, v) => ({ full: meshBuffer(`town ${BUILDING_TYPES[t].name} ${v}`, mesh.full), open: meshBuffer(`town ${BUILDING_TYPES[t].name} ${v} open`, mesh.open), plain: meshBuffer(`town ${BUILDING_TYPES[t].name} ${v} plain`, mesh.plain), height: mesh.height })));
 export const HOUSE_TRIANGLES = HOUSES.map((variants) => variants.map((mesh) => ({ full: mesh.full.length / VERTEX_FLOATS / 3, plain: mesh.plain.length / VERTEX_FLOATS / 3 })));
 const footingBuffer = meshBuffer('town footing', FOOTING);
 const rubbleBuffer = meshBuffer('town rubble', RUBBLE);
@@ -545,6 +549,28 @@ ballistics.addTarget((ax, ay, az, bx, by, bz) => {
 	return best;
 });
 let boxHouse = new Int32Array(0);		// each box's house (its number in houses), or -1
+// whether a wall of the towns stands anywhere on the line from a to b (world units): the line taken in lengths of a bucket or so, each against the boxes round it
+export function wallOnLine(a, b) {
+	const d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], n = Math.max(Math.ceil(Math.hypot(d[0], d[2]) / (BOX_BUCKET * 0.6)), 1);
+	for (let k = 0; k < n; k++) {
+		const s0 = k / n, s1 = (k + 1) / n, ax = a[0] + d[0] * s0, ay = a[1] + d[1] * s0, az = a[2] + d[2] * s0, sx = d[0] / n, sy = d[1] / n, sz = d[2] / n;
+		let hit = false;
+		boxesNear((ax + a[0] + d[0] * s1) / 2, (az + a[2] + d[2] * s1) / 2, Math.hypot(sx, sz) / 2 + 1, (x, z, half, bottom, top) => {
+			if (hit) return;
+			let t0 = 0, t1 = 1;
+			for (const [o, v, lo, hi] of [[ax, sx, x - half, x + half], [ay, sy, bottom, top], [az, sz, z - half, z + half]]) {
+				if (Math.abs(v) < 1e-9) { if (o < lo || o > hi) return; continue; }
+				let ta = (lo - o) / v, tb = (hi - o) / v;
+				if (ta > tb) [ta, tb] = [tb, ta];
+				t0 = Math.max(t0, ta); t1 = Math.min(t1, tb);
+				if (t0 > t1) return;
+			}
+			hit = true;
+		});
+		if (hit) return true;
+	}
+	return false;
+}
 
 function makeBoxes(towns, towers = [], groundAt = null) {
 	const list = [];
@@ -559,13 +585,27 @@ function makeBoxes(towns, towers = [], groundAt = null) {
 	}
 	for (const h of houses) {
 		const b = h.building, c = Math.cos(b.yaw), s = Math.sin(b.yaw);
-		// round its walls: squares along them, a little inside them
-		const hw = b.width / 2, hd = b.depth / 2, step = 2.2, half = 1.0 * (Math.abs(c) + Math.abs(s));
-		const ring = [];
-		for (let u = -hw + 1; u <= hw - 1 + 0.01; u += step) ring.push([u, -hd + 1], [u, hd - 1]);
-		for (let w = -hd + 1 + step; w <= hd - 1 - step + 0.01; w += step) ring.push([-hw + 1, w], [hw - 1, w]);
+		// round its walls: small squares along them, a gap at each door
+		const plan = planOf(b.type, b.variant ?? 0);
+		const hw = b.width / 2 - WALL.inset, hd = b.depth / 2 - WALL.inset, step = WALL.step, half = WALL.half;
 		const first = list.length / 5;
-		for (const [u, w] of ring) add(b.x + u * c + w * s, b.z - u * s + w * c, half, b.footing, b.y + h.height);
+		const at = (u, w, bottom, top) => add(b.x + u * c + w * s, b.z - u * s + w * c, half, bottom, top);
+		for (let u = -hw; u <= hw + 0.01; u += step) {
+			at(u, -hd, b.footing, b.y + h.height);
+			if (!plan.doors.some((D) => Math.abs(u - D.x) < D.w / 2 + half)) at(u, hd, b.footing, b.y + h.height);
+		}
+		for (let w = -hd + step; w <= hd - step + 0.01; w += step) { at(-hw, w, b.footing, b.y + h.height); at(hw, w, b.footing, b.y + h.height); }
+		// the walls between its rooms, with their doorways
+		for (const [x0, z0, x1, z1] of plan.walls) {
+			const n = Math.max(Math.ceil(Math.hypot(x1 - x0, z1 - z0) / step), 1);
+			for (let k = 0; k <= n; k++) {
+				const u = x0 + (x1 - x0) * k / n, w = z0 + (z1 - z0) * k / n;
+				if (plan.gaps.some((g) => g.along == 'x' ? Math.abs(w - g.at) < 0.4 && Math.abs(u - g.c) < g.w / 2 + half : Math.abs(u - g.at) < 0.4 && Math.abs(w - g.c) < g.w / 2 + half)) continue;
+				at(u, w, b.y, b.y + plan.ceil);
+			}
+		}
+		// what else it has outside to stand on or walk round (the library's steps, a chapel's tower)
+		for (const S of plan.solids) for (let u = S.x0 + 0.4; u <= S.x1; u += 0.7) for (let w = S.z0 + 0.4; w <= S.z1; w += 0.7) add(b.x + u * c + w * s, b.z - u * s + w * c, 0.5, b.footing, b.y + S.top);
 		h.boxes = [first, list.length / 5];
 	}
 	for (const town of towns) {
@@ -854,7 +894,7 @@ export function townPass(aEncoder, mainpassDepthTexture) {
 	for (const h of houses) {
 		const away = Math.hypot(h.building.x - settings.camPosX, h.building.z - settings.camPosZ);
 		if (away > DRAW_HOUSES) continue;
-		const mesh = h.damage >= 1 ? rubbleBuffer : away < NEAR_HOUSES ? h.mesh.full : h.mesh.plain;
+		const mesh = h.damage >= 1 ? rubbleBuffer : away < NEAR_OPEN ? h.mesh.open : away < NEAR_HOUSES ? h.mesh.full : h.mesh.plain;
 		if (!groups.has(mesh)) groups.set(mesh, []);
 		groups.get(mesh).push(h);
 		visible.push(h);
@@ -896,6 +936,20 @@ export function townPass(aEncoder, mainpassDepthTexture) {
 	townStats.triangles = triangles;
 }
 
+// what stands over a place, for the picture from above (skyCover.js): every house within reach, as { buffer, vertices, matrix }, and if there is one, the
+//		ground work (the pier and the bridges are in it)
+export function coverDraws(x, z, reach) {
+	const list = [];
+	for (const h of houses) {
+		const b = h.building;
+		if (h.damage >= 1 || Math.abs(b.x - x) > reach + b.width || Math.abs(b.z - z) > reach + b.width) continue;
+		list.push({ buffer: h.mesh.full.buffer, vertices: h.mesh.full.vertices, matrix: h.matrix });
+	}
+	if (ground?.vertices && list.length) list.push({ buffer: ground.buffer, vertices: ground.vertices, matrix: IDENTITY });
+	return list;
+}
+// every house, as they are kept here (interiors.js)
+export const houseList = () => houses;
 // for testing: every house, where it is and what
 export function townHouses() {
 	return houses.map((h) => ({ type: BUILDING_TYPES[h.building.type].name, variant: h.building.variant, x: h.building.x, y: h.building.y, z: h.building.z, yaw: h.building.yaw, footing: h.building.footing, height: h.height, width: h.building.width, depth: h.building.depth, damage: h.damage, town: h.town }));

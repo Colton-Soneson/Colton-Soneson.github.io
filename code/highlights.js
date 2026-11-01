@@ -55,7 +55,7 @@ function gather() {
 		for (const f of campfires.fireSpots()) out.push([[f.at[0], f.at[1] + 0.7 * m, f.at[2]], f.name, 'thing']);
 		for (const r of bedrolls.rollsForTest()) out.push([[r.at[0], r.at[1] + 0.3 * m, r.at[2]], 'Canvas bedroll', 'thing']);
 		for (const c of camp.campSpots()) out.push([c.at, c.name, 'thing']);
-		for (const c of deer.deerCorpses()) if (c.y !== undefined) out.push([[c.x, c.y + 0.8 * m, c.z], c.meat > 0 ? 'Dead deer (venison: hatchet or knife)' : 'Dead deer', 'thing']);
+		for (const c of deer.deerCorpses()) if (c.y !== undefined) out.push([[c.x, c.y + 0.8 * m, c.z], c.meat > 0 ? 'Dead deer (cut it up: hatchet or knife)' : 'Dead deer', 'thing']);
 	}
 	if (npcs.on()) for (const person of npcs.people) {
 		const p = person.place;

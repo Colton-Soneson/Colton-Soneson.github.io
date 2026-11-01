@@ -4,16 +4,20 @@ import { settings } from './settings.js';
 import * as hunting from './hunting.js'
 import * as weapons from './weapons.js'
 import * as help from './controlsHelp.js'
-import { ITEMS, SLOTS, SLOT_NAMES, HANDS, HAND_NAMES, ICONS, handSlots, sizeOf, nameOf, tintOf, weightOf, dollars } from './items.js'
+import { ITEMS, SLOTS, SLOT_NAMES, HANDS, HAND_NAMES, ICONS, handSlots, sizeOf, nameOf, tintOf, weightOf, dollars, placeFor } from './items.js'
 import * as inventory from './inventory.js'
 import * as survival from './survival.js'
 import * as loot from './loot.js'
 import * as bedrolls from './bedrolls.js'
 import * as campfires from './campfires.js'
 import * as camp from './camp.js'
+import * as crafting from './crafting.js'
+import * as rabbits from './rabbits.js'
 
 /*
-	THE INVENTORY SCREEN of the Survival game mode: I (or E at a container, loot.js) opens it, I or Esc shuts it. Four columns:
+	THE INVENTORY SCREEN of the Survival game mode: I (or E at a container, loot.js) opens it, I, Tab, Esc or F shuts it. Four columns, and a fifth
+	under its small Crafting tab (crafting.js: a six by six grid to lay things out in, any way round, and what they make in the output slot, dragged
+	out of it into the inventory or off on to the ground):
 		GEAR		what is worn, a slot each (items.js: SLOTS)
 		EQUIPPED	the hands: primary, secondary, item 1 to 4 (what T offers, survival.js), the pocket (one cell: the money, say); and under
 					them how the walker is (the needs, what it feels like, what the clothes come to, what is carried against what can be)
@@ -28,7 +32,7 @@ import * as camp from './camp.js'
 const CELL = 42;					// pixels
 const SLOT = 68;
 
-const ui = { open: false, container: null, camp: null, drag: null, menu: null };
+const ui = { open: false, container: null, camp: null, drag: null, menu: null, crafting: false };
 export const uiState = ui;
 const root = document.createElement('div');
 root.style.cssText = 'position: fixed; inset: 0; z-index: 20; display: none; background: rgba(10, 8, 6, 0.86); color: #e6dcc8; font: 12px Georgia, "Times New Roman", serif; user-select: none; overflow: auto;';
@@ -109,12 +113,18 @@ function render() {
 		else found = panel(said.title, `<div style="display:grid; grid-template-columns: repeat(2, ${SLOT + 14}px); gap:8px;">${Object.keys(camp.slotsOf(ui.camp)).map((s) => `<div><div style="font-size:10px; color:#b8a888; margin-bottom:2px;">${html(camp.SLOT_NAMES[s])}</div>${slotBox('camp:' + s, camp.SLOT_NAMES[s], h.slots[s], SLOT + 14, SLOT)}</div>`).join('')}</div>
 			<div style="margin-top:8px; color:#cfc2a8; line-height:1.5; max-width:180px;">${said.lines.map(html).join('<br>')}</div>`);
 	}
-	root.innerHTML = `<div style="display:flex; gap:16px; padding:24px; align-items:flex-start; min-width:max-content; margin:auto;">
+	const tab = (key, name, on) => `<span data-tab="${key}" style="display:inline-block; padding:3px 12px; margin-right:4px; border:1px solid #5a4a36; border-bottom:none; border-radius:5px 5px 0 0; cursor:pointer; font-size:11px; letter-spacing:0.1em; background:${on ? 'rgba(90,72,50,0.95)' : 'rgba(40,32,24,0.9)'}; color:${on ? '#f0e4c8' : '#b8a888'};">${name}</span>`;
+	const recipe = crafting.recipeNow();
+	const craftColumn = ui.crafting ? `<div>${panel('CRAFTING', `<div style="display:flex; gap:12px; align-items:center;">${gridBox('craft', inventory.CRAFT_GRID, I.craft, 'grid:craft')}
+		<div style="text-align:center;"><div style="font-size:18px; color:#b8a888; margin-bottom:4px;">⇒</div>${slotBox('craftOut', 'Output', crafting.outputNow(), 84, 84)}</div></div>
+		<div style="margin-top:8px; max-width:360px; color:#cfc2a8; line-height:1.5;">${recipe ? html(crafting.describe(recipe)) : 'Lay things out in the grid, any way round'}<br><span style="color:#9a8a70;">Makes: ${crafting.RECIPES.map((r) => html(crafting.describe(r))).join(' · ')}</span></div>`)}</div>` : '';
+	root.innerHTML = `<div style="position:fixed; left:24px; top:4px; z-index:1;">${tab('bag', 'INVENTORY', !ui.crafting)}${tab('craft', 'CRAFTING', ui.crafting)}</div><div style="display:flex; gap:16px; padding:24px; align-items:flex-start; min-width:max-content; margin:auto;">
 		<div>${panel('GEAR', gear)}</div>
 		<div style="width:250px;">${panel('EQUIPPED', hands)}${panel('CONDITION', status)}</div>
 		<div>${pack}</div>
 		${found ? `<div>${found}</div>` : ''}
-		<div style="position:fixed; left:24px; bottom:12px; color:rgba(220,200,170,0.6);">Drag to move · R turns · drop off the screen to put it down · double click: in or out · right click: more · Tab, I or Esc to close</div>
+		${craftColumn}
+		<div style="position:fixed; left:24px; bottom:12px; color:rgba(220,200,170,0.6);">Drag to move · R turns · drop off the screen to put it down · double click: in or out · right click: more · Tab, I, Esc or F to close</div>
 	</div>`;
 }
 
@@ -155,9 +165,9 @@ window.addEventListener('keydown', (e) => {
 	if ((e.code == 'KeyI' || e.code == 'Tab') && inventory.survivalOn()) {
 		if (e.code == 'Tab') e.preventDefault();		// (not round the page's controls)
 		if (e.repeat) return;
-		if (ui.open) closeInventory(); else if (document.pointerLockElement == canvas) openInventory();
+		if (ui.open) closeInventory(); else if (document.pointerLockElement == canvas && !hunting.input.menuOpen) openInventory();
 	}
-	else if (e.code == 'Escape' && ui.open) closeInventory();
+	else if ((e.code == 'Escape' || e.code == 'KeyF') && ui.open) closeInventory();
 	else if (e.code == 'KeyR' && ui.drag) { ui.drag.rot = 1 - ui.drag.rot; drawGhost(); }
 });
 inventory.onChange(() => render());
@@ -176,6 +186,8 @@ export function inventoryUIUpdate() {
 function find(src, uid) {
 	if (src == 'loot') return loot.containerById(ui.container)?.items?.find((i) => i.uid == uid) ?? null;
 	if (src.startsWith('camp:')) return camp.holder(ui.camp)?.slots[src.slice(5)] ?? null;
+	if (src == 'craftOut') return crafting.outputNow();
+	if (src == 'grid:craft') return inventory.inv.craft.find((i) => i.uid == uid) ?? null;
 	return inventory.everything().find(({ item }) => item.uid == uid)?.item ?? null;
 }
 const whereOf = (src) => {
@@ -221,6 +233,34 @@ function campSlotFor(item) {
 	if (!h) return null;
 	return Object.keys(slots).find((s) => slots[s] == ITEMS[item.type].camp && !h.slots[s]) ?? null;
 }
+// WHAT THE CRAFTING MAKES, dragged out of its slot (see the top): into a grid or a slot it goes in, on to a stack of its kind, or off on to the ground. Only
+//		then is what went into it used up
+function dropMade(item, el, mx, my, rot) {
+	const gridEl = el?.closest('.grid'), slotEl = el?.closest('.slot'), onto = el?.closest('.it');
+	if (onto && onto.dataset.src != 'craftOut' && onto.dataset.src != 'loot') {
+		const target = find(onto.dataset.src, Number(onto.dataset.uid));
+		if (target?.type == item.type && (ITEMS[item.type].stack ?? 1) > 1) {
+			const made = crafting.take();
+			if (made && inventory.stackOnto(target, made) > 0 && !inventory.give(made)) loot.dropHere([made]);
+			return;
+		}
+	}
+	if (gridEl && gridEl.dataset.grid != 'loot') {
+		const r = gridEl.getBoundingClientRect(), [w, h] = sizeOf({ ...item, rot });
+		const x = Math.round((mx - r.left) / CELL - w / 2), y = Math.round((my - r.top) / CELL - h / 2), to = { kind: 'grid', grid: gridEl.dataset.grid };
+		if (!inventory.accepts(to, item, x, y, rot)) { help.toast('It does not go there'); return; }
+		inventory.put(to, crafting.take(), x, y, rot);
+		return;
+	}
+	if (slotEl) {
+		const key = slotEl.dataset.slot, to = key.startsWith('camp:') || key == 'craftOut' ? null : whereOf(key);
+		if (!to) return;
+		if (!inventory.accepts(to, item)) { help.toast('It does not go there'); return; }
+		inventory.put(to, crafting.take());
+		return;
+	}
+	if (!el?.closest('[data-grid], .slot')) { const made = crafting.take(); if (made) loot.dropHere([made]); }
+}
 function dropOwn(item) {
 	inventory.remove(item);
 	loot.dropHere([item]);
@@ -245,6 +285,8 @@ function drawGhost() {
 root.addEventListener('pointerdown', (e) => {
 	if (e.button != 0) return;
 	closeMenu();
+	const tabEl = e.target.closest('[data-tab]');
+	if (tabEl) { ui.crafting = tabEl.dataset.tab == 'craft'; render(); return; }
 	const el = e.target.closest('.it');
 	if (!el) return;
 	const item = find(el.dataset.src, Number(el.dataset.uid));
@@ -272,6 +314,7 @@ window.addEventListener('pointerup', (e) => {
 function drop(d, mx, my) {
 	const el = document.elementFromPoint(mx, my);
 	const { item, src, rot } = d;
+	if (src == 'craftOut') { dropMade(item, el, mx, my, rot); return; }
 	const fromLoot = src == 'loot';
 	// (a tent's or the saddlebags' slots: out of one anywhere but another of them, in on to one)
 	const campSlot = el?.closest('.slot')?.dataset.slot?.startsWith('camp:') ? el.closest('.slot').dataset.slot.slice(5) : null;
@@ -314,7 +357,15 @@ root.addEventListener('dblclick', (e) => {
 	if (!el) return;
 	const item = find(el.dataset.src, Number(el.dataset.uid));
 	if (!item) return;
-	if (el.dataset.src == 'loot') loot.take(ui.container, item.uid);
+	if (el.dataset.src == 'craftOut') crafting.makeIntoInventory();
+	else if (el.dataset.src == 'grid:craft') { inventory.remove(item); if (!inventory.give(item)) loot.dropHere([item]); }
+	else if (el.dataset.src == 'loot') loot.take(ui.container, item.uid);
+	else if (ui.crafting && !el.dataset.src.startsWith('camp:') && !el.dataset.src.startsWith('worn') && !el.dataset.src.startsWith('hand') && !el.dataset.src.startsWith('attach')) {
+		// (the crafting tab open: into the grid, wherever it fits)
+		const at = placeFor(inventory.CRAFT_GRID, inventory.inv.craft, item), where = whereOf(el.dataset.src), was = { x: item.x, y: item.y, rot: item.rot };
+		if (!at || ITEMS[item.type].money) help.toast('It does not go in the grid');
+		else { inventory.remove(item); if (!inventory.put({ kind: 'grid', grid: 'craft' }, item, at.x, at.y, at.rot)) inventory.put(where, Object.assign(item, was), was.x, was.y, was.rot); }
+	}
 	else if (el.dataset.src.startsWith('camp:')) camp.take(ui.camp, el.dataset.src.slice(5));
 	else if (ui.camp && campSlotFor(item)) camp.put(ui.camp, campSlotFor(item), item);
 	else if (ui.container) { const where = whereOf(el.dataset.src); inventory.remove(item); if (!loot.putInto(ui.container, item)) inventory.put(where, item, item.x, item.y, item.rot); }
@@ -334,7 +385,8 @@ root.addEventListener('contextmenu', (e) => {
 	const src = el.dataset.src, item = find(src, Number(el.dataset.uid));
 	if (!item) return;
 	const it = ITEMS[item.type], acts = [];
-	if (src == 'loot') acts.push(['Take', () => loot.take(ui.container, item.uid)]);
+	if (src == 'craftOut') acts.push(['Make it', () => crafting.makeIntoInventory()]);
+	else if (src == 'loot') acts.push(['Take', () => loot.take(ui.container, item.uid)]);
 	else if (src.startsWith('camp:')) acts.push(['Take out', () => camp.take(ui.camp, src.slice(5))]);
 	else {
 		if (it.food) acts.push(['Eat', () => useItem(item, src)]);
@@ -343,7 +395,8 @@ root.addEventListener('contextmenu', (e) => {
 		if (it.use == 'pitch') acts.push(['Pitch tent', () => { if (camp.pitch(item)) closeInventory(); }]);
 		if (ui.camp && campSlotFor(item)) acts.push([ui.camp.kind == 'tent' ? 'Into the tent' : 'Into the saddlebags', () => camp.put(ui.camp, campSlotFor(item), item)]);
 		if (item.type == 'firewood') acts.push(['Build campfire', () => { const at = campfires.buildSpot(); if (!at) { help.toast('No room for a fire here'); return; } inventory.useOne(item); campfires.build(at); closeInventory(); help.toast('Campfire laid: light it with the lighter'); }]);
-		if (item.type == 'venison') acts.push(['Cook on the fire', () => campfires.cook(item)]);
+		if (item.type == 'venison' || item.type == 'rabbitMeat') acts.push(['Cook on the fire', () => campfires.cook(item)]);
+		if (it.use == 'trap') acts.push(['Set the snare', () => { if (rabbits.setSnare(item)) closeInventory(); }]);
 		const on = src.startsWith('worn') || src.startsWith('hand') || src.startsWith('attach');
 		if (on) acts.push(['Take off', () => quickEquip(item, src)]);
 		else if (typeof it.slot == 'string' || handSlots(item.type).length) acts.push([typeof it.slot == 'string' && it.slot != 'attachment' ? 'Wear' : 'Equip', () => quickEquip(item, src)]);

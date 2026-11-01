@@ -136,6 +136,12 @@ function watchArm() {
 	stroke(m, y + 0.0009, [0, -0.003], [0, 0.016], 0.0005, LABEL, 3);
 	return m;
 }
+// a rabbit's cut, a little one: raw or seared
+function rabbitCut(cooked) {
+	const m = vm.meshBuilder();
+	m.prismX([[-0.05, 0.0], [-0.02, -0.024], [0.03, -0.026], [0.055, 0.0], [0.03, 0.03], [-0.025, 0.03]], -0.012, 0.012, cooked ? SEARED : RAW_MEAT);
+	return m;
+}
 function smokedFish() {
 	const m = vm.meshBuilder();
 	m.prismX([[-0.09, 0.0], [-0.06, -0.022], [0.0, -0.028], [0.05, -0.02], [0.075, 0.0], [0.05, 0.02], [0.0, 0.028], [-0.06, 0.022]], -0.011, 0.011, BREAD_CRUST);
@@ -362,6 +368,6 @@ function campfire() {
 	return m;
 }
 
-const MAKERS = { tent, tentBundle, stove: () => stoveWithPipe(false), stoveLit: () => stoveWithPipe(true), stovePacked, collector, collectorPacked, waterSurface, compass, watchArm, smokedFish, lighter, hatchet, knife, stone, bread, sausage, venison: () => venison(false), cookedVenison: () => venison(true), water: () => bottle(false), beer: () => bottle(true), map, firewood, bedroll, bedrollFlat, crate, sack, campfire, campfireFull, campfireHalf, campfireEmbers, campfireDead, campfireLaid };
+const MAKERS = { tent, tentBundle, stove: () => stoveWithPipe(false), stoveLit: () => stoveWithPipe(true), stovePacked, collector, collectorPacked, waterSurface, compass, watchArm, smokedFish, lighter, hatchet, knife, stone, bread, sausage, venison: () => venison(false), cookedVenison: () => venison(true), rabbitMeat: () => rabbitCut(false), cookedRabbit: () => rabbitCut(true), water: () => bottle(false), beer: () => bottle(true), map, firewood, bedroll, bedrollFlat, crate, sack, campfire, campfireFull, campfireHalf, campfireEmbers, campfireDead, campfireLaid };
 export const MESHES = Object.fromEntries(Object.entries(MAKERS).map(([name, make]) => { const m = make(); return [name, { data: m.done(), triangles: m.count() }]; }));
 export const meshStats = Object.fromEntries(Object.entries(MESHES).map(([name, mesh]) => [name, mesh.triangles]));

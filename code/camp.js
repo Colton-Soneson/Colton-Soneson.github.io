@@ -17,15 +17,17 @@ import * as inventory from './inventory.js'
 import * as survival from './survival.js'
 import * as loot from './loot.js'
 import * as bedrolls from './bedrolls.js'
+import * as skyCover from './skyCover.js'
 
 /*
 	THE CAMP of the Survival mode: the canvas wall tent, what goes in it, and a horse's saddlebags to carry it all in (items.js: camp).
 	THE TENT is pitched (the inventory screen's right click, or left click with it in the hands) on the ground in front of the walker,
 	its door towards it, where the ground is level enough (PITCH) and no other tent is. It is TENT across and deep, room enough to walk
-	into. Under its roof (shelter: survival.js) the rain and the snow keep off, and most of the wind. It has a SLOT for each attachment,
+	into. Under its roof (skyCover.js: it is in the picture from above, setting out what the sky can see) the rain and the snow keep off, and most of the
+	wind. It has a SLOT for each attachment,
 	and an attachment put in its slot stands in its own place (SPOTS: in the tent's own metres, its door +z):
 		stove		at the back between the beds, its pipe up through the roof. Firewood (E) burns in it by the world's clock (STOVE: as a
-					campfire does, campfires.js), lit with the lighter (survivalTools.js); lit, it is warm in the tent (survival.js:
+					campfire does, campfires.js), lit with the lighter (survivalTools.js); lit, it is warm, in the tent and out to STOVE.near through its walls (survival.js:
 					setFireNear), smokes from its pipe, glows, and cooks (campfires.js: burningNear)
 		collector	outside, by the right wall: fills with water while it rains or snows (COLLECT, by the world's clock), up to COLLECT.most
 					bottles; E takes them
@@ -48,7 +50,7 @@ export const TENT_SLOTS = { stove: 'stove', collector: 'collector', bed1: 'bed',
 export const BAG_SLOTS = { tent: 'tent', stove: 'stove', collector: 'collector', bed1: 'bed', bed2: 'bed' };
 export const SLOT_NAMES = { tent: 'Tent', stove: 'Stove', collector: 'Rain collector', bed1: 'Bedroll', bed2: 'Bedroll' };
 const SPOTS = { stove: [0, 0.07, -1.0], collector: [1.9, 0, 0.55], bed1: [-0.72, 0.07, 0.3], bed2: [0.72, 0.07, 0.3] };	// (in it: on its floor)
-const STOVE = { wood: 2.5 / 24, most: 8 / 24, warmth: 12, reach: 3.5 };		// days of fuel a firewood, the most it holds; °C in the tent, metres it reaches
+const STOVE = { wood: 2.5 / 24, most: 8 / 24, warmth: 20, near: 10, reach: 3.5 };		// days of fuel a firewood, the most it holds; °C in the tent, metres it reaches
 const COLLECT = { perDay: 24, most: 4 };					// bottles a day of rain at its hardest; the most it holds
 const CARRIED = ['tent', 'stove', 'collector'];				// (the camp kinds carried in the hands)
 
@@ -317,13 +319,15 @@ survival.setFireNear((x, y, z) => {
 	let warmth = 0, calm = 0;
 	for (const t of tents.values()) {
 		if (!stoveBurning(t)) continue;
-		const inside = insideTent(t, x, z), d = Math.hypot(...tentToWorld(t, SPOTS.stove).map((v, i) => v - [x, y, z][i])) / m;
-		warmth = Math.max(warmth, inside ? STOVE.warmth : STOVE.warmth * 0.5 * Math.max(1 - d / STOVE.reach, 0));
-		if (inside) calm = 1;
+		// (from the middle of the tent: how far up or down the walker stands on the slope does not matter)
+		const inside = insideTent(t, x, z, 0.4), d = Math.hypot(t.at[0] - x, t.at[2] - z) / m;
+		warmth = Math.max(warmth, inside ? STOVE.warmth : STOVE.warmth * 0.6 * Math.max(1 - d / STOVE.near, 0));
+		if (inside || d < STOVE.reach) calm = 1;
 	}
 	return { warmth, calm };
 });
-survival.setShelter((x, y, z) => [...tents.values()].some((t) => insideTent(t, x, z) && y < t.at[1] + 2.4 * metre()));
+// (the picture from above: skyCover.js)
+skyCover.addProps((put) => { for (const t of tents.values()) put('tent', props.place(t.at, t.yaw)); });
 // a stove burning near enough to cook on (campfires.js)
 export function burningNear(x, z, reach) {
 	return [...tents.values()].find((t) => stoveBurning(t) && Math.hypot(...[0, 2].map((i) => tentToWorld(t, SPOTS.stove)[i] - [x, 0, z][i])) < reach * metre()) ?? null;

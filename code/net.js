@@ -8,6 +8,9 @@ import * as transformations from './transformations.js'
 import * as players from './players.js'
 import * as forest from './forest.js'
 import * as deer from './deer.js'
+import * as rabbits from './rabbits.js'
+import * as fish from './fish.js'
+import * as whaling from './whaling.js'
 import * as birds from './birds.js'
 import * as geese from './geese.js'
 import * as boat from './boat.js'
@@ -315,6 +318,10 @@ const ANIMALS = [
 	{ kind: 'hawk', share: birds.hawkShare, follow: birds.hawkFollow, kill: birds.killHawkById, shot: birds.hawkShot, angles: [4, 6] },
 	{ kind: 'goose', share: geese.geeseShare, follow: geese.geeseFollow, kill: geese.killGooseById, shot: geese.gooseShot, angles: [4, 6] },
 	{ kind: 'horde', share: horde.hordeShare, follow: horde.hordeFollow, kill: horde.killHordeById, shot: horde.hordeShot, angles: [4] },
+	{ kind: 'rabbit', share: rabbits.rabbitShare, follow: rabbits.rabbitFollow, kill: rabbits.killRabbitById, shot: rabbits.rabbitShot, angles: [4] },
+	// (the schools' leaders, and the whales: nothing fired does anything to them, whaling.js has the harpoons)
+	{ kind: 'fish', share: fish.fishShare, follow: fish.fishFollow, kill: () => {}, shot: {}, angles: [4] },
+	{ kind: 'whale', share: whaling.whaleShare, follow: whaling.whaleFollow, kill: () => {}, shot: {}, angles: [4] },
 ];
 const tracks = new Map(ANIMALS.map((animal) => [animal.kind, new Map()]));	// joiner: kind -> id -> the last few records heard, [{ at, r }]
 let animalTick = 0, lastAnimals = 0;

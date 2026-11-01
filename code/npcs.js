@@ -364,11 +364,8 @@ export function clearLine(a, b, steps = 16) {
 	for (let k = 1; k < steps; k++) {
 		const t = k / steps, x = a[0] + (b[0] - a[0]) * t, y = a[1] + (b[1] - a[1]) * t, z = a[2] + (b[2] - a[2]) * t;
 		if (land.heightAt(x, z) > y) return false;
-		let wall = false;
-		town.boxesNear(x, z, 0, (bx, bz, half, bottom, top) => { if (!wall && Math.abs(x - bx) < half && Math.abs(z - bz) < half && y > bottom && y < top) wall = true; });
-		if (wall) return false;
 	}
-	return true;
+	return !town.wallOnLine(a, b);
 }
 
 // a round of theirs at the players: this player (alone, or the host) and, the host, the others (see THE PLAYERS at the top)
@@ -453,27 +450,27 @@ export function npcUpdate() {
 }
 // MULTIPLAYER (see the top): the people as the host sends them. Each: [id, hat, colour, alive, down (seconds), gone, the vehicle it is in ('' for
 //		none), where (in the vehicle, metres: local x, y, z; or on the ground, world units: x, y, z), which way (in the vehicle: a direction
-//		in its own directions; or a heading and nothing), sitting, fighting, aim, arms down, gun, kind, side ('' for none)]
+//		in its own directions; or a heading and nothing), sitting, fighting, aim, arms down, gun, kind, side ('' for none), stride, walking]
 export function peopleShare() {
 	const r = (v) => Math.round(v * 1000) / 1000;
 	return people.filter((p) => !p.remote).map((p) => {
 		const a = p.anchor, pl = p.place;
 		const where = a ? [...a.local, ...a.facing] : pl ? [pl.x, pl.y, pl.z, pl.heading, 0, 0] : [0, 0, 0, 0, 0, 0];
-		return [p.id, p.hat, r(p.hue), p.alive ? 1 : 0, r(p.down), p.gone || !pl ? 1 : 0, a ? a.vehicle : '', ...where.map(r), pl?.sit ?? 0, p.fighting ? 1 : 0, r(p.aim), p.armsDown, p.gun, p.kind, p.side ?? ''];
+		return [p.id, p.hat, r(p.hue), p.alive ? 1 : 0, r(p.down), p.gone || !pl ? 1 : 0, a ? a.vehicle : '', ...where.map(r), pl?.sit ?? 0, p.fighting ? 1 : 0, r(p.aim), p.armsDown, p.gun, p.kind, p.side ?? '', r(p.stride ?? 0), r(p.walking ?? 0)];
 	});
 }
 // a joiner: the host's people as they are now (net.js), in place of any it had
 const remote = new Map();
 export function peopleHeard(list) {
 	const seen = new Set();
-	for (const [id, hat, hue, alive, down, gone, vehicle, a0, a1, a2, b0, b1, b2, sit, fighting, aim, armsDown, gun, kind, side] of list) {
+	for (const [id, hat, hue, alive, down, gone, vehicle, a0, a1, a2, b0, b1, b2, sit, fighting, aim, armsDown, gun, kind, side, stride, walking] of list) {
 		let p = remote.get(id);
 		if (!p) {
 			p = { id, kind, name: kind, hat, gun, hue, group: makeGroup(), home: null, health: HEALTH, alive: true, down: 0, gone: false, place: null, hit: 0, fighting: false, aim: 0, armsDown: 0, look: 0, stride: 0, walking: 0, respawnIn: -1, remote: true };
 			people.push(p);
 			remote.set(id, p);
 		}
-		Object.assign(p, { hat, hue, alive: !!alive, gone: !!gone, fighting: !!fighting, aim, armsDown, gun, kind, sit, side: side || null });
+		Object.assign(p, { hat, hue, alive: !!alive, gone: !!gone, fighting: !!fighting, aim, armsDown, gun, kind, sit, side: side || null, stride: stride ?? 0, walking: walking ?? 0 });
 		p.down = alive ? 0 : Math.max(p.down, down);
 		p.anchor = vehicle ? { vehicle, local: [a0, a1, a2], facing: [b0, b1, b2] } : null;
 		if (!vehicle) p.place = { x: a0, y: a1, z: a2, heading: b0, sit };

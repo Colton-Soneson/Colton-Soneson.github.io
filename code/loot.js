@@ -1,7 +1,6 @@
 import { settings } from './settings.js';
 
 import * as terrain from './terrain.js'
-import * as town from './town.js'
 import * as hunting from './hunting.js'
 import * as help from './controlsHelp.js'
 import * as npcs from './npcs.js'
@@ -15,7 +14,6 @@ import * as outfits from './outfits.js'
 /*
 	THE LOOT of the Survival game mode: everything there is to search, with E (within REACH, looked at), in the inventory screen
 	(inventoryUI.js). Each is a CONTAINER: { id, kind, at (world units), grid, items }:
-		crate		by the door of one house in CRATE_EVERY of the towns' (in the same place on every machine: the houses are)
 		cache		a supply crate out in the wild, CACHES of them, on the grassland and in the woods (the same places everywhere: the land's
 					spawn points)
 		body		a player's, where it went down: everything it carried (survival.js: onBody)
@@ -23,7 +21,9 @@ import * as outfits from './outfits.js'
 					would have on it (NPC_LOOT), for BODY_SECONDS
 		(a body is on the ground under where it fell, or on the water over it: restingAt)
 		pile		things put down or thrown (inventoryUI.js, survivalTools.js): a sack of them, near others merged into one
-	What is in each is drawn by lot (TABLES) the first time it is looked in, and the crates and the caches fill again RESTOCK days after
+		trap		a snare a player set (rabbits.js is what walks into it): THREE slots, empty until it has caught something, then what the rabbit
+					comes to (fillTrap). Nothing can be put into one; emptied, it is set again. F takes it up
+	What is in each is drawn by lot (TABLES) the first time it is looked in, and the caches fill again RESTOCK days after
 	they were emptied.
 	IN A GAME WITH OTHERS (survivalNet.js) the host keeps what is in every one. A joiner asks what is in one it opens (lootOpen: lootIs back),
 	asks for a thing out of it (lootTake: lootGot back, and lootIs to everyone), and puts a thing into it (lootPut). The bodies and the piles
@@ -31,20 +31,16 @@ import * as outfits from './outfits.js'
 	of all of them.
 */
 const REACH = 2.4;					// metres
-const CRATE_EVERY = 3;
 const CACHES = 28;
 const RESTOCK = 3;					// days
 const BODY_SECONDS = 8 * 60;
 const PILE_MERGE = 1.5;				// metres
 const FALLEN = 2;					// seconds an NPC down takes to come to rest
-const GRIDS = { crate: [6, 4], cache: [7, 5], body: [8, 8], npcBody: [6, 4], pile: [5, 4] };
-const LABELS = { crate: 'Crate', cache: 'Supply crate', body: 'Body', npcBody: 'Body', pile: 'Things on the ground' };
+const GRIDS = { cache: [7, 5], body: [8, 8], npcBody: [6, 4], pile: [5, 4], trap: [3, 1] };
+const LABELS = { cache: 'Supply crate', body: 'Body', npcBody: 'Body', pile: 'Things on the ground', trap: 'Snare' };
+const SNARED = ['smallBones', 'rabbitPelt', 'rabbitMeat'];		// what a rabbit in a snare comes to
 // [type, chance, most]: rolled for each
 const TABLES = {
-	crate: [['money', 0.35, 150], ['bread', 0.45, 2], ['sausage', 0.4, 2], ['water', 0.45, 2], ['beer', 0.35, 2], ['smokedFish', 0.15], ['cottonShirt', 0.12], ['henley', 0.08],
-		['flannelShirt', 0.08], ['toque', 0.1], ['bandana', 0.1], ['scarf', 0.08], ['cottonSocks', 0.12], ['woolSocks', 0.1], ['drawers', 0.08], ['longJohns', 0.06],
-		['denim', 0.08], ['woolTrousers', 0.06], ['workBoots', 0.06], ['moccasins', 0.05], ['cowboyHat', 0.05], ['knife', 0.12], ['stone', 0.2, 5], ['firewood', 0.3, 4],
-		['bedroll', 0.1], ['coltRounds', 0.15, 12], ['shells', 0.12, 8], ['haversack', 0.08], ['watch', 0.04], ['compass', 0.04], ['revolver', 0.04]],
 	cache: [['money', 0.45, 600], ['rifle', 0.25], ['shotgun', 0.18], ['sharps', 0.1], ['revolver', 0.2], ['mauser', 0.15], ['rifleRounds', 0.5, 20], ['shells', 0.4, 12],
 		['coltRounds', 0.35, 18], ['sharpsRounds', 0.25, 8], ['mauserRounds', 0.3, 20], ['rucksack', 0.2], ['framePack', 0.08], ['ammoPouch', 0.3], ['utilityPouch', 0.25],
 		['bedrollStrap', 0.15], ['slungPack', 0.15], ['chestplate', 0.06], ['duster', 0.1], ['mackinaw', 0.1], ['buffaloCoat', 0.05], ['sweater', 0.08], ['canvasTrousers', 0.1],
@@ -70,25 +66,14 @@ export const containerById = (id) => containers.get(id) ?? null;
 export const label = (c) => LABELS[c.kind] ?? 'Container';
 const seconds = () => performance.now() / 1000;
 
-// the crates and caches of a land (the same on every machine)
-let madeFor = null, housesFor = -1;
+// the caches of a land (the same on every machine)
+let madeFor = null;
 function makeFixed() {
 	const land = terrain.land;
-	// (made again once the towns' houses are up: they come after the land)
-	const houses = town.townHouses().length;
-	if (!land || (madeFor === land && housesFor == houses)) return;
+	if (!land || madeFor === land) return;
 	madeFor = land;
-	housesFor = houses;
-	for (const [id, c] of containers) if (c.kind == 'crate' || c.kind == 'cache') containers.delete(id);
+	for (const [id, c] of containers) if (c.kind == 'cache') containers.delete(id);
 	const m = metre();
-	town.townHouses().forEach((H, k) => {
-		if (k % CRATE_EVERY != 1 || H.footing < settings.waterWorldPosY) return;
-		const out = H.depth / 2 + 1.0 * m, side = H.width * 0.3;
-		const x = H.x + Math.sin(H.yaw) * out + Math.cos(H.yaw) * side, z = H.z + Math.cos(H.yaw) * out - Math.sin(H.yaw) * side;
-		const y = land.heightAt(x, z);
-		if (y < settings.waterWorldPosY) return;
-		add({ id: 'h' + k, kind: 'crate', at: [x, y, z], yaw: H.yaw });
-	});
 	const spots = [...land.findSpawnPoints(terrain.ZONE_FOREST, CACHES / 2, { seed: 4441, maxSlope: 0.3 }), ...land.findSpawnPoints(terrain.ZONE_GRASSLAND, CACHES / 2, { seed: 5113, maxSlope: 0.3 })];
 	spots.forEach((s, k) => { const y = land.heightAt(s.x, s.z); if (y > settings.waterWorldPosY + 0.5 * m) add({ id: 'w' + k, kind: 'cache', at: [s.x, y, s.z], yaw: k * 1.7 }); });
 }
@@ -112,7 +97,7 @@ function contentsHere(c) {
 	if (c.items === null || (c.restockAt >= 0 && atmosphere.sunCycles >= c.restockAt)) { c.items = TABLES[c.kind] ? roll(c, TABLES[c.kind]) : []; c.restockAt = -1; }
 	return c.items;
 }
-// (emptied: it fills again in time, a crate or a cache)
+// (emptied: it fills again in time, a cache)
 function emptied(c) { if (c.items.length == 0 && TABLES[c.kind] && c.restockAt < 0) c.restockAt = atmosphere.sunCycles + RESTOCK; }
 
 // WHAT IS IN ONE (see the top): asked for (open), and told when it comes or changes (onContents)
@@ -149,7 +134,7 @@ function landIn(item, where) {
 // a thing (no one's now) into it, at x, y (or wherever it fits): false if it will not go (then it is still the caller's)
 export function putInto(id, item, x = null, y = null, rot = item.rot) {
 	const c = containers.get(id);
-	if (!c?.items) return false;
+	if (!c?.items || c.kind == 'trap') return false;
 	if (!(x !== null && fits(c.grid, c.items, item, x, y, rot))) {
 		const at = placeFor(c.grid, c.items, item);
 		if (!at) return false;
@@ -186,7 +171,7 @@ function restingAt([x, y, z]) {
 // THE BODIES AND THE PILES (see the top): made by the host
 function makeDynamic(kind, at, items, extra = {}) {
 	const id = (kind == 'pile' ? 'p' : 'b') + Math.floor(Math.random() * 1e9);
-	const c = { id, kind, at: kind == 'pile' ? at : restingAt(at), items: [], grid: [...GRIDS[kind]], until: kind == 'npcBody' ? seconds() + BODY_SECONDS : -1, ...extra };
+	const c = { id, kind, at: kind == 'pile' || kind == 'trap' ? at : restingAt(at), items: [], grid: [...GRIDS[kind]], until: kind == 'npcBody' ? seconds() + BODY_SECONDS : -1, ...extra };
 	for (const item of items) {
 		let place = placeFor(c.grid, c.items, item);
 		while (!place) { c.grid[1] += 2; place = placeFor(c.grid, c.items, item); }
@@ -203,7 +188,39 @@ function remove(id) {
 	told(id);
 	if (survivalNet.authority()) survivalNet.send('lootDel', { id });
 }
-const shareOf = (c) => ({ id: c.id, kind: c.kind, at: c.at.map((v) => Math.round(v * 100) / 100), grid: c.grid, items: c.items, name: c.name ?? null });
+const shareOf = (c) => ({ id: c.id, kind: c.kind, at: c.at.map((v) => Math.round(v * 100) / 100), grid: c.grid, items: c.items, name: c.name ?? null, yaw: c.yaw ?? 0 });
+// THE SNARES (see the top; rabbits.js): set here (the host's to make, a joiner asks: trapSet), taken up (trapUp: trapGot back), and a rabbit
+//		caught in one. Everyone hears of each as of any container (lootAdd, lootIs, lootDel)
+export function setTrap(at, yaw) {
+	if (!survivalNet.authority()) { survivalNet.send('trapSet', { at, yaw }); return; }
+	lootStats.traps = (lootStats.traps ?? 0) + 1;
+	makeDynamic('trap', at, [], { yaw });
+}
+export const trapList = () => [...containers.values()].filter((c) => c.kind == 'trap');
+export const trapSprung = (c) => (c.items?.length ?? 0) > 0;
+export function fillTrap(id) {
+	const c = containers.get(id);
+	if (!c || c.kind != 'trap' || trapSprung(c)) return false;
+	c.items = SNARED.map((type, k) => Object.assign(makeItem(type), { x: k, y: 0, rot: 0 }));
+	changedHere(c);
+	return true;
+}
+// (done(taken): whether it could be taken up; what was left in it comes too)
+export function takeUpTrap(id, done) {
+	if (!survivalNet.authority()) { trapWaiting = done; survivalNet.send('trapUp', { id }); return; }
+	done(hostTakeUp(id));
+}
+let trapWaiting = null;
+function hostTakeUp(id) {
+	const c = containers.get(id);
+	if (!c || c.kind != 'trap') return null;
+	const items = c.items ?? [];
+	remove(id);
+	return items;
+}
+survivalNet.on('trapSet', (m) => { if (survivalNet.authority() && Array.isArray(m.at)) setTrap(m.at.map(Number), Number(m.yaw) || 0); });
+survivalNet.on('trapUp', (m, from) => { if (survivalNet.authority()) survivalNet.sendTo(from, 'trapGot', { items: hostTakeUp(m.id) }); });
+survivalNet.on('trapGot', (m) => { const done = trapWaiting; trapWaiting = null; done?.(m.items ? m.items.map(cleanItem).filter(Boolean) : null); });
 // a player's body (survival.js): everything it had
 survival.onBody((at, items) => {
 	if (!items.length) return;
@@ -277,11 +294,11 @@ survivalNet.on('lootBody', (m) => { const items = (m.items ?? []).map(cleanItem)
 survivalNet.on('lootPile', (m) => { const items = (m.items ?? []).map(cleanItem).filter(Boolean); if (items.length && Array.isArray(m.at)) pileAt(m.at.map(Number), items); });
 survivalNet.on('lootAdd', (m) => {
 	if (survivalNet.authority() || !m.c?.id) return;
-	add({ id: m.c.id, kind: m.c.kind, at: m.c.at.map(Number), grid: m.c.grid, items: (m.c.items ?? []).map(cleanItem).filter(Boolean), name: m.c.name });
+	add({ id: m.c.id, kind: m.c.kind, at: m.c.at.map(Number), grid: m.c.grid, items: (m.c.items ?? []).map(cleanItem).filter(Boolean), name: m.c.name, yaw: Number(m.c.yaw) || 0 });
 	told(m.c.id);
 });
 survivalNet.on('lootDel', (m) => { if (!survivalNet.authority()) { containers.delete(m.id); told(m.id); } });
-survivalNet.onJoin((id) => { for (const c of containers.values()) if (c.kind == 'body' || c.kind == 'npcBody' || c.kind == 'pile') survivalNet.sendTo(id, 'lootAdd', { c: shareOf(c) }); });
+survivalNet.onJoin((id) => { for (const c of containers.values()) if (c.kind == 'body' || c.kind == 'npcBody' || c.kind == 'pile' || c.kind == 'trap') survivalNet.sendTo(id, 'lootAdd', { c: shareOf(c) }); });
 
 // E AT ONE (see the top), and what is said of it
 export function inView() {
@@ -292,6 +309,7 @@ export function inView() {
 	const look = [Math.sin(settings.camYaw) * Math.cos(settings.camPitch), Math.sin(settings.camPitch), -Math.cos(settings.camYaw) * Math.cos(settings.camPitch)];
 	let best = null, bestScore = Infinity;
 	for (const c of containers.values()) {
+		if (c.kind == 'trap' && !trapSprung(c)) continue;		// (a snare with nothing in it: trapInView)
 		const to = [c.at[0] - eye[0], c.at[1] + 0.3 * m - eye[1], c.at[2] - eye[2]], d = Math.hypot(...to) / m;
 		if (d > REACH + 1.2) continue;
 		const off = 1 - (to[0] * look[0] + to[1] * look[1] + to[2] * look[2]) / (d * m || 1);
@@ -309,7 +327,31 @@ hunting.onUse(() => {
 	for (const fn of openListeners) fn(c.id);
 	return true;
 });
-hunting.addPrompt(() => { const c = inView(); return c ? { name: label(c), keys: 'E search' } : null; });
+hunting.addPrompt(() => { const c = inView(); return c ? { name: c.kind == 'trap' ? 'Snare, a rabbit in it' : label(c), keys: c.kind == 'trap' ? 'E take it · F take the snare up' : 'E search' } : null; });
+// the snare the eye is on, within reach (empty or not)
+export function trapInView() {
+	if (!inventory.survivalOn()) return null;
+	const p = hunting.hunterPlace(), m = metre();
+	if (!p.active || p.on != 'land') return null;
+	const look = [Math.sin(settings.camYaw), -Math.cos(settings.camYaw)];
+	let best = null, bestD = REACH + 0.6;
+	for (const c of trapList()) {
+		const dx = (c.at[0] - p.x) / m, dz = (c.at[2] - p.z) / m, d = Math.hypot(dx, dz);
+		if (d < bestD && (d < 0.8 || (dx * look[0] + dz * look[1]) / d > 0.6)) { best = c; bestD = d; }
+	}
+	return best;
+}
+hunting.addPrompt(() => { const c = trapInView(); return c && !trapSprung(c) ? { name: 'Snare, set', keys: 'F take it up' } : null; });
+hunting.onVehicleUse(() => {
+	const c = trapInView();
+	if (!c) return false;
+	takeUpTrap(c.id, (items) => {
+		if (!items) return;
+		for (const item of [makeItem('trap'), ...items]) if (!inventory.give(item)) dropHere([item]);
+		help.toast('Snare taken up');
+	});
+	return true;
+});
 
 // Once a frame
 export function lootUpdate() {

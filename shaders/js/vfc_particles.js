@@ -37,6 +37,7 @@ const particleUniforms =
 		cloudMap : vec4f,			// where the cloud coverage map is: what cloudShadeAt takes (vfc_clouds.js)
 		amounts : vec4f,			// x: size of a leaf, y: how much spray, z: how far from the camera rain is drawn, w: how much rain
 		season : vec4f,				// x: how far the leaves have turned for the fall, 0 to 1, y: how hard it is snowing, 0 to 1 (weather.js)
+		topDown : mat4x4f,			// the top down height map's view projection (skyCover.js)
 	}
 	@group(0) @binding(0) var<uniform> PU: ParticleUniforms;
 
@@ -576,14 +577,26 @@ export const vf_spray =
 	full of rain, the same drops whichever way the camera goes, and it costs nothing but drawing them.
 
 	Each is a thin streak along the way it is falling. It only shows where it is raining: under deep cloud, by the blue
-	channel of the cloud coverage map (c_cloudCoverage), so walking out from under a storm walks out of the rain.
+	channel of the cloud coverage map (c_cloudCoverage), so walking out from under a storm walks out of the rain. And only
+	where the sky can see it (skyCover.js: under a roof it does not rain).
 */
+const skyCanSee =
+`
+	@group(0) @binding(3) var coverMap: texture_depth_2d;
+	fn skyCanSee(at: vec3f) -> bool {
+		let seen = PU.topDown * vec4f(at, 1.0);
+		let uv = seen.xy * vec2f(0.5, -0.5) + vec2f(0.5, 0.5);
+		if (uv.x <= 0.0 || uv.x >= 1.0 || uv.y <= 0.0 || uv.y >= 1.0) { return true; }
+		return seen.z < textureLoad(coverMap, vec2i(uv * vec2f(textureDimensions(coverMap))), 0) + 0.0005;
+	}
+`;
 export const vf_rain =
 `
 	${particleUniforms}
 
 	@group(0) @binding(1) var cloudMap: texture_2d<f32>;
 	@group(0) @binding(2) var cloudMapSampler: sampler;
+	${skyCanSee}
 
 	${cloudShadeShapes}
 
@@ -614,7 +627,7 @@ export const vf_rain =
 		let raining = cloudShadeAt(position, vec3f(0.0, 1.0, 0.0), PU.cloudMap).b;
 		// thinner rain is fewer drops: each drop has its own point at which it joins in
 		let joins = random(instanceIndex + 991u);
-		if (raining * PU.amounts.w <= joins) {
+		if (raining * PU.amounts.w <= joins || !skyCanSee(position)) {
 			return output;
 		}
 
@@ -652,6 +665,7 @@ export const vf_snow =
 
 	@group(0) @binding(1) var cloudMap: texture_2d<f32>;
 	@group(0) @binding(2) var cloudMapSampler: sampler;
+	${skyCanSee}
 
 	${cloudShadeShapes}
 
@@ -681,7 +695,7 @@ export const vf_snow =
 
 		// is it snowing here? (thinner snow is fewer flakes: each has its own point at which it joins in)
 		let snowing = cloudShadeAt(position, vec3f(0.0, 1.0, 0.0), PU.cloudMap).b;
-		if (snowing * PU.season.y <= random(instanceIndex + 991u)) {
+		if (snowing * PU.season.y <= random(instanceIndex + 991u) || !skyCanSee(position)) {
 			return output;
 		}
 

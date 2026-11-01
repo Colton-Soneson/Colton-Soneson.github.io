@@ -10,7 +10,7 @@ import * as help from './controlsHelp.js'
 /*
 	THE SPAWN MENU (T, in the Hunting game mode): a ring of choices in the middle of the picture. The mouse picks one (the
 	view stops turning while it is open: hunting.input.menuOpen), and a click takes it (or let go of T, after holding it). A
-	choice with more under it opens its own ring: right click goes back out, T again or Esc closes it.
+	choice with more under it opens its own ring: right click goes back out, T again, Tab, Esc or F closes it.
 		Vehicles		a boat (the dinghy, the schooner) where the crosshair points, no further off than boat.SPAWN_REACH, on water
 						deep enough all round it not to touch the shore (boat.spawnSpot). One of each for each player: another
 						takes the place of the first
@@ -131,6 +131,13 @@ window.addEventListener('keydown', (event) => {
 	if (menu.open) { closeMenu(); return; }
 	if (usable() && locked()) openMenu();
 });
+// (Tab and F are other things' too: before they hear them, and they do not. hunting.js has heard them first, and leaves them while a menu is open)
+window.addEventListener('keydown', (event) => {
+	if (!menu.open || !['Tab', 'Escape', 'KeyF'].includes(event.code)) return;
+	event.preventDefault();
+	event.stopImmediatePropagation();
+	closeMenu();
+}, true);
 window.addEventListener('keyup', (event) => {
 	if (event.code != 'KeyT' || !menu.open || !menu.holding) return;
 	menu.holding = false;

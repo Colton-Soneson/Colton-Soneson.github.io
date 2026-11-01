@@ -125,16 +125,17 @@ export function burningNear() {
 	const p = hunting.hunterPlace(), m = metre();
 	return [...fires.values()].find((f) => BURNING.includes(stageOf(f)) && Math.hypot(f.at[0] - p.x, f.at[2] - p.z) / m < COOK_REACH) ?? camp.burningNear(p.x, p.z, COOK_REACH);		// (or a tent's stove)
 }
-const rawMeat = () => inventory.everything().filter(({ item }) => item.type == 'venison').map(({ item }) => item);
+const COOKED = { venison: 'cookedVenison', rabbitMeat: 'cookedRabbit' };
+const rawMeat = () => inventory.everything().filter(({ item }) => COOKED[item.type]).map(({ item }) => item);
 export function cook(only = null) {
 	const raw = only ? [only] : rawMeat();
-	if (!raw.length) { help.toast('No raw venison to cook'); return false; }
+	if (!raw.length) { help.toast('No raw meat to cook'); return false; }
 	if (!burningNear()) { help.toast('Cook it at a burning campfire'); return false; }
 	let n = 0;
-	for (const item of raw) { item.type = 'cookedVenison'; n += item.count; }
+	for (const item of raw) { item.type = COOKED[item.type]; n += item.count; }
 	inventory.changed();
 	fireStats.cooked += n;
-	help.toast('Cooked venison' + (n > 1 ? ' (' + n + ')' : ''));
+	help.toast('Cooked meat' + (n > 1 ? ' (' + n + ')' : ''));
 	return true;
 }
 window.addEventListener('keydown', (e) => {
@@ -145,7 +146,7 @@ hunting.addPrompt(() => {
 	const f = inView();
 	if (!f) return null;
 	const s = stageOf(f), hours = fuelOf(f) * 24;
-	return { name: NAMES[s] + (s != 'dead' ? ` (${hours.toFixed(1)} h of wood)` : ''), keys: 'E add wood' + (s == 'laid' ? ' · the lighter: light it' : '') + (BURNING.includes(s) && rawMeat().length ? ' · X cook venison' : '') };
+	return { name: NAMES[s] + (s != 'dead' ? ` (${hours.toFixed(1)} h of wood)` : ''), keys: 'E add wood' + (s == 'laid' ? ' · the lighter: light it' : '') + (BURNING.includes(s) && rawMeat().length ? ' · X cook meat' : '') };
 });
 
 // THE WARMTH AND THE CALM round them (survival.js)

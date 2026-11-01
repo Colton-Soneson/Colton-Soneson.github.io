@@ -12,17 +12,21 @@ import { CLOTHES, COLOURS } from './clothing.js'
 import * as inventory from './inventory.js'
 import * as loot from './loot.js'
 import * as horse from './horse.js'
+import * as survival from './survival.js'
+import * as treasury from './treasury.js'
 
 /*
 	THE SHOPS of the Survival mode: E at one of the townsfolk (townFolk.js) who has a TRADE, within REACH and looked at, opens its shop (and
 	it stops where it is, turned to the walker, until the shop shuts).
-		food		the baker, the butcher, the fisherman, the innkeeper: each sells its own (sells) and buys any food
+		food		the baker, the butcher, the fisherman, the innkeeper: each sells its own (sells) and buys any food. The butcher buys what comes
+					off the animals too (HIDES). The innkeeper also lets a room for the night (ROOM: survival.js: sleepInRoom)
 		clothes		the tailor (the clothes), the outfitter (boots, the backpacks and their pouches, the extras, the tools): each buys clothes and
 					gear back. A piece of clothing is bought in the colour chosen (clothing.js: its five)
 		bank		the banker: money put in or taken out (BANK)
 	What a thing costs is its price (items.js, clothing.js), in dollars; what a shop pays for one is SELL of that. Money is items.js's money:
 	cents, any amount in one stack (inventory.js: pay, receive). The shops have no end of anything, and are the same for everyone, so there
 	is nothing about them to send.
+	THE TREASURY (treasury.js): every town's own account, at its bank, what its hunters and its whalers bring in: the banker's screen says how it stands.
 	THE BANK keeps every player's money by name, and adds INTEREST to it for every day of the world's clock (atmosphere.js: sunCycles: one
 	world clock) that goes by. In a game the host keeps the accounts (survivalNet.js): a joiner asks what it has (bankAsk), puts money in
 	(bankPut: paid out here first) and takes it out (bankTake: the host says how much it may, bankIs), and the host's are kept in its
@@ -34,15 +38,17 @@ const INTEREST = 0.03;				// a day
 const SAVED = 'survivalBank';
 const FOOD = Object.keys(ITEMS).filter((type) => ITEMS[type].food || ITEMS[type].drink);
 const GEAR = ['tent', 'tentStove', 'rainCollector', 'haversack', 'rucksack', 'framePack', 'ammoPouch', 'utilityPouch', 'bedrollStrap', 'bedroll', 'compass', 'watch', 'knife', 'hatchet', 'lighter'];
+const ROOM = 2;						// dollars: a night in a room at the inn
+const HIDES = ['sinew', 'antlers', 'smallBones', 'rabbitPelt'];
 const HORSE = 30;					// dollars: a saddled horse (the outfitter's: horse.js brings it round, its saddlebags for the camp, camp.js)
 const CLOTHING = Object.keys(CLOTHES);
 const TAILORED = CLOTHING.filter((type) => CLOTHES[type].slot != 'feetOuter' && CLOTHES[type].slot != 'extra');
 const OUTFITTED = [...CLOTHING.filter((type) => CLOTHES[type].slot == 'feetOuter' || CLOTHES[type].slot == 'extra'), ...GEAR];
 export const TRADES = {
 	baker: { title: 'Bakery', sells: ['bread'], buys: FOOD },
-	butcher: { title: 'Butcher', sells: ['sausage', 'venison', 'cookedVenison'], buys: FOOD },
+	butcher: { title: 'Butcher', sells: ['sausage', 'venison', 'cookedVenison'], buys: [...FOOD, ...HIDES] },
 	fisherman: { title: 'Fish', sells: ['smokedFish', 'water'], buys: FOOD },
-	innkeeper: { title: 'Inn', sells: ['beer', 'water', 'bread', 'sausage', 'cookedVenison'], buys: FOOD },
+	innkeeper: { title: 'Inn', sells: ['beer', 'water', 'bread', 'sausage', 'cookedVenison'], buys: FOOD, room: true },
 	tailor: { title: 'Tailor', sells: TAILORED, buys: [...CLOTHING, ...GEAR] },
 	outfitter: { title: 'Outfitter', sells: OUTFITTED, buys: [...CLOTHING, ...GEAR], horse: true },
 	banker: { title: 'Bank', bank: true },
@@ -128,6 +134,7 @@ function render() {
 	let body = '';
 	if (trade.bank) {
 		body = `<div style="padding:8px;">In the bank: <b>${bank.cents === null ? '…' : dollars(bank.cents)}</b> · it earns ${Math.round(INTEREST * 100)}% every day</div>
+			<div style="padding:0 8px 8px;">Town treasury: <b>${dollars(treasury.centsOf(treasury.townNumber(shop.person.town)))}</b> <span style="font-size:11px; color:#b8a888;">what the town's hunters and whalers have brought in</span></div>
 			<div style="padding:8px; display:flex; align-items:center;">$ <input data-amount value="${html(shop.amount)}" placeholder="0.00" style="width:90px; margin:0 6px; padding:4px; background:#1e1812; color:#f0e4c8; border:1px solid #6a5a44; border-radius:4px; font:inherit;">
 			${button('put', 'Put in')}${button('take', 'Take out')}${button('putAll', 'Put in all')}${button('takeAll', 'Take out all')}</div>`;
 	} else {
@@ -139,6 +146,8 @@ function render() {
 		}
 		if (trade.horse) buy = row(`${picture('haversack', '#6a4a2a')}<div><div>Saddled horse</div><div style="font-size:11px; color:#b8a888;">Brought round for you: its saddlebags carry the camp (a tent, its stove, its rain collector, two bedrolls)</div></div>`,
 			`<span style="margin-right:4px;">${dollars(HORSE * 100)}</span>${button('horse', 'Buy')}`) + buy;
+		if (trade.room) buy = row(`${picture('bedroll', '#7a5a3a')}<div><div>Sleep in a room</div><div style="font-size:11px; color:#b8a888;">Eight hours go by. You wake fed and watered, rested, and with half your stress gone</div></div>`,
+			`<span style="margin-right:4px;">${dollars(ROOM * 100)}</span>${button('room', 'Sleep')}`) + buy;
 		let sell = '';
 		const mine = inventory.everything().filter(({ item, where }) => where.kind == 'grid' && trade.buys.includes(item.type) && offer(item.type) > 0);
 		for (const { item } of mine) sell += row(`${picture(item.type, tintOf(item))}<div>${html(nameOf(item))}${item.count > 1 ? ` × ${item.count}` : ''}</div>`, `<span>${dollars(offer(item.type))}</span>${button('sell', 'Sell', `data-uid="${item.uid}"`)}`);
@@ -149,7 +158,7 @@ function render() {
 	root.innerHTML = `<div style="margin:auto; width:min(860px, calc(100vw - 32px)); background:rgba(40,32,24,0.96); border:1px solid #5a4a36; border-radius:6px; padding:12px 16px;">
 		<div style="display:flex; align-items:center; margin-bottom:8px;"><div style="font-size:16px; letter-spacing:0.12em;">${html(trade.title.toUpperCase())}${trade.title != title(shop.person.profession.name) ? ' · ' + html(title(shop.person.profession.name)) : ''}</div>
 		<div style="margin-left:auto;">You carry <b>${dollars(carried)}</b>${button('close', 'Close')}</div></div>${body}
-		<div style="margin-top:8px; font-size:11px; color:#9a8a70;">They pay ${Math.round(SELL * 100)}% of the price · Esc, Tab or E to leave</div></div>`;
+		<div style="margin-top:8px; font-size:11px; color:#9a8a70;">They pay ${Math.round(SELL * 100)}% of the price · Esc, Tab, F or E to leave</div></div>`;
 	const input = root.querySelector('[data-amount]');
 	if (input) input.addEventListener('input', () => { shop.amount = input.value; });
 }
@@ -164,6 +173,7 @@ export function openShop(person) {
 	if (document.pointerLockElement) document.exitPointerLock();
 	if (shop.trade.bank) bankAsk();
 	render();
+	if (shop.trade.bank) survivalNet.send('treasuryAsk');
 }
 export function closeShop() {
 	if (!shop.person) return;
@@ -183,6 +193,14 @@ export function buy(type, colour = null) {
 	else help.toast('Bought: ' + nameOf(item));
 	return true;
 }
+// a night in a room (see the top): paid here; the eight hours are the world's (survival.js)
+export function sleepInRoom() {
+	if (!inventory.pay(ROOM * 100)) { help.toast('Not enough money'); return false; }
+	closeShop();
+	survival.sleepInRoom();
+	return true;
+}
+treasury.onChange(() => render());
 export function buyHorse() {
 	if (!inventory.pay(HORSE * 100)) { help.toast('Not enough money'); return false; }
 	if (!horse.bringHorse()) { inventory.receive(HORSE * 100); return false; }
@@ -205,6 +223,7 @@ root.addEventListener('click', (e) => {
 	if (act == 'close') { closeShop(); return; }
 	if (act == 'buy') buy(el.dataset.type, el.dataset.colour !== undefined ? Number(el.dataset.colour) : null);
 	if (act == 'horse') buyHorse();
+	if (act == 'room') { sleepInRoom(); return; }
 	if (act == 'sell') sell(Number(el.dataset.uid));
 	if (act == 'put' || act == 'putAll') {
 		const amount = act == 'putAll' ? inventory.moneyCarried() : amountOf();
@@ -219,8 +238,9 @@ root.addEventListener('click', (e) => {
 	render();
 });
 window.addEventListener('keydown', (e) => {
-	if (!shop.person || e.target?.matches?.('input')) return;
-	if (e.code == 'Escape' || e.code == 'Tab' || e.code == 'KeyE') { e.preventDefault(); closeShop(); }
+	if (!shop.person) return;
+	// (typing an amount at the bank: F and E are letters there)
+	if (e.code == 'Escape' || e.code == 'Tab' || (!e.target?.matches?.('input') && (e.code == 'KeyE' || e.code == 'KeyF'))) { e.preventDefault(); closeShop(); }
 });
 inventory.onChange(() => render());
 

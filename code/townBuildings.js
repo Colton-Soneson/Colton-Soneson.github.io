@@ -8,8 +8,11 @@ import { seededRandom } from './terrainGenerator.js'
 	its floor at y = 0, its front (to the street) facing +z, its width along x, its depth along z, both centred on the origin.
 	Each is no more than MOST_TRIANGLES. The patterns (the plaster and the stone under it, the tiles, the glazing bars) are the shader's
 	(vf_town.js), laid out by each surface's uv in world units, so a wall is two triangles and a window a handful.
-	Returns [type][variant] -> { full, plain, height }
+	Returns [type][variant] -> { full, open, plain, height, doors, windows, floorY, ceil, solids, porch, width, depth } (made once: the same again for whoever else asks)
 		full		all of it
+		open		all of it with a way in: a doorway cut through whatever is in front of each door (cutHoles), for near the camera. interiorMeshes.js makes what
+					is inside: from where its doors (doors: { x, z, w, h }) and its ground floor's windows are (windows: { x, y, z, w, h, nx, nz }), how high its floor
+					and ceiling are (floorY, ceil), and what else is to be stood on or walked round outside (solids: rectangles: town.js's boxes)
 		plain		for far off: the walls, the roofs, the glass and the bigger shapes, without the small things on them (frames, sills,
 					shutters, flower boxes, string courses, signs: anything marked small below)
 		height		of its walls, for anything that bumps into it
@@ -20,6 +23,47 @@ import { seededRandom } from './terrainGenerator.js'
 */
 export const MOST_TRIANGLES = 3000;
 const VERTEX_FLOATS = 8;
+
+/*
+	A DOORWAY: every triangle cut against a box (the doorway, through the wall): only what is outside it is kept. Clipped one plane at a time: what is on the
+	outer side of the plane is kept, what is on the inner side goes on to the next plane, and what gets through all six is in the box, and goes.
+*/
+function cutHoles(data, holes) {
+	const out = [], F = VERTEX_FLOATS;
+	const lerp = (a, b, t) => a.map((v, k) => v + (b[k] - v) * t);
+	// a polygon split by the plane axis = at: its side above it (keep: sign > 0) and below
+	const split = (poly, axis, at) => {
+		const above = [], below = [];
+		for (let k = 0; k < poly.length; k++) {
+			const a = poly[k], b = poly[(k + 1) % poly.length], da = a[axis] - at, db = b[axis] - at;
+			if (da >= 0) above.push(a);
+			if (da <= 0) below.push(a);
+			if ((da > 0 && db < 0) || (da < 0 && db > 0)) { const c = lerp(a, b, da / (da - db)); above.push(c); below.push(c); }
+		}
+		return [above, below];
+	};
+	const emit = (poly) => { for (let k = 1; k < poly.length - 1; k++) out.push(...poly[0], ...poly[k], ...poly[k + 1]); };
+	for (let o = 0; o < data.length; o += F * 3) {
+		let pieces = [[0, 1, 2].map((k) => Array.from(data.subarray(o + k * F, o + (k + 1) * F)))];
+		for (const H of holes) {
+			const kept = [];
+			for (const piece of pieces) {
+				let inner = piece;
+				for (const [axis, low, high] of [[0, H.x0, H.x1], [1, H.y0, H.y1], [2, H.z0, H.z1]]) {
+					if (inner.length < 3) break;
+					const [above, below] = split(inner, axis, low);
+					if (below.length >= 3) kept.push(below);
+					const [over, under] = split(above, axis, high);
+					if (over.length >= 3) kept.push(over);
+					inner = under;
+				}
+			}
+			pieces = kept;
+		}
+		for (const piece of pieces) emit(piece);
+	}
+	return new Float32Array(out);
+}
 
 // A mesh being made: triangles of [x, y, z, material, u, v, height over the foot, world pattern] (see vf_town.js)
 export function townMeshBuilder() {
@@ -66,6 +110,8 @@ function makeKit(seed) {
 	const tp = (p) => { const c = Math.cos(T.a), s = Math.sin(T.a); return [T.x + c * p[0] + s * p[2], T.y + p[1], T.z - s * p[0] + c * p[2]]; };
 	const K = {
 		random,
+		doors: [], windows: [], solids: [], porch: null, floorY: 0.25, ceil: GROUND_FLOOR - 0.3, doorDepth: 1.2,
+		point: (p) => tp(p),
 		chance: (p) => random() < p,
 		pick: (list) => list[Math.floor(random() * list.length)],
 		between: (a, b) => a + (b - a) * random(),
@@ -115,7 +161,8 @@ function makeKit(seed) {
 			const full = new Float32Array(all.data.length + fine.data.length);
 			full.set(plain, 0);
 			full.set(fine.data, all.data.length);
-			return { full, plain };
+			const open = cutHoles(full, K.doors.map((D) => ({ x0: D.x - D.w / 2, x1: D.x + D.w / 2, y0: K.floorY, y1: D.h, z0: D.z - K.doorDepth, z1: D.z + 0.4 })));
+			return { full, plain, open };
 		},
 		triangles: () => (all.data.length + fine.data.length) / VERTEX_FLOATS / 3,
 	};
@@ -157,6 +204,9 @@ const topOf = (floors) => GROUND_FLOOR + floors * FLOOR_HEIGHT;
 		arch		a round head over it						simple		glass and sill alone (the backs and sides)
 */
 function windowAt(K, x, y, w, h, { frame = true, sill = true, shutters = false, flowers = false, arch = false, simple = false, lintel = false } = {}) {
+	// (on the ground floor: what is inside has it too: interiorMeshes.js)
+	const c = K.point([x, y, 0]), n = K.point([x, y, 1]), nx = Math.round((n[0] - c[0]) * 1000) / 1000, nz = Math.round((n[2] - c[2]) * 1000) / 1000;
+	if ((Math.abs(nx) == 1 || Math.abs(nz) == 1) && y < K.ceil - 1) K.windows.push({ x: c[0], y: c[1], z: c[2], w, h: h + (arch ? w / 2 : 0), nx, nz });
 	K.panel(x - w / 2, y, x + w / 2, y + h, 0.06, MAT.GLASS);
 	if (arch) {
 		const r = w / 2, cy = y + h;
@@ -185,6 +235,8 @@ function windowAt(K, x, y, w, h, { frame = true, sill = true, shutters = false, 
 }
 // a door on a face, its middle x, w wide and h high: the door, its frame, a step, a light over it
 function doorAt(K, x, w = 2.4, h = 4.6, { arch = false, step = true, canopy = false } = {}) {
+	const at = K.point([x, 0, 0]);
+	K.doors.push({ x: at[0], z: at[2], w, h });
 	K.panel(x - w / 2, 0, x + w / 2, h, 0.05, MAT.DOOR);
 	K.panel(x - w / 2 + 0.2, h + 0.2, x + w / 2 - 0.2, h + 1.0, 0.06, MAT.GLASS, true);
 	const f = 0.3;
@@ -496,6 +548,11 @@ const TYPES = {
 	//		copper, and the clock tower over the middle of it
 	library(K, w, d, floors) {
 		const H = GROUND_FLOOR + 2 * FLOOR_HEIGHT + 1.5;
+		// (its floor up at the top of its steps, and they are to be walked up)
+		K.floorY = 1.0;
+		K.ceil = 13;
+		K.solids.push({ x0: -6, x1: 6, z0: d / 2, z1: d / 2 + 4.2, top: 1.0 });
+		for (let k = 0; k < 3; k++) K.solids.push({ x0: -6, x1: 6, z0: d / 2 + 4.2 + k, z1: d / 2 + 5.2 + k, top: 1.0 - (k + 1) * 0.33 });
 		walls(K, w, d, -0.5, 1.5, MAT.DRESSED);
 		walls(K, w, d, 1.5, H, MAT.PLASTER);
 		quoins(K, w, d, 1.5, H);
@@ -547,6 +604,7 @@ const TYPES = {
 	//		round it on posts down into the sea, a barrel and a coil of rope
 	shack(K, w, d) {
 		const H = 6.2;
+		K.ceil = 5.6;
 		// the deck and its posts
 		K.box(-w / 2 - 1.5, -0.4, -d / 2 - 1.5, w / 2 + 1.5, 0, d / 2 + 2.5, MAT.PLANKS, { skip: ['bottom'] });
 		for (const [x, z] of [[-w / 2 - 1, -d / 2 - 1], [w / 2 + 1, -d / 2 - 1], [-w / 2 - 1, d / 2 + 2], [w / 2 + 1, d / 2 + 2], [0, -d / 2 - 1], [-w / 2 - 1, 0], [w / 2 + 1, 0]])
@@ -595,6 +653,7 @@ const TYPES = {
 	// a chapel: a nave gabled front to back, a rose window, a tower with a spire over its front
 	chapel(K, w, d) {
 		const H = 11;
+		K.ceil = 10;
 		walls(K, w, d, -0.5, H, MAT.PLASTER);
 		quoins(K, w, d, -0.5, H);
 		const F = boxFaces(w, d);
@@ -603,6 +662,10 @@ const TYPES = {
 		const top = gableRoofZ(K, w, d, H, w * 0.6);
 		// the tower, in front of the nave
 		const t = 3.6, tz = d / 2 + t - 0.5, th = H + 10;
+		// (the way in is through the foot of the tower, and on through the nave's wall: its walls in the way either side of that)
+		K.doorDepth = 2 * t + 0.4;
+		K.porch = { x0: -t, x1: t, z0: tz - t, z1: tz + t };
+		K.solids.push({ x0: -t, x1: -1.6, z0: tz - t, z1: tz + t, top: th }, { x0: 1.6, x1: t, z0: tz - t, z1: tz + t, top: th });
 		K.box(-t, -0.5, tz - t, t, th, tz + t, MAT.PLASTER, { skip: ['bottom', 'top'] });
 		quoinsAt(K, t, -0.5, th, 0, tz);
 		K.push(0, 0, tz + t);
@@ -780,12 +843,13 @@ function pretzel(K, x, y, z, s = 2.0) {
 const range = (a, b) => Array.from({ length: Math.max(b - a + 1, 0) }, (_, k) => a + k);
 
 //-------------------------------ALL OF THEM-------------------------------
+let made = null;
 export function buildingMeshes() {
-	return BUILDING_TYPES.map((type, t) => Array.from({ length: VARIANTS }, (_, v) => {
+	return made ??= BUILDING_TYPES.map((type, t) => Array.from({ length: VARIANTS }, (_, v) => {
 		const { width, depth, floors } = variantSize(t, v);
 		const K = makeKit(t * 101 + v * 7 + 3);
 		const height = TYPES[type.name](K, width, depth, floors, v);
-		const { full, plain } = K.done();
-		return { full, plain, height };
+		const { full, plain, open } = K.done();
+		return { full, plain, open, height, doors: K.doors, windows: K.windows, floorY: K.floorY, ceil: K.ceil, solids: K.solids, porch: K.porch, width, depth };
 	}));
 }

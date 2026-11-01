@@ -71,6 +71,14 @@ export const ITEMS = {
 	cookedVenison: { name: 'Cooked venison', slot: ['item'], w: 1, h: 1, stack: 4, food: 45, stress: -5, weapon: 'eat', icon: 'meat', tint: '#6e4426', detail: 'Hunger -45, and a little calmer' },
 	smokedFish: { name: 'Smoked fish', slot: ['item'], w: 2, h: 1, stack: 2, food: 30, drink: -6, weapon: 'eat', icon: 'fish', tint: '#a07040', detail: 'Hunger -30, a little thirsty' },
 	beer: { name: 'Beer', slot: ['item'], w: 1, h: 2, drink: 22, stress: -30, tired: 6, weapon: 'eat', icon: 'bottle', tint: '#5a7a2a', detail: 'Thirst -22, stress -30, a little sleepy' },
+	rabbitMeat: { name: 'Raw rabbit', slot: ['item'], w: 1, h: 1, stack: 4, food: 8, stress: 8, weapon: 'eat', cooksTo: 'cookedRabbit', icon: 'meat', tint: '#b8564a', detail: 'Hunger -8, but raw: stress +8. Cook it at a burning campfire or a tent stove; the butcher buys it' },
+	cookedRabbit: { name: 'Cooked rabbit', slot: ['item'], w: 1, h: 1, stack: 4, food: 28, stress: -3, weapon: 'eat', icon: 'meat', tint: '#7a4c2a', detail: 'Hunger -28, and a little calmer' },
+	// what comes off the animals (deer.js, rabbits.js): for the crafting grid (crafting.js), and for the butcher
+	sinew: { name: 'Sinew', w: 1, h: 1, stack: 4, kg: 0.05, price: 0.8, icon: 'sinew', tint: '#d8c8a0', detail: 'Cut from a dead deer. Crafted with firewood into a snare' },
+	antlers: { name: 'Antlers', w: 2, h: 2, kg: 1.2, price: 6, icon: 'antlers', tint: '#c8b48a', detail: 'Cut from a dead buck. The butcher pays well for a rack' },
+	smallBones: { name: 'Small bones', w: 1, h: 1, stack: 6, kg: 0.05, price: 0.6, icon: 'bones', tint: '#e0d8c0', detail: 'From a rabbit. The butcher buys them' },
+	rabbitPelt: { name: 'Rabbit pelt', w: 1, h: 1, stack: 4, kg: 0.1, price: 1.4, icon: 'pelt', tint: '#8a7050', detail: 'From a snared rabbit, the skin whole. The butcher buys it' },
+	trap: { name: 'Snare', w: 1, h: 1, stack: 4, kg: 0.5, price: 1.5, use: 'trap', icon: 'trap', tint: '#8a6a44', detail: 'Crafted from firewood and sinew. Set it (right click here): rabbits within 50 m come to it. E takes what it caught, F takes it up' },
 };
 // WEIGHT (kg, one of a stack) and PRICE (dollars) of those that do not say: the rest weigh by their size; without a price, a shop has no use for it
 const KG = { rifle: 4, shotgun: 3.4, sharps: 4.3, revolver: 1.1, mauser: 1.2, rifleRounds: 0.025, shells: 0.04, coltRounds: 0.02, sharpsRounds: 0.03, mauserRounds: 0.012,
@@ -181,4 +189,9 @@ export const ICONS = {
 	stove: 'M9 14 L29 14 L29 30 L9 30 Z M23 3 L28 3 L28 14 L23 14 Z M11 30 L14 30 L14 36 L11 36 Z M24 30 L27 30 L27 36 L24 36 Z M13 18 L21 18 L21 26 L13 26 Z',
 	funnel: 'M4 6 L36 6 L23 18 L23 22 L17 22 L17 18 Z M11 22 L29 22 L29 37 L11 37 Z',
 	bottle: 'M17 3 L23 3 L23 11 Q29 15 29 21 L29 37 L11 37 L11 21 Q11 15 17 11 Z',
+	sinew: 'M6 8 Q16 14 12 22 Q8 30 20 32 Q32 34 34 28 L36 31 Q32 38 19 36 Q4 33 8 22 Q11 15 4 11 Z',
+	antlers: 'M19 36 L21 36 L21 22 L30 14 L31 4 L34 5 L33 15 L37 12 L38 15 L24 26 L24 36 L16 36 L16 26 L2 15 L3 12 L7 15 L6 5 L9 4 L10 14 L19 22 Z',
+	bones: 'M6 10 A3 3 0 1 1 11 7 L29 25 A3 3 0 1 1 34 30 A3 3 0 1 1 29 34 A3 3 0 1 1 25 29 L7 11 Z M30 6 A3 3 0 1 1 34 11 L28 17 L24 13 Z',
+	pelt: 'M14 4 L26 4 L28 12 L36 16 L32 22 L28 20 L30 34 L24 36 L20 30 L16 36 L10 34 L12 20 L8 22 L4 16 L12 12 Z',
+	trap: 'M4 34 L36 34 L36 37 L4 37 Z M18 34 L22 34 L22 10 L18 10 Z M20 4 A7 7 0 1 1 19.99 4 Z M20 8 A3 3 0 1 0 20.01 8 Z',
 };

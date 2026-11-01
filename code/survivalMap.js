@@ -208,7 +208,7 @@ export function closeMap() {
 survival.setMapChoice({ label: 'Map', detail: 'Pull out the map', act: () => openMap() });
 window.addEventListener('keydown', (e) => {
 	if (e.code == 'KeyM' && !e.repeat && !e.target?.matches?.('input')) { if (state.phase == 'away') { if (document.pointerLockElement == canvas) openMap(); } else closeMap(); }
-	if (e.code == 'Escape' && (state.phase == 'open' || state.phase == 'pulling')) closeMap();
+	if ((e.code == 'Escape' || e.code == 'Tab' || e.code == 'KeyF') && (state.phase == 'open' || state.phase == 'pulling')) { e.preventDefault(); closeMap(); }
 });
 window.addEventListener('mousedown', (e) => { if (e.button == 2 && state.phase == 'open') closeMap(); }, true);
 let lastTime = performance.now();

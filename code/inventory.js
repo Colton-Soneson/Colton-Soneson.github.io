@@ -14,6 +14,8 @@ import { ITEMS, SLOTS, HANDS, makeItem, cleanItem, fits, placeFor, handSlots, si
 					attached, each with contents), and the extra's if it has one (the satchel). Where a thing goes in them, it fits (items.js:
 					fits). Money (items.js) goes only in the pocket and the backpack's grids (MONEY_GRIDS)
 		the watch	worn on the wrist, it can be taken up from T to be read (survivalTools.js), as if it were in the hands
+	THE CRAFTING GRID (crafting.js, inventoryUI.js): six by six, a grid of its own that nothing goes into by itself (not one of grids()): what is
+	laid out in it is still carried, and left on the body with the rest
 	THE AMMUNITION of a gun in the hands is the rounds of its kind carried in the grids (weapons.js: setAmmoSource): loading takes one off a
 	stack, a live round taken out goes back on one (or a new stack, where there is room).
 	A NEW PLAYER (START_KIT) has a lighter, a hatchet and a compass in the item slots, a wristwatch on (START_WORN), a haversack on
@@ -33,7 +35,8 @@ const MONEY_GRIDS = (id) => id == 'pocket' || id == 'pack' || id.startsWith('att
 const INSULATION = 20;				// °C a whole share of insulation keeps the cold off
 const CARRY = 30;					// kg, with nothing on that adds to it or takes from it (wornStats: carry)
 
-export const inv = { worn: Object.fromEntries(SLOTS.map((s) => [s, null])), hands: Object.fromEntries(HANDS.map((h) => [h, null])), pocket: makeItem('pocket') };
+export const CRAFT_GRID = [6, 6];
+export const inv = { worn: Object.fromEntries(SLOTS.map((s) => [s, null])), hands: Object.fromEntries(HANDS.map((h) => [h, null])), pocket: makeItem('pocket'), craft: [] };
 const changeListeners = [];
 export function onChange(fn) { changeListeners.push(fn); }
 let saveSoon = 0;
@@ -55,7 +58,7 @@ export function grids() {
 	if (extra && ITEMS[extra.type].grid) list.push({ id: 'extra', grid: ITEMS[extra.type].grid, items: extra.contents, owner: extra, name: ITEMS[extra.type].name });
 	return list;
 }
-export const gridById = (id) => grids().find((g) => g.id == id) ?? null;
+export const gridById = (id) => id == 'craft' ? { id, grid: CRAFT_GRID, items: inv.craft, owner: null, name: 'Crafting' } : grids().find((g) => g.id == id) ?? null;
 // everything carried: [{ item, where }]: where { kind: 'worn' | 'hand' | 'attach' | 'grid', slot | index | grid }
 export function everything() {
 	const out = [];
@@ -81,6 +84,8 @@ export function remove(item) {
 	const pack = inv.worn.backpack;
 	if (pack) { const k = pack.attached.indexOf(item); if (k >= 0) { pack.attached[k] = null; changed(); return true; } }
 	for (const g of grids()) { const k = g.items.indexOf(item); if (k >= 0) { g.items.splice(k, 1); changed(); return true; } }
+	const k = inv.craft.indexOf(item);
+	if (k >= 0) { inv.craft.splice(k, 1); changed(); return true; }
 	return false;
 }
 // whether an item may go where: worn in its slot, in the hands slots it is for, a pouch on the backpack, anything in a grid it fits in
@@ -93,7 +98,7 @@ export function accepts(where, item, x = 0, y = 0, rot = item.rot) {
 	if (where.kind == 'grid') {
 		const g = gridById(where.grid);
 		if (!g || g.owner === item || item.contents?.length || item.attached?.some(Boolean)) return false;
-		if (ITEMS[g.owner.type].holds && !ITEMS[g.owner.type].holds.includes(item.type)) return false;
+		if (g.owner && ITEMS[g.owner.type].holds && !ITEMS[g.owner.type].holds.includes(item.type)) return false;
 		if (ITEMS[item.type].money && !MONEY_GRIDS(g.id)) return false;
 		return fits(g.grid, g.items, item, x, y, rot);
 	}
@@ -181,6 +186,7 @@ export function wornStats() {
 	for (const s of SLOTS) if (inv.worn[s]) load += weightOf(inv.worn[s]);
 	for (const h of HANDS) if (inv.hands[h]) load += weightOf(inv.hands[h]);
 	load += weightOf(inv.pocket);
+	for (const item of inv.craft) load += weightOf(item);
 	return { warmth: insulation * INSULATION, insulation, waterproof: Math.min(water * 1.2, 0.9), sweat: Math.max(Math.min(sweat, 0.8), -0.8), armour: Math.min(armour, 0.6),
 		capacity: CARRY * Math.max(Math.min(1 + carry, 1.6), 0.5), load, watch: inv.worn.wrist?.type == 'watch' };
 }
@@ -214,6 +220,7 @@ export function startKit() {
 	for (const [h, type] of Object.entries(START_KIT)) inv.hands[h] = makeItem(type);
 	for (const [s, type] of Object.entries(START_WORN)) inv.worn[s] = makeItem(type);
 	inv.pocket = makeItem('pocket');
+	inv.craft = [];
 	inv.pocket.contents.push(makeItem('money', START_MONEY));
 	const pack = makeItem(START_PACK.pack), pouch = makeItem(START_PACK.pouch);
 	pouch.contents.push(makeItem(START_PACK.in));
@@ -231,7 +238,8 @@ export function takeAll() {
 	const all = [];
 	for (const s of SLOTS) if (inv.worn[s]) all.push(inv.worn[s]);
 	for (const h of HANDS) if (inv.hands[h]) all.push(inv.hands[h]);
-	all.push(...inv.pocket.contents);
+	all.push(...inv.pocket.contents, ...inv.craft);
+	inv.craft = [];
 	for (const s of SLOTS) inv.worn[s] = null;
 	for (const h of HANDS) inv.hands[h] = null;
 	inv.pocket.contents = [];
@@ -251,6 +259,7 @@ function load() {
 		for (const s of SLOTS) inv.worn[s] = cleanItem(raw.worn?.[s]);
 		for (const h of HANDS) inv.hands[h] = cleanItem(raw.hands?.[h]);
 		inv.pocket = cleanItem(raw.pocket) ?? makeItem('pocket');
+		inv.craft = (raw.craft ?? []).map(cleanItem).filter(Boolean);
 		return true;
 	} catch (e) { return false; }
 }

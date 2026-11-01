@@ -47,6 +47,9 @@ import {uniformBufferLights} from './rotatingCube.js'
 	It is all worked out from the time (folkSeconds, which the host shares in a game with others, net.js) and each person's own
 	number: everyone in a game sees the same people in the same places, and nothing about them has to be sent.
 
+	INDOORS. Near enough to be seen (setIndoorSpot, interiors.js: at work in its own building, behind its counter: the Survival mode's only), one who is indoors can be found
+	there, and traded with. It is only whether it is drawn on this machine: where that is comes from the building, the same everywhere.
+
 	THE PLAYERS. Out of doors, a person steps aside from a player who comes within MAKE_ROOM (a push on top of where its day has it,
 	so its day goes on as it was), and turns its head to look at the nearest one within LOOK_AT. The walker cannot walk through
 	them (folkNear, for hunting.js).
@@ -619,6 +622,8 @@ export function turnedList() { return folk.filter((person) => person.turned).map
 // how many there are, and how many of them have not turned (the Horde game mode is lost when none are left, horde.js)
 export function folkCount() { return settings.enableTownFolk ? { all: folk.length, left: folk.filter((person) => !person.turned).length } : { all: 0, left: 0 }; }
 
+let indoorSpot = null;
+export function setIndoorSpot(fn) { indoorSpot = fn; }
 let lastTime = performance.now();
 export function townFolkUpdate() {
 	const now = performance.now();
@@ -634,8 +639,9 @@ export function townFolkUpdate() {
 		if (k != person.k) { person.k = k; person.errand = planErrand(person, k); }
 		if (person.flee && person.flee.k != k) person.flee = null;		// (out again with the next errand)
 		const f = person.fight;
-		const place = person.turned || person.gone || person.dead ? null : person.led ? { ...person.led } : f ? { x: f.x, y: f.y, z: f.z, heading: f.heading, stride: 0, walking: 0 }
-			: person.flee ? fleeingAt(person.flee, folkSeconds - person.flee.t0) : placeAt(person, time - k * person.period);
+		const gone = person.turned || person.gone || person.dead;
+		const place = (gone ? null : person.led ? { ...person.led } : f ? { x: f.x, y: f.y, z: f.z, heading: f.heading, stride: 0, walking: 0 }
+			: person.flee ? fleeingAt(person.flee, folkSeconds - person.flee.t0) : placeAt(person, time - k * person.period)) ?? (gone ? null : indoorSpot?.(person) ?? null);
 		person.hit = Math.max(person.hit - elapsed * 2, 0);
 		if (!place) { person.place = null; person.push = [0, 0]; person.look = 0; continue; }
 		out++;

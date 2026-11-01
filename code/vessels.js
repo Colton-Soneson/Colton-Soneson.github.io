@@ -369,6 +369,7 @@ function schooner() {
 		...GUNS.flatMap((z) => [[1.6, 2.2, z - 0.3, z + 0.3, 0.7], [-2.2, -1.6, z - 0.3, z + 0.3, 0.7]]),
 		[SHELLS[0] - 0.3, SHELLS[0] + 0.3, SHELLS[1] - 0.25, SHELLS[1] + 0.25, 0.5], [PACKS[0] - 0.3, PACKS[0] + 0.3, PACKS[1] - 0.3, PACKS[1] + 0.3, 0.6],
 		[BARREL[0] - 0.33, BARREL[0] + 0.33, BARREL[1] - 0.33, BARREL[1] + 0.33, 0.85],
+		[-2.3, -1.2, -3.5, -2.7, 0.6],
 	];
 	const deckHeight = (x, z) => {
 		const half = deckHalf(z);
@@ -395,6 +396,7 @@ function schooner() {
 	};
 	const triArea = (a, b, c) => Math.abs((b[2] - a[2]) * (c[1] - a[1]) - (c[2] - a[2]) * (b[1] - a[1])) / 2;
 	const BOW_FITTING = [2.0, 4.7, 7.4];		// the cathead the anchor hangs from
+	const HARPOONS = [[-1, 6.5], [1, 6.5]], CHEST = [-1.7, -3.1];		// where the harpoon guns stand ([side, z]) and the chest (x, z): whaling.js
 
 	const deckAt = (x, z, over = 0.05) => [x, deckY(z) + over, z];
 	const rail = (side, z, over = 0.1) => [side * (hull.point(z, 6)[0] - 0.1), hull.point(z, 6)[1] + over, z];
@@ -415,6 +417,9 @@ function schooner() {
 		{ kind: 'helm', at: WHEEL, name: 'Wheel', keys: 'F take the wheel', radius: 0.8 },
 		...[-1, 1].map((side, k) => ({ kind: 'ladder', ladder: k, at: [side * 3.0, 3.2, 1.5], name: 'Boarding ladder', keys: 'F climb aboard', radius: 0.7 })),
 		{ kind: 'anchor', at: BOW_FITTING, name: 'Anchor', keys: 'G let go or weigh anchor', radius: 0.6 },
+		// the harpoon guns on her bow, and the chest what is cut from a whale goes in (whaling.js)
+		...HARPOONS.map(([side, z], k) => ({ kind: 'harpoon', harpoon: k, at: [side * 0.85, deckY(z) + 1.0, z], name: 'Harpoon gun', keys: 'F man it', radius: 0.5 })),
+		{ kind: 'whaleChest', at: deckAt(CHEST[0], CHEST[1], 0.4), name: 'The ship\'s chest', keys: 'E look in it', radius: 0.6 },
 		// the guns, the stores, the masts' ladders, and up in each nest its gun and the top of its ladder
 		...GUN_SPOTS.map(([z, side], k) => ({ kind: 'gun', gun: k, at: [side * 1.55, deckY(z) + 1.1, z], name: 'Howitzer', keys: 'Middle click: breech · R (held): load · F man it (aim and fire)', radius: 0.45 })),
 		{ kind: 'shells', at: deckAt(SHELLS[0], SHELLS[1], 0.4), name: '80mm rounds', keys: 'F take a round', radius: 0.45 },
@@ -633,6 +638,8 @@ function schooner() {
 		health: 160, sinkSeconds: 30,
 		// the howitzers: which side, where each turns and is raised about, where its gunner sits and looks from, its barrel's length
 		//		out from its pivot, and its first part (the yoke; the barrel and the breech next); its control
+		beam: 2.95,
+		harpoons: Object.assign(HARPOONS.map(([side, z]) => ({ side, z, foot: [side * 0.85, deckY(z), z], pivot: [side * 0.85, deckY(z) + 0.95, z], stand: [side * 0.85, deckY(z), z - 1.0], eye: [side * 0.85, deckY(z) + 1.35, z - 0.9] })), { chest: deckAt(CHEST[0], CHEST[1], 0) }),
 		guns: GUN_SPOTS.map(([z, side], k) => ({ side, z, pivot: [side * 1.95, deckY(z) + 1.05, z], seat: [side * 0.95, deckY(z), z], eye: [side * 0.9, deckY(z) + 1.5, z],
 			muzzle: 1.03, part: 1 + 3 * k, control: controlOf('gun', 'gun', k) })),
 		// the crow's nests: where the walker stands in each (at the top of its ladder), its Lewis gun's pivot and its parts (the gun,

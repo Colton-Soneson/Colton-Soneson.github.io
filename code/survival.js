@@ -13,6 +13,7 @@ import { weatherNow, seasonNow } from './weather.js'
 import { ITEMS, HANDS, HAND_NAMES } from './items.js'
 import * as inventory from './inventory.js'
 import * as outfits from './outfits.js'
+import * as skyCover from './skyCover.js'
 
 /*
 	THE SURVIVAL game mode (settings.gameMode 'Hunting': the menu calls it Survival): what the walker needs, and what it costs it not to have
@@ -20,13 +21,15 @@ import * as outfits from './outfits.js'
 	(overheating). NEEDS says how fast each grows.
 		hunger		grows all the time (faster running, and in the cold). Bread and sausage (items.js: food) take it away
 		thirst		grows all the time (faster running, and in the heat). Water and beer (drink), or E at a lake's edge: a drink (DRINK)
-		tiredness	grows all the time (faster running). Sleeping on a bedroll laid out (bedrolls.js: SLEEP) takes it away; beer adds a little
+		tiredness	grows all the time (faster running). Sleeping on a bedroll laid out (bedrolls.js: SLEEP) or in a room at the inn (ROOM) takes it away; beer adds a little
 		stress		comes in jolts: shot near (a round past within NEAR_MISS), hurt, the horde close. It ebbs away once it has been calm a
 					while (CALM), faster by a campfire; beer takes it down
 		temperature	the body warmed or chilled towards what it FEELS LIKE: the air (the season, the time of day, the weather, how high up, the
 					wind) and the clothes worn (inventory.js: wornStats, their insulation), less for being wet (the rain through what is not
 					waterproof, the water swum in, and SWEAT: running, or too warm, through what does not let it out), more by a campfire
 					(survivalTools.js: fireWarmth). Comfortable in COMFORT
+	UNDER COVER: the rain and the snow only get to the walker where the sky can see it. Whatever the top down height map saw over it (skyCover.js:
+	a roof, an awning, a tent, a bridge, a tree) keeps them off, as a share of what is over it, and most of the wind (ROOF).
 		the load	everything carried and worn (inventory.js: wornStats, load) against what the clothes let it carry (capacity): over it, the
 					walker is slower (OVERLOAD) and tires faster
 		armour		what the clothes come to is told to the damage (outfits.js: setArmour): a share of every hit stopped
@@ -49,6 +52,7 @@ const DRY = { air: 0.008, fire: 0.002 };
 const SWEAT = { run: 0.012, heat: 0.0015, from: 24, most: 0.6 };	// wetness a second running, and for every °C it feels like over from; no wetter than most
 const OVERLOAD = { pace: 0.6, least: 0.45 };	// pace lost for every share over what can be carried, and the slowest		// wetness a second dried in the air, and more for every °C of a fire's warmth
 const DRINK = 30;
+const ROOF = 0.5;							// of what is over the walker: as much as this, and it is under a roof
 const STARVE = 0.25;						// health a second, at the end of any of them
 const SHAKE = 0.012;						// radians, the most the view sways
 const SEASON_AIR = [13, 23, 10, -3];		// °C: spring, summer, fall, winter
@@ -67,10 +71,6 @@ function fireNear(x, y, z) {
 	for (const fn of fireSources) { const f = fn(x, y, z); warmth = Math.max(warmth, f.warmth); calm = Math.max(calm, f.calm); }
 	return { warmth, calm };
 }
-// a roof over the walker (camp.js: the tents): fn(x, y, z) true. Under one the rain and the snow keep off, and the wind mostly
-let shelterAt = () => false;
-export function setShelter(fn) { shelterAt = fn; }
-
 // EATEN, DRUNK, SLEPT (what the item does: items.js)
 export function consume(type) {
 	const it = ITEMS[type];
@@ -176,7 +176,7 @@ export function survivalUpdate() {
 	outfits.setArmour('me', worn.armour);
 	hunting.effects.pace = (1 - 0.18 * bad(status.hunger, 60)) * (1 - 0.25 * bad(status.thirst, 60)) * (1 - 0.25 * bad(status.tired, 60)) * (1 - 0.2 * bad(-status.temperature, 50))
 		* Math.max(1 - over * OVERLOAD.pace, OVERLOAD.least);
-	hunting.effects.frozen = status.asleep > 0;
+	hunting.effects.frozen = status.asleep > 0 || performance.now() < roomUntil;
 	const shake = Math.max(bad(status.tired, 50), bad(status.stress, 40), bad(-status.temperature, 40), bad(status.hunger, 75));
 	if (shake > 0 && status.asleep <= 0) {
 		wobble += dt;
@@ -194,13 +194,14 @@ function needs(dt, p, run = 1) {
 	// asleep on a bedroll they come on more slowly, by a fire more slowly still (SLEEP.slow)
 	const slow = status.asleep > 0 ? (fire.warmth > 0 ? SLEEP.slowFire : SLEEP.slow) : 1;
 	// wet: in the water at once, in the rain through what is not waterproof; dried in the air, faster by a fire
-	const roof = shelterAt(p.x, p.y, p.z);
+	const cover = skyCover.coverNow(), roof = cover >= ROOF;
 	if (p.swimming) status.wet = 1;
 	else {
 		const sweating = status.wet < SWEAT.most ? ((run > 1 ? SWEAT.run : 0) + Math.max(status.feels - SWEAT.from, 0) * SWEAT.heat) * (1 - worn.sweat) : 0;
-		status.wet = Math.min(Math.max(status.wet + ((roof ? 0 : weatherNow.rain + weatherNow.snow * 0.5) * (1 - worn.waterproof) * 0.02 + sweating - DRY.air - fire.warmth * DRY.fire) * dt, 0), 1);
+		status.wet = Math.min(Math.max(status.wet + ((1 - cover) * (weatherNow.rain + weatherNow.snow * 0.5) * (1 - worn.waterproof) * 0.02 + sweating - DRY.air - fire.warmth * DRY.fire) * dt, 0), 1);
 	}
 	status.feels = feelsLike(worn.warmth, roof ? 0.9 : worn.waterproof, fire.warmth + (roof ? 2 : 0));
+	status.covered = roof;
 	const below = COMFORT[0] - status.feels, above = status.feels - COMFORT[1];
 	if (below > 0) status.temperature = Math.max(status.temperature - below * CHILL * slow * dt, -100);
 	else if (above > 0) status.temperature = Math.min(status.temperature + above * HEAT * slow * dt, 100);
@@ -276,6 +277,41 @@ function nightWatch(dt) {
 }
 // (not in the Survival mode, or down: the clock at its own pace)
 function nightOff() { if (nightPhase.on && survivalNet.authority()) { setNightPhase(false); survivalNet.send('nightPhase', { on: false, done: false }); } }
+/*
+	A ROOM AT THE INN (shops.js has it paid for): the screen goes dark a moment (ROOM.dark), and the walker wakes fed, watered and rested, its stress
+	cut by ROOM.stress. The EIGHT HOURS are the world's: the host moves its clock on (roomSlept), and everyone's goes with it at once, so the fires
+	burn down, the sun and the weather move on, and everyone is told: only the one who slept wakes rested. A joiner asks the host (roomSlept).
+*/
+const ROOM_SLEEP = { dark: 2.2, hours: 8, stress: 0.5 };
+const roomShade = document.createElement('div');
+roomShade.style.cssText = 'position: fixed; inset: 0; z-index: 25; background: #000; opacity: 0; pointer-events: none; transition: opacity 0.7s ease; display: flex; align-items: center; justify-content: center; color: #d8d0c0; font: 18px Georgia, serif;';
+document.body.appendChild(roomShade);
+let roomUntil = 0;
+export function sleepInRoom() {
+	roomUntil = performance.now() + ROOM_SLEEP.dark * 1000;
+	roomShade.textContent = 'Eight hours pass';
+	roomShade.style.opacity = '1';
+	hunting.effects.frozen = true;
+	survivalStats.slept++;
+	if (survivalNet.authority()) hoursGone(ROOM_SLEEP.hours);
+	else survivalNet.send('roomSlept', { hours: ROOM_SLEEP.hours });
+	setTimeout(() => {
+		Object.assign(status, { hunger: 0, thirst: 0, tired: 0, stress: status.stress * ROOM_SLEEP.stress, asleep: 0 });
+		roomShade.style.opacity = '0';
+		help.toast('You wake in a room at the inn, rested: eight hours have gone by', 3.5);
+	}, ROOM_SLEEP.dark * 1000);
+}
+// (the host: the world's clock on by so many hours, and everyone told where it is now)
+function hoursGone(hours) {
+	atmosphere.sunCycle(2 * Math.PI * hours / 24);
+	survivalNet.send('hoursGone', { hours, clock: [atmosphere.sunCycles, settings.sunCycleAngle] });
+}
+survivalNet.on('roomSlept', (m) => { if (survivalNet.authority()) { hoursGone(Math.min(Math.max(Number(m.hours) || 0, 0), 24)); help.toast('Someone sleeps at the inn: the hours go by', 3); } });
+survivalNet.on('hoursGone', (m) => {
+	if (survivalNet.authority() || !Array.isArray(m.clock)) return;
+	atmosphere.setSunClock(Number(m.clock[0]) || 0, Number(m.clock[1]) || 0);
+	if (performance.now() > roomUntil) help.toast('Someone sleeps at the inn: the hours go by', 3);
+});
 // the horde close (horde.js tells, setHordeNear): fn(place) true
 let hordeNear = () => false;
 export function setHordeNear(fn) { hordeNear = fn; }
@@ -333,6 +369,7 @@ function shown(visible) {
 	}
 	const worn = inventory.wornStats();
 	if (worn.load > worn.capacity * 0.85) html += `<div style="margin-top:4px;color:${worn.load > worn.capacity ? '#f08a6a' : '#e8d08a'};">Load ${worn.load.toFixed(1)} / ${worn.capacity.toFixed(0)} kg${worn.load > worn.capacity ? ': slowed' : ''}</div>`;
+	if (status.covered && weatherNow.rain + weatherNow.snow > 0.02) html += `<div style="margin-top:4px;color:#a8c8e8;">Under cover: the ${weatherNow.snow > weatherNow.rain ? 'snow' : 'rain'} keeps off</div>`;
 	if (status.asleep > 0) html += `<div style="margin-top:4px;color:#c8c0f0;">${nightPhase.on ? `The night passes: ${Math.max(0, NIGHT.hours - (nightPhase.until - atmosphere.sunCycles) * 24).toFixed(1)} of ${NIGHT.hours} hours`
 		: `Asleep${players.otherList().length ? ' (the night passes when everyone sleeps)' : ''}`} · E to wake</div>`;
 	box.innerHTML = html;

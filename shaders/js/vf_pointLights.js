@@ -23,7 +23,7 @@ export const vf_pointLights =
 		cameraPosition : vec4f,		// xyz
 		grid : vec4f,				// x: half the world's width, y: the width of a cell, z: cells along a side, w: how many moving lights
 		look : vec4f,				// x: how strong the still lights are (0 by day: they are lamps), y: the light from everywhere already in the picture
-		moving : array<vec4f, 16>,	// the moving lights, two each: where (xyz) and its radius (w), its colour (rgb) and how bright (a)
+		moving : array<vec4f, 24>,	// the moving lights, two each: where (xyz) and its radius (w), its colour (rgb) and how bright (a)
 	}
 	@group(0) @binding(0) var<uniform> LU: LightUniforms;
 	@group(0) @binding(1) var depthTexture: texture_depth_2d;

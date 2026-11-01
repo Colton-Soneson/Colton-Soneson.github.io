@@ -68,6 +68,12 @@ import * as outfits from './outfits.js'
 import * as shops from './shops.js'
 import * as camp from './camp.js'
 import * as highlights from './highlights.js'
+import * as skyCover from './skyCover.js'
+import * as rabbits from './rabbits.js'
+import * as interiors from './interiors.js'
+import * as fish from './fish.js'
+import * as whaling from './whaling.js'
+import * as npcHunters from './npcHunters.js'
 import * as shotgun from './shotgun.js'
 import * as revolver from './revolver.js'
 import * as mauser from './mauser.js'
@@ -408,6 +414,7 @@ export function updateRotatingCubePass() {
 	profiler.cpuMark('NPCs: Sailors');
 	npcShips.shipsUpdate(npcSeconds);
 	npcDinghies.dinghiesUpdate(npcSeconds);
+	npcHunters.huntersUpdate(npcSeconds);
 	profiler.cpuMark('Boats');
 	boat.boatUpdate();			//the boats sail on, before the walker on one is carried along
 	profiler.cpuMark('Horses and Biplanes');
@@ -470,6 +477,10 @@ export function updateRotatingCubePass() {
 	birds.birdUpdate();				//the hawks fly on
 	geese.geeseUpdate();			//and the geese
 	deer.deerUpdate();				//and the deer
+	rabbits.rabbitsUpdate();		//the rabbits, and the snares they walk into
+	fish.fishUpdate();				//the fish, in their schools
+	whaling.whalingUpdate();		//the whales, and the harpoons
+	interiors.interiorsUpdate();	//what is inside the houses near the camera
 	horde.hordeUpdate();			//and the horde, in the Horde game mode
 	lightning.lightningUpdate();	//a strike that is going on flickers and dies, and now and then a new one starts
 	temporalAA.cameraNow(encoder);	//(a temporal anti-aliasing: this frame's camera, and the motion cleared)
@@ -643,6 +654,9 @@ export function updateRotatingCubePass() {
 	{
 		profiler.section('Water', () => waterPass(depthTexture));
 	}
+
+	//(once the water has read the height map: what stands on the land goes in, for what the sky can see)
+	profiler.section('Sky Cover', () => skyCover.coverPass());
 
 	profiler.cpuMark('Atmosphere, Clouds, Lightning');
 	if(settings.enableAtmosphere)

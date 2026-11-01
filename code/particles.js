@@ -59,7 +59,7 @@ const snowShaderModule = device.createShaderModule({ label: "vf_snow", code: vf_
 //-------------------------------------------------
 const particleUniformBuffer = device.createBuffer({
   label: "particle Uniform",
-  size: 256,
+  size: 320,
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 });
 
@@ -221,6 +221,7 @@ function particleUniformBufferUpdates() {
 	bufferResult.push(seasonNow.autumn);
 	bufferResult.push(settings.enableSnow && settings.enableClouds ? weatherNow.snow * settings.snowAmount : 0);
 	bufferResult.push(0, 0);
+	bufferResult.push(...transformations.getTopDownViewProjectionMat());		//what the sky can see: see skyCover.js
 
 	const result = new Float32Array(bufferResult);
 	device.queue.writeBuffer(particleUniformBuffer, 0, result.buffer, result.byteOffset, result.byteLength);
@@ -434,6 +435,7 @@ export function weatherParticlePass(mainpassDepthTexture) {
 				{ binding: 0, resource: { buffer: particleUniformBuffer } },
 				{ binding: 1, resource: clouds.cloudCoverageView },
 				{ binding: 2, resource: linSampler },
+				{ binding: 3, resource: scene.heightMapView },
 			],
 		}));
 		pass.draw(RAIN_VERTICES, RAIN_COUNT, 0, 0);
@@ -448,6 +450,7 @@ export function weatherParticlePass(mainpassDepthTexture) {
 				{ binding: 0, resource: { buffer: particleUniformBuffer } },
 				{ binding: 1, resource: clouds.cloudCoverageView },
 				{ binding: 2, resource: linSampler },
+				{ binding: 3, resource: scene.heightMapView },
 			],
 		}));
 		pass.draw(SNOW_VERTICES, SNOW_COUNT, 0, 0);

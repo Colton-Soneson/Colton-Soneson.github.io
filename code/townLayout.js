@@ -123,6 +123,7 @@ export const TRIMS = [[0.95, 0.94, 0.9], [0.3, 0.42, 0.36], [0.24, 0.3, 0.42], [
 
 const smoothstep = (a, b, x) => { const t = Math.min(Math.max((x - a) / (b - a), 0), 1); return t * t * (3 - 2 * t); };
 const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+const BUCKET = 32;
 
 //-------------------------------THE SITES-------------------------------
 /*
@@ -312,8 +313,46 @@ export function planTownGround(g, sites, seed) {
 //-------------------------------THE ROADS IN THE LAND-------------------------------
 // Segments are 8 floats each: ax, az, ah (world y), bx, bz, bh, half width, kind (0 street, 1 lane, 2 stairs, 3 plaza, 4 promenade,
 //		5 bridge: a road, but not cut into the land)
+/*
+	THE GROUND UNDER A HOUSE (its floors, interiors.js): it may rise behind a house, and must not come up through its floor. So the land is cut down
+	under every house's footprint and PAD.margin round it to a little under its floor, the cut rising PAD.slope a world unit out from there until it meets the land.
+	(Only ever down: where the land falls away the house stands on its footings.) buildingPads: { x, z, ax, az, hw, hd, floor } of every house, as floats; a chapel's tower a pad of its own
+*/
+const PAD = { margin: 3, slope: 1, under: 0.35, floats: 7 };
+export function buildingPads(towns) {
+	const out = [];
+	for (const town of towns) for (const b of town.buildings) {
+		if (b.onPier) continue;
+		const ax = Math.cos(b.yaw), az = -Math.sin(b.yaw), fx = Math.sin(b.yaw), fz = Math.cos(b.yaw);
+		out.push(b.x, b.z, ax, az, b.width / 2, b.depth / 2, b.y);
+		if (BUILDING_TYPES[b.type].name == 'chapel') out.push(b.x + fx * (b.depth / 2 + 3.1), b.z + fz * (b.depth / 2 + 3.1), ax, az, 3.6, 3.6, b.y);
+	}
+	return new Float32Array(out);
+}
+export function makePadCutter(pads) {
+	const buckets = new Map(), count = pads.length / PAD.floats;
+	for (let k = 0; k < count; k++) {
+		const o = k * PAD.floats, r = Math.hypot(pads[o + 4], pads[o + 5]) + PAD.margin + 12;
+		for (let bx = Math.floor((pads[o] - r) / BUCKET); bx <= Math.floor((pads[o] + r) / BUCKET); bx++) for (let bz = Math.floor((pads[o + 1] - r) / BUCKET); bz <= Math.floor((pads[o + 1] + r) / BUCKET); bz++) {
+			const key = bx * 100000 + bz;
+			if (!buckets.has(key)) buckets.set(key, []);
+			buckets.get(key).push(k);
+		}
+	}
+	return (x, z, y) => {
+		const bucket = buckets.get(Math.floor(x / BUCKET) * 100000 + Math.floor(z / BUCKET));
+		if (!bucket) return y;
+		for (const k of bucket) {
+			const o = k * PAD.floats, dx = x - pads[o], dz = z - pads[o + 1];
+			const u = Math.abs(dx * pads[o + 2] + dz * pads[o + 3]) - pads[o + 4], w = Math.abs(-dx * pads[o + 3] + dz * pads[o + 2]) - pads[o + 5];
+			const out = Math.hypot(Math.max(u, 0), Math.max(w, 0));
+			y = Math.min(y, pads[o + 6] - PAD.under + Math.max(out - PAD.margin, 0) * PAD.slope);
+		}
+		return y;
+	};
+}
+
 export const SEGMENT_FLOATS = 8;
-const BUCKET = 32;
 // Returns flatten(x, z, y) -> the land's world y there with the roads cut into it, and nearest(x, z) -> the road a point is on ({ y, kind, d }) or null
 export function makeRoadFlattener(segments) {
 	const buckets = new Map();

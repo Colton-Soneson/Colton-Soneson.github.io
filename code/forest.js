@@ -463,6 +463,20 @@ export function treeNear(x, z, reach) {
 	}
 	return best;
 }
+// the crowns of the trees standing round a place (skyCover.js: what the sky sees over the walker): each(x, y (its foot), z, radius, height), world units
+export function crownsNear(x, z, reach, each) {
+	for (let cx = Math.floor((x - reach) / CELL_SIZE); cx <= Math.floor((x + reach) / CELL_SIZE); cx++) {
+		for (let cz = Math.floor((z - reach) / CELL_SIZE); cz <= Math.floor((z + reach) / CELL_SIZE); cz++) {
+			const cell = cellsByKey.get(cx + "," + cz);
+			if (!cell) continue;
+			for (const i of cell.trees) {
+				const tree = trees[i];
+				if (!tree || !tree.height || tree.dead || Math.abs(tree.x - x) > reach || Math.abs(tree.z - z) > reach) continue;
+				each(tree.x, tree.y, tree.z, tree.crownRadius ?? tree.height * 0.25, tree.height);
+			}
+		}
+	}
+}
 export function fellTree(index, direction) {
 	const tree = trees[index];
 	if (!life || following || !tree || tree.dead || tree.planted) return 0;

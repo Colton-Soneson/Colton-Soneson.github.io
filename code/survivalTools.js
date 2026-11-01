@@ -24,6 +24,7 @@ import * as loot from './loot.js'
 import * as deer from './deer.js'
 import * as forest from './forest.js'
 import * as camp from './camp.js'
+import * as rabbits from './rabbits.js'
 
 /*
 	THE TOOLS of the Survival mode, in the hands (from T: survival.js; each one a weapons.js weapon, its item the one it was taken up from):
@@ -34,8 +35,8 @@ import * as camp from './camp.js'
 					it was (WOOD_METRES of it a firewood). Right click held, then left: thrown (ballistics.js 'hatchet'): it flies, hurts what it hits, and lies where it
 					comes down (a pile, loot.js) for E to pick up, glowing as the discs do (discgolf.js) and marked through anything (MARK)
 		knife		left click: a stab ('stab'). Right click held, then left: thrown, as the hatchet
-		(either, at a dead deer within BUTCHER_REACH: a cut of venison off it, deer.js: butcher; the host's to say, a joiner asks: butcher,
-		butchered back. Cooked at a campfire: campfires.js)
+		(either, at a dead deer within BUTCHER_REACH: the next cut off it, deer.js: butcher: a buck's antlers, then venison and sinew in turn; the host's
+		to say, a joiner asks: butcher, butchered back. Cooked at a campfire: campfires.js. At a dead rabbit, as rabbits.js says: rabbitCut, rabbitGot)
 		stone		left click: one thrown (a stack of them; a bird is brought down by one)
 		food, drink	left click: eaten, or drunk (survival.js: consume), and one fewer
 		compass		held face up in front: its card turns to keep its N to the north (the land's -z: survivalMap.js draws it north up),
@@ -84,7 +85,7 @@ const usedUp = (count = 1) => {
 
 // THE MODELS in the hands
 const views = {};
-for (const name of ['lighter', 'hatchet', 'knife', 'stone', 'bread', 'sausage', 'venison', 'cookedVenison', 'smokedFish', 'water', 'beer', 'compass', 'watchArm', 'tentBundle', 'stovePacked', 'collectorPacked']) views[name] = new vm.Viewmodel('held ' + name, MESHES[name].data);
+for (const name of ['lighter', 'hatchet', 'knife', 'stone', 'bread', 'sausage', 'venison', 'cookedVenison', 'rabbitMeat', 'cookedRabbit', 'smokedFish', 'water', 'beer', 'compass', 'watchArm', 'tentBundle', 'stovePacked', 'collectorPacked']) views[name] = new vm.Viewmodel('held ' + name, MESHES[name].data);
 const meshFor = (type) => views[type] ? type : null;
 
 const tool = { state: 'ready', t: 0, raised: false, lit: false, chops: 0, fired: false, up: 0 };
@@ -172,8 +173,9 @@ function act(dt) {
 	if (!tool.fired && tool.t > T * 0.45) {
 		tool.fired = true;
 		if (tool.state == 'chop' || tool.state == 'stab') {
-			const carcass = deer.corpseInReach(eye, f, BUTCHER_REACH * m);
+			const carcass = deer.corpseInReach(eye, f, BUTCHER_REACH * m), small = carcass == null ? rabbits.corpseInReach(eye, f, BUTCHER_REACH * m) : null;
 			if (carcass != null) butcher(carcass);
+			else if (small != null) skinRabbit(small);
 			else ballistics.fire(eye, f, { round: tool.state });
 			toolStats.blows++;
 		}
@@ -223,19 +225,34 @@ function butcher(id) {
 	if (survivalNet.authority()) gotMeat(deer.butcher(id));
 	else survivalNet.send('butcher', { id });
 }
-function gotMeat(ok) {
-	if (!ok) { help.toast('Nothing more on it to cut'); return; }
-	toolStats.venison++;
-	const meat = makeItem('venison');
-	if (!inventory.give(meat)) loot.dropHere([meat]);
-	help.toast('Raw venison');
+function gotMeat(kind) {
+	if (!kind) { help.toast('Nothing more on it to cut'); return; }
+	if (kind == 'venison') toolStats.venison++;
+	const cut = makeItem(kind);
+	if (!inventory.give(cut)) loot.dropHere([cut]);
+	help.toast(ITEMS[kind].name);
 }
-survivalNet.on('butcher', (msg, from) => { if (survivalNet.authority()) survivalNet.sendTo(from, 'butchered', { ok: deer.butcher(Number(msg.id)) }); });
-survivalNet.on('butchered', (msg) => gotMeat(!!msg.ok));
+survivalNet.on('butcher', (msg, from) => { if (survivalNet.authority()) survivalNet.sendTo(from, 'butchered', { kind: deer.butcher(Number(msg.id)) }); });
+survivalNet.on('butchered', (msg) => gotMeat(ITEMS[msg.kind] ? msg.kind : null));
+// A DEAD RABBIT (rabbits.js): the host's to say what comes of it
+function skinRabbit(id) {
+	weapons.actionSound('chop');
+	if (survivalNet.authority()) gotRabbit(rabbits.harvest(id));
+	else survivalNet.send('rabbitCut', { id });
+}
+function gotRabbit(kinds) {
+	if (!kinds?.length) { help.toast('Nothing on it to cut'); return; }
+	for (const kind of kinds) { const cut = makeItem(kind); if (!inventory.give(cut)) loot.dropHere([cut]); }
+	help.toast(kinds.map((k) => ITEMS[k].name).join(', '));
+}
+survivalNet.on('rabbitCut', (msg, from) => { if (survivalNet.authority()) survivalNet.sendTo(from, 'rabbitGot', { kinds: rabbits.harvest(Number(msg.id)) }); });
+survivalNet.on('rabbitGot', (msg) => gotRabbit((msg.kinds ?? []).filter((k) => ITEMS[k])));
 hunting.addPrompt(() => {
 	if (!inventory.survivalOn() || hunting.hunterPlace().on != 'land') return null;
-	if (deer.corpseInReach([settings.camPosX, settings.camPosY, settings.camPosZ], transformations.getCameraForward(), BUTCHER_REACH * settings.forestUnitsPerMetre) == null) return null;
-	return { name: 'Dead deer', keys: name() == 'hatchet' || name() == 'knife' ? 'Left click: cut venison' : 'A hatchet or a knife: cut venison' };
+	const eye = [settings.camPosX, settings.camPosY, settings.camPosZ], look = transformations.getCameraForward(), reach = BUTCHER_REACH * settings.forestUnitsPerMetre;
+	const keys = name() == 'hatchet' || name() == 'knife' ? 'Left click: cut it up' : 'A hatchet or a knife: cut it up';
+	if (deer.corpseInReach(eye, look, reach) != null) return { name: 'Dead deer', keys };
+	return rabbits.corpseInReach(eye, look, reach) != null ? { name: 'Dead rabbit', keys } : null;
 });
 
 // where a thrown thing came down: lying there, to be picked up; a blow on a tree: firewood in time
@@ -263,7 +280,7 @@ ballistics.onStop((at, bullet, what) => {
 });
 
 // THE THINGS OUT IN THE WORLD (see the top), and the marks over this player's thrown ones lying out
-const MESH_OF = { tent: 'tentBundle', tentStove: 'stovePacked', rainCollector: 'collectorPacked', compass: 'compass', smokedFish: 'smokedFish', hatchet: 'hatchet', knife: 'knife', stone: 'stone', bread: 'bread', sausage: 'sausage', venison: 'venison', cookedVenison: 'cookedVenison', water: 'water', beer: 'beer', firewood: 'firewood', bedroll: 'bedroll', lighter: 'lighter' };
+const MESH_OF = { rabbitMeat: 'rabbitMeat', cookedRabbit: 'cookedRabbit', rabbitPelt: 'rabbitPelt', smallBones: 'smallBones', antlers: 'antlersCut', sinew: 'sinewCoil', trap: 'trap', tent: 'tentBundle', tentStove: 'stovePacked', rainCollector: 'collectorPacked', compass: 'compass', smokedFish: 'smokedFish', hatchet: 'hatchet', knife: 'knife', stone: 'stone', bread: 'bread', sausage: 'sausage', venison: 'venison', cookedVenison: 'cookedVenison', water: 'water', beer: 'beer', firewood: 'firewood', bedroll: 'bedroll', lighter: 'lighter' };
 const marks = document.createElement('div');
 marks.style.cssText = 'position: fixed; inset: 0; pointer-events: none; z-index: 4; font: 11px system-ui, sans-serif;';
 document.body.appendChild(marks);
@@ -276,13 +293,14 @@ function screenOf(at) {
 }
 function showWorld() {
 	const m = settings.forestUnitsPerMetre, t = nowSeconds();
-	const looked = loot.inView();
+	const looked = loot.inView(), trapLooked = loot.trapInView();
 	let markHtml = '';
 	for (const c of loot.containerList()) {
 		const d = Math.hypot(c.at[0] - settings.camPosX, c.at[2] - settings.camPosZ) / m;
 		if (d > SHOW_REACH) continue;
 		const glow = c === looked ? [1.0, 0.82, 0.45, 0.55] : [0, 0, 0, 0];
-		if (c.kind == 'crate' || c.kind == 'cache') props.show('crate', props.place(c.at, c.yaw ?? 0, 0, 0, c.kind == 'cache' ? 1.25 : 1), glow);
+		if (c.kind == 'cache') props.show('crate', props.place(c.at, c.yaw ?? 0, 0, 0, 1.25), glow);
+		else if (c.kind == 'trap') props.show(loot.trapSprung(c) ? 'trapSprung' : 'trap', props.place(c.at, c.yaw ?? 0), c === looked || c === trapLooked ? [1.0, 0.82, 0.45, 0.55] : [0, 0, 0, 0]);
 		else if (c.kind == 'body' || c.kind == 'npcBody') props.show('sack', props.place(c.at, 0, 0, 0, 1.2), glow);
 		else if (c.kind == 'pile') {
 			const one = c.items?.length == 1 ? c.items[0] : null, mesh = one && MESH_OF[one.type];

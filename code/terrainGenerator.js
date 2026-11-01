@@ -29,7 +29,7 @@
 	under them is made as it would be, then laid flat for the strip, with banks no steeper than STRIP.bank where it is cut into the
 	land or built up over it, and level across each path.
 */
-import { findTownSites, planTownGround, layoutTowns, makeRoadFlattener } from './townLayout.js'
+import { findTownSites, planTownGround, layoutTowns, makeRoadFlattener, makePadCutter, buildingPads } from './townLayout.js'
 import { planFootpaths, makePathFlattener, PATHS } from './footpaths.js'
 
 // index = the tag stored for every grid point. name and color are what the rest of the engine reads
@@ -710,7 +710,7 @@ export function makeChunkBuilder(params, grids, sampler = createTerrainSampler(p
 	const { sample, erodedFbm, foothillShape } = sampler;
 	const { ridges, marshes, footings, beyondDrop } = grids;		// (and the towns' grids, read as they are when wanted: generateTerrain fills them in after making this)
 	// the streets of the towns, cut into the land (made when they are first wanted: they are laid out after the builder is made)
-	let roads = null, roadsFrom = null;
+	let roads = null, roadsFrom = null, cutPads = null, padsFrom = null;
 	let paths = null, pathsFrom = null;		// (and the footpaths, the same way)
 	const cells = params.dataResolution ?? 1024;
 	const points = cells + 1;
@@ -758,6 +758,11 @@ export function makeChunkBuilder(params, grids, sampler = createTerrainSampler(p
 			}
 			if (grids.townRoads !== roadsFrom) { roadsFrom = grids.townRoads; roads = makeRoadFlattener(roadsFrom); }
 			if (roads && town > 0) height = roads.flatten(x, z, height + params.seaLevel) - params.seaLevel;
+			// (and cut down under its houses: see THE GROUND UNDER A HOUSE in townLayout.js)
+			if (grids.townPads && town > 0) {
+				if (grids.townPads !== padsFrom) { padsFrom = grids.townPads; cutPads = makePadCutter(padsFrom); }
+				height = cutPads(x, z, height + params.seaLevel) - params.seaLevel;
+			}
 		}
 		// the landing strip: laid on the land, flat at its grade, with banks down or up to the land round it. Its ground is short turf
 		if (grids.strip) {
@@ -1028,7 +1033,7 @@ export function generateTerrain(params) {
 	}
 
 	// the mesh (see makeChunkBuilder)
-	const chunkGrids = { ridges, marshes, footings, beyondDrop, townStrength: null, townHeight: null, townRoads: null };
+	const chunkGrids = { ridges, marshes, footings, beyondDrop, townStrength: null, townHeight: null, townRoads: null, townPads: null };
 	const { landAt, buildChunk } = makeChunkBuilder(params, chunkGrids, { sample, erodedFbm, foothillShape });
 
 	/*
@@ -1063,6 +1068,7 @@ export function generateTerrain(params) {
 		townSites = [...kept, ...more].slice(0, townSites.length).map((site, k) => ({ ...site, number: k, clusters: null }));
 	}
 	chunkGrids.townRoads = town.segments;
+	chunkGrids.townPads = buildingPads(town.towns);
 	for (let i = 0; i < points * points; i++) {
 		if (townGround.strength[i] <= 0) continue;
 		const col = i % points, row = (i - col) / points;

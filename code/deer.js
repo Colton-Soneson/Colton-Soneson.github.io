@@ -25,9 +25,11 @@ import {uniformBufferLights} from './rotatingCube.js'
 	the water to drink.
 
 	THE DEER (DEER_MESH)
-		77 triangles, in metres, life size: a body (a box, 12), a neck (6) and a head (8), ears (2), a tail (1), and four legs
-		of two pieces each (48, three sided tubes). The legs walk and the head goes down to graze and to drink in the shader
+		Under 400 triangles, in metres, life size: a body in rings (eight sided, 108), a neck (36) and a head (56), ears (8), a tail (6), four legs from hip to
+		hoof (32 each), and a buck's antlers (48). The legs walk and the head goes down to graze and to drink in the shader
 		(vf_deer.js), which only needs to know where each deer is in its stride and how far down its head is.
+		BUCKS AND DOES: more bucks (BUCKS of them), a little bigger, and only they have antlers. All of it is in own: a doe's is under 1, a buck's 1 to 2, a buck's whose
+		antlers have been cut off 2 to 3: so it goes with the deer's record to everyone, as it is.
 
 	THE GROUPS
 		Each has a home: a stretch of forest near a marsh (the wet ground round a lake), the nearest first. The homes are
@@ -47,8 +49,8 @@ import {uniformBufferLights} from './rotatingCube.js'
 
 	SHOT (rifle.js, ballistics.js). Each deer's hitbox is DEER_SPHERES, 7 balls: rump, middle and chest, neck and head (which go
 		down with the head), and the front and the hind legs. A deer that is hit falls over on to its side, away from the shot
-		(FALL_SECONDS), lies there (LIE_SECONDS; in the Survival mode SURVIVAL_LIE_SECONDS, with MEAT cuts of venison on it for a hatchet
-		or a knife: butcher, survivalTools.js, and it goes once they are all cut), sinks into the ground (SINK_SECONDS) and is gone. RESPAWN_SECONDS later another
+		(FALL_SECONDS), lies there (LIE_SECONDS; in the Survival mode SURVIVAL_LIE_SECONDS, with CUTS on it for a hatchet or a knife, one at a time: a buck's antlers, then venison
+		and sinew: butcher, survivalTools.js, and it goes once they are all cut), sinks into the ground (SINK_SECONDS) and is gone. RESPAWN_SECONDS later another
 		joins its group, at its home in the forest (or somewhere else in the forest round it), never nearer the camera than
 		RESPAWN_AWAY.
 
@@ -75,7 +77,11 @@ const STEEPEST = 1.0;				// rise over run a deer will walk up: 45 degrees
 const STUCK_SECONDS = 6;			// going to the water and getting no nearer for this long, it tries somewhere else to drink
 const GROUND_AGAIN = 0.5;			// metres
 const FALL_SECONDS = 0.7, LIE_SECONDS = 6, SINK_SECONDS = 4;
-const SURVIVAL_LIE_SECONDS = 600, MEAT = 4;
+const SURVIVAL_LIE_SECONDS = 600;
+const CUTS = ['venison', 'sinew', 'venison', 'venison', 'sinew', 'venison'];
+const BUCKS = 0.65, BUCK_SIZE = 1.1;
+const isBuck = (own) => own >= 1;
+const sizeOfOwn = (own) => isBuck(own) ? BUCK_SIZE : 1;
 const lieOf = (corpse) => corpse.lie ?? (settings.gameMode == 'Hunting' ? SURVIVAL_LIE_SECONDS : LIE_SECONDS);
 const SINK_DEPTH = 0.7;				// metres it goes down into the ground
 const RESPAWN_SECONDS = 120;
@@ -101,28 +107,53 @@ function tube(into, a, b, ra, rb, sides, part) {
 	}
 	return { A, B };
 }
+// the sides between rings of corners (each the same number, in order round it), and the first and the last closed if asked
+function rings(into, list, part, capFirst = false, capLast = false) {
+	const n = list[0].length;
+	for (let i = 0; i < list.length - 1; i++) for (let k = 0; k < n; k++) {
+		const j = (k + 1) % n;
+		into.push([list[i][k], list[i + 1][k], list[i + 1][j], part], [list[i][k], list[i + 1][j], list[i][j], part]);
+	}
+	const last = list[list.length - 1];
+	if (capFirst) for (let k = 1; k < n - 1; k++) into.push([list[0][0], list[0][k + 1], list[0][k], part]);
+	if (capLast) for (let k = 1; k < n - 1; k++) into.push([last[0], last[k], last[k + 1], part]);
+}
+// a ring of corners round a line along z (its plane upright): half widths w across, h up, about (0, y)
+const acrossZ = (z, w, y0, y1, n = 8) => Array.from({ length: n }, (_, k) => { const a = (k + 0.5) / n * Math.PI * 2, y = (y0 + y1) / 2, h = (y1 - y0) / 2; return [Math.cos(a) * w, y + Math.sin(a) * h, z]; });
+// a ring across the way from a place going towards the next (the neck, the head): at c, w across and h the other way, the axis the way it runs
+const ringAlong = (c, axis, w, h, n = 6) => {
+	const l = Math.hypot(...axis), d = axis.map((v) => v / l), up = [0, d[2], -d[1]];
+	return Array.from({ length: n }, (_, k) => { const a = (k + 0.5) / n * Math.PI * 2; return [c[0] + Math.cos(a) * w, c[1] + up[1] * Math.sin(a) * h, c[2] + up[2] * Math.sin(a) * h]; });
+};
 const DEER_MESH = (() => {
 	const triangles = [];
-	// the body: a box, a little narrower at the rump than at the chest
-	const back = [[-0.14, 0.84, -0.6], [0.14, 0.84, -0.6], [0.14, 1.1, -0.6], [-0.14, 1.1, -0.6]];
-	const front = [[-0.15, 0.85, 0.52], [0.15, 0.85, 0.52], [0.15, 1.15, 0.52], [-0.15, 1.15, 0.52]];
-	for (let k = 0; k < 4; k++) {
-		const n = (k + 1) % 4;
-		triangles.push([back[k], front[k], front[n], 0], [back[k], front[n], back[n], 0]);
+	// the body, rump to chest: its middle a little deeper at the chest, its belly drawn up behind
+	rings(triangles, [acrossZ(-0.68, 0.05, 0.96, 1.06), acrossZ(-0.58, 0.12, 0.86, 1.13), acrossZ(-0.32, 0.15, 0.84, 1.15), acrossZ(-0.02, 0.15, 0.82, 1.13), acrossZ(0.26, 0.155, 0.8, 1.15), acrossZ(0.48, 0.14, 0.84, 1.2), acrossZ(0.6, 0.085, 0.94, 1.2)], 0, true, true);
+	// the neck
+	const neck = [[0, 1.1, 0.46, 0.105, 0.135], [0, 1.25, 0.56, 0.08, 0.1], [0, 1.38, 0.63, 0.062, 0.078], [0, 1.47, 0.68, 0.052, 0.066]];
+	rings(triangles, neck.map(([x, y, z, w, h], k) => ringAlong([x, y, z], [0, 0.82, 0.57], w, h)), 1);
+	// the head: from behind the ears down to the muzzle, closed at both ends
+	const head = [[0, 1.5, 0.62, 0.052, 0.062], [0, 1.49, 0.7, 0.07, 0.08], [0, 1.46, 0.78, 0.054, 0.058], [0, 1.425, 0.87, 0.038, 0.04], [0, 1.4, 0.94, 0.024, 0.024]];
+	rings(triangles, head.map(([x, y, z, w, h]) => ringAlong([x, y, z], [0, -0.25, 1], w, h)), 1, true, true);
+	// the ears (a thin leaf each, both ways), and the tail
+	for (const side of [-1, 1]) {
+		const a = [0.035 * side, 1.54, 0.67], b = [0.05 * side, 1.55, 0.62], c = [0.1 * side, 1.61, 0.655], e = [0.17 * side, 1.65, 0.625];
+		triangles.push([a, c, b, 1], [c, e, b, 1], [a, b, c, 1], [c, b, e, 1]);
 	}
-	triangles.push([back[0], back[2], back[1], 0], [back[0], back[3], back[2], 0], [front[0], front[1], front[2], 0], [front[0], front[2], front[3], 0]);
-	// the neck and the head
-	tube(triangles, [0, 1.05, 0.42], [0, 1.45, 0.68], 0.1, 0.06, 3, 1);
-	const head = tube(triangles, [0, 1.47, 0.64], [0, 1.4, 0.93], 0.085, 0.035, 3, 1);
-	triangles.push([head.A[0], head.A[2], head.A[1], 1], [head.B[0], head.B[1], head.B[2], 1]);
-	// the ears, and the tail
-	for (const side of [-1, 1]) triangles.push([[0.04 * side, 1.53, 0.7], [0.15 * side, 1.62, 0.65], [0.06 * side, 1.54, 0.64], 1]);
-	triangles.push([[-0.05, 1.08, -0.6], [0.05, 1.08, -0.6], [0, 0.94, -0.7], 0]);
-	// the legs: left front, right front, left hind, right hind. Hip to knee, and knee to hoof
-	[[-0.11, 0.4], [0.11, 0.4], [-0.11, -0.45], [0.11, -0.45]].forEach(([x, z], leg) => {
-		tube(triangles, [x, 0.88, z], [x, 0.45, z], 0.055, 0.035, 3, 2 + leg);
-		tube(triangles, [x, 0.45, z], [x, 0.0, z + 0.02], 0.03, 0.022, 3, 2 + leg);
+	tube(triangles, [0, 1.06, -0.66], [0, 0.93, -0.75], 0.045, 0.012, 3, 0);
+	// the legs: left front, right front, left hind, right hind: hip, knee, down the cannon bone, the hoof
+	[[-0.095, 0.4], [0.095, 0.4], [-0.095, -0.45], [0.095, -0.45]].forEach(([x, z], leg) => {
+		const hind = z < 0, ring = (y, w, d, off = 0) => [[x - w, y, z - d + off], [x + w, y, z - d + off], [x + w, y, z + d + off], [x - w, y, z + d + off]];
+		rings(triangles, [ring(0.9, 0.05, hind ? 0.12 : 0.085), ring(0.46, 0.028, 0.038, hind ? -0.02 : 0), ring(0.14, 0.018, 0.022, 0.01), ring(0.05, 0.022, 0.03, 0.015), ring(0, 0.025, 0.036, 0.02)], 2 + leg);
 	});
+	// a buck's antlers (part 6: only a buck has them, vf_deer.js): a beam out and up and forward from behind each ear, two tines off it
+	for (const side of [-1, 1]) {
+		const foot = [0.03 * side, 1.555, 0.655], bend = [0.13 * side, 1.72, 0.6], tip = [0.1 * side, 1.86, 0.8];
+		tube(triangles, foot, bend, 0.016, 0.012, 3, 6);
+		tube(triangles, bend, tip, 0.012, 0.004, 3, 6);
+		tube(triangles, bend, [0.17 * side, 1.92, 0.58], 0.009, 0.003, 3, 6);
+		tube(triangles, [0.12 * side, 1.78, 0.68], [0.04 * side, 1.9, 0.68], 0.008, 0.003, 3, 6);
+	}
 	const data = [];
 	for (const [a, b, c, part] of triangles) for (const p of [a, b, c]) data.push(p[0], p[1], p[2], part);
 	return new Float32Array(data);
@@ -235,7 +266,8 @@ function killDeer(deer, group, velocity) {
 	group.deer.splice(at, 1);
 	// over on to the side the shot pushed it to (its right is (cos, -sin) of its heading)
 	const side = velocity[0] * Math.cos(deer.heading) - velocity[2] * Math.sin(deer.heading) > 0 ? 1 : -1;
-	corpses.push({ deer: deer, t: 0, side: side, meat: MEAT });
+	const cuts = [...(deer.own >= 1 && deer.own < 2 ? ['antlers'] : []), ...CUTS];
+	corpses.push({ deer: deer, t: 0, side: side, cuts, meat: cuts.length });
 	group.respawns.push(herdSeconds + RESPAWN_SECONDS);
 	deerStats.killed++;
 }
@@ -262,7 +294,7 @@ export function deerFollow(records) {
 	followed = [];
 	for (let at = 0; at < records.length; at += 12) {
 		followed.push({ id: records[at], x: records[at + 1], y: records[at + 2], z: records[at + 3], heading: records[at + 4], stride: records[at + 5], headDown: records[at + 6],
-			walking: records[at + 7], own: records[at + 8], slope: records[at + 9], roll: records[at + 10], alive: records[at + 11] > 0.5 });
+			walking: records[at + 7], own: records[at + 8], slope: records[at + 9], roll: records[at + 10], alive: records[at + 11] > 0.5, size: sizeOfOwn(records[at + 8]) });
 	}
 }
 // host: a deer one of the others shot
@@ -294,7 +326,8 @@ function respawnDeer(group) {
 
 let nextDeerId = 1;
 function newDeer(x, z) {
-	return { id: nextDeerId++, x: x, z: z, y: 0, heading: Math.random() * Math.PI * 2, stride: Math.random() * 6.28, walking: 0, headDown: 0, headWanted: 0, alertTimer: 0, own: Math.random(), slope: 0, ground: null, place: null };
+	const own = Math.random() * 0.999 + (Math.random() < BUCKS ? 1 : 0);
+	return { id: nextDeerId++, x: x, z: z, y: 0, heading: Math.random() * Math.PI * 2, stride: Math.random() * 6.28, walking: 0, headDown: 0, headWanted: 0, alertTimer: 0, own, size: sizeOfOwn(own), slope: 0, ground: null, place: null };
 }
 const between = ([low, high]) => low + (high - low) * Math.random();
 const metre = () => settings.forestUnitsPerMetre;
@@ -643,14 +676,26 @@ export function corpseInReach(eye, look, reach) {
 	}
 	return best ? best.id : null;
 }
-// host: a cut of venison off the dead one id, if there is any left on it (true); the last one taken, it sinks away
+// host: the next cut off the dead one id, if there is any left on it (what it is: items.js); the last one taken, it sinks away. A buck's antlers cut off, it has none
 export function butcher(id) {
 	const corpse = corpses.find((one) => one.deer.id == id);
-	if (!corpse || !(corpse.meat > 0)) return false;
-	if (--corpse.meat == 0) corpse.lie = Math.max(corpse.t - FALL_SECONDS, 0);
+	if (!corpse?.cuts.length) return null;
+	const kind = corpse.cuts.shift();
+	corpse.meat = corpse.cuts.length;
+	if (kind == 'antlers') corpse.deer.own += 1;
+	if (corpse.meat == 0) corpse.lie = Math.max(corpse.t - FALL_SECONDS, 0);
 	deerStats.butchered = (deerStats.butchered ?? 0) + 1;
-	return true;
+	return kind;
 }
+// host: for the hunters (npcHunters.js): the nearest deer alive within reach (world units), a living one by its id, a dead one by its id (while it lies there with something on it)
+export function nearestDeer(x, z, reach) {
+	let best = null, bestD = reach;
+	if (!settings.enableDeer || hidden()) return null;
+	for (const group of groups) for (const one of group.deer) { const d = Math.hypot(one.x - x, one.z - z); if (d < bestD) { bestD = d; best = one; } }
+	return best;
+}
+export function deerById(id) { for (const group of groups) { const one = group.deer.find((d) => d.id === id); if (one) return one; } return null; }
+export function corpseOf(id) { const corpse = corpses.find((c) => c.deer.id === id && c.cuts.length); return corpse ? corpse.deer : null; }
 export function deerCorpses() {
 	return corpses.map((corpse) => ({ id: corpse.deer.id, t: corpse.t, roll: corpse.roll, sink: corpse.sink, x: corpse.deer.x, y: corpse.deer.y, z: corpse.deer.z, meat: corpse.meat }));
 }
@@ -675,7 +720,7 @@ export function deerPass(aEncoder, mainpassDepthTexture) {
 	if (settings.enableDeer && !hidden()) {
 		const drawn = followed ? followed.map((one) => [one, one.roll, 0])
 			: [...groups.flatMap((group) => group.deer.map((deer) => [deer, 0, 0])), ...corpses.map((corpse) => [corpse.deer, corpse.roll ?? 0, corpse.sink ?? 0])];
-		for (const [deer, roll, sink] of drawn) put(deer.x, deer.y - sink * size, deer.z, deer.heading, deer.stride, deer.headDown, deer.walking, deer.own, deer.slope, roll, 0);
+		for (const [deer, roll, sink] of drawn) put(deer.x, deer.y - sink * size, deer.z, deer.heading, deer.stride, deer.headDown, deer.walking, deer.own, deer.slope, roll, 0, deer.size ?? 1);
 	}
 	for (const fn of drawers) fn(put);
 	if (count == 0) return;

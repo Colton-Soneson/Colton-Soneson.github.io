@@ -20,7 +20,7 @@ import { lightNow } from './lighting.js'
 	The pass is skipped when there is nothing to light: by day, or with no light within REACH of the camera.
 */
 const CELL = 32;
-const MOST_MOVING = 8;
+const MOST_MOVING = 12;
 const REACH = 900;
 
 const still = new Map();			// owner -> list

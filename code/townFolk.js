@@ -86,6 +86,14 @@ const SPHERES = [[0, 1.71, 0.01, 0.14], [0, 1.33, 0, 0.21], [0, 1.0, 0, 0.19], [
 	The trades, by building type. errands: what an errand is, and how likely ('door' its own, 'plaza', 'promenade', 'pierEnd',
 	'street' near home, 'garden' (rose bushes), 'lamps', or a building type: the nearest one's door). hours: 'day', 'night', 'always'
 */
+const BLACKSMITH = { name: 'blacksmith', hat: 'flatCap', errands: { door: 0.7, warehouse: 0.2, plaza: 0.1 } };
+const SMITHY_TYPES = ['warehouse', 'turret', 'gabled', 'timbered', 'townhouse', 'mansard', 'shop'];
+function smithyOf(town) {
+	if (town.smithy !== undefined) return town.smithy;
+	town.smithy = null;
+	for (const name of SMITHY_TYPES) { const b = town.buildings.find((o) => BUILDING_TYPES[o.type].name == name); if (b) { town.smithy = b; break; } }
+	return town.smithy;
+}
 export const PROFESSIONS = {
 	bakery: { name: 'baker', hat: 'toque', errands: { door: 0.6, plaza: 0.2, inn: 0.2 } },
 	library: { name: 'librarian', hat: 'mortarboard', errands: { door: 0.5, plaza: 0.4, shop: 0.1 } },
@@ -330,7 +338,9 @@ function build() {
 		const ways = makeWays(town);
 		if (!ways.nodes.length) continue;
 		town.buildings.forEach((b, k) => {
-			const type = BUILDING_TYPES[b.type].name, profession = PROFESSIONS[type];
+			const type = BUILDING_TYPES[b.type].name;
+			// (the one house in the town that is the smithy: the first of a kind to spare)
+			const profession = b === smithyOf(town) ? BLACKSMITH : PROFESSIONS[type];
 			if (!profession) return;
 			const random = seededRandom(settings.terrainSeed * 7919 + t * 104729 + k * 31337 + 17);
 			const period = ERRAND_SECONDS[0] + (ERRAND_SECONDS[1] - ERRAND_SECONDS[0]) * random();

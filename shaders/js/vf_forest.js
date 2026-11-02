@@ -54,7 +54,7 @@ const structs =
 		world : vec4f,				// x: world units in a metre, y: horizon fog distance, z: 1.0 if the atmosphere is on, w: how far the broadleaved trees have turned for the fall, 0 to 1
 		atlas : vec4f,				// the billboard pictures. x: how many to a row, y: how many rows, z: how many are side views (the views from above come after), w: ages per archetype
 		bake : vec4f,				// only while a billboard is being baked. x: the view (1.0 from the side, 2.0 from above), y: half the depth of the view, z: its height
-		life : vec4f,				// x: how long a dead tree takes to fall over, y: and then to go back into the ground. Years of the forest's clock
+		life : vec4f,				// x: how long a dead tree takes to fall over, y: and then to go back into the ground. Years of the forest's clock. w: how far the broadleaved trees have lost their leaves for the winter
 		windScroll : vec4f,			// these two are what windAt takes, see vf_wind.js
 		windBlow : vec4f,
 	}
@@ -597,6 +597,10 @@ export const vf_forestFoliage = structs + common +
 		let archetypeIndex = u32(tree.shape.y);
 		let archetype = archetypes[archetypeIndex];
 		let age = treeAge(tree);
+		// bare for the winter: a broadleaved tree's leaves go a piece at a time, each at its own moment, and come back the same way
+		if (archetype.growth.w > 1.5 && fract(piece.more.x * 91.7 + f32(part) * 0.618) < UBO.life.w * 1.02) {
+			return output;
+		}
 
 		//------------------IS IT THERE YET-----------------
 		if (age <= piece.middle.w || age >= piece.u.w) {
@@ -891,7 +895,7 @@ export const vf_forestBillboard = structs + common +
 		output.depth = vec2f(cell.size.x, cell.size.y) * fit;
 		output.right = right;
 		output.trunk = trunk;
-		output.dying = vec3f(treeDryness(tree), treeGone(tree), select(0.0, UBO.world.w, archetype.growth.w > 1.5));
+		output.dying = vec3f(treeDryness(tree), treeGone(tree), select(-1.0, UBO.world.w, archetype.growth.w > 1.5));	// (z less than 0: a conifer)
 		output.dryColor = vec4f(archetype.dry.rgb, dot(archetype.leaf.rgb, vec3f(1.0, 1.0, 1.0)));
 		return output;
 	}
@@ -952,6 +956,10 @@ export const vf_forestBillboard = structs + common +
 		if (leaf > 0.5 && input.dying.x > 0.35 + 0.6 * clump) {
 			discard;
 		}
+		// and a broadleaved tree bare for the winter the same way, all of them
+		if (leaf > 0.5 && input.dying.z >= 0.0 && clump < UBO.life.w * 1.02) {
+			discard;
+		}
 
 		//------------------PUT THE PIXEL BACK IN THE TREE-----------------
 		let facing = shape.rg * 2.0 - vec2f(1.0, 1.0);
@@ -975,7 +983,7 @@ export const vf_forestBillboard = structs + common +
 		// drying out: the wood greys and the foliage browns, as on the meshes (see barkColor and the foliage's fragmentMain)
 		let grey = dot(color.rgb, vec3f(0.4, 0.4, 0.4)) * vec3f(1.05, 1.0, 0.94);
 		let brown = input.dryColor.rgb * (dot(color.rgb, vec3f(1.0, 1.0, 1.0)) / input.dryColor.a);
-		let leafColor = mix(autumnLeaf(color.rgb * treeTint(input.look.y), input.look.y, input.dying.z), brown, smoothstep(0.0, 0.5, input.dying.x * (0.6 + 0.8 * clump)));
+		let leafColor = mix(autumnLeaf(color.rgb * treeTint(input.look.y), input.look.y, max(input.dying.z, 0.0)), brown, smoothstep(0.0, 0.5, input.dying.x * (0.6 + 0.8 * clump)));
 
 		let wood = lit(mix(color.rgb, grey, 0.7 * input.dying.x), saturate(dot(N, L)), light, worldPos);
 		let leafy = litLeaf(leafColor, N, light, worldPos);

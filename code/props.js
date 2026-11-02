@@ -13,6 +13,7 @@ import * as temporalAA from './temporalAA.js'
 import { MESHES } from './itemMeshes.js'
 import { INTERIOR_MESHES } from './interiorMeshes.js'
 import { CREATURE_MESHES } from './creatureMeshes.js'
+import { WORK_MESHES } from './workMeshes.js'
 
 //GET THE LIGHT CREATION OUT OF THE MAIN
 import {uniformBufferLights} from './rotatingCube.js'
@@ -28,7 +29,7 @@ const MOST = 8192;
 const INSTANCE_FLOATS = 28;
 
 // every model in one buffer: each its first vertex and how many
-const ALL = { ...MESHES, ...INTERIOR_MESHES, ...CREATURE_MESHES };
+const ALL = { ...MESHES, ...INTERIOR_MESHES, ...CREATURE_MESHES, ...WORK_MESHES };
 const ranges = {};
 export const meshRange = (name) => ranges[name];
 const vertexData = (() => {
@@ -69,6 +70,8 @@ export function show(name, model, glow = NO_EXTRA, extra = NO_EXTRA, rig = NO_EX
 	if (queue.length < MOST && ranges[name]) queue.push({ name, model, glow, extra, rig });
 }
 // where one is: at (world units, its foot), heading (radians, round from +z towards +x), and tipped (pitch: its +z up, roll), scaled
+// (and stretched: a place's model, scaled along its own x, y and z)
+export const stretched = (model, x, y, z) => mat4.scale(model, [x, y, z]);
 export function place(at, heading = 0, pitch = 0, roll = 0, scale = 1) {
 	const m = settings.forestUnitsPerMetre * scale;
 	let model = mat4.translation(at);

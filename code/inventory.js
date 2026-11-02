@@ -146,7 +146,7 @@ export function useOne(item) {
 
 // THE HANDS: the weapons.js weapons the equippables are; one put away that is no longer there
 export function inHands(name) {
-	return HANDS.some((h) => inv.hands[h] && ITEMS[inv.hands[h].type].weapon == name) || (name == 'watch' && inv.worn.wrist?.type == 'watch');
+	return name == 'journal' || HANDS.some((h) => inv.hands[h] && ITEMS[inv.hands[h].type].weapon == name) || (name == 'watch' && inv.worn.wrist?.type == 'watch');
 }
 export const handItemFor = (name) => HANDS.map((h) => inv.hands[h]).find((i) => i && ITEMS[i.type].weapon == name) ?? null;
 function handsChanged() {

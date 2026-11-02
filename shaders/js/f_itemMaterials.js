@@ -80,6 +80,27 @@ export const itemMaterials =
 			case 81: { return vec4f(mix(vec3f(0.42, 0.41, 0.4), vec3f(0.78, 0.74, 0.66), smoothstep(0.66, 0.42, at.y)) * (0.95 + 0.05 * sin(at.y * 17.0 + at.z * 11.0)), 0.04); }
 			case 82: { return vec4f(vec3f(0.36, 0.23, 0.13) * (0.96 + 0.04 * sin(at.y * 11.0 + at.z * 7.0)), 0.04); }
 			case 84: { return vec4f(1.0, 0.8, 0.7, 0.0); }
+			case 86: { return vec4f(0.8, 0.9, 0.97, 0.75); }
+			case 88: { return vec4f(vec3f(0.36, 0.34, 0.33) * (0.88 + 0.12 * sin(at.x * 19.0 + at.y * 13.0 + at.z * 23.0)), 0.08); }
+			case 89: { return vec4f(0.52, 0.24, 0.1, 0.55); }
+			case 90: { return vec4f(vec3f(0.2, 0.135, 0.08) * (0.86 + 0.14 * sin(at.x * 37.0 + at.z * 53.0)), 0.02); }
+			case 91: { return vec4f(0.3, 0.46, 0.13, 0.1); }
+			case 92: { return vec4f(0.78, 0.62, 0.25, 0.1); }
+			case 93: { return vec4f(0.1, 0.1, 0.11, 0.55); }
+			case 94: { return vec4f(vec3f(0.42, 0.38, 0.34) * (0.86 + 0.14 * sin(at.x * 31.0 + at.y * 47.0) * sin(at.z * 29.0 + at.y * 41.0)), 0.05); }
+			case 95: { return vec4f(0.55, 0.3, 0.14, 0.15); }
+			case 96: { return vec4f(0.82, 0.77, 0.64, 0.05); }
+			case 97: { return vec4f(vec3f(0.5, 0.29, 0.14) * (0.9 + 0.1 * sin(at.x * 25.0)), 0.06); }
+			case 98: { return vec4f(0.13, 0.29, 0.23, 0.55); }
+			case 99: { return vec4f(0.12, 0.13, 0.15, 0.9); }
+			case 100: { return vec4f(0.72, 0.64, 0.42, 0.03); }
+			case 101: { return vec4f(0.58, 0.44, 0.27, 0.08); }
+			case 102: { return vec4f(0.27, 0.16, 0.09, 0.2); }
+			case 103: { return vec4f(vec3f(0.74, 0.54, 0.33) * (0.92 + 0.08 * sin(at.x * 21.0) * sin(at.x * 3.1 + 1.0)), 0.08); }
+			case 104: { return vec4f(vec3f(0.55, 0.38, 0.22) * (0.9 + 0.1 * sin(at.x * 44.0)), 0.1); }
+			case 105: { return vec4f(vec3f(0.4, 0.39, 0.37) * (0.86 + 0.14 * sin(at.x * 23.0 + at.y * 9.0) * sin(at.z * 19.0 + at.y * 17.0)), 0.05); }
+			case 106: { return vec4f(0.03, 0.028, 0.027, 0.02); }
+			case 107: { return vec4f(0.3, 0.1, 0.03, 0.0); }
 			case 85: { return vec4f(0.85, 0.32, 0.06, 0.5); }
 			case 74: { return vec4f(mix(vec3f(0.3, 0.34, 0.2) * (0.75 + 0.25 * step(0.2, sin(at.x * 300.0) * sin(at.z * 240.0))), vec3f(0.78, 0.66, 0.62), smoothstep(0.012, -0.018, at.y)), 0.7); }
 			case 75: { return vec4f(mix(vec3f(0.62, 0.44, 0.16), vec3f(0.86, 0.72, 0.42), smoothstep(0.02, -0.03, at.y)), 0.8); }
@@ -95,6 +116,7 @@ export const itemMaterials =
 		if (m == 36) { return vec3f(1.6, 0.45, 0.08); }
 		if (m == 62) { return vec3f(1.5, 1.05, 0.5); }
 		if (m == 84) { return vec3f(9.0, 3.6, 2.4); }
+		if (m == 107) { return vec3f(2.4, 0.95, 0.25); }
 		return vec3f(0.0);
 	}
 `;

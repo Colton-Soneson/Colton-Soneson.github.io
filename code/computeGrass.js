@@ -141,6 +141,10 @@ function grassUniformBufferUpdates() {
 		}
 	}
 
+	//where it does not grow (see setGrassHoles)
+	paintHoles();
+	bufferResult.push(holesFrom[0] - HOLES / 2, holesFrom[1] - HOLES / 2, HOLES, 0);
+
 	//where it is pressed flat: the nearest few to the camera
 	const flats = [...grassFlats.values()].flat().map(([x, z, r]) => [x, z, r, Math.hypot(x - settings.camPosX, z - settings.camPosZ)]).sort((a, b) => a[3] - b[3]);
 	for (let k = 0; k < 8; k++) bufferResult.push(...(flats[k] ? [flats[k][0], flats[k][1], flats[k][2], 0] : [0, 0, 0, 0]));
@@ -152,6 +156,27 @@ function grassUniformBufferUpdates() {
 //		list of [x, z, radius] (world units), made again when it changes
 const grassFlats = new Map();
 export function setGrassFlats(owner, list) { grassFlats.set(owner, list); }
+// where the grass does not grow at all (a farm bed, a cabin's floor: farms.js, cabins.js): for each owner a list of [x, z, half across x, half across z] (world units), made again when it changes. It is painted into a picture
+//		(HOLES across, a world unit each) round the camera, and every blade looks there. Painted again when one changes, or the camera has gone HOLES_AGAIN from where it was. Past its edge they grow: too far off to see
+const HOLES = 512, HOLES_AGAIN = 64;
+const grassHoles = new Map();
+let holesDirty = true, holesFrom = [0, 0];
+const holeTexture = device.createTexture({ label: 'grass holes', size: [HOLES, HOLES], format: 'r8unorm', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
+const holeData = new Uint8Array(HOLES * HOLES);
+export function setGrassHoles(owner, list) { grassHoles.set(owner, list); holesDirty = true; }
+function paintHoles() {
+	const cx = settings.camPosX, cz = settings.camPosZ;
+	if (!holesDirty && Math.abs(cx - holesFrom[0]) < HOLES_AGAIN && Math.abs(cz - holesFrom[1]) < HOLES_AGAIN) return;
+	holesDirty = false;
+	holesFrom = [Math.round(cx), Math.round(cz)];
+	const x0 = holesFrom[0] - HOLES / 2, z0 = holesFrom[1] - HOLES / 2;
+	holeData.fill(0);
+	for (const list of grassHoles.values()) for (const [x, z, hx, hz] of list) {
+		const a = Math.max(Math.floor(x - hx - x0), 0), b = Math.min(Math.ceil(x + hx - x0), HOLES), c = Math.max(Math.floor(z - hz - z0), 0), d = Math.min(Math.ceil(z + hz - z0), HOLES);
+		for (let j = c; j < d; j++) holeData.fill(255, j * HOLES + a, j * HOLES + Math.max(a, b));
+	}
+	device.queue.writeTexture({ texture: holeTexture }, holeData, { bytesPerRow: HOLES }, [HOLES, HOLES]);
+}
 
 // Layouts
 //-------------------------------------------------
@@ -174,6 +199,11 @@ const bindGroupVFLayout = device.createBindGroupLayout({
     texture: {
 		sampleType: 'unfilterable-float',
 	}
+  },
+  {
+    binding: 10,							//where the grass does not grow, read in the vertex shader: see setGrassHoles
+    visibility: GPUShaderStage.VERTEX,
+    texture: {}
   },
   {
     binding: 3,								//sky view LUT
@@ -219,6 +249,10 @@ function createVFBindGroupGrass() {
 			{
 				binding: 2,
 				resource: terrain.terrainFieldsTexture.createView()
+			},
+			{
+				binding: 10,
+				resource: holeTexture.createView()
 			},
 			{
 				binding: 3,

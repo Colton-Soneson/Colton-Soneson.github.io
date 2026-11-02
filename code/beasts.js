@@ -24,7 +24,7 @@ import * as survivalNet from './survivalNet.js'
 	In metres and seconds (their places world units). Not in the Horde game mode, and only in the Survival mode do they go for the players (hearing.js: listeners).
 */
 export const KINDS = {
-	moose: { number: 1, model: 'moose', dead: 'moose', health: 420, walk: 1.2, run: 6.5, damage: 34, reach: 3.2, every: 2.2, aggro: 15, leash: 45, wander: 30, spheres: [[0, 1.45, -0.5, 0.42], [0, 1.5, 0.4, 0.45], [0, 1.95, 1.2, 0.26], [0, 0.6, 0, 0.4]], around: 2.2, cuts: ['mooseHide', 'bigBones', 'mooseMeat', 'mooseMeat', 'bigBones', 'mooseMeat', 'mooseMeat'], respawn: 1 },
+	moose: { number: 1, model: 'moose', dead: 'moose', health: 420, walk: 1.2, run: 6.5, damage: 34, reach: 3.2, every: 2.2, aggro: 15, leash: 45, wander: 30, spheres: [[0, 1.45, -0.5, 0.42], [0, 1.5, 0.4, 0.45], [0, 1.95, 1.2, 0.26], [0, 0.6, 0, 0.4]], around: 2.2, cuts: ['mooseHide', 'sinew', 'bigBones', 'mooseMeat', 'sinew', 'mooseMeat', 'sinew', 'bigBones', 'mooseMeat', 'sinew', 'mooseMeat'], respawn: 1 },
 	wolf: { number: 2, model: 'wolf', dead: 'wolf', health: 85, walk: 1.8, run: 8.2, damage: 13, reach: 1.9, every: 1.3, aggro: 28, leash: 110, wander: 140, spheres: [[0, 0.55, -0.3, 0.18], [0, 0.6, 0.15, 0.2], [0, 0.72, 0.62, 0.14]], around: 1, cuts: ['wolfMeat', 'smallBones', 'wolfMeat'], respawn: 1 },
 	bear: { number: 3, model: 'bear', dead: 'bear', health: 400, walk: 1.1, run: 7, damage: 46, reach: 2.6, every: 2.0, aggro: 25, leash: 60, wander: 35, spheres: [[0, 0.75, -0.45, 0.42], [0, 0.85, 0.2, 0.46], [0, 0.95, 0.85, 0.26]], around: 1.6, cuts: ['bearHide', 'bigBones', 'bearMeat', 'bearMeat', 'bigBones', 'bearMeat'], respawn: 2 },
 };
@@ -43,6 +43,7 @@ const HURT = 70;					// health off for a rifle round (ballistics.js: its damage 
 const LIE = 8, LIE_SURVIVAL = 400;
 const FALL = 0.8;					// seconds
 const DRAW = 420;					// metres
+const WOLF_SINEW = 0.4;
 
 const metre = () => settings.forestUnitsPerMetre;
 const hidden = () => settings.gameMode == 'Horde';
@@ -297,7 +298,8 @@ function hurtBeast(b, velocity, round, who) {
 	if (b.health > 0) return;
 	beasts.splice(beasts.indexOf(b), 1);
 	const side = velocity[0] * Math.cos(b.heading) - velocity[2] * Math.sin(b.heading) > 0 ? 1 : -1;
-	corpses.push({ beast: b, t: 0, side, cuts: [...KINDS[b.kind].cuts] });
+	// (a wolf has a little sinew on it, now and then)
+	corpses.push({ beast: b, t: 0, side, cuts: [...KINDS[b.kind].cuts, ...(b.kind == 'wolf' && Math.random() < WOLF_SINEW ? ['sinew'] : [])] });
 	respawns.push({ at: clock() + KINDS[b.kind].respawn, kind: b.kind, number: b.number, pack: b.pack });
 	beastStats.killed++;
 }

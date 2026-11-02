@@ -36,9 +36,10 @@ const RESTOCK = 3;					// days
 const BODY_SECONDS = 8 * 60;
 const PILE_MERGE = 1.5;				// metres
 const FALLEN = 2;					// seconds an NPC down takes to come to rest
-const GRIDS = { cache: [7, 5], body: [8, 8], npcBody: [6, 4], pile: [5, 4], trap: [3, 1] };
-const LABELS = { cache: 'Supply crate', body: 'Body', npcBody: 'Body', pile: 'Things on the ground', trap: 'Snare' };
+const GRIDS = { cache: [7, 5], body: [8, 8], npcBody: [6, 4], pile: [5, 4], trap: [3, 1], chest: [6, 4], chestBig: [8, 6] };
+const LABELS = { chest: 'Chest', chestBig: 'Big chest', cache: 'Supply crate', body: 'Body', npcBody: 'Body', pile: 'Things on the ground', trap: 'Snare' };
 const SNARED = ['smallBones', 'rabbitPelt', 'rabbitMeat'];		// what a rabbit in a snare comes to
+const SNARED_SINEW = 0.12;			// (and now and then a little sinew)
 // [type, chance, most]: rolled for each
 const TABLES = {
 	cache: [['money', 0.45, 600], ['rifle', 0.25], ['shotgun', 0.18], ['sharps', 0.1], ['revolver', 0.2], ['mauser', 0.15], ['rifleRounds', 0.5, 20], ['shells', 0.4, 12],
@@ -157,6 +158,7 @@ export function moveIn(id, uid, x, y, rot) {
 }
 function changedHere(c) {
 	told(c.id);
+	if (c.kind == 'chest' || c.kind == 'chestBig') for (const fn of chestListeners) fn();
 	survivalNet.send('lootIs', { id: c.id, items: c.items });
 	// (a body or a pile with nothing left in it goes)
 	if ((c.kind == 'pile' || c.kind == 'body' || c.kind == 'npcBody') && c.items.length == 0) remove(c.id);
@@ -189,6 +191,19 @@ function remove(id) {
 	if (survivalNet.authority()) survivalNet.send('lootDel', { id });
 }
 const shareOf = (c) => ({ id: c.id, kind: c.kind, at: c.at.map((v) => Math.round(v * 100) / 100), grid: c.grid, items: c.items, name: c.name ?? null, yaw: c.yaw ?? 0 });
+// THE CHESTS of a cabin (cabins.js): the host's to make, and to keep
+const chestListeners = [];
+export function onChest(fn) { chestListeners.push(fn); }
+export function addChest(id, at, yaw, kind) {
+	if (containers.has(id)) return;
+	const c = { id, kind, at, items: [], grid: [...GRIDS[kind]], until: -1, yaw };
+	add(c);
+	survivalNet.send('lootAdd', { c: shareOf(c) });
+	told(id);
+	for (const fn of chestListeners) fn();
+}
+export const chestsSave = () => [...containers.values()].filter((c) => c.kind == 'chest' || c.kind == 'chestBig').map(shareOf);
+export function chestsLoad(list) { for (const c of list ?? []) if (Array.isArray(c.at)) add({ id: c.id, kind: c.kind, at: c.at.map(Number), items: c.items ?? [], grid: c.grid, until: -1, yaw: Number(c.yaw) || 0 }); }
 // THE SNARES (see the top; rabbits.js): set here (the host's to make, a joiner asks: trapSet), taken up (trapUp: trapGot back), and a rabbit
 //		caught in one. Everyone hears of each as of any container (lootAdd, lootIs, lootDel)
 export function setTrap(at, yaw) {
@@ -201,7 +216,9 @@ export const trapSprung = (c) => (c.items?.length ?? 0) > 0;
 export function fillTrap(id) {
 	const c = containers.get(id);
 	if (!c || c.kind != 'trap' || trapSprung(c)) return false;
-	c.items = SNARED.map((type, k) => Object.assign(makeItem(type), { x: k, y: 0, rot: 0 }));
+	const caught = [...SNARED, ...(Math.random() < SNARED_SINEW ? ['sinew'] : [])];
+	c.grid = [Math.max(caught.length, 3), 1];
+	c.items = caught.map((type, k) => Object.assign(makeItem(type), { x: k, y: 0, rot: 0 }));
 	changedHere(c);
 	return true;
 }
@@ -298,7 +315,7 @@ survivalNet.on('lootAdd', (m) => {
 	told(m.c.id);
 });
 survivalNet.on('lootDel', (m) => { if (!survivalNet.authority()) { containers.delete(m.id); told(m.id); } });
-survivalNet.onJoin((id) => { for (const c of containers.values()) if (c.kind == 'body' || c.kind == 'npcBody' || c.kind == 'pile' || c.kind == 'trap') survivalNet.sendTo(id, 'lootAdd', { c: shareOf(c) }); });
+survivalNet.onJoin((id) => { for (const c of containers.values()) if (c.kind == 'body' || c.kind == 'npcBody' || c.kind == 'pile' || c.kind == 'trap' || c.kind == 'chest' || c.kind == 'chestBig') survivalNet.sendTo(id, 'lootAdd', { c: shareOf(c) }); });
 
 // E AT ONE (see the top), and what is said of it
 export function inView() {

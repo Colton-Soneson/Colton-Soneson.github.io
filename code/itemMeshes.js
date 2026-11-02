@@ -46,6 +46,45 @@ function hatchet() {
 	m.prismX([[0.104, 0.292], [0.112, 0.29], [0.117, 0.402], [0.109, 0.4]], -0.0035, 0.0035, STEEL);
 	return m;
 }
+// a pickaxe, and a hoe: as the hatchet, the handle up y, longer; each under 200
+function longHandle(m) {
+	const rings = [[0, 0.018, 0.014], [0.05, 0.018, 0.014], [0.25, 0.015, 0.012], [0.55, 0.015, 0.012], [0.62, 0.017, 0.014]];
+	m.loft(rings.map(([y, a, b]) => Array.from({ length: 6 }, (_, k) => { const t = (k + 0.5) / 6 * Math.PI * 2; return [Math.cos(t) * b, y, Math.sin(t) * a]; })), HANDLE, 0, [0, 1]);
+}
+function pickaxe() {
+	const m = vm.meshBuilder();
+	longHandle(m);
+	m.section(-0.026, [0.022, 0.585, 0.65], 0.026, [0.022, 0.585, 0.65], BLUED, 0, [0, 1]);
+	// the two points, curving down from the eye
+	const arm = (s) => [[0.024, 0.016, 0.03, 0.654, 0.58], [0.1, 0.012, 0.022, 0.65, 0.59], [0.18, 0.008, 0.014, 0.625, 0.585], [0.26, 0.002, 0.003, 0.575, 0.565]].map(([z, h, , hi, lo]) => [[-h, lo, s * z], [h, lo, s * z], [h, hi, s * z], [-h, hi, s * z]]);
+	m.loft(arm(1), BLUED, 0, [1]);
+	m.loft(arm(-1), STEEL, 0, [1]);
+	return m;
+}
+function hoe() {
+	const m = vm.meshBuilder();
+	longHandle(m);
+	m.section(-0.022, [0.02, 0.59, 0.64], 0.022, [0.02, 0.59, 0.64], BLUED, 0, [0, 1]);
+	// the neck, and the blade hanging down from it, broad, thin
+	m.section(0.02, [0.012, 0.6, 0.63], 0.1, [0.012, 0.56, 0.59], BLUED);
+	m.loft([[[-0.075, 0.57, 0.095], [0.075, 0.57, 0.095], [0.075, 0.58, 0.105], [-0.075, 0.58, 0.105]], [[-0.085, 0.44, 0.105], [0.085, 0.44, 0.105], [0.085, 0.44, 0.112], [-0.085, 0.44, 0.112]]], STEEL, 0, [0, 1]);
+	return m;
+}
+// the journal: its back cover and pages (0), its front cover (1, hinged at x = -0.085, as survivalMap.js's panels are), under 300. Lying in x, y, its face to +z
+const JOURNAL_LEATHER = 102;
+function journal() {
+	const m = vm.meshBuilder(), W = 0.085, H = 0.115;
+	const slab = (z0, z1, x0, x1, y0, y1, material, part) => { const c = [[x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0], [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]]; for (const [a, b, d, e] of [[0, 3, 2, 1], [4, 5, 6, 7], [0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6], [3, 0, 4, 7]]) m.quad(c[a], c[b], c[d], c[e], part, material); };
+	slab(-0.012, -0.008, -W, W, -H, H, JOURNAL_LEATHER, 0);
+	slab(-0.008, 0.008, -W + 0.004, W - 0.004, -H + 0.004, H - 0.004, PAPER, 0);
+	slab(-0.012, 0.012, -W - 0.004, -W, -H, H, JOURNAL_LEATHER, 0);
+	slab(0.008, 0.012, -W, W, -H, H, JOURNAL_LEATHER, 1);
+	slab(0.0065, 0.008, -W + 0.004, W - 0.004, -H + 0.004, H - 0.004, PAPER, 1);
+	// a strap round it, a pencil of charcoal under it
+	slab(0.012, 0.014, W * 0.35, W * 0.55, -H, H, ROPE, 1);
+	m.strut([W + 0.006, -H * 0.8, 0], [W + 0.006, H * 0.8, 0], 0.005, 0.005, 5, CHARCOAL, 0);
+	return m;
+}
 function knife() {
 	const m = vm.meshBuilder();
 	m.prismX([[0.0, 0.0], [0.07, 0.0], [0.1, 0.008], [0.07, 0.018], [0.0, 0.018]], -0.0015, 0.0015, STEEL);
@@ -382,6 +421,6 @@ function campfire() {
 	return m;
 }
 
-const MAKERS = { tent, tentBundle, stove: () => stoveWithPipe(false), stoveLit: () => stoveWithPipe(true), stovePacked, collector, collectorPacked, waterSurface, compass, watchArm, smokedFish, lighter, hatchet, knife, stone, bread, sausage, venison: () => venison(false), cookedVenison: () => venison(true), flaregun, rabbitMeat: () => rabbitCut(false), cookedRabbit: () => rabbitCut(true), water: () => bottle(false), beer: () => bottle(true), map, firewood, bedroll, bedrollFlat, crate, sack, campfire, campfireFull, campfireHalf, campfireEmbers, campfireDead, campfireLaid };
+const MAKERS = { pickaxe, hoe, journal, tent, tentBundle, stove: () => stoveWithPipe(false), stoveLit: () => stoveWithPipe(true), stovePacked, collector, collectorPacked, waterSurface, compass, watchArm, smokedFish, lighter, hatchet, knife, stone, bread, sausage, venison: () => venison(false), cookedVenison: () => venison(true), flaregun, rabbitMeat: () => rabbitCut(false), cookedRabbit: () => rabbitCut(true), water: () => bottle(false), beer: () => bottle(true), map, firewood, bedroll, bedrollFlat, crate, sack, campfire, campfireFull, campfireHalf, campfireEmbers, campfireDead, campfireLaid };
 export const MESHES = Object.fromEntries(Object.entries(MAKERS).map(([name, make]) => { const m = make(); return [name, { data: m.done(), triangles: m.count() }]; }));
 export const meshStats = Object.fromEntries(Object.entries(MESHES).map(([name, mesh]) => [name, mesh.triangles]));

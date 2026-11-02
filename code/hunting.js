@@ -303,9 +303,9 @@ const MOST_BOXES = 4096;
 const boxes = new Float32Array(MOST_BOXES * 6);		// min x, min y, min z, max x, max y, max z
 let boxCount = 0, stillBoxes = 0;		// (the still ones first, then the moving ones, gathered again every frame)
 let gatheredAt = null, gatheredWhen = 0;
-const add = (x, z, half, bottom, top) => {
+const add = (x, z, half, bottom, top, halfZ = half) => {		// (square, unless it says how far it goes in z: halfZ)
 	if (boxCount >= MOST_BOXES) return;
-	boxes.set([x - half, bottom, z - half, x + half, top, z + half], boxCount * 6);
+	boxes.set([x - half, bottom, z - halfZ, x + half, top, z + halfZ], boxCount * 6);
 	boxCount++;
 };
 
@@ -323,6 +323,8 @@ function gather(now) {
 	hunterStats.boxes = boxCount;
 	hunterStats.gathers++;
 }
+// (what stands still has changed: built, cabins.js)
+export function regather() { gatheredAt = null; }
 // More things in the way that stand still: each one's fn(x, z, reach, add) gives the boxes within reach
 const stills = [];
 export function addStill(near) { stills.push(near); }

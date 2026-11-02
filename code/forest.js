@@ -918,7 +918,7 @@ function forestUniformValues(bake) {
 	bufferResult.push(life ? life.fallYears : 1);
 	bufferResult.push(life ? life.goneYears : 1);
 	bufferResult.push(0);
-	bufferResult.push(0);
+	bufferResult.push(bake ? 0 : seasonNow.bare);		//how far the broadleaved trees have lost their leaves (weather.js). Never in a billboard's picture
 
 	//and the two rows windAt takes (vf_wind.js)
 	bufferResult.push(...wind.windUniformValues());

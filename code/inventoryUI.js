@@ -14,9 +14,11 @@ import * as camp from './camp.js'
 import * as crafting from './crafting.js'
 import * as rabbits from './rabbits.js'
 import * as medical from './medical.js'
+import * as stations from './stations.js'
+import * as journal from './journalUI.js'
 
 /*
-	THE INVENTORY SCREEN of the Survival game mode: I (or E at a container, loot.js) opens it, I, Tab, Esc or F shuts it. Four columns, and a fifth
+	THE INVENTORY of the Survival game mode: in the journal (journalUI.js): pulled out and opened in the hands, its pages written in charcoal. I (or E at a container, loot.js) opens it, I, Tab, Esc or F shuts it. Four columns, and a fifth
 	under its small Crafting tab (crafting.js: a six by six grid to lay things out in, any way round, and what they make in the output slot, dragged
 	out of it into the inventory or off on to the ground), or its First Aid tab (medical.js: a man after Leonardo's, each limb as it is: right click one for what can be done for it):
 		GEAR		what is worn, a slot each (items.js: SLOTS)
@@ -36,34 +38,35 @@ const SLOT = 68;
 const ui = { open: false, container: null, camp: null, drag: null, menu: null, crafting: false, aid: false };
 export const uiState = ui;
 const root = document.createElement('div');
-root.style.cssText = 'position: fixed; inset: 0; z-index: 20; display: none; background: rgba(10, 8, 6, 0.86); color: #e6dcc8; font: 12px Georgia, "Times New Roman", serif; user-select: none; overflow: auto;';
+root.style.cssText = `position: fixed; inset: 0; z-index: 20; display: none; background: rgba(12, 10, 8, 0.75); color: ${journal.INK}; font: 12px ${journal.HAND}; user-select: none; overflow: auto;`;
 document.body.appendChild(root);
 const tip = document.createElement('div');
-tip.style.cssText = 'position: fixed; z-index: 22; pointer-events: none; display: none; max-width: 240px; padding: 6px 8px; background: rgba(28, 22, 16, 0.96); border: 1px solid #6a5a44; border-radius: 4px; font: 12px Georgia, serif; color: #efe4cc;';
+tip.className = 'jr-page';
+tip.style.cssText = `position: fixed; z-index: 22; pointer-events: none; display: none; max-width: 260px; padding: 6px 9px; border: 1.5px solid ${journal.INK}; border-radius: 3px; font: 12px ${journal.HAND};`;
 document.body.appendChild(tip);
 
 const html = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const panel = (title, body) => `<div style="background: rgba(40, 32, 24, 0.92); border: 1px solid #5a4a36; border-radius: 6px; padding: 10px 12px; margin-bottom: 12px;">
-	<div style="font-size: 11px; letter-spacing: 0.18em; color: #b8a888; margin-bottom: 8px;">${title}</div>${body}</div>`;
+const panel = (title, body) => `<div style="padding: 4px 8px 6px; margin-bottom: 10px;">
+	<div class="jr-title">${title.charAt(0) + title.slice(1).toLowerCase()}</div><div>${body}</div></div>`;
 function icon(item, w, h) {
 	const it = ITEMS[item.type];
 	// (turned: the picture drawn upright in the turned box's shape, and turned with it)
 	const [iw, ih] = item.rot ? [h, w] : [w, h];
 	return `<svg viewBox="0 0 40 40" preserveAspectRatio="xMidYMid meet" style="position:absolute; left:50%; top:50%; width:${iw}px; height:${ih}px; transform: translate(-50%, -50%)${item.rot ? ' rotate(90deg)' : ''}; opacity: 0.95;">
-		<path d="${ICONS[it.icon] ?? ICONS.pouch}" fill="${tintOf(item)}" stroke="rgba(0,0,0,0.6)" stroke-width="1" fill-rule="evenodd"/></svg>`;
+		<path d="${ICONS[it.icon] ?? ICONS.pouch}" fill="${journal.INK}" fill-opacity="0.62" stroke="${journal.INK}" stroke-width="1.3" stroke-linejoin="round" fill-rule="evenodd" style="filter:url(#charcoal);"/></svg>`;
 }
 // a thing, drawn in a box w x h pixels
 function thing(item, w, h, src) {
 	const it = ITEMS[item.type];
-	return `<div class="it" data-uid="${item.uid}" data-src="${src}" style="position:absolute; inset:2px; border-radius:3px; background:rgba(80,66,48,0.55); border:1px solid rgba(200,180,140,0.35); cursor:grab; overflow:hidden;">
+	return `<div class="it" data-uid="${item.uid}" data-src="${src}" style="position:absolute; inset:2px; border-radius:3px 5px 2px 4px; background:rgba(43,37,32,0.07); border:1.3px solid rgba(43,37,32,0.7); cursor:grab; overflow:hidden;">
 		<div style="position:absolute; inset:0;">${icon(item, w - 12, h - 12)}</div>
-		<div style="position:absolute; left:3px; top:1px; font-size:9px; color:#f0e6d0; text-shadow:0 0 2px #000; white-space:nowrap; overflow:hidden; max-width:${w - 8}px;">${html(it.name)}</div>
-		${it.money ? `<div style="position:absolute; right:3px; bottom:1px; font-size:10px; font-weight:bold; color:#f8e8a8; text-shadow:0 0 2px #000;">${dollars(item.count)}</div>`
-			: item.count > 1 ? `<div style="position:absolute; right:3px; bottom:1px; font-size:11px; font-weight:bold; text-shadow:0 0 2px #000;">${item.count}</div>` : ''}</div>`;
+		<div style="position:absolute; left:3px; top:1px; font-size:9px; color:${journal.INK}; white-space:nowrap; overflow:hidden; max-width:${w - 8}px;">${html(it.name)}</div>
+		${it.money ? `<div style="position:absolute; right:3px; bottom:1px; font-size:10px; font-weight:bold; color:${journal.INK};">${dollars(item.count)}</div>`
+			: item.count > 1 ? `<div style="position:absolute; right:3px; bottom:1px; font-size:12px; font-weight:bold; color:${journal.INK};">${item.count}</div>` : ''}</div>`;
 }
 function slotBox(key, name, item, w = SLOT, h = SLOT) {
-	return `<div class="slot" data-slot="${key}" style="position:relative; width:${w}px; height:${h}px; border:1px dashed rgba(200,180,140,0.35); border-radius:4px; background:rgba(0,0,0,0.25);">
-		${item ? thing(item, w, h, key) : `<div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; text-align:center; font-size:10px; color:rgba(220,200,170,0.45); padding:4px;">${html(name)}</div>`}</div>`;
+	return `<div class="slot" data-slot="${key}" style="position:relative; width:${w}px; height:${h}px; border:1.3px dashed rgba(43,37,32,0.55); border-radius:4px 2px 5px 3px;">
+		${item ? thing(item, w, h, key) : `<div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; text-align:center; font-size:10px; color:rgba(43,37,32,0.5); padding:4px;">${html(name)}</div>`}</div>`;
 }
 function gridBox(id, grid, items, src) {
 	let cells = '';
@@ -71,7 +74,7 @@ function gridBox(id, grid, items, src) {
 		const [w, h] = sizeOf(item);
 		cells += `<div style="position:absolute; left:${item.x * CELL}px; top:${item.y * CELL}px; width:${w * CELL}px; height:${h * CELL}px;">${thing(item, w * CELL, h * CELL, src)}</div>`;
 	}
-	return `<div class="grid" data-grid="${id}" style="position:relative; width:${grid[0] * CELL}px; height:${grid[1] * CELL}px; background-image: linear-gradient(rgba(200,180,140,0.18) 1px, transparent 1px), linear-gradient(90deg, rgba(200,180,140,0.18) 1px, transparent 1px); background-size:${CELL}px ${CELL}px; border:1px solid rgba(200,180,140,0.35); background-color: rgba(0,0,0,0.3);">${cells}</div>`;
+	return `<div class="grid" data-grid="${id}" style="position:relative; width:${grid[0] * CELL}px; height:${grid[1] * CELL}px; background-image: linear-gradient(rgba(43,37,32,0.3) 1px, transparent 1px), linear-gradient(90deg, rgba(43,37,32,0.3) 1px, transparent 1px); background-size:${CELL}px ${CELL}px; border:1.6px solid ${journal.INK};">${cells}</div>`;
 }
 
 function render() {
@@ -83,50 +86,50 @@ function render() {
 	const hands = `<div style="margin-bottom:8px;">${slotBox('hand:primary', 'Primary weapon', I.hands.primary, 222, 64)}</div>
 		<div style="margin-bottom:8px;">${slotBox('hand:secondary', 'Secondary weapon', I.hands.secondary, 160, 64)}</div>
 		<div style="display:flex; gap:6px;">${['item1', 'item2', 'item3', 'item4'].map((h) => slotBox('hand:' + h, HAND_NAMES[h], I.hands[h], 56, 56)).join('')}</div>
-		<div style="display:flex; align-items:center; gap:10px; margin-top:10px;"><span style="font-size:11px; letter-spacing:0.18em; color:#b8a888;">POCKET</span>${gridBox('pocket', ITEMS.pocket.grid, I.pocket.contents, 'grid:pocket')}
-		<span style="color:#cfc2a8;">${dollars(inventory.moneyCarried())} carried</span></div>`;
+		<div style="display:flex; align-items:center; gap:10px; margin-top:10px;"><span style="font-size:12px; font-weight:bold;">Pocket</span>${gridBox('pocket', ITEMS.pocket.grid, I.pocket.contents, 'grid:pocket')}
+		<span>${dollars(inventory.moneyCarried())} carried</span></div>`;
 	const bar = (name, v, colour) => `<div style="display:flex; justify-content:space-between; margin-top:5px;"><span>${name}</span><span>${Math.round(v)}%</span></div>
-		<div style="height:7px; background:rgba(255,255,255,0.12); border-radius:3px; overflow:hidden;"><div style="height:100%; width:${v}%; background:${colour};"></div></div>`;
-	const tone = (v) => v < 50 ? '#8ab06a' : v < 80 ? '#d8b04a' : '#d0583e';
+		<div style="height:8px; border:1.2px solid ${journal.INK}; border-radius:2px 3px 2px 4px; overflow:hidden;"><div style="height:100%; width:${v}%; background: repeating-linear-gradient(115deg, ${colour} 0 2px, transparent 2px 4px);"></div></div>`;
+	const tone = (v) => v < 50 ? journal.INK : v < 80 ? '#5a3a20' : journal.RED;
 	const t = S.temperature;
-	const status = bar('Hunger', S.hunger, tone(S.hunger)) + bar('Thirst', S.thirst, tone(S.thirst)) + bar('Wetness', S.wet * 100, S.wet < 0.3 ? '#6a9ac8' : S.wet < 0.7 ? '#4a7ab8' : '#2a5aa8') + bar('Tiredness', S.tired, tone(S.tired)) + bar('Stress', S.stress, tone(S.stress))
+	const status = bar('Hunger', S.hunger, tone(S.hunger)) + bar('Thirst', S.thirst, tone(S.thirst)) + bar('Wetness', S.wet * 100, journal.INK) + bar('Tiredness', S.tired, tone(S.tired)) + bar('Stress', S.stress, tone(S.stress))
 		+ `<div style="display:flex; justify-content:space-between; margin-top:5px;"><span>Temperature</span><span>${t < -50 ? 'Freezing' : t < -15 ? 'Cold' : t > 50 ? 'Overheating' : t > 15 ? 'Warm' : 'Comfortable'}</span></div>
-		<div style="position:relative; height:7px; background:rgba(255,255,255,0.12); border-radius:3px; overflow:hidden;"><div style="position:absolute; left:${t < 0 ? 50 + t / 2 : 50}%; width:${Math.abs(t) / 2}%; height:100%; background:${t < 0 ? '#6aa0d0' : '#d07a4a'};"></div><div style="position:absolute; left:50%; width:1px; height:100%; background:#fff8;"></div></div>
-		<div style="margin-top:8px; line-height:1.6; color:#cfc2a8;">Feels like <b>${S.feels.toFixed(0)}°C</b> (air ${survival.airTemperature().toFixed(0)}°C)<br>
+		<div style="position:relative; height:8px; border:1.2px solid ${journal.INK}; border-radius:2px 3px 2px 4px; overflow:hidden;"><div style="position:absolute; left:${t < 0 ? 50 + t / 2 : 50}%; width:${Math.abs(t) / 2}%; height:100%; background: repeating-linear-gradient(115deg, ${t < 0 ? journal.INK : journal.RED} 0 2px, transparent 2px 4px);"></div><div style="position:absolute; left:50%; width:1.5px; height:100%; background:${journal.INK};"></div></div>
+		<div style="margin-top:8px; line-height:1.55;">Feels like <b>${S.feels.toFixed(0)}°C</b> (air ${survival.airTemperature().toFixed(0)}°C)<br>
 		Clothes: warmth +${worn.warmth.toFixed(1)}°C · rain kept off ${Math.round(worn.waterproof * 100)}%<br>Sweat ${worn.sweat >= 0 ? 'let out' : 'held in'} ${Math.round(Math.abs(worn.sweat) * 100)}% · armour ${Math.round(worn.armour * 100)}%<br>
-		<span style="color:${worn.load > worn.capacity ? '#f08a6a' : '#cfc2a8'};">Load ${worn.load.toFixed(1)} / ${worn.capacity.toFixed(0)} kg${worn.load > worn.capacity ? ' (slowed)' : ''}</span></div>`;
+		<span style="color:${worn.load > worn.capacity ? journal.RED : journal.INK};">Load ${worn.load.toFixed(1)} / ${worn.capacity.toFixed(0)} kg${worn.load > worn.capacity ? ' (slowed)' : ''}</span></div>`;
 	let pack = '';
 	const P = I.worn.backpack;
 	if (P) {
 		pack += panel(html(ITEMS[P.type].name).toUpperCase(), gridBox('pack', ITEMS[P.type].grid, P.contents, 'grid:pack'));
 		let att = `<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">${P.attached.map((p, k) => slotBox('attach:' + k, 'Pouch', p, 72, 56)).join('')}</div>`;
-		P.attached.forEach((p, k) => { if (p) att += `<div style="margin:6px 0 2px; color:#b8a888;">${html(ITEMS[p.type].name)}</div>` + gridBox('attach' + k, ITEMS[p.type].grid, p.contents, 'grid:attach' + k); });
+		P.attached.forEach((p, k) => { if (p) att += `<div style="margin:6px 0 2px;">${html(ITEMS[p.type].name)}</div>` + gridBox('attach' + k, ITEMS[p.type].grid, p.contents, 'grid:attach' + k); });
 		pack += panel('BACKPACK ATTACHMENTS', att);
-	} else pack += panel('BACKPACK', '<div style="color:rgba(220,200,170,0.5);">No backpack worn</div>');
+	} else pack += panel('BACKPACK', '<div style="color:rgba(43,37,32,0.5);">No backpack worn</div>');
 	const E = I.worn.extra;
 	if (E && ITEMS[E.type].grid) pack += panel(html(ITEMS[E.type].name).toUpperCase(), gridBox('extra', ITEMS[E.type].grid, E.contents, 'grid:extra'));
 	let found = '';
 	const C = ui.container && loot.containerById(ui.container);
-	if (C) found = panel(html(loot.label(C)).toUpperCase(), C.items ? gridBox('loot', C.grid, C.items, 'loot') : '<div style="color:#b8a888;">Searching…</div>');
+	if (C) found = panel(html(loot.label(C)).toUpperCase(), C.items ? gridBox('loot', C.grid, C.items, 'loot') : '<div>Searching…</div>');
 	if (ui.camp) {
 		const h = camp.holder(ui.camp), said = camp.describe(ui.camp);
-		if (!h) found = panel(ui.camp.kind == 'bags' ? 'SADDLEBAGS' : 'TENT', '<div style="color:#b8a888;">Opening…</div>');
-		else found = panel(said.title, `<div style="display:grid; grid-template-columns: repeat(2, ${SLOT + 14}px); gap:8px;">${Object.keys(camp.slotsOf(ui.camp)).map((s) => `<div><div style="font-size:10px; color:#b8a888; margin-bottom:2px;">${html(camp.SLOT_NAMES[s])}</div>${slotBox('camp:' + s, camp.SLOT_NAMES[s], h.slots[s], SLOT + 14, SLOT)}</div>`).join('')}</div>
-			<div style="margin-top:8px; color:#cfc2a8; line-height:1.5; max-width:180px;">${said.lines.map(html).join('<br>')}</div>`);
+		if (!h) found = panel(ui.camp.kind == 'bags' ? 'SADDLEBAGS' : 'TENT', '<div>Opening…</div>');
+		else found = panel(said.title, `<div style="display:grid; grid-template-columns: repeat(2, ${SLOT + 14}px); gap:8px;">${Object.keys(camp.slotsOf(ui.camp)).map((s) => `<div><div style="font-size:10px; margin-bottom:2px;">${html(camp.SLOT_NAMES[s])}</div>${slotBox('camp:' + s, camp.SLOT_NAMES[s], h.slots[s], SLOT + 14, SLOT)}</div>`).join('')}</div>
+			<div style="margin-top:8px; line-height:1.5; max-width:180px;">${said.lines.map(html).join('<br>')}</div>`);
 	}
-	const tab = (key, name, on) => `<span data-tab="${key}" style="display:inline-block; padding:3px 12px; margin-right:4px; border:1px solid #5a4a36; border-bottom:none; border-radius:5px 5px 0 0; cursor:pointer; font-size:11px; letter-spacing:0.1em; background:${on ? 'rgba(90,72,50,0.95)' : 'rgba(40,32,24,0.9)'}; color:${on ? '#f0e4c8' : '#b8a888'};">${name}</span>`;
+	const tab = (key, name, on) => `<span data-tab="${key}" style="display:inline-block; padding:3px 14px; margin-right:4px; border:1.4px solid ${journal.INK}; border-bottom:none; border-radius:6px 8px 0 0; cursor:pointer; font-size:12px; font-weight:${on ? 'bold' : 'normal'}; background:url(${journal.PAPER}); color:${journal.INK}; opacity:${on ? 1 : 0.72};">${name.charAt(0) + name.slice(1).toLowerCase()}</span>`;
 	const recipe = crafting.recipeNow();
 	const craftColumn = ui.crafting ? `<div>${panel('CRAFTING', `<div style="display:flex; gap:12px; align-items:center;">${gridBox('craft', inventory.CRAFT_GRID, I.craft, 'grid:craft')}
-		<div style="text-align:center;"><div style="font-size:18px; color:#b8a888; margin-bottom:4px;">⇒</div>${slotBox('craftOut', 'Output', crafting.outputNow(), 84, 84)}</div></div>
-		<div style="margin-top:8px; max-width:360px; color:#cfc2a8; line-height:1.5;">${recipe ? html(crafting.describe(recipe)) : 'Lay things out in the grid, any way round'}<br><span style="color:#9a8a70;">Makes: ${crafting.RECIPES.map((r) => html(crafting.describe(r))).join(' · ')}</span></div>`)}</div>` : '';
-	root.innerHTML = `<div style="position:fixed; left:24px; top:4px; z-index:1;">${tab('bag', 'INVENTORY', !ui.crafting && !ui.aid)}${tab('craft', 'CRAFTING', ui.crafting)}${tab('aid', 'FIRST AID', ui.aid)}</div><div style="display:flex; gap:16px; padding:24px; align-items:flex-start; min-width:max-content; margin:auto;">
+		<div style="text-align:center;"><div style="font-size:18px; margin-bottom:4px;">⇒</div>${slotBox('craftOut', 'Output', crafting.outputNow(), 84, 84)}</div></div>
+		<div style="margin-top:8px; max-width:360px; line-height:1.5;">${recipe ? html(crafting.describe(recipe)) : 'Lay things out in the grid, any way round'}<br><span style="color:rgba(43,37,32,0.6);">Makes: ${crafting.RECIPES.map((r) => html(crafting.describe(r))).join(' · ')}</span></div>`)}</div>` : '';
+	root.innerHTML = `<div style="position:fixed; left:32px; top:4px; z-index:1;">${tab('bag', 'INVENTORY', !ui.crafting && !ui.aid)}${tab('craft', 'CRAFTING', ui.crafting)}${tab('aid', 'FIRST AID', ui.aid)}</div><div class="jr-spread" style="position:relative; display:flex; gap:16px; padding:18px 22px 34px; align-items:flex-start; min-width:max-content; margin:auto; margin-top:30px; margin-bottom:12px;">
 		<div>${panel('GEAR', gear)}</div>
 		<div style="width:250px;">${panel('EQUIPPED', hands)}${panel('CONDITION', status)}</div>
 		<div>${pack}</div>
 		${found ? `<div>${found}</div>` : ''}
 		${craftColumn}
 		${ui.aid ? `<div>${firstAidPanel()}</div>` : ''}
-		<div style="position:fixed; left:24px; bottom:12px; color:rgba(220,200,170,0.6);">Drag to move · R turns · drop off the screen to put it down · double click: in or out · right click: more · Tab, I, Esc or F to close</div>
+		<div style="position:absolute; left:22px; right:22px; bottom:8px; text-align:center; font-size:11px; color:rgba(43,37,32,0.62);">Drag to move · R turns · drop off the screen to put it down · double click: in or out · right click: more · Tab, I, Esc or F to close</div>
 	</div>`;
 }
 
@@ -140,16 +143,16 @@ const LIMB_SHAPES = {
 	legR: '<path d="M119 130 L111 134 L116 170 L126 212 L138 212 L132 172 Z"/>',
 };
 function firstAidPanel() {
-	const fill = (conditions) => conditions.length ? conditions[conditions.length - 1][1] : 'rgba(210, 190, 150, 0.55)';
+	const fill = (conditions) => conditions.length ? conditions[conditions.length - 1][1] : 'rgba(43, 37, 32, 0.08)';
 	const limbs = Object.keys(LIMB_SHAPES).map((k) => { const c = medical.conditionsOf(k); return `<g data-limb="${k}" style="cursor:context-menu;" fill="${fill(c)}" stroke="#3a2c1c" stroke-width="1"><title>${medical.LIMB_NAMES[k]}: right click to treat</title>${LIMB_SHAPES[k]}</g>`; }).join('');
-	const drawing = `<svg viewBox="0 0 220 240" width="300" height="327" style="display:block; background:#d9c9a6; border:1px solid #6a5a44; border-radius:3px;">
+	const drawing = `<svg viewBox="0 0 220 240" width="300" height="327" style="display:block; filter:url(#charcoal);">
 		<circle cx="110" cy="122" r="104" fill="none" stroke="#6b5233" stroke-width="1.2"/><rect x="18" y="30" width="184" height="184" fill="none" stroke="#6b5233" stroke-width="1.2"/>
 		<path d="M93 74 L52 46 L24 30 M127 74 L168 46 L196 30 M101 130 L70 176 L44 214 M119 130 L150 176 L176 214" fill="none" stroke="#6b5233" stroke-width="1.6" opacity="0.55"/>
 		<path d="M110 30 L110 214 M18 122 L202 122" stroke="#6b5233" stroke-width="0.4" opacity="0.5"/>
 		${limbs}</svg>`;
-	const rows = Object.keys(LIMB_SHAPES).map((k) => { const c = medical.conditionsOf(k); return `<div style="padding:3px 0; border-bottom:1px solid rgba(200,180,140,0.15);"><b>${medical.LIMB_NAMES[k]}</b>: ${c.length ? c.map(([t, colour]) => `<span style="color:${colour};">${html(t)}</span>`).join(' · ') : '<span style="color:#9a8a70;">fine</span>'}</div>`; }).join('');
-	const sick = medical.moodles().filter(([key]) => medical.ILLNESS[key]).map(([key]) => { const I = medical.ILLNESS[key]; return `<div style="margin-top:4px;"><b style="color:#e0a050;">${html(I.name)}</b>: <span style="color:#cfc2a8;">${html(I.detail)}</span></div>`; }).join('');
-	return panel('FIRST AID', `<div style="display:flex; gap:12px; align-items:flex-start;">${drawing}<div style="width:260px; line-height:1.45;">${rows}${sick || '<div style="margin-top:8px; color:#9a8a70;">No illness</div>'}<div style="margin-top:8px; font-size:11px; color:#9a8a70;">Right click a limb to treat it</div></div></div>`);
+	const rows = Object.keys(LIMB_SHAPES).map((k) => { const c = medical.conditionsOf(k); return `<div style="padding:3px 0; border-bottom:1px dashed rgba(43,37,32,0.25);"><b>${medical.LIMB_NAMES[k]}</b>: ${c.length ? c.map(([t, colour]) => `<span style="color:${colour};">${html(t)}</span>`).join(' · ') : '<span style="color:rgba(43,37,32,0.55);">fine</span>'}</div>`; }).join('');
+	const sick = medical.moodles().filter(([key]) => medical.ILLNESS[key]).map(([key]) => { const I = medical.ILLNESS[key]; return `<div style="margin-top:4px;"><b style="color:${journal.RED};">${html(I.name)}</b>: <span>${html(I.detail)}</span></div>`; }).join('');
+	return panel('FIRST AID', `<div style="display:flex; gap:12px; align-items:flex-start;">${drawing}<div style="width:260px; line-height:1.45;">${rows}${sick || '<div style="margin-top:8px; color:rgba(43,37,32,0.55);">No illness</div>'}<div style="margin-top:8px; font-size:11px; color:rgba(43,37,32,0.6);">Right click a limb to treat it</div></div></div>`);
 }
 medical.onChange(() => render());
 
@@ -159,9 +162,7 @@ export function openInventory(containerId = null) {
 	ui.open = true;
 	ui.container = containerId;
 	ui.camp = null;
-	root.style.display = 'flex';
-	hunting.input.menuOpen = true;
-	if (document.pointerLockElement) document.exitPointerLock();
+	journal.pull(() => { if (ui.open) { root.style.display = 'flex'; render(); } });
 	render();
 }
 export function closeInventory() {
@@ -173,8 +174,7 @@ export function closeInventory() {
 	closeMenu();
 	tip.style.display = 'none';
 	root.style.display = 'none';
-	hunting.input.menuOpen = false;
-	canvas.requestPointerLock?.()?.catch?.(() => {});
+	journal.put();
 }
 loot.onOpen((id) => openInventory(id));
 // a tent's slots, or a horse's saddlebags (camp.js)
@@ -190,7 +190,7 @@ window.addEventListener('keydown', (e) => {
 	if ((e.code == 'KeyI' || e.code == 'Tab') && inventory.survivalOn()) {
 		if (e.code == 'Tab') e.preventDefault();		// (not round the page's controls)
 		if (e.repeat) return;
-		if (ui.open) closeInventory(); else if (document.pointerLockElement == canvas && !hunting.input.menuOpen) openInventory();
+		if (ui.open) closeInventory(); else if (document.pointerLockElement == canvas && !hunting.input.menuOpen && !journal.journalOut()) openInventory();
 	}
 	else if ((e.code == 'Escape' || e.code == 'KeyF') && ui.open) closeInventory();
 	else if (e.code == 'KeyR' && ui.drag) { ui.drag.rot = 1 - ui.drag.rot; drawGhost(); }
@@ -400,11 +400,12 @@ root.addEventListener('dblclick', (e) => {
 
 // RIGHT CLICK: what can be done with it
 const menuBox = document.createElement('div');
-menuBox.style.cssText = 'position: fixed; z-index: 24; display: none; background: rgba(28, 22, 16, 0.97); border: 1px solid #6a5a44; border-radius: 4px; font: 13px Georgia, serif; color: #efe4cc; min-width: 140px;';
+menuBox.className = 'jr-page';
+menuBox.style.cssText = `position: fixed; z-index: 24; display: none; border: 1.5px solid ${journal.INK}; border-radius: 3px; font: 13px ${journal.HAND}; min-width: 140px;`;
 document.body.appendChild(menuBox);
 function closeMenu() { menuBox.style.display = 'none'; ui.menu = null; }
 function showMenu(acts, e) {
-	menuBox.innerHTML = acts.map(([name], k) => `<div data-k="${k}" style="padding:6px 12px; cursor:pointer;" onmouseover="this.style.background='rgba(200,160,100,0.25)'" onmouseout="this.style.background=''">${html(name)}</div>`).join('');
+	menuBox.innerHTML = acts.map(([name], k) => `<div data-k="${k}" style="padding:6px 12px; cursor:pointer;" onmouseover="this.style.background='rgba(43,37,32,0.14)'" onmouseout="this.style.background=''">${html(name)}</div>`).join('');
 	menuBox.style.left = e.clientX + 'px';
 	menuBox.style.top = e.clientY + 'px';
 	menuBox.style.display = '';
@@ -431,6 +432,7 @@ root.addEventListener('contextmenu', (e) => {
 		if (ui.camp && campSlotFor(item)) acts.push([ui.camp.kind == 'tent' ? 'Into the tent' : 'Into the saddlebags', () => camp.put(ui.camp, campSlotFor(item), item)]);
 		if (item.type == 'firewood') acts.push(['Build campfire', () => { const at = campfires.buildSpot(); if (!at) { help.toast('No room for a fire here'); return; } inventory.useOne(item); campfires.build(at); closeInventory(); help.toast('Campfire laid: light it with the lighter'); }]);
 		if (['venison', 'rabbitMeat', 'mooseMeat', 'wolfMeat', 'bearMeat'].includes(item.type)) acts.push(['Cook on the fire', () => campfires.cook(item)]);
+		if (it.use == 'station') acts.push(['Set it up', () => { if (stations.place(item)) closeInventory(); }]);
 		if (it.use == 'trap') acts.push(['Set the snare', () => { if (rabbits.setSnare(item)) closeInventory(); }]);
 		const on = src.startsWith('worn') || src.startsWith('hand') || src.startsWith('attach');
 		if (on) acts.push(['Take off', () => quickEquip(item, src)]);
@@ -466,7 +468,7 @@ function showTip(e) {
 	if (it.detail) lines.push(it.detail);
 	const kg = weightOf(item);
 	if (kg > 0) lines.push(`${kg < 1 ? Math.round(kg * 1000) + ' g' : kg.toFixed(1) + ' kg'}${it.price ? ' · worth ' + dollars(it.price * 100) : ''}`);
-	tip.innerHTML = `<b>${html(nameOf(item))}</b>${item.count > 1 && !it.money ? ` × ${item.count}` : ''}<div style="margin-top:4px; color:#cfc2a8; line-height:1.5;">${lines.map(html).join('<br>')}</div>`;
+	tip.innerHTML = `<b>${html(nameOf(item))}</b>${item.count > 1 && !it.money ? ` × ${item.count}` : ''}<div style="margin-top:4px; line-height:1.5;">${lines.map(html).join('<br>')}</div>`;
 	tip.style.display = '';
 	tip.style.left = (e.clientX + 14) + 'px';
 	tip.style.top = (e.clientY + 14) + 'px';

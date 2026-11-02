@@ -114,6 +114,7 @@ export const c_leaves =
 
 	@group(0) @binding(1) var<storage, read_write> leaves: array<Particle>;
 	@group(0) @binding(2) var<storage, read> sources: array<vec4f>;		// where leaves come from. xyz: the middle of a tree's crown, w: its radius
+	const LEAF_RELEASE = 18.0;			// seconds for all of them to have let go, at a Leaf Amount of 1
 	@group(0) @binding(3) var<storage, read> obstacles: array<vec4f>;	// what stands in their way. x, z: where, as x and y. z: its radius, w: the height of its top
 	@group(0) @binding(4) var windTexture: texture_2d<f32>;
 	@group(0) @binding(5) var windSampler: sampler;
@@ -153,7 +154,8 @@ export const c_leaves =
 				let count = u32(PU.counts.x);
 				if (count == 0u) {
 					leaf.life = 1.0;	// no trees near: ask again in a while
-				} else {
+				} else if (random(chance + 9u) < elapsed * PU.step.w / LEAF_RELEASE) {
+					// (a leaf ready waits its turn. Come up to the trees with every leaf ready, they would all let go at once: this is how many let go a second, whatever is waiting)
 					let tree = sources[min(u32(random(chance) * f32(count)), count - 1u)];
 					// from somewhere in the crown, more often out near its edge
 					let turn = random(chance + 1u) * 6.2832;

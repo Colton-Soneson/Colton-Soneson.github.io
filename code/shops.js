@@ -20,6 +20,7 @@ import * as treasury from './treasury.js'
 	it stops where it is, turned to the walker, until the shop shuts).
 		food		the baker, the butcher, the fisherman, the innkeeper: each sells its own (sells) and buys any food. The butcher buys what comes
 					off the animals too (HIDES). The innkeeper also lets a room for the night (ROOM: survival.js: sleepInRoom)
+		iron		the blacksmith: nails, a pickaxe, a hoe, and whatever else is made or goes into making it (IRON): one in every town (townFolk.js)
 		clothes		the tailor (the clothes), the outfitter (boots, the backpacks and their pouches, the extras, the tools): each buys clothes and
 					gear back. A piece of clothing is bought in the colour chosen (clothing.js: its five)
 		bank		the banker: money put in or taken out (BANK)
@@ -37,9 +38,11 @@ const SELL = 0.5;					// of the price
 const INTEREST = 0.03;				// a day
 const SAVED = 'survivalBank';
 const FOOD = Object.keys(ITEMS).filter((type) => ITEMS[type].food || ITEMS[type].drink);
-const GEAR = ['flareGun', 'flareRound', 'bandage', 'alcohol', 'antibiotics', 'splint', 'sewingKit', 'tent', 'tentStove', 'rainCollector', 'haversack', 'rucksack', 'framePack', 'ammoPouch', 'utilityPouch', 'bedrollStrap', 'bedroll', 'compass', 'watch', 'knife', 'hatchet', 'lighter'];
+const GEAR = ['mortar', 'mushroom', 'flareGun', 'flareRound', 'bandage', 'alcohol', 'antibiotics', 'splint', 'sewingKit', 'tent', 'tentStove', 'rainCollector', 'haversack', 'rucksack', 'framePack', 'ammoPouch', 'utilityPouch', 'bedrollStrap', 'bedroll', 'compass', 'watch', 'knife', 'hatchet', 'lighter'];
 const ROOM = 2;						// dollars: a night in a room at the inn
-const HIDES = ['sinew', 'antlers', 'smallBones', 'bigBones', 'rabbitPelt', 'mooseHide', 'bearHide'];
+const HIDES = ['sinew', 'antlers', 'smallBones', 'bigBones', 'rabbitPelt', 'mooseHide', 'bearHide', 'deerHide'];
+const IRON = ['nails', 'pickaxe', 'hoe', 'hatchet', 'knife', 'ironOre', 'ironBar', 'rock', 'smelter', 'anvil', 'cauldron'];
+const SPIRITS = ['boneAlcohol', 'grainAlcohol'];
 const MEDICINE = ['bandage', 'alcohol', 'antibiotics', 'splint', 'sewingKit'];
 const HORSE = 30;					// dollars: a saddled horse (the outfitter's: horse.js brings it round, its saddlebags for the camp, camp.js)
 const CLOTHING = Object.keys(CLOTHES);
@@ -47,10 +50,11 @@ const TAILORED = CLOTHING.filter((type) => CLOTHES[type].slot != 'feetOuter' && 
 const OUTFITTED = [...CLOTHING.filter((type) => CLOTHES[type].slot == 'feetOuter' || CLOTHES[type].slot == 'extra'), ...GEAR];
 export const TRADES = {
 	// (the medicine: the outfitter's, in GEAR; the inn keeps the tincture and bandages)
-	baker: { title: 'Bakery', sells: ['bread'], buys: FOOD },
-	butcher: { title: 'Butcher', sells: ['sausage', 'venison', 'cookedVenison'], buys: [...FOOD, ...HIDES] },
+	blacksmith: { title: 'Blacksmith', sells: IRON, buys: IRON },
+	baker: { title: 'Bakery', sells: ['bread', 'wheat'], buys: [...FOOD, 'wheat'] },
+	butcher: { title: 'Butcher', sells: ['sausage', 'venison', 'cookedVenison', 'deerHide'], buys: [...FOOD, ...HIDES] },
 	fisherman: { title: 'Fish', sells: ['smokedFish', 'water'], buys: FOOD },
-	innkeeper: { title: 'Inn', sells: ['beer', 'water', 'bread', 'sausage', 'cookedVenison', 'alcohol', 'bandage'], buys: [...FOOD, ...MEDICINE], room: true },
+	innkeeper: { title: 'Inn', sells: ['beer', 'water', 'bread', 'sausage', 'cookedVenison', 'alcohol', 'bandage', 'boiledMushroom', ...SPIRITS], buys: [...FOOD, ...MEDICINE, ...SPIRITS, 'mushroom'], room: true },
 	tailor: { title: 'Tailor', sells: TAILORED, buys: [...CLOTHING, ...GEAR] },
 	outfitter: { title: 'Outfitter', sells: OUTFITTED, buys: [...CLOTHING, ...GEAR], horse: true },
 	banker: { title: 'Bank', bank: true },

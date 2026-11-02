@@ -14,6 +14,7 @@ import { ITEMS, HANDS, HAND_NAMES } from './items.js'
 import * as inventory from './inventory.js'
 import * as outfits from './outfits.js'
 import * as skyCover from './skyCover.js'
+import * as ice from './ice.js'
 
 /*
 	THE SURVIVAL game mode (settings.gameMode 'Hunting': the menu calls it Survival): what the walker needs, and what it costs it not to have
@@ -120,6 +121,7 @@ hunting.onUse((place) => {
 		const x = place.x + look[0] * ahead * m, z = place.z + look[1] * ahead * m;
 		if (land.heightAt(x, z) < settings.waterWorldPosY + 0.05 * m && Math.abs(place.y - settings.waterWorldPosY) < 1.5 * m) {
 			if (land.zoneAt(x, z) != terrain.ZONE_LAKE) { help.toast('Salt water: not to drink'); return true; }
+			if (ice.iceAt(x, z) !== null) { help.toast('Frozen over: melt snow in a rain collector'); return true; }
 			status.thirst = Math.max(status.thirst - DRINK, 0);
 			survivalStats.drinks++;
 			help.toast('A drink from the lake');
@@ -333,7 +335,8 @@ const bodyListeners = [];
 export function onBody(fn) { bodyListeners.push(fn); }
 
 // T: in the Survival mode only the hands' (and the map), but in god mode (see the top). The map's own place is the map's (survivalMap.js)
-let mapChoice = null, everything = () => [];
+let mapChoice = null, buildChoice = null, everything = () => [];
+export function setBuildChoice(choice) { buildChoice = choice; }
 export function setMapChoice(choice) { mapChoice = choice; }
 export function setEveryEquippable(fn) { everything = fn; }
 let holdItem = null, watchChoice = null;
@@ -349,6 +352,7 @@ radialMenu.setRootSource((root) => {
 	if (watchChoice && inventory.inv.worn.wrist?.type == 'watch') items.push(watchChoice);
 	items.push({ label: 'Empty hands', detail: 'Put away what you hold', act: () => { weapons.equipWeapon('none'); return true; } });
 	if (mapChoice) items.push(mapChoice);
+	if (buildChoice) items.push(buildChoice);
 	return { label: 'Equipped', items };
 });
 

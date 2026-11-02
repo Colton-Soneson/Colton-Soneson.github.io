@@ -73,6 +73,12 @@ import * as rabbits from './rabbits.js'
 import * as beasts from './beasts.js'
 import * as medical from './medical.js'
 import * as flares from './flares.js'
+import * as ice from './ice.js'
+import * as mining from './mining.js'
+import * as stations from './stations.js'
+import * as farms from './farms.js'
+import * as cabins from './cabins.js'
+import * as journal from './journalUI.js'
 import * as interiors from './interiors.js'
 import * as fish from './fish.js'
 import * as whaling from './whaling.js'
@@ -444,6 +450,7 @@ export function updateRotatingCubePass() {
 	campfires.campfiresUpdate();
 	survivalMap.mapUpdate();
 	inventoryUI.inventoryUIUpdate();
+	journal.journalUpdate();
 	outfits.outfitsUpdate();
 	shops.shopsUpdate();
 	camp.campUpdate();
@@ -484,6 +491,11 @@ export function updateRotatingCubePass() {
 	rabbits.rabbitsUpdate();		//the rabbits, and the snares they walk into
 	beasts.beastsUpdate();			//the moose, the wolves and the bears
 	flares.flaresUpdate();			//(and the flares in the air)
+	ice.iceUpdate();				//the ponds frozen, in the winter
+	mining.miningUpdate();			//the ore veins and the mushrooms
+	stations.stationsUpdate();		//the smelters, anvils, cauldrons and mortars
+	farms.farmsUpdate();			//the farm beds
+	cabins.cabinsUpdate();			//the cabins
 	fish.fishUpdate();				//the fish, in their schools
 	whaling.whalingUpdate();		//the whales, and the harpoons
 	interiors.interiorsUpdate();	//what is inside the houses near the camera
@@ -691,6 +703,7 @@ export function updateRotatingCubePass() {
 		weapons.weaponsPass();	//(the gun held, if it is not the rifle)
 		plane.gunnerPass();		//(or the Lewis gun on a biplane's ring, in the gunner's seat)
 		survivalMap.mapPass();	//(or the map, pulled out: the Survival mode)
+		journal.journalPass();	//(or the journal: the inventory)
 		shipGuns.gunnerPass();	//(or in a schooner's crow's nest)
 	});
 

@@ -42,6 +42,7 @@ export const vf_props =
 		@location(2) @interpolate(flat) material: f32,
 		@location(3) @interpolate(flat) glow: vec4f,
 		@location(4) @interpolate(flat) indoors: f32,
+		@location(5) @interpolate(flat) snow: f32,		// (the ponds' ice)
 		@location(14) nowClip: vec4f,
 		@location(15) prevClip: vec4f,
 	};
@@ -94,6 +95,7 @@ export const vf_props =
 		output.material = floor((shape.w + 0.5) / 32.0);
 		output.glow = I.glow;
 		output.indoors = I.extra.x;
+		output.snow = I.extra.z;
 		output.nowClip = PU.motionNow * vec4f(world, 1.0);
 		output.prevClip = PU.motionPrev * vec4f(world, 1.0);
 		return output;
@@ -109,6 +111,18 @@ export const vf_props =
 		var albedo = vec3f(0.4);
 		var gloss = 0.1;
 		if (m >= 20) { let im = itemMaterial(m, input.shape); albedo = im.rgb; gloss = im.a; }
+		// the ponds' ice (ice.js): its marks run on from one square to the next, so they are the world's
+		if (m == 86) {
+			let w = input.worldPos.xz;
+			let crack = abs(sin(w.x * 0.083 + 2.3 * sin(w.y * 0.047))) * abs(sin(w.y * 0.097 + 2.6 * sin(w.x * 0.037)));
+			let fine = abs(sin(w.x * 0.31 + 1.7 * sin(w.y * 0.19) + w.y * 0.13));
+			albedo = albedo * (0.9 + 0.1 * sin(w.x * 0.031 + w.y * 0.023)) * (0.97 + 0.03 * smoothstep(0.0, 0.05, fine)) + vec3f(0.1) * (1.0 - smoothstep(0.0, 0.007, crack));
+			// the snow lying on it, in drifts
+			let drift = 0.5 + 0.25 * sin(w.x * 0.021 + 1.9 * sin(w.y * 0.017)) + 0.15 * sin(w.y * 0.053 + 1.3 * sin(w.x * 0.041)) + 0.1 * sin((w.x + w.y) * 0.13);
+			let lying = smoothstep(drift - 0.12, drift + 0.12, input.snow * 1.25);
+			albedo = mix(albedo, vec3f(0.96, 0.97, 1.0), lying);
+			gloss = mix(gloss, 0.04, lying);
+		}
 		else if (m == 1) { albedo = vec3f(0.06, 0.065, 0.075); gloss = 0.5; }
 		else if (m == 2) { albedo = vec3f(0.62, 0.46, 0.2); gloss = 0.8; }
 		else if (m == 8) { albedo = vec3f(0.62, 0.63, 0.65); gloss = 0.9; }
@@ -124,9 +138,11 @@ export const vf_props =
 			// a room: no sun on it, the day in at the windows, the lamps lit as it gets dark (warm), a little more on what faces up
 			let room = (0.2 + 0.55 * day) * (0.72 + 0.28 * N.y) * vec3f(0.98, 0.96, 0.92) + (1.0 - day) * vec3f(0.34, 0.26, 0.17) * (0.8 + 0.2 * N.y);
 			color = albedo * room;
-			if (m == 61) { color = mix(vec3f(0.03, 0.04, 0.08), vec3f(0.9, 1.0, 1.1), day); }
+			if (m == 61 || m == 99) { color = mix(vec3f(0.03, 0.04, 0.08), vec3f(0.9, 1.0, 1.1), day); }
 		}
 		color += itemGlow(m) * (0.8 + 0.2 * sin(PU.time.x * 13.0 + input.shape.x * 40.0));
+		// a cabin's windows: by night, the warm of the room behind them
+		if (m == 99) { color += vec3f(1.5, 0.92, 0.42) * smoothstep(0.75, 0.15, day); }
 		color += input.glow.rgb * input.glow.a * (0.35 + 0.65 * saturate(dot(N, normalize(toEye))));
 		return vec4f(color, 1.0);
 	}

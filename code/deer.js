@@ -81,7 +81,7 @@ const STUCK_SECONDS = 6;			// going to the water and getting no nearer for this 
 const GROUND_AGAIN = 0.5;			// metres
 const FALL_SECONDS = 0.7, LIE_SECONDS = 6, SINK_SECONDS = 4;
 const SURVIVAL_LIE_SECONDS = 600;
-const CUTS = ['venison', 'sinew', 'venison', 'venison', 'sinew', 'venison'];
+const CUTS = ['venison', 'sinew', 'deerHide', 'venison', 'venison', 'sinew', 'venison'];
 const BUCKS = 0.65, BUCK_SIZE = 1.1;
 const isBuck = (own) => own >= 1;
 const sizeOfOwn = (own) => isBuck(own) ? BUCK_SIZE : 1;

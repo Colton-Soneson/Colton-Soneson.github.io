@@ -14,7 +14,8 @@ import { seededRandom } from './terrainGenerator.js';
 			fall		the broadleaved trees turn, the grass goes the color of hay, and leaves come down off the trees
 						(the leaf particles, particles.js: this is the only season they fall in)
 			winter		the storms are winter storms: snow, not rain, no lightning and no tornadoes. Snow builds up on the
-						ground while it falls (see SNOW). The grass gets shorter every day
+						ground while it falls (see SNOW). The grass gets shorter every day. The broadleaved trees stand bare (seasonNow.bare: their
+						leaves going through the last of the fall, coming back green through the first of the spring), and the ponds freeze (seasonNow.ice: ice.js)
 		Nothing changes at a stroke: the colors turn over the first days of a season.
 
 	THE WEATHER
@@ -118,7 +119,7 @@ const WEATHER_SKIES = [
 //		hay				how far the grass has gone the color of hay, 0 to 1
 //		autumn			how far the broadleaved trees have turned, 0 to 1
 //		leafFall		whether leaves are coming down off the trees
-export const seasonNow = { index: SEASON_SUMMER, name: "summer", progress: 0, grassHeight: 1, hay: 0, autumn: 0, leafFall: false };
+export const seasonNow = { index: SEASON_SUMMER, name: "summer", progress: 0, grassHeight: 1, hay: 0, autumn: 0, bare: 0, ice: 0, leafFall: false };
 
 // Everything about the weather right now.
 //		tower		the cumulonimbus: x and z of where it stands, its radius, and how built up it is (0 none)
@@ -175,7 +176,10 @@ function seasonUpdate() {
 
 	// the colors: turning over the first part of the fall, staying through the winter, and going back over the first part of the spring
 	seasonNow.hay = index == SEASON_FALL ? smooth(progress / 0.25) : index == SEASON_WINTER ? 1 : index == SEASON_SPRING ? 1 - smooth(progress / 0.4) : 0;
-	seasonNow.autumn = index == SEASON_FALL ? smooth(progress / 0.3) : index == SEASON_WINTER ? 1 : index == SEASON_SPRING ? 1 - smooth(progress / 0.3) : 0;
+	// (the spring's leaves come back green: there is nothing on the trees to turn back by then)
+	seasonNow.autumn = index == SEASON_FALL ? smooth(progress / 0.3) : index == SEASON_WINTER ? 1 : 0;
+	seasonNow.bare = index == SEASON_FALL ? smooth((progress - 0.5) / 0.5) : index == SEASON_WINTER ? 1 : index == SEASON_SPRING ? 1 - smooth(progress / 0.45) : 0;
+	seasonNow.ice = index == SEASON_WINTER ? smooth(progress / 0.3) : index == SEASON_SPRING ? 1 - smooth(progress / 0.25) : 0;
 	seasonNow.leafFall = index == SEASON_FALL;
 
 	settings.seasonNow = seasonNow.name;	// for the controls to show

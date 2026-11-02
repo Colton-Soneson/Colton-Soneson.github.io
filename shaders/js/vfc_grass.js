@@ -65,6 +65,7 @@ export const vf_grass =
 		clump : vec4f,				// x: how far apart the clumps are, y: pull, z: height, w: facing (see CLUMPS above)
 		clumpLook : vec4f,			// x: color. And the season: y: how far the grass has gone to hay, z: how much snow is lying on it (both 0 to 1, see weather.js)
 		rings : array<vec4f, ${GRASS_MAX_RINGS}>,	// a ring's x: blades along one side of its grid, y: cell size, z: how far out it reaches, w: pieces in a blade
+		holes : vec4f,				// where it does not grow (grassHoles): x, z of its corner, z: how many across (world units)
 		flats : array<vec4f, 8>,	// where the grass is pressed flat (a bedroll laid out, a campfire: setGrassFlats): x, z (world units), radius, 0 for none
 	}
 	@group(0) @binding(0) var<uniform> UBO: GrassUniforms;
@@ -84,6 +85,7 @@ export const vf_grass =
 	}
 	@group(0) @binding(1) var<uniform> Lights: LightsUniforms;
 
+	@group(0) @binding(10) var grassHoles: texture_2d<f32>;
 	@group(0) @binding(2) var terrainFields: texture_2d<f32>;	// per terrain grid point: height, mountain value, normal.x, normal.z
 	@group(0) @binding(3) var skyLUT: texture_2d<f32>;
 	@group(0) @binding(4) var skySampler: sampler;
@@ -280,6 +282,11 @@ export const vf_grass =
 						* smoothstep(0.7, 0.82, groundNormal.y);									// not a cliff
 		if (random(seed + 3u) >= grassland) {
 			return output;	// thins out towards the edge of the zone, gone outside it
+		}
+		// nor under what has been built (setGrassHoles)
+		let holeAt = vec2i(floor(root - UBO.holes.xy));
+		if (all(holeAt >= vec2i(0)) && all(holeAt < vec2i(i32(UBO.holes.z))) && textureLoad(grassHoles, holeAt, 0).r > 0.5) {
+			return output;
 		}
 		if (onTownWork(root)) {
 			return output;	// not on a town's roads, nor under its houses

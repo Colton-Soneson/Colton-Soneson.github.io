@@ -36,6 +36,7 @@ const BONES = 0.05;
 const DRAW = 180;					// metres
 const SNARE_AHEAD = 1.4;			// metres in front of the walker it is set
 const SPHERES = [[0, 0.13, -0.03, 0.1], [0, 0.18, 0.13, 0.06]];
+const SINEW = 0.12;					// the chance of a little sinew off one, as a small one has
 const SPOOK = 12;					// metres a player is heard from (hearing.js): off it goes
 
 const metre = () => settings.forestUnitsPerMetre;
@@ -191,7 +192,7 @@ export function harvest(id) {
 	const at = corpses.findIndex((c) => c.rabbit.id == id);
 	if (at < 0) return null;
 	corpses.splice(at, 1);
-	return Math.random() < BONES ? ['rabbitMeat', 'smallBones'] : ['rabbitMeat'];
+	return ['rabbitMeat', ...(Math.random() < BONES ? ['smallBones'] : []), ...(Math.random() < SINEW ? ['sinew'] : [])];
 }
 
 // A SNARE SET (see the top): one out of the inventory, on the ground in front of the walker

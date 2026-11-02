@@ -155,6 +155,7 @@ function handsChanged() {
 }
 let godMode = () => false;
 export function setGodMode(fn) { godMode = fn; }
+export const isGod = () => godMode();		// (nothing it makes or builds costs anything: crafting.js, stations.js, cabins.js)
 // (in the Survival mode: only what is in the hands may be taken up, but in god mode)
 weapons.gateEquip((name) => !survivalOn() || name == 'none' || godMode() || inHands(name));
 

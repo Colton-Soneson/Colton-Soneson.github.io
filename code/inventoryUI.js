@@ -121,7 +121,7 @@ function render() {
 	const recipe = crafting.recipeNow();
 	const craftColumn = ui.crafting ? `<div>${panel('CRAFTING', `<div style="display:flex; gap:12px; align-items:center;">${gridBox('craft', inventory.CRAFT_GRID, I.craft, 'grid:craft')}
 		<div style="text-align:center;"><div style="font-size:18px; margin-bottom:4px;">⇒</div>${slotBox('craftOut', 'Output', crafting.outputNow(), 84, 84)}</div></div>
-		<div style="margin-top:8px; max-width:360px; line-height:1.5;">${recipe ? html(crafting.describe(recipe)) : 'Lay things out in the grid, any way round'}<br><span style="color:rgba(43,37,32,0.6);">Makes: ${crafting.RECIPES.map((r) => html(crafting.describe(r))).join(' · ')}</span></div>`)}</div>` : '';
+		<div style="margin-top:8px; max-width:360px; line-height:1.5;">${recipe ? html(crafting.describe(recipe)) : 'Lay things out in the grid, any way round'}<br><span style="color:rgba(43,37,32,0.6);">Makes: ${crafting.RECIPES.map((r) => html(crafting.describe(r))).join(' · ')}</span>${inventory.isGod() ? `<div style="margin-top:8px;"><b>God mode, free:</b><div style="display:flex; flex-wrap:wrap; gap:5px; margin-top:4px;">${crafting.freeMakes().map((type) => `<button class="jr-btn" data-free="${type}">${html(ITEMS[type].name)}</button>`).join('')}</div></div>` : ''}</div>`)}</div>` : '';
 	root.innerHTML = `<div style="position:fixed; left:32px; top:4px; z-index:1;">${tab('bag', 'INVENTORY', !ui.crafting && !ui.aid)}${tab('craft', 'CRAFTING', ui.crafting)}${tab('aid', 'FIRST AID', ui.aid)}</div><div class="jr-spread" style="position:relative; display:flex; gap:16px; padding:18px 22px 34px; align-items:flex-start; min-width:max-content; margin:auto; margin-top:30px; margin-bottom:12px;">
 		<div>${panel('GEAR', gear)}</div>
 		<div style="width:250px;">${panel('EQUIPPED', hands)}${panel('CONDITION', status)}</div>
@@ -312,6 +312,8 @@ root.addEventListener('pointerdown', (e) => {
 	closeMenu();
 	const tabEl = e.target.closest('[data-tab]');
 	if (tabEl) { ui.crafting = tabEl.dataset.tab == 'craft'; ui.aid = tabEl.dataset.tab == 'aid'; render(); return; }
+	const freeEl = e.target.closest('[data-free]');
+	if (freeEl) { crafting.makeFree(freeEl.dataset.free); render(); return; }
 	const el = e.target.closest('.it');
 	if (!el) return;
 	const item = find(el.dataset.src, Number(el.dataset.uid));

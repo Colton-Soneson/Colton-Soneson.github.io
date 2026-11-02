@@ -9,6 +9,7 @@ import * as loot from './loot.js'
 	What it makes stands in the output slot (outputNow) until it is dragged out into the inventory or off on to the ground (take): only then is
 	what went into it used up. It all happens in the player's own inventory, so there is nothing about it to send: what comes of it on the ground
 	goes the way anything put down goes (loot.js).
+	In god mode nothing is used up, and any recipe can be made at a click, with nothing laid out (makeFree: the tab's buttons, inventoryUI.js).
 */
 export const RECIPES = [
 	{ makes: 'trap', count: 1, needs: { firewood: 1, sinew: 1 } },
@@ -43,6 +44,7 @@ export function take() {
 	const recipe = recipeNow();
 	if (!recipe) return null;
 	const made = shown?.recipe === recipe ? shown.item : makeItem(recipe.makes, recipe.count);
+	if (inventory.isGod()) { shown = null; inventory.changed(); return made; }
 	for (const [type, need] of Object.entries(recipe.needs)) {
 		let left = need;
 		for (const item of [...inventory.inv.craft]) {
@@ -62,5 +64,14 @@ export function makeIntoInventory() {
 	const made = take();
 	if (made && !inventory.give(made)) loot.dropHere([made]);
 	return !!made;
+}
+// (god mode: one of what it makes, out of nothing)
+export const freeMakes = () => [...new Set(RECIPES.map((r) => r.makes))];
+export function makeFree(type) {
+	const recipe = inventory.isGod() && RECIPES.find((r) => r.makes == type);
+	if (!recipe) return false;
+	const made = makeItem(recipe.makes, recipe.count);
+	if (!inventory.give(made)) loot.dropHere([made]);
+	return true;
 }
 export const describe = (recipe) => `${ITEMS[recipe.makes].name}: ${Object.entries(recipe.needs).map(([k, n]) => `${n} ${ITEMS[k].name.toLowerCase()}`).join(' + ')}`;

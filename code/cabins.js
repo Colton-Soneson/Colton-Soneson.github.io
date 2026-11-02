@@ -28,7 +28,7 @@ import * as journal from './journalUI.js'
 	(R turns it, left click drives the stakes in, right click thinks better of it). It wants level, clear ground: no trees, no boulders, no water, no town. It is all on a grid of the world's quarter turns, so its walls run true for the walker to walk into (hunting.js: boxes with a halfZ).
 	Held and looked at a main room built, the page is its plan from above instead: choose a ROOM (ROOMS: a cube each) and a square round it, and its foundation goes there. It joins by an opening through the wall. Squares that cannot take one: the one with the door and the one at the fireplace.
 	WHAT IT TAKES: each wants what its walls take (MAINS, ROOMS: wood, nails) and what goes in it (FURNISHED: as these things cost to make). Stakes and twine mark it until then: E at them puts in whatever of that is carried (hide: any). F takes up a foundation not yet built, and gives it all back.
-	Once it has it all, it stands. Every room comes with what is in it: a main room a bedroll, a chest and a fireplace (stations.js); a bedroom two bedrolls and two big chests; a kitchen a cauldron and a mortar; a workshop an anvil and a smelter. E sleeps on a bedroll (bedrolls.js), the chests are loot.js's containers.
+	In god mode it costs nothing: it stands as soon as its stakes are in, and E finishes one staked out before. Once it has it all, it stands. Every room comes with what is in it: a main room a bedroll, a chest and a fireplace (stations.js); a bedroom two bedrolls and two big chests; a kitchen a cauldron and a mortar; a workshop an anvil and a smelter. E sleeps on a bedroll (bedrolls.js), the chests are loot.js's containers.
 	IN A GAME (survivalNet.js) the host keeps them all: a joiner asks (cabinFound, roomFound, cabinGive: anything it would not take, cabinBack; cabinTakeUp: cabinBack), everyone is told of each as it is (cabinIs, cabinDel), and a joiner come in, of all of them.
 	SAVED: the host's are kept in its browser (SAVED), for the land's seed, and so are its work stations and farm beds, and what is in the chests.
 */
@@ -174,9 +174,15 @@ survivalNet.on('cabinNo', (m) => help.toast(String(m.why).slice(0, 80), 2.5));
 const leftOf = (style, stock) => Object.entries(needOf(style)).map(([k, n]) => [k, n - (stock[k] ?? 0)]).filter(([, n]) => n > 0);
 const carriedOf = (k) => inventory.everything().filter(({ item }) => k == 'hide' ? HIDES.includes(item.type) : item.type == k).map(({ item }) => item);
 function targetIn(c, roomK) { return roomK < 0 ? { style: c.style, holder: c } : { style: c.rooms[roomK]?.type, holder: c.rooms[roomK] }; }
+// (god mode: everything it still wants, out of nothing. God mode is only ever the host's: survival.js)
+function finishFree(c, roomK) {
+	const T = targetIn(c, roomK);
+	for (const [k, n] of leftOf(T.style, T.holder.stock)) hostGive(c.id, roomK, k, n);
+}
 function give(c, roomK) {
 	const T = targetIn(c, roomK);
 	if (!T.holder || T.holder.built) return;
+	if (inventory.isGod()) { finishFree(c, roomK); weapons.actionSound('knock'); help.toast('Built: free in god mode', 2); return; }
 	const given = [];
 	for (const [k, n] of leftOf(T.style, T.holder.stock)) {
 		let left = n, got = 0;
@@ -444,6 +450,7 @@ hunting.addPrompt(() => {
 	const v = foundationInView();
 	if (!v) return null;
 	const T = targetIn(v.cabin, v.room), name = MAINS[T.style]?.name ?? ROOMS[T.style]?.name;
+	if (inventory.isGod()) return { name: `Foundation, ${name}`, keys: 'E build it, free · F take it up' };
 	return { name: `Foundation, ${name}: wants ${leftOf(T.style, T.holder.stock).map(([k, n]) => `${n} ${nameOfNeed(k)}`).join(', ')}`, keys: 'E put in what you carry · F take it up' };
 });
 // a built main room the eye is on, or stood in
@@ -481,7 +488,7 @@ const sketchMain = (M) => {
 	const u = 26, W = M.w * u, D = M.d * u * 0.55, H = M.h * u * 0.7, R = D * 0.7, x0 = 16, y0 = 12 + R + H;
 	return `<svg width="${W + D * 0.7 + 34}" height="${y0 + 14}" style="filter:url(#charcoal);" fill="none" stroke="${journal.INK}" stroke-width="1.6"><path d="M${x0} ${y0} h${W} v${-H} h${-W} Z M${x0 + W} ${y0} l${D * 0.7} ${-D * 0.45} v${-H} l${-D * 0.7} ${D * 0.45} M${x0} ${y0 - H} l${D * 0.35} ${-R} h${W} l${-D * 0.35} ${R} M${x0 + W + D * 0.35} ${y0 - H - R} l${D * 0.35} ${R - D * 0.45}"/>${Array.from({ length: M.w }, (_, k) => `<path d="M${x0 + (k + 0.5) * u - 7} ${y0 - H + 8} h14 v12 h-14 Z" stroke-width="1"/>`).join('')}<path d="M${x0 + (Math.floor(M.w / 2) + 0.5) * u - 6} ${y0} v-16 h12 v16" stroke-width="1.2"/></svg>`;
 };
-const needList = (style, stock = {}) => Object.entries(needOf(style)).map(([k, n]) => `${(stock[k] ?? 0) ? `${stock[k]} of ` : ''}${n} ${nameOfNeed(k)}`).join(', ');
+const needList = (style, stock = {}) => inventory.isGod() ? 'Free: god mode' : Object.entries(needOf(style)).map(([k, n]) => `${(stock[k] ?? 0) ? `${stock[k]} of ` : ''}${n} ${nameOfNeed(k)}`).join(', ');
 const planMenu = {
 	render() {
 		const c = plan.cabin && cabins.get(plan.cabin);
@@ -515,6 +522,7 @@ const planMenu = {
 			if (survivalNet.authority()) { const why = hostRoom(id, i, j, plan.room); if (why) { help.toast(why, 2.5); return; } }
 			else survivalNet.send('roomFound', { id, i, j, type: plan.room });
 			journal.closeMenu();
+			if (inventory.isGod()) { const c = cabins.get(id); finishFree(c, c.rooms.length - 1); help.toast('Built: free in god mode', 2); return; }
 			help.toast(`Stakes in: E at them with ${needList(plan.room)}`, 4);
 		}
 	},
@@ -544,6 +552,7 @@ function dropStakes() {
 		survivalNet.send('cabinFound', { style: P.style, x: A.x, z: A.z, turn: A.turn });
 	}
 	plan.placing = null;
+	if (inventory.isGod()) { finishFree([...cabins.values()].at(-1), -1); help.toast('Built: free in god mode', 2); return; }
 	help.toast(`Stakes in. E at them with ${needList(P.style)}`, 5);
 }
 window.addEventListener('keydown', (e) => { if (e.code == 'KeyR' && plan.placing && !hunting.input.menuOpen) plan.placing.extraTurn = (plan.placing.extraTurn + 1) & 3; });

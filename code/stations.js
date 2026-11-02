@@ -27,7 +27,7 @@ import * as journal from './journalUI.js'
 		mortar		E: its page (MORTAR)
 		fireplace	a cabin's: E firewood, the lighter. It warms the room
 	IN A GAME (survivalNet.js) the host keeps them, their fires and what is in a smelter: a joiner asks (stationPlace, stationTake: stationBack; stationWood, stationLight, stationOre, stationBars: stationGot), and everyone is told each as it is (stationIs, stationDel); a joiner come in, of all of them.
-	What is made on a page is made out of what the player carries, so there is nothing about that to send. The host's are kept in its browser with the rest of what is built (cabins.js: its save).
+	What is made on a page is made out of what the player carries, so there is nothing about that to send (in god mode, out of nothing: a cauldron still wants its fire). The host's are kept in its browser with the rest of what is built (cabins.js: its save).
 */
 const WOOD = 2.5 / 24;				// days of fuel a firewood gives (as a campfire)
 const SMELT = 1.25 / 24;			// days an ore takes
@@ -253,7 +253,7 @@ export function lightInView() {
 
 // THE PAGES (see the top)
 const nameOf = (type) => ITEMS[type]?.name ?? type;
-function canMake(r) { return Object.entries(r.needs).every(([k, n]) => carried(k) >= n); }
+function canMake(r) { return inventory.isGod() || Object.entries(r.needs).every(([k, n]) => carried(k) >= n); }
 function openPage(s) { journal.openMenu(pageOf(s)); }
 function pageOf(s) {
 	const P = PAGES[s.kind];
@@ -262,7 +262,7 @@ function pageOf(s) {
 		render() {
 			const hot = !P.fire || burning(s);
 			const rows = P.list.map((r, k) => {
-				const needs = Object.entries(r.needs).map(([type, n]) => { const have = carried(type); return `<span class="${have < n ? 'jr-short' : ''}">${n} ${nameOf(type).toLowerCase()}${have < n ? ` (${have})` : ''}</span>`; }).join(' + ');
+				const needs = inventory.isGod() ? 'Free: god mode' : Object.entries(r.needs).map(([type, n]) => { const have = carried(type); return `<span class="${have < n ? 'jr-short' : ''}">${n} ${nameOf(type).toLowerCase()}${have < n ? ` (${have})` : ''}</span>`; }).join(' + ');
 				return `<div class="jr-row"><div><b>${nameOf(r.makes)}${r.count > 1 ? ' × ' + r.count : ''}</b><div class="jr-need">${needs}</div></div><button class="jr-btn" data-act="${k}" ${canMake(r) && hot ? '' : 'disabled'}>Make</button></div>`;
 			}).join('');
 			return `<div class="jr-title" style="font-size: 20px;">${P.title}</div>${P.fire && !hot ? `<div class="jr-short" style="margin-bottom: 6px;">No fire under it: firewood, and the lighter</div>` : ''}${rows}<div class="jr-need" style="margin-top: 10px;">Tab, Esc or F to close</div>`;
@@ -272,7 +272,7 @@ function pageOf(s) {
 }
 function make(r, P, s) {
 	if (!r || !canMake(r) || (P.fire && !burning(s))) return false;
-	for (const [type, n] of Object.entries(r.needs)) takeOut(type, n);
+	if (!inventory.isGod()) for (const [type, n] of Object.entries(r.needs)) takeOut(type, n);
 	giveBack(r.makes, r.count ?? 1);
 	stationStats.made++;
 	weapons.actionSound(s.kind == 'anvil' ? 'knock' : 'click');

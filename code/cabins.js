@@ -12,7 +12,8 @@ import * as transformations from './transformations.js'
 import * as skyCover from './skyCover.js'
 import * as survivalNet from './survivalNet.js'
 import { setGrassHoles } from './computeGrass.js'
-import { CUBE, CUBE_UP, PORCH } from './workMeshes.js'
+import { CUBE, CUBE_UP, PORCH, STAIR_STEPS, STAIR_RISE, STAIR_RADIUS, STAIR_TURN, STAIR_FROM } from './workMeshes.js'
+import { MODELS as FURNITURE } from './interiorMeshes.js'
 import { ITEMS, makeItem, cleanItem } from './items.js'
 import * as inventory from './inventory.js'
 import * as survival from './survival.js'
@@ -26,7 +27,10 @@ import * as journal from './journalUI.js'
 	THE CABINS of the Survival mode: Nordic cabins of dark boards and battens under a green metal roof, built of prefabricated rooms on a grid of cubes (CUBE metres across, CUBE_UP high), planned in the build journal.
 	THE BUILD JOURNAL (T: its own place on the wheel; held, left click: its page, plan): choose a MAIN ROOM (MAINS: cubes across, deep and high; more of them, more wood and nails), and the page shuts. A foundation is laid out in front on the ground, turned by quarters so its door faces the walker
 	(R turns it, left click drives the stakes in, right click thinks better of it). It wants level, clear ground: no trees, no boulders, no water, no town. It is all on a grid of the world's quarter turns, so its walls run true for the walker to walk into (hunting.js: boxes with a halfZ).
-	Held and looked at a main room built, the page is its plan from above instead: choose a ROOM (ROOMS: a cube each) and a square round it, and its foundation goes there. It joins by an opening through the wall. Squares that cannot take one: the one with the door and the one at the fireplace.
+	Held and looked at a main room built, the page is its plan from above instead: choose a ROOM (ROOMS: a cube each) and a square round it, and its foundation goes there. It joins by an opening through the wall. Squares that cannot take one: the one with the door, the one at the fireplace, and on a hall two cubes high the two either side of its stair.
+	A HALL TWO CUBES HIGH has a floor over the first, CUBE_UP up, and a spiral stair (workMeshes.js: spiralStair) up to it in its front corner on the left, through a stairwell (STAIR_WELL) railed round but where the stair comes up. The walker walks up it step by step (the floor under it: stairStep), kept on it by a ring of posts round it, open at its foot and its head. Upstairs, a bed (E sleeps), a nightstand, a wardrobe, a rug, an armchair.
+	FURNISHED: every main room has, as well as what it comes with, a rug before the fire and an armchair turned to it, a table with two chairs and a candle, a barrel in the corner by the fire, a cabinet by the door (interiorMeshes.js: MODELS, the townsfolk's houses' own), each in the way as it stands.
+	HOW IT GOES TOGETHER, so nothing shows through anything: corner boards up its corners; a room has a ceiling under its roof (the hall's eave comes down into the space over it); a room on the front or the back of a hall one cube high has its ridge along the hall's wall, and no eave down into it; rooms side by side share a wall (each its own face of it) and stop their eaves at it; a hall's wall over a room is boards, not a window; a room's gable against the hall is not to be seen; the dormer stands on the front wall.
 	WHAT IT TAKES: each wants what its walls take (MAINS, ROOMS: wood, nails) and what goes in it (FURNISHED: as these things cost to make). Stakes and twine mark it until then: E at them puts in whatever of that is carried (hide: any). F takes up a foundation not yet built, and gives it all back.
 	In god mode it costs nothing: it stands as soon as its stakes are in, and E finishes one staked out before. Once it has it all, it stands. Every room comes with what is in it: a main room a bedroll, a chest and a fireplace (stations.js); a bedroom two bedrolls and two big chests; a kitchen a cauldron and a mortar; a workshop an anvil and a smelter. E sleeps on a bedroll (bedrolls.js), the chests are loot.js's containers.
 	IN A GAME (survivalNet.js) the host keeps them all: a joiner asks (cabinFound, roomFound, cabinGive: anything it would not take, cabinBack; cabinTakeUp: cabinBack), everyone is told of each as it is (cabinIs, cabinDel), and a joiner come in, of all of them.
@@ -63,13 +67,19 @@ const doorI = (M) => Math.floor(M.w / 2);
 const FIRE_I = 0;					// the fireplace is on the back wall of the first column
 const mid = (M, i, j) => [(i + 0.5 - M.w / 2) * CUBE, (j + 0.5 - M.d / 2) * CUBE];
 // out from the main room: which way a square round it lies. null: not one
-function sideOf(M, i, j) {
+// (a hall two cubes high has its stair in its front corner on the left: no room on the squares either side of it)
+const stairBlocks = (M, i, j) => M.h > 1 && ((i == -1 && j == M.d - 1) || (i == 0 && j == M.d));
+const STAIR_WELL = 2.3;				// metres square, the stairwell
+const stairOf = (M) => [-M.w * CUBE / 2 + STAIR_WELL / 2, M.d * CUBE / 2 - STAIR_WELL / 2];
+// which way a square lies out from it, a room on it or not (one built before the stair kept it clear still stands there)
+function sideRaw(M, i, j) {
 	if (i >= 0 && i < M.w && j == -1) return i == FIRE_I ? null : [0, -1];
 	if (i >= 0 && i < M.w && j == M.d) return i == doorI(M) ? null : [0, 1];
 	if (j >= 0 && j < M.d && i == -1) return [-1, 0];
 	if (j >= 0 && j < M.d && i == M.w) return [1, 0];
 	return null;
 }
+const sideOf = (M, i, j) => stairBlocks(M, i, j) ? null : sideRaw(M, i, j);
 export const slotsOf = (M) => { const out = []; for (let i = -1; i <= M.w; i++) for (let j = -1; j <= M.d; j++) if (sideOf(M, i, j)) out.push([i, j]); return out; };
 const headingOf = ([dx, dz]) => Math.atan2(dx, dz);
 // a place in a cabin's own metres (its floor at y = 0), in the world
@@ -230,7 +240,7 @@ survivalNet.on('cabinTakeUp', (m, from) => { if (survivalNet.authority()) { cons
 function frameOf(c, roomK) {
 	const M = MAINS[c.style];
 	if (roomK < 0) return { place: (x, y, z) => worldOf(c, x, y, z), heading: (h) => headingIn(c, h) };
-	const r = c.rooms[roomK], [cx, cz] = mid(M, r.i, r.j), h = headingOf(sideOf(M, r.i, r.j)), co = Math.round(Math.cos(h)), si = Math.round(Math.sin(h));
+	const r = c.rooms[roomK], [cx, cz] = mid(M, r.i, r.j), h = headingOf(sideRaw(M, r.i, r.j)), co = Math.round(Math.cos(h)), si = Math.round(Math.sin(h));
 	return { place: (x, y, z) => worldOf(c, cx + x * co + z * si, y, cz - x * si + z * co), heading: (a) => headingIn(c, h + a) };
 }
 // what stands in each, in its own metres (+z out; x either way): [kind, x, z, its heading]
@@ -265,6 +275,8 @@ function bedsOf(c) {
 	if (!c.built) return out;
 	const F = frameOf(c, -1), P = MAIN_FURNISH(MAINS[c.style]);
 	out.push({ id: c.id + 'bed', at: F.place(P.bed[0], 0.02, P.bed[1]), yaw: F.heading(P.bed[2]) });
+	const M = MAINS[c.style];
+	if (M.h > 1) out.push({ id: c.id + 'loft', at: F.place(M.w * CUBE / 2 - 0.75, CUBE_UP + 0.5, -M.d * CUBE / 2 + 1.15), yaw: F.heading(Math.PI) });
 	c.rooms.forEach((r, k) => {
 		if (!r.built) return;
 		const G = frameOf(c, k);
@@ -278,7 +290,7 @@ const shapes = new Map();
 function shapeOf(c) {
 	const made = shapes.get(c.id);
 	if (made) return made;
-	const out = { outer: [], inner: [], roofs: [], boxes: [], floors: [], smoke: null };
+	const out = { outer: [], inner: [], roofs: [], boxes: [], floors: [], smoke: null, stair: null };
 	const m = metre(), M = MAINS[c.style], base = headingIn(c, 0);
 	const put = (list, name, x, y, z, h, sx = 1, sy = 1, sz = 1) => {
 		const at = worldOf(c, x, y, z);
@@ -291,15 +303,16 @@ function shapeOf(c) {
 		const a = worldOf(c, x0, y0, z0), b = worldOf(c, x1, y1, z1);
 		out.boxes.push([(a[0] + b[0]) / 2, (a[2] + b[2]) / 2, Math.abs(a[0] - b[0]) / 2, a[1], b[1], Math.abs(a[2] - b[2]) / 2]);
 	};
-	const floorOf = (x0, z0, x1, z1) => {
+	const floorOf = (x0, z0, x1, z1, y = 0) => {
 		const a = worldOf(c, x0, 0, z0), b = worldOf(c, x1, 0, z1);
-		out.floors.push([Math.min(a[0], b[0]), Math.min(a[2], b[2]), Math.max(a[0], b[0]), Math.max(a[2], b[2]), c.at[1]]);
+		out.floors.push([Math.min(a[0], b[0]), Math.min(a[2], b[2]), Math.max(a[0], b[0]), Math.max(a[2], b[2]), c.at[1] + y * m]);
 	};
-	// one wall's width of wall, on an edge's middle (x, z), its outside towards h; kind: 'wall', 'window', 'door', 'gap' (through to a room). tier: how far up, in cubes
+	// one wall's width of wall, on an edge's middle (x, z), its outside towards h; kind: 'wall', 'window', 'door', 'gap' (through to a room), 'inner' (its inside only: a
+	//		wall two rooms share, each its own face of it). tier: how far up, in cubes
 	const edge = (x, z, h, kind, tier = 0) => {
 		const y = tier * CUBE_UP;
-		if (kind != 'gap') put(out.outer, kind + 'Out', x, y, z, h);
-		put(out.inner, kind + 'In', x, y, z, h);
+		if (kind != 'gap' && kind != 'inner') put(out.outer, kind + 'Out', x, y, z, h);
+		put(out.inner, kind == 'inner' ? 'wallIn' : kind + 'In', x, y, z, h);
 		const dx = Math.round(Math.cos(h)), dz = -Math.round(Math.sin(h));		// along it
 		const t = 0.34, top = y + CUBE_UP;		// (more than the wall: the eye sees nothing nearer than half a metre, so the walker is kept that far off it)
 		const piece = (a, b, y0, y1) => wall(x + dx * a - Math.abs(dz) * t, z + dz * a - Math.abs(dx) * t, x + dx * b + Math.abs(dz) * t, z + dz * b + Math.abs(dx) * t, y0, y1);
@@ -311,15 +324,21 @@ function shapeOf(c) {
 			piece(-hw, hw, y + tall, top);
 		} else piece(-W, W, y, top);
 	};
-	// a gabled roof on a rectangle (hx, hz half across, in a frame at (x, z) turned h: its ridge along its x), on walls up to y
-	//		joined: 0, or 1 or -1, the end of it (along its x) that stands against a higher wall: no eave out past that end, and no gable to be seen on its far side
-	const roof = (x, z, h, hx, hz, y, joined = 0, wallAbove = false) => {
+	// a gabled roof on a rectangle (hx, hz half across, in a frame at (x, z) turned h: its ridge along its x), on walls up to y.
+	//		ends: the ends of it (along its x: -1, 1) that stand against a wall: no eave out past them, and no gable to be seen outside.
+	//		slopes: the sides of it (along its z: -1, 1) whose eave would come down into something (the hall's wall, the room beside it): they stop at their wall.
+	//		columns: its slopes in so many pieces along it, and bare(s, k): piece k of slope s has no eave either (over a room against the wall under it)
+	const roof = (x, z, h, hx, hz, y, { ends = [], slopes = [], columns = 1, bare = () => false } = {}) => {
 		const co = Math.round(Math.cos(h)), si = Math.round(Math.sin(h));
 		const local = (a, b) => [x + a * co + b * si, z - a * si + b * co];
-		const run = hz, rise = run * PITCH, drop = EAVE * PITCH, len = hx * 2 + EAVE * (joined ? 1 : 2), along = joined ? -joined * EAVE / 2 : 0;
+		const run = hz, rise = run * PITCH, out0 = ends.includes(-1) ? 0 : EAVE, out1 = ends.includes(1) ? 0 : EAVE, len = hx * 2 + out0 + out1, along = (out1 - out0) / 2;
 		for (const [s, turn] of [[1, Math.PI], [-1, 0]]) {
-			const [ex, ez] = local(along, s * (hz + EAVE));
-			put(out.roofs, 'roofOut', ex, y - drop, ez, h + turn, len, rise + drop, run + EAVE);
+			for (let k = 0; k < columns; k++) {
+				const a0 = -hx + k * hx * 2 / columns - (k == 0 ? out0 : 0), a1 = -hx + (k + 1) * hx * 2 / columns + (k == columns - 1 ? out1 : 0);
+				const eave = slopes.includes(s) || bare(s, k) ? 0 : EAVE;
+				const [ex, ez] = local((a0 + a1) / 2, s * (hz + eave));
+				put(out.roofs, 'roofOut', ex, y - eave * PITCH, ez, h + turn, a1 - a0, rise + eave * PITCH, run + eave);
+			}
 			const [ix, iz] = local(0, s * hz);
 			put(out.inner, 'roofIn', ix, y - 0.08, iz, h + turn, hx * 2, rise, run);
 		}
@@ -327,9 +346,20 @@ function shapeOf(c) {
 		put(out.roofs, 'ridge', rx, y + rise + 0.015, rz, h, len, 1, 1);
 		for (const s of [1, -1]) {
 			const [gx, gz] = local(s * hx, 0);
-			if (!(joined == s && wallAbove)) put(out.outer, 'gableOut', gx + (co * s) * 0.1, y, gz - (si * s) * 0.1, h + s * Math.PI / 2, hz * 2, rise, 1);
+			if (!ends.includes(s)) put(out.outer, 'gableOut', gx + (co * s) * 0.1, y, gz - (si * s) * 0.1, h + s * Math.PI / 2, hz * 2, rise, 1);
 			put(out.inner, 'gableIn', gx - (co * s) * 0.1, y, gz + (si * s) * 0.1, h - s * Math.PI / 2, hz * 2, rise, 1);
 		}
+	};
+	// a board up a corner (x, z), from y0 to y1
+	const corner = (x, z, y0, y1) => put(out.outer, 'cornerBoard', x, y0, z, 0, 0.22, y1 - y0, 0.22);
+	// a piece of furniture (interiorMeshes.js: MODELS) at (x, y, z) turned a, and what of it is in the way (turned other than by quarters: the bigger of its sides both ways)
+	const furnish = (name, x, y, z, a = 0) => {
+		put(out.inner, name, x, y, z, a);
+		const F = FURNITURE[name];
+		if (!F || F.solid === false) return;
+		const q = Math.abs(Math.sin(a)), quarter = q < 0.01 || q > 0.99, big = Math.max(F.hw, F.hd);
+		const hw = !quarter ? big : q > 0.5 ? F.hd : F.hw, hd = !quarter ? big : q > 0.5 ? F.hw : F.hd;
+		wall(x - hw, z - hd, x + hw, z + hd, y, y + F.h);
 	};
 	if (c.built) {
 		const hx = M.w * CUBE / 2, hz = M.d * CUBE / 2, under = c.at[1] - c.low;
@@ -338,28 +368,33 @@ function shapeOf(c) {
 		put(out.inner, 'floorTile', 0, 0.01, 0, 0, hx * 2, 1, hz * 2);
 		floorOf(-hx - 0.1, -hz - 0.1, hx + 0.1, hz + 0.1);
 		const roomAt = (i, j) => c.rooms.find((r) => r.built && r.i == i && r.j == j);
-		// its walls, round it: tier by tier. On the front the door, then windows and boards by turns
+		// its walls, round it: tier by tier. On the front the door, then windows and boards by turns. Where a room stands against it: the way through to it, and
+		//		over that boards (the room's roof comes up against them)
 		for (let tier = 0; tier < M.h; tier++) {
+			const roomed = (r) => tier == 0 ? 'gap' : 'wall';
 			for (let i = 0; i < M.w; i++) {
 				const x = (i + 0.5 - M.w / 2) * CUBE;
-				edge(x, hz, 0, tier == 0 && i == doorI(M) ? 'door' : tier == 0 && roomAt(i, M.d) ? 'gap' : (i + tier) % 2 == 0 || M.w == 2 ? 'window' : 'wall', tier);
-				edge(x, -hz, Math.PI, tier == 0 && roomAt(i, -1) ? 'gap' : tier == 0 && i == FIRE_I ? 'wall' : (i + tier) % 2 == 1 ? 'window' : 'wall', tier);
+				edge(x, hz, 0, tier == 0 && i == doorI(M) ? 'door' : roomAt(i, M.d) ? roomed() : (i + tier) % 2 == 0 || M.w == 2 ? 'window' : 'wall', tier);
+				edge(x, -hz, Math.PI, roomAt(i, -1) ? roomed() : tier == 0 && i == FIRE_I ? 'wall' : (i + tier) % 2 == 1 ? 'window' : 'wall', tier);
 			}
 			for (let j = 0; j < M.d; j++) {
 				const z = (j + 0.5 - M.d / 2) * CUBE;
-				edge(hx, z, Math.PI / 2, tier == 0 && roomAt(M.w, j) ? 'gap' : (j + tier) % 2 == 0 ? 'window' : 'wall', tier);
-				edge(-hx, z, -Math.PI / 2, tier == 0 && roomAt(-1, j) ? 'gap' : (j + tier) % 2 == 1 ? 'window' : 'wall', tier);
+				edge(hx, z, Math.PI / 2, roomAt(M.w, j) ? roomed() : (j + tier) % 2 == 0 ? 'window' : 'wall', tier);
+				edge(-hx, z, -Math.PI / 2, roomAt(-1, j) ? roomed() : (j + tier) % 2 == 1 ? 'window' : 'wall', tier);
 			}
 		}
 		const top = M.h * CUBE_UP;
-		roof(0, 0, 0, hx, hz, top);
-		// a tall one has a window in its roof over the door
-		if (M.h > 1 && M.d > 1) put(out.outer, 'dormer', 0, top + 0.1, hz * 0.36, 0);
-		// the porch, its roof and its steps
+		// (one cube high, a room on its front or back has its roof up under this one's eave: no eave over it, the two meet at the wall)
+		roof(0, 0, 0, hx, hz, top, M.h == 1 ? { columns: M.w, bare: (s, k) => !!roomAt(k, s > 0 ? M.d : -1) } : {});
+		// boards up its corners
+		for (const [a, b] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) corner(a * (hx + 0.05), b * (hz + 0.05), -0.05, top);
+		// a tall one has a window in its roof over the door, standing on the front wall
+		if (M.h > 1 && M.d > 1) put(out.outer, 'dormer', 0, top - 0.02, hz - 0.12, 0);
+		// the porch, its roof (not out over a room beside it) and its steps
 		const doorX = (doorI(M) + 0.5 - M.w / 2) * CUBE;
 		put(out.outer, 'porch', doorX, 0, hz + 0.1, 0);
-		const lean = PORCH + EAVE;
-		put(out.roofs, 'roofOut', doorX, 2.5, hz + 0.1 + lean, Math.PI, CUBE + 0.3, Math.max(top * 0.14, 0.45), lean);
+		const lean = PORCH + EAVE, trimL = roomAt(doorI(M) - 1, M.d) ? 0.5 : 0, trimR = roomAt(doorI(M) + 1, M.d) ? 0.5 : 0;
+		put(out.roofs, 'roofOut', doorX + (trimL - trimR) / 2, 2.5, hz + 0.1 + lean, Math.PI, CUBE + 0.3 - trimL - trimR, Math.max(top * 0.14, 0.45), lean);
 		floorOf(doorX - CUBE / 2, hz, doorX + CUBE / 2, hz + 0.1 + PORCH);
 		const [fx, , fz] = worldOf(c, doorX, 0, hz + 0.1 + PORCH + 0.5);
 		const ground = terrain.land?.heightAt(fx, fz) ?? c.low, rise = (c.at[1] - ground) / m;
@@ -379,24 +414,76 @@ function shapeOf(c) {
 		put(out.inner, 'chest', P.chest[0], 0, P.chest[1], P.chest[2]);
 		wall(P.chest[0] - 0.46, P.chest[1] - 0.3, P.chest[0] + 0.46, P.chest[1] + 0.3, 0, 0.5);
 		put(out.inner, 'bedrollFlat', P.bed[0], 0.02, P.bed[1], P.bed[2]);
-		// the rooms on it
+		// FURNISHED (see the top): the fire's side of the room, the table, the corners
+		const fire = P.fire[0], tall = M.h > 1;
+		furnish('rug', fire + (tall ? 0.7 : 0), 0.005, -hz + 1.75, 0);
+		const ax = fire + 1.4, az = -hz + 2.05;
+		furnish('armchair', ax, 0, az, Math.atan2(fire - ax, -hz + 0.55 - az));
+		const tx = M.w == 2 ? -hx + 2.4 : 1.7, tz = M.d == 1 ? -0.35 : tall ? 1.0 : 1.7;
+		furnish('tableLong', tx, 0, tz, 0);
+		furnish('chair', tx - 0.45, 0, tz - 0.85, 0);
+		furnish('chair', tx + 0.45, 0, tz + 0.85, Math.PI);
+		put(out.inner, 'candle', tx + 0.35, 0.8, tz, 0);
+		furnish('barrel', -hx + 0.45, 0, -hz + 0.45, 0);
+		furnish('cabinet', hx - 0.6, 0, hz - 0.36, Math.PI);
+		// A HALL TWO CUBES HIGH (see the top): the floor over, round the stairwell; the stair and what keeps the walker on it; the rail round the well; upstairs
+		if (tall) {
+			const y1 = CUBE_UP, S = STAIR_WELL, [sx, sz] = stairOf(M);
+			const slab = (x0, z0, x1, z1) => { put(out.inner, 'plank', (x0 + x1) / 2, y1 - 0.1, (z0 + z1) / 2, 0, x1 - x0, 0.1, z1 - z0); floorOf(x0, z0, x1, z1, y1); };
+			slab(-hx + S, -hz, hx, hz);
+			slab(-hx, -hz, -hx + S, hz - S);
+			put(out.inner, 'spiralStair', sx, 0, sz, 0);
+			out.stair = [sx, sz];
+			wall(sx - 0.1, sz - 0.1, sx + 0.1, sz + 0.1, 0, y1 + 1);
+			for (let k = 0; k < 20; k++) {
+				const a = k / 20 * Math.PI * 2, rel = ((a - STAIR_FROM) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+				if (rel < STAIR_TURN * 2.2 || rel > Math.PI * 2 - STAIR_TURN * 1.2) continue;		// (its foot, and its head)
+				const px = sx + Math.sin(a) * (STAIR_RADIUS + 0.12), pz = sz + Math.cos(a) * (STAIR_RADIUS + 0.12);
+				wall(px - 0.09, pz - 0.09, px + 0.09, pz + 0.09, 0, y1);
+			}
+			const rail = (x0, z0, x1, z1) => {
+				const len = Math.hypot(x1 - x0, z1 - z0), n = Math.max(Math.round(len), 1), alongX = x1 != x0;
+				for (let k = 0; k < n; k++) put(out.inner, 'railing', x0 + (x1 - x0) * (k + 0.5) / n, y1, z0 + (z1 - z0) * (k + 0.5) / n, alongX ? 0 : Math.PI / 2, len / n, 1, 1);
+				wall(Math.min(x0, x1) - 0.05, Math.min(z0, z1) - 0.05, Math.max(x0, x1) + 0.05, Math.max(z0, z1) + 0.05, y1, y1 + 1);
+			};
+			rail(-hx + 0.1, hz - S, -hx + S, hz - S);
+			rail(-hx + S, hz - S, -hx + S, sz - 0.6);
+			rail(-hx + S, sz + 0.6, -hx + S, hz - 0.1);
+			// (the chimney, on up through the floor over)
+			wall(fire - 0.5, -hz, fire + 0.5, -hz + 0.82, y1, top);
+			furnish('bed', hx - 0.75, y1, -hz + 1.15, 0);
+			furnish('nightstand', hx - 1.65, y1, -hz + 0.35, 0);
+			put(out.inner, 'candle', hx - 1.65, y1 + 0.6, -hz + 0.35, 0);
+			furnish('wardrobe', hx - 0.42, y1, Math.min(-hz + 2.9, hz - 0.8), -Math.PI / 2);
+			furnish('rug', 0.6, y1 + 0.005, 0, 0);
+			furnish('armchair', -hx + 3.4, y1, -hz + 0.8, 0.3);
+		}
+		// the rooms on it (see HOW IT GOES TOGETHER at the top)
 		for (const r of c.rooms) {
 			if (!r.built) continue;
-			const [cx, cz] = mid(M, r.i, r.j), dir = sideOf(M, r.i, r.j), h = headingOf(dir), co = Math.round(Math.cos(h)), si = Math.round(Math.sin(h)), W = CUBE / 2;
+			const [cx, cz] = mid(M, r.i, r.j), dir = sideRaw(M, r.i, r.j), h = headingOf(dir), co = Math.round(Math.cos(h)), si = Math.round(Math.sin(h)), W = CUBE / 2;
 			const local = (a, b) => [cx + a * co + b * si, cz - a * si + b * co];
+			// (the room beside it on the same side of the hall: at its +W, s 1, or its -W)
+			const near = (s) => !!roomAt(r.i + s * co, r.j - s * si);
 			put(out.outer, 'block', cx, -(c.at[1] - r.low) / m - 0.4, cz, 0, CUBE + 0.25, (c.at[1] - r.low) / m + 0.38, CUBE + 0.25);
 			put(out.inner, 'floorTile', cx, 0.012, cz, 0, CUBE, 1, CUBE);
+			put(out.inner, 'floorTile', cx, 2.5, cz, 0, CUBE, 1, CUBE);		// (its ceiling)
 			const q = local(-W - 0.1, -W - 0.3), e = local(W + 0.1, W + 0.1);
 			floorOf(Math.min(q[0], e[0]), Math.min(q[1], e[1]), Math.max(q[0], e[0]), Math.max(q[1], e[1]));
 			const [ox, oz] = local(0, W);
 			edge(ox, oz, h, 'window');
 			const [sx1, sz1] = local(W, 0), [sx2, sz2] = local(-W, 0);
-			edge(sx1, sz1, h + Math.PI / 2, 'wall');
-			edge(sx2, sz2, h - Math.PI / 2, 'wall');
+			edge(sx1, sz1, h + Math.PI / 2, near(1) ? 'inner' : 'wall');
+			edge(sx2, sz2, h - Math.PI / 2, near(-1) ? 'inner' : 'wall');
 			const [ix, iz] = local(0, -W);
 			edge(ix, iz, h + Math.PI, 'gap');
-			// (its ridge out from the main room: its roof's own x along that)
-			roof(cx, cz, h - Math.PI / 2, W, W, CUBE_UP, -1, M.h > 1);
+			{ const [bx, bz] = local(W + 0.05, W + 0.05); corner(bx, bz, -0.05, CUBE_UP); }
+			if (!near(-1)) { const [bx, bz] = local(-W - 0.05, W + 0.05); corner(bx, bz, -0.05, CUBE_UP); }
+			// its roof: on the front or the back of a hall one cube high, its ridge along the hall's wall (under the hall's eave, and none down into it); otherwise its
+			//		ridge out from the hall's wall, which stands over it
+			const beside = (a, b) => [...(near(1) ? [a] : []), ...(near(-1) ? [b] : [])];
+			if (M.h == 1 && dir[0] == 0) roof(cx, cz, h, W, W, CUBE_UP, { ends: beside(1, -1), slopes: [-1] });
+			else roof(cx, cz, h - Math.PI / 2, W, W, CUBE_UP, { ends: [-1], slopes: beside(-1, 1) });
 			const P2 = ROOM_FURNISH[r.type];
 			for (const [x, z, a] of P2.beds) { const [bx, bz] = local(x, z); put(out.inner, 'bedrollFlat', bx, 0.02, bz, h + a); }
 			for (const [x, z, a] of P2.chests) { const [bx, bz] = local(x, z); put(out.inner, 'chest', bx, 0, bz, h + a); const s = CHEST.big; out.inner[out.inner.length - 1][1] = props.place(worldOf(c, bx, 0, bz), base + h + a, 0, 0, s); wall(bx - 0.62, bz - 0.62, bx + 0.62, bz + 0.62, 0, 0.7); }
@@ -570,10 +657,20 @@ hunting.addFloor((x, z, highest) => {
 	let floor = -Infinity;
 	for (const c of cabins.values()) {
 		if (!c.built || c.at[1] > highest) continue;
-		for (const [x0, z0, x1, z1, y] of shapeOf(c).floors) if (x > x0 && x < x1 && z > z0 && z < z1 && y <= highest) floor = Math.max(floor, y);
+		const S = shapeOf(c);
+		for (const [x0, z0, x1, z1, y] of S.floors) if (x > x0 && x < x1 && z > z0 && z < z1 && y <= highest) floor = Math.max(floor, y);
+		if (S.stair) { const y = stairStep(c, S.stair, x, z); if (y !== null && y <= highest) floor = Math.max(floor, y); }
 	}
 	return floor;
 });
+// the top of the stair's step over (x, z) (the world's), or null: off it
+function stairStep(c, [sx, sz], wx, wz) {
+	const m = metre(), h = c.turn * Math.PI / 2, co = Math.round(Math.cos(h)), si = Math.round(Math.sin(h));
+	const dx = (wx - c.at[0]) / m, dz = (wz - c.at[2]) / m, x = dx * co - dz * si - sx, z = dx * si + dz * co - sz;
+	if (Math.hypot(x, z) > STAIR_RADIUS + 0.05) return null;
+	const rel = ((Math.atan2(x, z) - STAIR_FROM) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+	return c.at[1] + (Math.min(Math.floor(rel / STAIR_TURN), STAIR_STEPS - 1) + 1) * STAIR_RISE * m;
+}
 // (the roofs in the picture from above: skyCover.js)
 skyCover.addProps((put) => { for (const c of cabins.values()) if (c.built) for (const [name, model] of shapeOf(c).roofs) put(name, model); });
 // the picture of what is in the way, for stations set up near (a place's own question)

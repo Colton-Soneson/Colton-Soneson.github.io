@@ -18,8 +18,15 @@ import * as vm from './viewmodel.js'
 		roofOut, roofIn				one slope, a unit each way: its eave along x at y = 0, z = 0, up to its ridge at y = 1, z = 1. Scaled to fit
 		gableOut, gableIn			the wall up under a roof's end, a unit across and a unit high. Scaled to fit
 		floorTile, block, plank, ridge, dormer, porch, hearth	a floor (a unit square), a block of stone (a unit, its foot on y = 0), a board, the ridge's cap, a window in the roof, the posts of a porch, a fireplace
+		spiralStair		the stair of a hall two cubes high (cabins.js: STAIR): a post, its steps round it one turn up to the floor over, a handrail on the outside
+		railing			a metre of rail round the stairwell (posts, a top and a bottom rail: laid end to end), cornerBoard: a board up a corner (stretched)
 */
+
 export const CUBE = 4, CUBE_UP = 3;		// metres
+// THE SPIRAL STAIR (cabins.js): STAIR_STEPS steps of STAIR_RISE each round a post, a whole turn: step k from the angle STAIR_FROM + k turns of a step (an
+//		angle round from +z towards +x: +x at a quarter turn), its top at (k + 1) rises. So its top step comes out over its foot, a floor up
+export const STAIR_STEPS = 15, STAIR_RISE = CUBE_UP / STAIR_STEPS, STAIR_RADIUS = 1.0;
+export const STAIR_TURN = Math.PI * 2 / STAIR_STEPS, STAIR_FROM = Math.PI / 2 + STAIR_TURN / 2;
 const ICE = 86, ORE_ROCK = 88, ORE = 89, SOIL = 90, WHEAT_GREEN = 91, WHEAT_GOLD = 92, CAST_IRON = 93, FIRE_STONE = 94, CAP = 95, STEM = 96, WALL = 97, ROOF = 98, WINDOW = 99, TWINE = 100, STAKE = 101,
 	INNER = 103, FLOOR = 104, PLINTH = 105, SOOT = 106, EMBER = 107, BOARDS = 30, LEATHER = 42;
 
@@ -307,7 +314,31 @@ function hearth() {
 	return m;
 }
 
-const MAKERS = { iceTile, oreSmall, oreMid, oreBig, mushroom, smelter, smelterFire, anvil, cauldron, mortar, chest, farmBed,
+function spiralStair() {
+	const m = vm.meshBuilder(), R = STAIR_RADIUS, at = (a, r, y) => [Math.sin(a) * r, y, Math.cos(a) * r];
+	m.strut([0, 0, 0], [0, CUBE_UP + 0.95, 0], 0.075, 0.075, 8, STAKE);
+	for (let k = 0; k < STAIR_STEPS; k++) {
+		const a0 = STAIR_FROM + k * STAIR_TURN, a1 = a0 + STAIR_TURN * 1.02, top = (k + 1) * STAIR_RISE, y0 = top - 0.06;
+		const ring = (y) => [at(a0, 0.07, y), at(a0, R, y), at(a1, R, y), at(a1, 0.07, y)];
+		m.loft([ring(y0), ring(top)], FLOOR, 0, [0, 1]);
+		// a baluster at its outer edge, and the handrail on to the next
+		const am = a0 + STAIR_TURN / 2;
+		m.strut(at(am, R - 0.04, top), at(am, R - 0.04, top + 0.92), 0.016, 0.016, 3, STAKE);
+		m.strut(at(am, R - 0.04, top + 0.92), at(am + STAIR_TURN, R - 0.04, top + STAIR_RISE + 0.92), 0.025, 0.025, 4, STAKE);
+	}
+	return m;
+}
+function railing() {
+	const m = vm.meshBuilder();
+	box(m, -0.5, 0.5, 0.93, 1.0, -0.035, 0.035, STAKE);
+	box(m, -0.5, 0.5, 0.08, 0.13, -0.025, 0.025, STAKE);
+	for (const x of [-0.46, 0.46]) box(m, x - 0.04, x + 0.04, 0, 1.0, -0.04, 0.04, STAKE);
+	for (let k = 1; k < 6; k++) { const x = -0.5 + k / 6; box(m, x - 0.014, x + 0.014, 0.13, 0.93, -0.014, 0.014, STAKE); }
+	return m;
+}
+function cornerBoard() { const m = vm.meshBuilder(); box(m, -0.5, 0.5, 0, 1, -0.5, 0.5, STAKE); return m; }
+
+const MAKERS = { spiralStair, railing, cornerBoard, iceTile, oreSmall, oreMid, oreBig, mushroom, smelter, smelterFire, anvil, cauldron, mortar, chest, farmBed,
 	wheat1: () => wheat(0.12, 40, WHEAT_GREEN), wheat2: () => wheat(0.32, 70, WHEAT_GREEN), wheat3: () => wheat(0.62, 100, WHEAT_GREEN), wheat4: () => wheat(0.85, 90, WHEAT_GOLD, WHEAT_GOLD), stake, twine,
 	wallOut: () => outside(null), wallIn: () => inside(null), windowOut, windowIn, doorOut: () => outside(DOOR_HOLE, STAKE), doorIn, gapIn: () => inside(GAP_HOLE),
 	roofOut: () => roofPiece(ROOF, 8), roofIn: () => roofPiece(INNER, 0), gableOut: () => gable(WALL, 8), gableIn: () => gable(INNER, 0), floorTile, block: () => block(PLINTH), plank: () => block(FLOOR), ridge, dormer, porch, hearth };

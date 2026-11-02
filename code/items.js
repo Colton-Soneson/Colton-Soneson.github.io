@@ -83,6 +83,11 @@ export const ITEMS = {
 	mooseHide: { name: 'Moose hide', w: 3, h: 2, kg: 9, price: 20, icon: 'pelt', tint: '#5a4630', detail: 'A big, valuable hide. The butcher pays well for it' },
 	bearHide: { name: 'Bear hide', w: 3, h: 2, kg: 8, price: 32, icon: 'pelt', tint: '#3a2a1c', detail: 'A rare and very valuable hide. The butcher pays well for it' },
 	bigBones: { name: 'Big bones', w: 2, h: 1, stack: 4, kg: 1, price: 1.6, icon: 'bones', tint: '#d8ceb0', detail: 'From a moose or a bear. The butcher buys them' },
+	// the cooking spit (spit.js): its one slot, the meat on it (item.meat)
+	spit: { name: 'Cooking spit', slot: ['secondary', 'item'], w: 5, h: 1, kg: 0.4, price: 1, weapon: 'spit', spit: true, icon: 'spit', tint: '#8a6a44', detail: 'Held: right click puts raw meat on it, left click holds it out over a campfire to cook. Take it off before it burns' },
+	ratMeat: { name: 'Raw rat', slot: ['item'], w: 1, h: 1, stack: 6, price: 0.1, food: 3, stress: 10, weapon: 'eat', cooksTo: 'cookedRat', icon: 'meat', tint: '#9a5a50', detail: 'Hunger -3, raw: stress +10. Cook it on a spit' },
+	cookedRat: { name: 'Cooked rat', slot: ['item'], w: 1, h: 1, stack: 6, price: 0.2, food: 9, weapon: 'eat', icon: 'meat', tint: '#6a4a30', detail: 'Hunger -9' },
+	burntMeat: { name: 'Burnt meat', slot: ['item'], w: 1, h: 1, stack: 6, price: 0.02, food: 2, drink: -14, weapon: 'eat', icon: 'meat', tint: '#2a2220', detail: 'Hunger -2, thirst +14. Left too long on the spit' },
 	// the iron and the stone (mining.js, stations.js), the land's (farms.js), and what is made of them
 	nails: { name: 'Nails', w: 1, h: 1, stack: 50, kg: 0.01, price: 0.05, icon: 'nails', tint: '#6a6a70', detail: 'For building a cabin. The blacksmith sells them; ten on the anvil from an iron bar' },
 	pickaxe: { name: 'Pickaxe', slot: ['secondary', 'item'], w: 1, h: 3, kg: 2, price: 7, weapon: 'pickaxe', icon: 'pickaxe', tint: '#7a6a58', detail: 'Breaks out iron ore from a vein on the mountainside, and stone from a boulder' },
@@ -157,6 +162,7 @@ export function cleanItem(raw) {
 	if (it.grid) item.contents = (raw.contents ?? []).map(cleanItem).filter(Boolean);
 	if (it.attach) item.attached = Array.from({ length: it.attach }, (_, k) => cleanItem(raw.attached?.[k]) ?? null);
 	if (it.chamber) item.loaded = Math.max(0, Math.min(it.chamber, raw.loaded | 0));
+	if (it.spit) item.meat = raw.meat && ITEMS[raw.meat.type] ? { type: raw.meat.type, cook: Math.max(0, Math.min(Number(raw.meat.cook) || 0, 2)) } : null;
 	return item;
 }
 
@@ -232,6 +238,7 @@ export const ICONS = {
 	pills: 'M11 6 L29 6 L29 11 L11 11 Z M12 12 L28 12 L28 36 L12 36 Z M15 20 L25 20 L25 28 L15 28 Z',
 	splint: 'M12 3 L19 3 L19 37 L12 37 Z M22 3 L29 3 L29 37 L22 37 Z M8 11 L33 11 L33 15 L8 15 Z M8 26 L33 26 L33 30 L8 30 Z',
 	needle: 'M32 4 L36 8 L10 34 L5 36 L7 30 Z M28 8 L32 12 L30 14 L26 10 Z M4 12 Q14 4 22 12 Q12 10 8 20 Z',
+	spit: 'M2 22 L36 16 L37 18 L3 24 Z M30 13 L38 17 L31 21 Z',
 	nails: 'M8 6 L16 6 L16 9 L13 9 L13 32 L12 36 L11 32 L11 9 L8 9 Z M22 10 L30 10 L30 13 L27 13 L27 34 L26 38 L25 34 L25 13 L22 13 Z',
 	pickaxe: 'M4 12 Q20 2 36 12 L33 14 Q20 7 7 14 Z M18 8 L22 8 L22 38 L18 38 Z',
 	hoe: 'M18 2 L22 2 L22 38 L18 38 Z M10 4 L30 4 L30 8 L26 8 L26 16 L14 16 L14 8 L10 8 Z',

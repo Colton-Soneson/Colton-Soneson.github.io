@@ -61,8 +61,8 @@ export const vf_props =
 		// four legs (rig: x where in its stride, y how far it is walking, z head down, w its kind; the mesh's parts: 1 the neck and head, 2 to 5 the legs, as vf_deer.js)
 		if (I.rig.w > 0.5) {
 			// its kind's: its hips' height, its knees', how far forward its front hips are and its hind ones; and the foot of its neck, its height and how far forward
-			var rigs = array<vec4f, 4>(vec4f(0.0), vec4f(1.25, 0.66, 0.68, -0.78), vec4f(0.56, 0.3, 0.38, -0.42), vec4f(0.62, 0.32, 0.56, -0.6));
-			var necks = array<vec2f, 4>(vec2f(0.0), vec2f(1.6, 0.8), vec2f(0.68, 0.46), vec2f(0.88, 0.72));
+			var rigs = array<vec4f, 6>(vec4f(0.0), vec4f(1.25, 0.66, 0.68, -0.78), vec4f(0.56, 0.3, 0.38, -0.42), vec4f(0.62, 0.32, 0.56, -0.6), vec4f(0.2, 0.1, 0.12, -0.13), vec4f(0.035, 0.018, 0.035, -0.045));
+			var necks = array<vec2f, 6>(vec2f(0.0), vec2f(1.6, 0.8), vec2f(0.68, 0.46), vec2f(0.88, 0.72), vec2f(0.25, 0.15), vec2f(0.03, 0.03));
 			let k2 = i32(I.rig.w + 0.5);
 			let R = rigs[k2];
 			let part = i32(shape.w + 0.5) % 32;

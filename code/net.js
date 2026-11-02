@@ -10,6 +10,7 @@ import * as forest from './forest.js'
 import * as deer from './deer.js'
 import * as rabbits from './rabbits.js'
 import * as beasts from './beasts.js'
+import * as critters from './critters.js'
 import * as fish from './fish.js'
 import * as whaling from './whaling.js'
 import * as birds from './birds.js'
@@ -319,6 +320,7 @@ const ANIMALS = [
 	{ kind: 'hawk', share: birds.hawkShare, follow: birds.hawkFollow, kill: birds.killHawkById, shot: birds.hawkShot, angles: [4, 6] },
 	{ kind: 'goose', share: geese.geeseShare, follow: geese.geeseFollow, kill: geese.killGooseById, shot: geese.gooseShot, angles: [4, 6] },
 	{ kind: 'horde', share: horde.hordeShare, follow: horde.hordeFollow, kill: horde.killHordeById, shot: horde.hordeShot, angles: [4] },
+	{ kind: 'critter', share: critters.critterShare, follow: critters.critterFollow, kill: critters.hitCritter, shot: critters.critterShot, angles: [4] },
 	{ kind: 'beast', share: beasts.beastShare, follow: beasts.beastFollow, kill: beasts.killBeastById, shot: beasts.beastShot, angles: [4] },
 	{ kind: 'rabbit', share: rabbits.rabbitShare, follow: rabbits.rabbitFollow, kill: rabbits.killRabbitById, shot: rabbits.rabbitShot, angles: [4] },
 	// (the schools' leaders, and the whales: nothing fired does anything to them, whaling.js has the harpoons)

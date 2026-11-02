@@ -58,6 +58,7 @@ export const POT = [
 	{ makes: 'cookedMoose', needs: { mooseMeat: 1 } },
 	{ makes: 'cookedWolf', needs: { wolfMeat: 1 } },
 	{ makes: 'cookedBear', needs: { bearMeat: 1 } },
+	{ makes: 'cookedRat', needs: { ratMeat: 1 } },
 	{ makes: 'boneAlcohol', needs: { bigBones: 1 } },
 	{ makes: 'grainAlcohol', needs: { smallBones: 1, wheat: 1 } },
 ];

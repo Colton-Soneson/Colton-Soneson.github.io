@@ -38,7 +38,7 @@ const SELL = 0.5;					// of the price
 const INTEREST = 0.03;				// a day
 const SAVED = 'survivalBank';
 const FOOD = Object.keys(ITEMS).filter((type) => ITEMS[type].food || ITEMS[type].drink);
-const GEAR = ['mortar', 'mushroom', 'flareGun', 'flareRound', 'bandage', 'alcohol', 'antibiotics', 'splint', 'sewingKit', 'tent', 'tentStove', 'rainCollector', 'haversack', 'rucksack', 'framePack', 'ammoPouch', 'utilityPouch', 'bedrollStrap', 'bedroll', 'compass', 'watch', 'knife', 'hatchet', 'lighter'];
+const GEAR = ['spit', 'mortar', 'mushroom', 'flareGun', 'flareRound', 'bandage', 'alcohol', 'antibiotics', 'splint', 'sewingKit', 'tent', 'tentStove', 'rainCollector', 'haversack', 'rucksack', 'framePack', 'ammoPouch', 'utilityPouch', 'bedrollStrap', 'bedroll', 'compass', 'watch', 'knife', 'hatchet', 'lighter'];
 const ROOM = 2;						// dollars: a night in a room at the inn
 const HIDES = ['sinew', 'antlers', 'smallBones', 'bigBones', 'rabbitPelt', 'mooseHide', 'bearHide', 'deerHide'];
 const IRON = ['nails', 'pickaxe', 'hoe', 'hatchet', 'knife', 'ironOre', 'ironBar', 'rock', 'smelter', 'anvil', 'cauldron'];

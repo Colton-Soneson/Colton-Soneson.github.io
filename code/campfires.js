@@ -25,8 +25,8 @@ import * as camp from './camp.js'
 		half		more than STAGE.half: the logs burnt down, lower flames
 		embers		anything left: no flames, a glow, a thread of smoke, a little warmth
 		dead		burnt out: ash and the stubs of the logs, cold. Wood put on it is laid ready to be lit again
-	Wood put on one burning raises its stage straight away. Raw venison (survivalTools.js) is COOKED at one burning, within COOK_REACH: X at
-	it (all of it carried), or the inventory screen's right click (that one stack).
+	Wood put on one burning raises its stage straight away. Meat is cooked over one only on a cooking spit (spit.js). A tent's stove still COOKS: X at it (all the raw meat
+	carried), or the inventory screen's right click (that one stack), within COOK_REACH.
 	In a game (survivalNet.js) the host keeps them: a joiner's building, wood and lighting are asked for (fireBuild, fireWood, fireLight), and
 	everyone is told each one as it is (fireIs: where, its fuel as of when, whether it burns), and when one goes (fireDel: burnt out and
 	left GONE days); a joiner come in, of all of them.
@@ -122,15 +122,15 @@ hunting.onUse(() => {
 });
 // COOKED (see the top): one burning near enough, and the raw venison (that stack, or all of it) cooked
 export function burningNear() {
-	const p = hunting.hunterPlace(), m = metre();
-	return [...fires.values()].find((f) => BURNING.includes(stageOf(f)) && Math.hypot(f.at[0] - p.x, f.at[2] - p.z) / m < COOK_REACH) ?? camp.burningNear(p.x, p.z, COOK_REACH);		// (or a tent's stove)
+	const p = hunting.hunterPlace();
+	return camp.burningNear(p.x, p.z, COOK_REACH);		// (a tent's stove: a campfire's is the spit's, spit.js)
 }
-const COOKED = { venison: 'cookedVenison', rabbitMeat: 'cookedRabbit', mooseMeat: 'cookedMoose', wolfMeat: 'cookedWolf', bearMeat: 'cookedBear' };
+const COOKED = { venison: 'cookedVenison', rabbitMeat: 'cookedRabbit', mooseMeat: 'cookedMoose', wolfMeat: 'cookedWolf', bearMeat: 'cookedBear', ratMeat: 'cookedRat' };
 const rawMeat = () => inventory.everything().filter(({ item }) => COOKED[item.type]).map(({ item }) => item);
 export function cook(only = null) {
 	const raw = only ? [only] : rawMeat();
 	if (!raw.length) { help.toast('No raw meat to cook'); return false; }
-	if (!burningNear()) { help.toast('Cook it at a burning campfire'); return false; }
+	if (!burningNear()) { help.toast('Cook it on a spit over a campfire, or on a lit stove'); return false; }
 	let n = 0;
 	for (const item of raw) { item.type = COOKED[item.type]; n += item.count; }
 	inventory.changed();
@@ -139,14 +139,14 @@ export function cook(only = null) {
 	return true;
 }
 window.addEventListener('keydown', (e) => {
-	if (e.code == 'KeyX' && !e.repeat && inventory.survivalOn() && document.pointerLockElement && !hunting.input.menuOpen && (inView() || camp.stoveInView())) cook();
+	if (e.code == 'KeyX' && !e.repeat && inventory.survivalOn() && document.pointerLockElement && !hunting.input.menuOpen && camp.stoveInView()) cook();
 });
 const NAMES = { full: 'Campfire, burning well', half: 'Campfire, burning low', embers: 'Campfire, embers', dead: 'Campfire, burnt out', laid: 'Campfire, laid' };
 hunting.addPrompt(() => {
 	const f = inView();
 	if (!f) return null;
 	const s = stageOf(f), hours = fuelOf(f) * 24;
-	return { name: NAMES[s] + (s != 'dead' ? ` (${hours.toFixed(1)} h of wood)` : ''), keys: 'E add wood' + (s == 'laid' ? ' · the lighter: light it' : '') + (BURNING.includes(s) && rawMeat().length ? ' · X cook meat' : '') };
+	return { name: NAMES[s] + (s != 'dead' ? ` (${hours.toFixed(1)} h of wood)` : ''), keys: 'E add wood' + (s == 'laid' ? ' · the lighter: light it' : '') + (BURNING.includes(s) && rawMeat().length ? ' · a cooking spit: cook over it' : '') };
 });
 
 // THE WARMTH AND THE CALM round them (survival.js)
@@ -212,3 +212,4 @@ export function campfiresUpdate() {
 export const fireSpots = () => [...fires.values()].map((f) => ({ at: f.at, name: NAMES[stageOf(f)] }));
 export const firesForTest = () => [...fires.values()].map((f) => ({ id: f.id, stage: stageOf(f), hours: Math.round(fuelOf(f) * 24 * 100) / 100, lit: f.lit }));
 export const fireById = (id) => fires.get(id) ?? null;
+export const fireList = () => [...fires.values()];

@@ -12,6 +12,7 @@ import * as vm from './viewmodel.js'
 		crownCover	a tree's crown as the sky sees it, a unit tall and a unit round (skyCover.js)
 		moose, wolf, bear	each under 450 triangles, standing on y = 0 (beasts.js). Their parts walk them (vf_props.js: the hips, knees and necks there are these): 0 the body, 1 the neck and head, 2 to 5 the legs (left front, right front, left hind, right hind)
 		flareSpark, flareBall	a flare climbing, and burning (flares.js)
+		catTabby, catBlack, rat	the towns' (critters.js): a cat under 200 triangles, a rat under 50. Their parts walk them as the beasts' do (vf_props.js: RIGS): 1 the head, 2 to 5 the legs
 */
 const COAT = 63, BELLY = 64, BONE = 65, WHALE_BACK = 66, WHALE_BELLY = 67, FLESH = 68, BLUBBER = 69, ANTLER = 70, IRON = 73, BOARDS = 30, HANDLE = 34, ROPE = 35, BRASS = 2, DARK = 9;
 const INK = 43;
@@ -316,6 +317,39 @@ void legsOf;
 function flareSpark() { const m = vm.meshBuilder(); m.ball([0, 0, 0], 0.12, 5, 84); return m; }
 function flareBall() { const m = vm.meshBuilder(); m.ball([0, 0, 0], 0.55, 8, 84); return m; }
 
-const MAKERS = { moose, wolf, bear, flareSpark, flareBall, rabbit, rabbitDead, trap, trapSprung, antlersCut, sinewCoil, rabbitPelt, smallBones, ...FISH_MODELS, whale, whaleStage1, whaleStage2, whaleStage3, whaleStage4, harpoonGun, harpoonBarrel, harpoon, cable, shipChest, crownCover };
+// a cat: the body in rings along z, a head (1), legs a strut each (2 to 5: left front, right front, left hind, right hind), a tail curling up behind
+function cat(coat, belly) {
+	const m = vm.meshBuilder(), ring = (z, w, lo, hi, n = 6) => Array.from({ length: n }, (_, k) => { const t = (k + 0.5) / n * Math.PI * 2; return [Math.cos(t) * w, (lo + hi) / 2 + Math.sin(t) * (hi - lo) / 2, z]; });
+	m.loft([ring(-0.2, 0.04, 0.17, 0.25), ring(-0.14, 0.07, 0.13, 0.27), ring(0.04, 0.065, 0.13, 0.26), ring(0.16, 0.055, 0.15, 0.27)], coat, 0, [0, 1]);
+	m.quad([-0.05, 0.135, -0.12], [0.05, 0.135, -0.12], [0.045, 0.135, 0.12], [-0.045, 0.135, 0.12], 0, belly);
+	// the head and its ears
+	const head = (y, z, w, h) => Array.from({ length: 5 }, (_, k) => { const t = (k + 0.5) / 5 * Math.PI * 2; return [Math.cos(t) * w, y + Math.sin(t) * h, z]; });
+	m.loft([head(0.27, 0.15, 0.04, 0.04), head(0.29, 0.21, 0.055, 0.048), head(0.27, 0.27, 0.03, 0.028)], coat, 1, [0, 1]);
+	for (const s of [-1, 1]) { m.tri([s * 0.018, 0.325, 0.2], [s * 0.05, 0.325, 0.21], [s * 0.038, 0.37, 0.205], 1, coat); m.tri([s * 0.018, 0.325, 0.2], [s * 0.038, 0.37, 0.205], [s * 0.05, 0.325, 0.21], 1, coat); }
+	// the legs
+	[[-0.04, 0.12], [0.04, 0.12], [-0.045, -0.13], [0.045, -0.13]].forEach(([x, z], k) => m.strut([x, 0.2, z], [x, 0, z + 0.01], 0.022, 0.014, 3, coat, 2 + k));
+	// the tail
+	m.strut([0, 0.22, -0.2], [0, 0.2, -0.32], 0.016, 0.014, 3, coat);
+	m.strut([0, 0.2, -0.32], [0, 0.3, -0.4], 0.014, 0.012, 3, coat);
+	m.strut([0, 0.3, -0.4], [0, 0.4, -0.38], 0.012, 0.006, 3, coat);
+	return m;
+}
+function rat() {
+	const m = vm.meshBuilder(), R = 110, ring = (z, w, lo, hi) => [[-w, lo, z], [0, (lo + hi) / 2 - (hi - lo) * 0.7, z], [w, lo, z], [w * 0.8, hi, z], [-w * 0.8, hi, z]].slice(0, 4).map((p, k) => k == 1 ? [0, lo - 0.002, z] : p);
+	m.loft([ring(-0.07, 0.015, 0.012, 0.035), ring(-0.03, 0.03, 0.01, 0.06), ring(0.03, 0.025, 0.012, 0.052)], R, 0, [0]);
+	// the head: a point (1), ears
+	m.tri([-0.022, 0.015, 0.03], [0.022, 0.015, 0.03], [0, 0.03, 0.09], 1, R);
+	m.tri([0.022, 0.015, 0.03], [-0.022, 0.05, 0.03], [0, 0.03, 0.09], 1, R);
+	m.tri([-0.022, 0.05, 0.03], [-0.022, 0.015, 0.03], [0, 0.03, 0.09], 1, R);
+	m.tri([0.022, 0.05, 0.03], [-0.022, 0.05, 0.03], [0, 0.03, 0.09], 1, R);
+	m.tri([0.022, 0.015, 0.03], [0.022, 0.05, 0.03], [0, 0.03, 0.09], 1, R);
+	for (const s of [-1, 1]) m.tri([s * 0.01, 0.05, 0.035], [s * 0.028, 0.05, 0.03], [s * 0.022, 0.068, 0.033], 1, R);
+	// the legs: a triangle each (2 to 5), and the tail
+	[[-0.022, 0.035], [0.022, 0.035], [-0.024, -0.045], [0.024, -0.045]].forEach(([x, z], k) => m.tri([x, 0.035, z - 0.01], [x, 0.035, z + 0.01], [x, 0, z + 0.004], 2 + k, R));
+	m.tri([-0.005, 0.02, -0.07], [0.005, 0.02, -0.07], [0, 0.008, -0.2], 0, R);
+	m.tri([0.005, 0.02, -0.07], [-0.005, 0.02, -0.07], [0, 0.008, -0.2], 0, R);
+	return m;
+}
+const MAKERS = { catTabby: () => cat(108, 111), catBlack: () => cat(109, 109), rat, moose, wolf, bear, flareSpark, flareBall, rabbit, rabbitDead, trap, trapSprung, antlersCut, sinewCoil, rabbitPelt, smallBones, ...FISH_MODELS, whale, whaleStage1, whaleStage2, whaleStage3, whaleStage4, harpoonGun, harpoonBarrel, harpoon, cable, shipChest, crownCover };
 export const CREATURE_MESHES = Object.fromEntries(Object.entries(MAKERS).map(([name, make]) => { const m = make(); return [name, { data: m.done(), triangles: m.count() }]; }));
 export const creatureStats = Object.fromEntries(Object.entries(CREATURE_MESHES).map(([name, mesh]) => [name, mesh.triangles]));

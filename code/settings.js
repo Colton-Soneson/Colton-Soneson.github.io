@@ -183,6 +183,7 @@ export const settings = {
 	deerGroups: 4,						//how many groups, 0 to 200. Each is 1 to 3 deer. Past about 40 the homes are closer together (see THE GROUPS in deer.js)
 	deerSize: 1.0,						//1 = life size
 	enableRabbits: true,				//rabbits in the woods, and out on to the grassland and the marshes. See rabbits.js
+	enableCritters: true,				//the towns' cats, and rats in the towns and the grassland. See critters.js
 	enableBeasts: true,					//moose, wolves and bears, which fight back. See beasts.js
 	enableFish: true,					//schools of fish, six kinds, in the ponds and the sea. See fish.js
 	enableWhales: true,					//a few whales out in the deep, and the schooners after them. See whaling.js

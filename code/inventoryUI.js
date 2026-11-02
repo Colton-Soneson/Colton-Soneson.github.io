@@ -16,6 +16,7 @@ import * as rabbits from './rabbits.js'
 import * as medical from './medical.js'
 import * as stations from './stations.js'
 import * as journal from './journalUI.js'
+import * as spit from './spit.js'
 
 /*
 	THE INVENTORY of the Survival game mode: in the journal (journalUI.js): pulled out and opened in the hands, its pages written in charcoal. I (or E at a container, loot.js) opens it, I, Tab, Esc or F shuts it. Four columns, and a fifth
@@ -35,7 +36,7 @@ import * as journal from './journalUI.js'
 const CELL = 42;					// pixels
 const SLOT = 68;
 
-const ui = { open: false, container: null, camp: null, drag: null, menu: null, crafting: false, aid: false };
+const ui = { open: false, container: null, camp: null, drag: null, menu: null, crafting: false, aid: false, spit: null };
 export const uiState = ui;
 const root = document.createElement('div');
 root.style.cssText = `position: fixed; inset: 0; z-index: 20; display: none; background: rgba(12, 10, 8, 0.75); color: ${journal.INK}; font: 12px ${journal.HAND}; user-select: none; overflow: auto;`;
@@ -111,6 +112,10 @@ function render() {
 	let found = '';
 	const C = ui.container && loot.containerById(ui.container);
 	if (C) found = panel(html(loot.label(C)).toUpperCase(), C.items ? gridBox('loot', C.grid, C.items, 'loot') : '<div>Searching…</div>');
+	if (ui.spit) {
+		const S = ui.spit, on = S.meat ? { uid: -7, type: spit.typeNow(S.meat), count: 1, x: 0, y: 0, rot: 0 } : null, k = S.meat?.cook ?? 0;
+		found = panel('COOKING SPIT', `${slotBox('spit', 'Raw meat', on, 96, 84)}<div style="margin-top:8px; line-height:1.5; max-width:200px;">${S.meat ? `${Math.round(Math.min(k, 1) * 100)}% cooked${k >= 1.75 ? ', burnt' : k >= 1 ? ': take it off before it burns' : ''}<br>` : ''}Drag raw meat on to it (venison, rabbit, wolf, bear, rat, moose); drag it off to take it</div>`);
+	}
 	if (ui.camp) {
 		const h = camp.holder(ui.camp), said = camp.describe(ui.camp);
 		if (!h) found = panel(ui.camp.kind == 'bags' ? 'SADDLEBAGS' : 'TENT', '<div>Opening…</div>');
@@ -162,6 +167,7 @@ export function openInventory(containerId = null) {
 	ui.open = true;
 	ui.container = containerId;
 	ui.camp = null;
+	ui.spit = null;
 	journal.pull(() => { if (ui.open) { root.style.display = 'flex'; render(); } });
 	render();
 }
@@ -170,6 +176,7 @@ export function closeInventory() {
 	ui.open = false;
 	ui.container = null;
 	ui.camp = null;
+	ui.spit = null;
 	ui.drag = null;
 	closeMenu();
 	tip.style.display = 'none';
@@ -185,6 +192,8 @@ export function openCamp(ref) {
 	render();
 }
 camp.onOpen((ref) => openCamp(ref));
+// a cooking spit's slot (spit.js)
+spit.onOpen((item) => { openInventory(); if (ui.open) { ui.spit = item; render(); } });
 camp.onChange(() => render());
 window.addEventListener('keydown', (e) => {
 	if ((e.code == 'KeyI' || e.code == 'Tab') && inventory.survivalOn()) {
@@ -212,6 +221,7 @@ function find(src, uid) {
 	if (src == 'loot') return loot.containerById(ui.container)?.items?.find((i) => i.uid == uid) ?? null;
 	if (src.startsWith('camp:')) return camp.holder(ui.camp)?.slots[src.slice(5)] ?? null;
 	if (src == 'craftOut') return crafting.outputNow();
+	if (src == 'spit') return ui.spit?.meat ? { uid: -7, type: spit.typeNow(ui.spit.meat), count: 1, x: 0, y: 0, rot: 0 } : null;
 	if (src == 'grid:craft') return inventory.inv.craft.find((i) => i.uid == uid) ?? null;
 	return inventory.everything().find(({ item }) => item.uid == uid)?.item ?? null;
 }
@@ -342,6 +352,10 @@ function drop(d, mx, my) {
 	const el = document.elementFromPoint(mx, my);
 	const { item, src, rot } = d;
 	if (src == 'craftOut') { dropMade(item, el, mx, my, rot); return; }
+	// (the spit's slot: off it anywhere else; on to it, raw meat, one piece)
+	const spitSlot = el?.closest('.slot')?.dataset.slot == 'spit';
+	if (src == 'spit') { if (!spitSlot) spit.takeOff(ui.spit); return; }
+	if (spitSlot) { if (src != 'loot' && !src.startsWith('camp:')) spit.put(ui.spit, item); return; }
 	const fromLoot = src == 'loot';
 	// (a tent's or the saddlebags' slots: out of one anywhere but another of them, in on to one)
 	const campSlot = el?.closest('.slot')?.dataset.slot?.startsWith('camp:') ? el.closest('.slot').dataset.slot.slice(5) : null;
@@ -384,7 +398,9 @@ root.addEventListener('dblclick', (e) => {
 	if (!el) return;
 	const item = find(el.dataset.src, Number(el.dataset.uid));
 	if (!item) return;
-	if (el.dataset.src == 'craftOut') crafting.makeIntoInventory();
+	if (el.dataset.src == 'spit') spit.takeOff(ui.spit);
+	else if (ui.spit && spit.isRaw(item.type) && el.dataset.src != 'loot') spit.put(ui.spit, item);
+	else if (el.dataset.src == 'craftOut') crafting.makeIntoInventory();
 	else if (el.dataset.src == 'grid:craft') { inventory.remove(item); if (!inventory.give(item)) loot.dropHere([item]); }
 	else if (el.dataset.src == 'loot') loot.take(ui.container, item.uid);
 	else if (ui.crafting && !el.dataset.src.startsWith('camp:') && !el.dataset.src.startsWith('worn') && !el.dataset.src.startsWith('hand') && !el.dataset.src.startsWith('attach')) {
@@ -423,7 +439,8 @@ root.addEventListener('contextmenu', (e) => {
 	const src = el.dataset.src, item = find(src, Number(el.dataset.uid));
 	if (!item) return;
 	const it = ITEMS[item.type], acts = [];
-	if (src == 'craftOut') acts.push(['Make it', () => crafting.makeIntoInventory()]);
+	if (src == 'spit') acts.push(['Take it off', () => spit.takeOff(ui.spit)]);
+	else if (src == 'craftOut') acts.push(['Make it', () => crafting.makeIntoInventory()]);
 	else if (src == 'loot') acts.push(['Take', () => loot.take(ui.container, item.uid)]);
 	else if (src.startsWith('camp:')) acts.push(['Take out', () => camp.take(ui.camp, src.slice(5))]);
 	else {
@@ -433,7 +450,8 @@ root.addEventListener('contextmenu', (e) => {
 		if (it.use == 'pitch') acts.push(['Pitch tent', () => { if (camp.pitch(item)) closeInventory(); }]);
 		if (ui.camp && campSlotFor(item)) acts.push([ui.camp.kind == 'tent' ? 'Into the tent' : 'Into the saddlebags', () => camp.put(ui.camp, campSlotFor(item), item)]);
 		if (item.type == 'firewood') acts.push(['Build campfire', () => { const at = campfires.buildSpot(); if (!at) { help.toast('No room for a fire here'); return; } inventory.useOne(item); campfires.build(at); closeInventory(); help.toast('Campfire laid: light it with the lighter'); }]);
-		if (['venison', 'rabbitMeat', 'mooseMeat', 'wolfMeat', 'bearMeat'].includes(item.type)) acts.push(['Cook on the fire', () => campfires.cook(item)]);
+		if (ui.spit && spit.isRaw(item.type)) acts.push(['Put on the spit', () => spit.put(ui.spit, item)]);
+		if (spit.isRaw(item.type) && camp.burningNear(hunting.hunterPlace().x, hunting.hunterPlace().z, 3)) acts.push(['Cook on the stove', () => campfires.cook(item)]);
 		if (it.use == 'station') acts.push(['Set it up', () => { if (stations.place(item)) closeInventory(); }]);
 		if (it.use == 'trap') acts.push(['Set the snare', () => { if (rabbits.setSnare(item)) closeInventory(); }]);
 		const on = src.startsWith('worn') || src.startsWith('hand') || src.startsWith('attach');

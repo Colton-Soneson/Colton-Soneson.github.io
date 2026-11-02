@@ -101,6 +101,10 @@ export const itemMaterials =
 			case 105: { return vec4f(vec3f(0.4, 0.39, 0.37) * (0.86 + 0.14 * sin(at.x * 23.0 + at.y * 9.0) * sin(at.z * 19.0 + at.y * 17.0)), 0.05); }
 			case 106: { return vec4f(0.03, 0.028, 0.027, 0.02); }
 			case 107: { return vec4f(0.3, 0.1, 0.03, 0.0); }
+			case 108: { let stripe = smoothstep(0.35, 0.65, sin(at.z * 70.0 + sin(at.x * 40.0) * 1.5)); return vec4f(mix(vec3f(0.55, 0.38, 0.2), vec3f(0.22, 0.14, 0.08), stripe), 0.1); }
+			case 109: { return vec4f(0.035, 0.032, 0.034, 0.35); }
+			case 110: { return vec4f(vec3f(0.3, 0.27, 0.24) * (0.9 + 0.1 * sin(at.z * 90.0)), 0.1); }
+			case 111: { return vec4f(0.78, 0.7, 0.58, 0.06); }
 			case 85: { return vec4f(0.85, 0.32, 0.06, 0.5); }
 			case 74: { return vec4f(mix(vec3f(0.3, 0.34, 0.2) * (0.75 + 0.25 * step(0.2, sin(at.x * 300.0) * sin(at.z * 240.0))), vec3f(0.78, 0.66, 0.62), smoothstep(0.012, -0.018, at.y)), 0.7); }
 			case 75: { return vec4f(mix(vec3f(0.62, 0.44, 0.16), vec3f(0.86, 0.72, 0.42), smoothstep(0.02, -0.03, at.y)), 0.8); }

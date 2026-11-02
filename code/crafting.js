@@ -13,6 +13,7 @@ import * as loot from './loot.js'
 */
 export const RECIPES = [
 	{ makes: 'trap', count: 1, needs: { firewood: 1, sinew: 1 } },
+	{ makes: 'spit', count: 1, needs: { firewood: 2 } },
 	{ makes: 'smelter', count: 1, needs: { rock: 3 } },
 	{ makes: 'anvil', count: 1, needs: { ironBar: 3 } },
 	{ makes: 'mortar', count: 1, needs: { rock: 2, firewood: 1 } },

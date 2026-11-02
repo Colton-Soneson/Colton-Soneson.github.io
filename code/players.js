@@ -59,7 +59,7 @@ const FEED_SECONDS = 6;
 const MAX_DRAWN = 16;
 const DUMMY_FLOATS = 20;				// one dummy as the shader gets it: place (4), pose (4), state (4), what it holds (4), tilt (4)
 // how long what each one holds is (the box it carries, see vf_dummy.js), as the long gun it was made with is 1: nothing, a disc: 0
-export const HELD_LENGTH = { rifle: 1, shotgun: 0.9, sharps: 1.1, revolver: 0.3, mauser: 0.32, lewis: 1.25, staff: 1.6, hatchet: 0.36, knife: 0.18, none: 0 };
+export const HELD_LENGTH = { rifle: 1, shotgun: 0.9, sharps: 1.1, revolver: 0.3, mauser: 0.32, lewis: 1.25, staff: 1.6, hatchet: 0.36, knife: 0.18, spit: 1.3, pickaxe: 0.62, hoe: 0.62, none: 0 };
 const STRIDE = 1.5;					// metres a stride takes
 // the hitbox, in the dummy's own metres: x, y, z, radius, and which part it is (see DAMAGE in net.js)
 const CROUCH_DROP = 0.44;			// metres the hips come down, crouched (as vf_dummy.js draws it)

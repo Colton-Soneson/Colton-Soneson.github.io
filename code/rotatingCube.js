@@ -78,6 +78,7 @@ import * as mining from './mining.js'
 import * as stations from './stations.js'
 import * as farms from './farms.js'
 import * as cabins from './cabins.js'
+import * as critters from './critters.js'
 import * as journal from './journalUI.js'
 import * as interiors from './interiors.js'
 import * as fish from './fish.js'
@@ -490,6 +491,7 @@ export function updateRotatingCubePass() {
 	deer.deerUpdate();				//and the deer
 	rabbits.rabbitsUpdate();		//the rabbits, and the snares they walk into
 	beasts.beastsUpdate();			//the moose, the wolves and the bears
+	critters.crittersUpdate();		//the towns' cats, and the rats
 	flares.flaresUpdate();			//(and the flares in the air)
 	ice.iceUpdate();				//the ponds frozen, in the winter
 	mining.miningUpdate();			//the ore veins and the mushrooms

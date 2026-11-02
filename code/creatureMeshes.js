@@ -10,6 +10,8 @@ import * as vm from './viewmodel.js'
 					the ribs showing, and at the last only bones (whaling.js)
 		harpoonGun, harpoonBarrel, harpoon, cable (a unit long, a unit round: stretched between two points), shipChest: the schooner's whaling gear
 		crownCover	a tree's crown as the sky sees it, a unit tall and a unit round (skyCover.js)
+		moose, wolf, bear	each under 450 triangles, standing on y = 0 (beasts.js). Their parts walk them (vf_props.js: the hips, knees and necks there are these): 0 the body, 1 the neck and head, 2 to 5 the legs (left front, right front, left hind, right hind)
+		flareSpark, flareBall	a flare climbing, and burning (flares.js)
 */
 const COAT = 63, BELLY = 64, BONE = 65, WHALE_BACK = 66, WHALE_BELLY = 67, FLESH = 68, BLUBBER = 69, ANTLER = 70, IRON = 73, BOARDS = 30, HANDLE = 34, ROPE = 35, BRASS = 2, DARK = 9;
 const INK = 43;
@@ -251,6 +253,69 @@ function crownCover() {
 	return m;
 }
 
-const MAKERS = { rabbit, rabbitDead, trap, trapSprung, antlersCut, sinewCoil, rabbitPelt, smallBones, ...FISH_MODELS, whale, whaleStage1, whaleStage2, whaleStage3, whaleStage4, harpoonGun, harpoonBarrel, harpoon, cable, shipChest, crownCover };
+//-------------------------------THE BEASTS-------------------------------
+// the body in rings along z (each [z, half its width, its bottom, its top]), a neck and a head up from it in rings of [y, z, half its width, half its height], its legs, in the part the rig wants them
+function quadruped(m, { body, neck, head, legs, material, foot = material, ears = [] }) {
+	const across = (z, w, a, b, n) => Array.from({ length: n }, (_, k) => { const t = (k + 0.5) / n * Math.PI * 2; return [Math.cos(t) * w, (a + b) / 2 + Math.sin(t) * (b - a) / 2, z]; });
+	m.loft(body.map(([z, w, a, b]) => across(z, w, a, b, 8)), material, 0, [0, 1]);
+	const tipped = (y, z, w, h) => Array.from({ length: 6 }, (_, k) => { const t = (k + 0.5) / 6 * Math.PI * 2; return [Math.cos(t) * w, y + Math.sin(t) * h, z + Math.sin(t) * h * 0.25]; });
+	m.loft(neck.map(([y, z, w, h]) => tipped(y, z, w, h)), material, 1);
+	m.loft(head.map(([y, z, w, h]) => tipped(y, z, w, h)), material, 1, [0, 1]);
+	for (const [a, b, c] of ears) for (const s of [-1, 1]) { m.tri([s * a[0], a[1], a[2]], [s * b[0], b[1], b[2]], [s * c[0], c[1], c[2]], 1, material); m.tri([s * a[0], a[1], a[2]], [s * c[0], c[1], c[2]], [s * b[0], b[1], b[2]], 1, material); }
+	legs.forEach(([x, z, rings], k) => {
+		const ring = ([y, w, d, off = 0]) => [[x - w, y, z - d + off], [x + w, y, z - d + off], [x + w, y, z + d + off], [x - w, y, z + d + off]];
+		m.loft(rings.map(ring), k < 0 ? material : material, 2 + k);
+		m.loft([ring(rings[rings.length - 2]), ring(rings[rings.length - 1])], foot, 2 + k);
+	});
+}
+const legsOf = (x, front, hind, top, knee, low) => [[-x, front, top], [x, front, top], [-x, hind, knee], [x, hind, knee]].map(([a, z, r]) => [a, z, r ?? low]);
+function moose() {
+	const m = vm.meshBuilder(), M = 80;
+	const front = [[1.3, 0.1, 0.17], [0.66, 0.05, 0.075], [0.28, 0.035, 0.045, 0.01], [0.07, 0.042, 0.055, 0.02], [0, 0.05, 0.07, 0.03]], hind = [[1.28, 0.11, 0.24], [0.68, 0.05, 0.08, -0.03], [0.3, 0.036, 0.045, 0.01], [0.07, 0.042, 0.055, 0.02], [0, 0.05, 0.07, 0.03]];
+	quadruped(m, { material: M, foot: DARK,
+		body: [[-1.08, 0.08, 1.35, 1.5], [-0.96, 0.24, 1.14, 1.66], [-0.55, 0.32, 1.0, 1.74], [-0.05, 0.34, 0.98, 1.82], [0.42, 0.36, 0.96, 2.0], [0.8, 0.3, 1.04, 2.04], [1.02, 0.14, 1.32, 1.92]],
+		neck: [[1.6, 0.86, 0.17, 0.27], [1.8, 1.04, 0.13, 0.2], [1.95, 1.2, 0.11, 0.15], [2.02, 1.32, 0.1, 0.13]],
+		head: [[2.1, 1.28, 0.1, 0.13], [2.06, 1.46, 0.12, 0.15], [1.94, 1.68, 0.1, 0.13], [1.82, 1.86, 0.1, 0.1], [1.74, 1.98, 0.075, 0.07]],
+		ears: [[[0.08, 2.2, 1.28], [0.1, 2.15, 1.2], [0.24, 2.32, 1.22]]],
+		legs: [[-0.2, 0.68, front], [0.2, 0.68, front], [-0.2, -0.78, hind], [0.2, -0.78, hind]] });
+	// a bell under its throat (part 1), and its antlers: a beam out to a broad palm, tines along its edge
+	m.strut([0, 1.78, 1.5], [0, 1.45, 1.46], 0.05, 0.02, 3, M, 1);
+	for (const s of [-1, 1]) {
+		m.strut([s * 0.08, 2.2, 1.26], [s * 0.42, 2.34, 1.2], 0.045, 0.035, 4, ANTLER, 1);
+		const P = [[0.42, 2.3, 1.1], [0.9, 2.52, 1.0], [1.08, 2.66, 1.22], [0.72, 2.6, 1.42], [0.4, 2.42, 1.34]].map(([x, y, z]) => [s * x, y, z]);
+		for (let k = 1; k < 4; k++) { m.tri(P[0], P[k], P[k + 1], 1, ANTLER); m.tri(P[0], P[k + 1], P[k], 1, ANTLER); }
+		for (const [a, b] of [[P[1], [s * 1.08, 2.8, 0.9]], [P[2], [s * 1.3, 2.86, 1.26]], [P[3], [s * 0.86, 2.86, 1.54]]]) m.strut(a, b, 0.03, 0.006, 3, ANTLER, 1);
+	}
+	return m;
+}
+function wolf() {
+	const m = vm.meshBuilder(), W = 81;
+	const front = [[0.58, 0.04, 0.06], [0.3, 0.022, 0.03], [0.12, 0.016, 0.02, 0.005], [0.03, 0.02, 0.026, 0.012], [0, 0.022, 0.034, 0.016]], hind = [[0.58, 0.05, 0.085], [0.3, 0.024, 0.03, -0.03], [0.12, 0.016, 0.02, -0.005], [0.03, 0.02, 0.026, 0.012], [0, 0.022, 0.034, 0.016]];
+	quadruped(m, { material: W, foot: INK,
+		body: [[-0.6, 0.05, 0.55, 0.68], [-0.5, 0.11, 0.46, 0.73], [-0.25, 0.135, 0.44, 0.74], [0.05, 0.14, 0.42, 0.76], [0.3, 0.15, 0.4, 0.8], [0.46, 0.13, 0.46, 0.82], [0.56, 0.07, 0.56, 0.78]],
+		neck: [[0.68, 0.48, 0.09, 0.13], [0.76, 0.58, 0.075, 0.1], [0.82, 0.66, 0.065, 0.08], [0.84, 0.7, 0.06, 0.07]],
+		head: [[0.86, 0.66, 0.06, 0.07], [0.86, 0.74, 0.078, 0.08], [0.82, 0.84, 0.05, 0.05], [0.79, 0.94, 0.03, 0.028], [0.77, 1.0, 0.018, 0.018]],
+		ears: [[[0.02, 0.93, 0.7], [0.07, 0.92, 0.66], [0.06, 1.03, 0.65]]],
+		legs: [[-0.09, 0.38, front], [0.09, 0.38, front], [-0.09, -0.42, hind], [0.09, -0.42, hind]] });
+	// the tail: a brush, down and out behind
+	m.loft([ringZ(-0.58, 0.035, 0.035, 5, 0.66), ringZ(-0.78, 0.05, 0.055, 5, 0.5), ringZ(-0.96, 0.012, 0.012, 5, 0.34)], W, 0, [1]);
+	return m;
+}
+function bear() {
+	const m = vm.meshBuilder(), B = 82;
+	const front = [[0.72, 0.09, 0.13], [0.34, 0.075, 0.09], [0.14, 0.07, 0.09, 0.01], [0.04, 0.08, 0.11, 0.03], [0, 0.08, 0.13, 0.04]], hind = [[0.72, 0.12, 0.17], [0.34, 0.08, 0.1, -0.02], [0.14, 0.07, 0.09, 0.01], [0.04, 0.08, 0.11, 0.03], [0, 0.08, 0.14, 0.05]];
+	quadruped(m, { material: B, foot: B,
+		body: [[-0.86, 0.14, 0.52, 0.88], [-0.74, 0.3, 0.34, 1.02], [-0.42, 0.42, 0.28, 1.08], [-0.05, 0.46, 0.27, 1.12], [0.3, 0.44, 0.28, 1.2], [0.58, 0.34, 0.36, 1.18], [0.76, 0.18, 0.56, 1.06]],
+		neck: [[0.88, 0.74, 0.2, 0.24], [0.94, 0.86, 0.17, 0.2], [0.98, 0.96, 0.15, 0.17], [1.0, 1.02, 0.14, 0.15]],
+		head: [[1.02, 0.98, 0.15, 0.16], [1.02, 1.08, 0.18, 0.18], [0.96, 1.22, 0.11, 0.11], [0.9, 1.32, 0.075, 0.07], [0.86, 1.4, 0.05, 0.045]],
+		ears: [[[0.07, 1.17, 1.02], [0.15, 1.14, 0.98], [0.15, 1.26, 0.98]]],
+		legs: [[-0.26, 0.56, front], [0.26, 0.56, front], [-0.28, -0.6, hind], [0.28, -0.6, hind]] });
+	return m;
+}
+void legsOf;
+function flareSpark() { const m = vm.meshBuilder(); m.ball([0, 0, 0], 0.12, 5, 84); return m; }
+function flareBall() { const m = vm.meshBuilder(); m.ball([0, 0, 0], 0.55, 8, 84); return m; }
+
+const MAKERS = { moose, wolf, bear, flareSpark, flareBall, rabbit, rabbitDead, trap, trapSprung, antlersCut, sinewCoil, rabbitPelt, smallBones, ...FISH_MODELS, whale, whaleStage1, whaleStage2, whaleStage3, whaleStage4, harpoonGun, harpoonBarrel, harpoon, cable, shipChest, crownCover };
 export const CREATURE_MESHES = Object.fromEntries(Object.entries(MAKERS).map(([name, make]) => { const m = make(); return [name, { data: m.done(), triangles: m.count() }]; }));
 export const creatureStats = Object.fromEntries(Object.entries(CREATURE_MESHES).map(([name, mesh]) => [name, mesh.triangles]));

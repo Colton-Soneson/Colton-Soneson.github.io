@@ -70,6 +70,9 @@ import * as camp from './camp.js'
 import * as highlights from './highlights.js'
 import * as skyCover from './skyCover.js'
 import * as rabbits from './rabbits.js'
+import * as beasts from './beasts.js'
+import * as medical from './medical.js'
+import * as flares from './flares.js'
 import * as interiors from './interiors.js'
 import * as fish from './fish.js'
 import * as whaling from './whaling.js'
@@ -434,6 +437,7 @@ export function updateRotatingCubePass() {
 	weapons.weaponsUpdate();	//(and the controls of whatever is in them, on the left)
 	//the Survival mode: the needs, the loot, the tools and the campfires, the map, the inventory screen
 	survival.survivalUpdate();
+	medical.medicalUpdate();
 	loot.lootUpdate();
 	survivalTools.survivalToolsUpdate();
 	bedrolls.bedrollsUpdate();
@@ -478,6 +482,8 @@ export function updateRotatingCubePass() {
 	geese.geeseUpdate();			//and the geese
 	deer.deerUpdate();				//and the deer
 	rabbits.rabbitsUpdate();		//the rabbits, and the snares they walk into
+	beasts.beastsUpdate();			//the moose, the wolves and the bears
+	flares.flaresUpdate();			//(and the flares in the air)
 	fish.fishUpdate();				//the fish, in their schools
 	whaling.whalingUpdate();		//the whales, and the harpoons
 	interiors.interiorsUpdate();	//what is inside the houses near the camera

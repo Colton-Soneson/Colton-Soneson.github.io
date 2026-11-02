@@ -125,7 +125,7 @@ export function burningNear() {
 	const p = hunting.hunterPlace(), m = metre();
 	return [...fires.values()].find((f) => BURNING.includes(stageOf(f)) && Math.hypot(f.at[0] - p.x, f.at[2] - p.z) / m < COOK_REACH) ?? camp.burningNear(p.x, p.z, COOK_REACH);		// (or a tent's stove)
 }
-const COOKED = { venison: 'cookedVenison', rabbitMeat: 'cookedRabbit' };
+const COOKED = { venison: 'cookedVenison', rabbitMeat: 'cookedRabbit', mooseMeat: 'cookedMoose', wolfMeat: 'cookedWolf', bearMeat: 'cookedBear' };
 const rawMeat = () => inventory.everything().filter(({ item }) => COOKED[item.type]).map(({ item }) => item);
 export function cook(only = null) {
 	const raw = only ? [only] : rawMeat();

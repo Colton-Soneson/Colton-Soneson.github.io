@@ -21,10 +21,11 @@ import {uniformBufferLights} from './rotatingCube.js'
 	THE PROPS (the Survival mode's things out in the world, vf_props.js): each frame whoever has some to show puts them in (show: the
 	model's name, itemMeshes.js, interiorMeshes.js, creatureMeshes.js; where, world units; how it is turned, and glowing) and they are drawn together
 	after the animals, MOST at the most, by model. place() makes where one is from a spot on the ground, a heading and a tip. extra: [indoors (1: lit as a
-	room is), how far it bends (a share of its length), where in the bend it is, its length in metres (less than 0: it bends up and down: a whale)]
+	room is), how far it bends (a share of its length), where in the bend it is, its length in metres (less than 0: it bends up and down: a whale)]; rig: what walks on four legs
+	(beasts.js): [where in its stride, how far it is walking, head down, its kind: vf_props.js's RIGS]
 */
 const MOST = 8192;
-const INSTANCE_FLOATS = 24;
+const INSTANCE_FLOATS = 28;
 
 // every model in one buffer: each its first vertex and how many
 const ALL = { ...MESHES, ...INTERIOR_MESHES, ...CREATURE_MESHES };
@@ -60,12 +61,12 @@ const makeBindGroup = () => device.createBindGroup({ label: 'props bind group', 
 	{ binding: 2, resource: { buffer: instanceBuffer } },
 ] });
 
-const queue = [];		// { name, model, glow, extra }
+const queue = [];		// { name, model, glow, extra, rig }
 export const propStats = { drawn: 0 };
 // one to draw this frame: name (itemMeshes.js), model (its metres into the world: place), glow ([r, g, b, how strong])
 const NO_EXTRA = [0, 0, 0, 0];
-export function show(name, model, glow = NO_EXTRA, extra = NO_EXTRA) {
-	if (queue.length < MOST && ranges[name]) queue.push({ name, model, glow, extra });
+export function show(name, model, glow = NO_EXTRA, extra = NO_EXTRA, rig = NO_EXTRA) {
+	if (queue.length < MOST && ranges[name]) queue.push({ name, model, glow, extra, rig });
 }
 // where one is: at (world units, its foot), heading (radians, round from +z towards +x), and tipped (pitch: its +z up, roll), scaled
 export function place(at, heading = 0, pitch = 0, roll = 0, scale = 1) {
@@ -81,7 +82,7 @@ export function propsPass(encoder, depthTexture) {
 	propStats.drawn = queue.length;
 	if (!queue.length) return;
 	queue.sort((a, b) => ranges[a.name].first - ranges[b.name].first);
-	queue.forEach((q, k) => { instanceData.set(q.model, k * INSTANCE_FLOATS); instanceData.set(q.glow, k * INSTANCE_FLOATS + 16); instanceData.set(q.extra, k * INSTANCE_FLOATS + 20); });
+	queue.forEach((q, k) => { instanceData.set(q.model, k * INSTANCE_FLOATS); instanceData.set(q.glow, k * INSTANCE_FLOATS + 16); instanceData.set(q.extra, k * INSTANCE_FLOATS + 20); instanceData.set(q.rig, k * INSTANCE_FLOATS + 24); });
 	device.queue.writeBuffer(instanceBuffer, 0, instanceData, 0, queue.length * INSTANCE_FLOATS);
 	const u = new Float32Array(52);
 	u.set(transformations.getViewProj(), 0);

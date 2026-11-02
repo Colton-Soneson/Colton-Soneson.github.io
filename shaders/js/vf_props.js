@@ -32,7 +32,7 @@ export const vf_props =
 		moonPos : vec4f,
 	}
 	@group(0) @binding(1) var<uniform> Lights: LightsUniforms;
-	struct Instance { model : mat4x4f, glow : vec4f, extra : vec4f, }	// extra: x indoors; y how far it bends, z where in the bend it is, w its length (metres, less than 0: up and down)
+	struct Instance { model : mat4x4f, glow : vec4f, extra : vec4f, rig : vec4f, }	// extra: x indoors; y how far it bends, z where in the bend it is, w its length (metres, less than 0: up and down)
 	@group(0) @binding(2) var<storage, read> instances: array<Instance>;
 
 	struct VertexOutput {
@@ -56,6 +56,35 @@ export const vf_props =
 			let t = saturate(0.5 - at.z / L);
 			let bend = I.extra.y * L * t * t * sin(I.extra.z + t * 5.0);
 			if (I.extra.w < 0.0) { at.y += bend; } else { at.x += bend; }
+		}
+		// four legs (rig: x where in its stride, y how far it is walking, z head down, w its kind; the mesh's parts: 1 the neck and head, 2 to 5 the legs, as vf_deer.js)
+		if (I.rig.w > 0.5) {
+			// its kind's: its hips' height, its knees', how far forward its front hips are and its hind ones; and the foot of its neck, its height and how far forward
+			var rigs = array<vec4f, 4>(vec4f(0.0), vec4f(1.25, 0.66, 0.68, -0.78), vec4f(0.56, 0.3, 0.38, -0.42), vec4f(0.62, 0.32, 0.56, -0.6));
+			var necks = array<vec2f, 4>(vec2f(0.0), vec2f(1.6, 0.8), vec2f(0.68, 0.46), vec2f(0.88, 0.72));
+			let k2 = i32(I.rig.w + 0.5);
+			let R = rigs[k2];
+			let part = i32(shape.w + 0.5) % 32;
+			if (part >= 2 && part <= 5) {
+				let leg = part - 2;
+				let turnIn = select(select(0.5, 0.0, leg == 2), select(0.75, 0.25, leg == 0), leg < 2);
+				let phase = I.rig.x + turnIn * 6.2831853;
+				let hip = vec3f(0.0, R.x, select(R.w, R.z, leg < 2));
+				if (at.y < R.y - 0.01) {
+					let knee = vec3f(at.x, R.y, hip.z);
+					let bend = max(sin(phase), 0.0) * 0.7 * I.rig.y * select(1.0, -1.0, leg < 2);
+					let d = at - knee;
+					at = knee + vec3f(d.x, d.y * cos(bend) - d.z * sin(bend), d.y * sin(bend) + d.z * cos(bend));
+				}
+				let swing = cos(phase) * 0.42 * I.rig.y;
+				let d2 = at - hip;
+				at = hip + vec3f(d2.x, d2.y * cos(swing) - d2.z * sin(swing), d2.y * sin(swing) + d2.z * cos(swing));
+			} else if (part == 1) {
+				let foot = vec3f(0.0, necks[k2].x, necks[k2].y);
+				let a = 1.05 * I.rig.z;
+				let d = at - foot;
+				at = foot + vec3f(d.x, d.y * cos(a) - d.z * sin(a), d.y * sin(a) + d.z * cos(a));
+			}
 		}
 		let world = (I.model * vec4f(at, 1.0)).xyz;
 		var output: VertexOutput;

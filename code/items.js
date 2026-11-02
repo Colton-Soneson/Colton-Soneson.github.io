@@ -71,8 +71,27 @@ export const ITEMS = {
 	cookedVenison: { name: 'Cooked venison', slot: ['item'], w: 1, h: 1, stack: 4, food: 45, stress: -5, weapon: 'eat', icon: 'meat', tint: '#6e4426', detail: 'Hunger -45, and a little calmer' },
 	smokedFish: { name: 'Smoked fish', slot: ['item'], w: 2, h: 1, stack: 2, food: 30, drink: -6, weapon: 'eat', icon: 'fish', tint: '#a07040', detail: 'Hunger -30, a little thirsty' },
 	beer: { name: 'Beer', slot: ['item'], w: 1, h: 2, drink: 22, stress: -30, tired: 6, weapon: 'eat', icon: 'bottle', tint: '#5a7a2a', detail: 'Thirst -22, stress -30, a little sleepy' },
-	rabbitMeat: { name: 'Raw rabbit', slot: ['item'], w: 1, h: 1, stack: 4, food: 8, stress: 8, weapon: 'eat', cooksTo: 'cookedRabbit', icon: 'meat', tint: '#b8564a', detail: 'Hunger -8, but raw: stress +8. Cook it at a burning campfire or a tent stove; the butcher buys it' },
-	cookedRabbit: { name: 'Cooked rabbit', slot: ['item'], w: 1, h: 1, stack: 4, food: 28, stress: -3, weapon: 'eat', icon: 'meat', tint: '#7a4c2a', detail: 'Hunger -28, and a little calmer' },
+	rabbitMeat: { name: 'Raw rabbit', slot: ['item'], w: 1, h: 1, stack: 4, price: 0.4, food: 8, stress: 8, weapon: 'eat', cooksTo: 'cookedRabbit', icon: 'meat', tint: '#b8564a', detail: 'Hunger -8, but raw: stress +8. Cook it at a burning campfire or a tent stove; the butcher buys it' },
+	cookedRabbit: { name: 'Cooked rabbit', slot: ['item'], w: 1, h: 1, stack: 4, price: 0.7, food: 28, stress: -3, weapon: 'eat', icon: 'meat', tint: '#7a4c2a', detail: 'Hunger -28, and a little calmer' },
+	// the bigger animals' (beasts.js): raw, a wolf's or a bear's has its chance of parasites (parasites: medical.js)
+	mooseMeat: { name: 'Raw moose', slot: ['item'], w: 1, h: 1, stack: 4, price: 1, food: 14, stress: 10, weapon: 'eat', cooksTo: 'cookedMoose', icon: 'meat', tint: '#9a3a34', detail: 'Hunger -14, but raw: stress +10. Cook it. The butcher buys it' },
+	cookedMoose: { name: 'Cooked moose', slot: ['item'], w: 1, h: 1, stack: 4, price: 1.6, food: 50, stress: -5, weapon: 'eat', icon: 'meat', tint: '#62401f', detail: 'Hunger -50, and a little calmer' },
+	wolfMeat: { name: 'Raw wolf', slot: ['item'], w: 1, h: 1, stack: 4, price: 0.4, food: 10, stress: 12, parasites: 0.7, weapon: 'eat', cooksTo: 'cookedWolf', icon: 'meat', tint: '#8a4a44', detail: 'Hunger -10. Raw, it will likely give you parasites: cook it. The butcher buys it' },
+	cookedWolf: { name: 'Cooked wolf', slot: ['item'], w: 1, h: 1, stack: 4, price: 0.8, food: 26, weapon: 'eat', icon: 'meat', tint: '#6a4a30', detail: 'Hunger -26' },
+	bearMeat: { name: 'Raw bear', slot: ['item'], w: 1, h: 1, stack: 4, price: 1, food: 16, stress: 12, parasites: 0.7, weapon: 'eat', cooksTo: 'cookedBear', icon: 'meat', tint: '#7a2e2a', detail: 'Hunger -16. Raw, it will likely give you parasites: cook it. The butcher buys it' },
+	cookedBear: { name: 'Cooked bear', slot: ['item'], w: 1, h: 1, stack: 4, price: 1.8, food: 55, stress: -5, weapon: 'eat', icon: 'meat', tint: '#5a381c', detail: 'Hunger -55, and a little calmer' },
+	mooseHide: { name: 'Moose hide', w: 3, h: 2, kg: 9, price: 20, icon: 'pelt', tint: '#5a4630', detail: 'A big, valuable hide. The butcher pays well for it' },
+	bearHide: { name: 'Bear hide', w: 3, h: 2, kg: 8, price: 32, icon: 'pelt', tint: '#3a2a1c', detail: 'A rare and very valuable hide. The butcher pays well for it' },
+	bigBones: { name: 'Big bones', w: 2, h: 1, stack: 4, kg: 1, price: 1.6, icon: 'bones', tint: '#d8ceb0', detail: 'From a moose or a bear. The butcher buys them' },
+	// first aid (medical.js): right click a limb on the inventory screen's first aid tab
+	bandage: { name: 'Bandage', w: 1, h: 1, stack: 5, kg: 0.05, price: 0.6, icon: 'bandage', tint: '#e8e0d0', detail: 'Binds a cut or a laceration, and a splint' },
+	alcohol: { name: 'Alcohol tincture', w: 1, h: 1, stack: 5, kg: 0.1, price: 0.8, icon: 'tincture', tint: '#a8783a', detail: 'Disinfects a cut or a laceration' },
+	antibiotics: { name: 'Antibiotics', w: 1, h: 1, stack: 10, kg: 0.02, price: 2.5, icon: 'pills', tint: '#d84a4a', detail: 'Cures infection and parasites at once. A fever also wants a full day of sleep after them' },
+	splint: { name: 'Splint', w: 1, h: 1, kg: 0.3, price: 1, icon: 'splint', tint: '#a8845a', detail: 'With a bandage, sets a broken bone' },
+	sewingKit: { name: 'Sewing kit', w: 1, h: 1, kg: 0.05, price: 1.5, icon: 'needle', tint: '#b8b8c0', detail: 'Sews up a laceration: used up doing it' },
+	// the flare gun (survivalTools.js, flares.js)
+	flareGun: { name: 'Flare gun', slot: ['item'], w: 2, h: 1, kg: 0.5, price: 6, weapon: 'flaregun', chamber: 1, icon: 'pistol', tint: '#d8641e', detail: 'Fires one flare, high up: seen for miles, and it lights the land under it. Reloaded with a flare shell' },
+	flareRound: { name: 'Flare shell', w: 1, h: 1, stack: 6, kg: 0.06, price: 0.8, icon: 'shells', tint: '#e0641e', detail: 'For the flare gun' },
 	// what comes off the animals (deer.js, rabbits.js): for the crafting grid (crafting.js), and for the butcher
 	sinew: { name: 'Sinew', w: 1, h: 1, stack: 4, kg: 0.05, price: 0.8, icon: 'sinew', tint: '#d8c8a0', detail: 'Cut from a dead deer. Crafted with firewood into a snare' },
 	antlers: { name: 'Antlers', w: 2, h: 2, kg: 1.2, price: 6, icon: 'antlers', tint: '#c8b48a', detail: 'Cut from a dead buck. The butcher pays well for a rack' },
@@ -109,6 +128,7 @@ export function makeItem(type, count = 1, colour = null) {
 	if (it.clothing) item.colour = colour ?? Math.floor(Math.random() * 5);
 	if (it.grid) item.contents = [];
 	if (it.attach) item.attached = Array(it.attach).fill(null);
+	if (it.chamber) item.loaded = it.chamber;
 	return item;
 }
 // (an item heard from another machine: its uid kept, whatever else made sane)
@@ -119,6 +139,7 @@ export function cleanItem(raw) {
 	if (it.clothing) item.colour = Math.max(0, Math.min(4, raw.colour | 0));
 	if (it.grid) item.contents = (raw.contents ?? []).map(cleanItem).filter(Boolean);
 	if (it.attach) item.attached = Array.from({ length: it.attach }, (_, k) => cleanItem(raw.attached?.[k]) ?? null);
+	if (it.chamber) item.loaded = Math.max(0, Math.min(it.chamber, raw.loaded | 0));
 	return item;
 }
 
@@ -189,6 +210,11 @@ export const ICONS = {
 	stove: 'M9 14 L29 14 L29 30 L9 30 Z M23 3 L28 3 L28 14 L23 14 Z M11 30 L14 30 L14 36 L11 36 Z M24 30 L27 30 L27 36 L24 36 Z M13 18 L21 18 L21 26 L13 26 Z',
 	funnel: 'M4 6 L36 6 L23 18 L23 22 L17 22 L17 18 Z M11 22 L29 22 L29 37 L11 37 Z',
 	bottle: 'M17 3 L23 3 L23 11 Q29 15 29 21 L29 37 L11 37 L11 21 Q11 15 17 11 Z',
+	bandage: 'M6 14 L34 14 L34 26 L6 26 Z M14 14 L14 26 M26 14 L26 26 M4 10 A6 6 0 0 0 4 30 L8 30 L8 10 Z',
+	tincture: 'M16 3 L24 3 L24 10 L28 15 L28 36 L12 36 L12 15 L16 10 Z M12 20 L28 20 L28 30 L12 30 Z',
+	pills: 'M11 6 L29 6 L29 11 L11 11 Z M12 12 L28 12 L28 36 L12 36 Z M15 20 L25 20 L25 28 L15 28 Z',
+	splint: 'M12 3 L19 3 L19 37 L12 37 Z M22 3 L29 3 L29 37 L22 37 Z M8 11 L33 11 L33 15 L8 15 Z M8 26 L33 26 L33 30 L8 30 Z',
+	needle: 'M32 4 L36 8 L10 34 L5 36 L7 30 Z M28 8 L32 12 L30 14 L26 10 Z M4 12 Q14 4 22 12 Q12 10 8 20 Z',
 	sinew: 'M6 8 Q16 14 12 22 Q8 30 20 32 Q32 34 34 28 L36 31 Q32 38 19 36 Q4 33 8 22 Q11 15 4 11 Z',
 	antlers: 'M19 36 L21 36 L21 22 L30 14 L31 4 L34 5 L33 15 L37 12 L38 15 L24 26 L24 36 L16 36 L16 26 L2 15 L3 12 L7 15 L6 5 L9 4 L10 14 L19 22 Z',
 	bones: 'M6 10 A3 3 0 1 1 11 7 L29 25 A3 3 0 1 1 34 30 A3 3 0 1 1 29 34 A3 3 0 1 1 25 29 L7 11 Z M30 6 A3 3 0 1 1 34 11 L28 17 L24 13 Z',

@@ -25,6 +25,8 @@ import * as deer from './deer.js'
 import * as forest from './forest.js'
 import * as camp from './camp.js'
 import * as rabbits from './rabbits.js'
+import * as beasts from './beasts.js'
+import * as flares from './flares.js'
 
 /*
 	THE TOOLS of the Survival mode, in the hands (from T: survival.js; each one a weapons.js weapon, its item the one it was taken up from):
@@ -39,6 +41,7 @@ import * as rabbits from './rabbits.js'
 		to say, a joiner asks: butcher, butchered back. Cooked at a campfire: campfires.js. At a dead rabbit, as rabbits.js says: rabbitCut, rabbitGot)
 		stone		left click: one thrown (a stack of them; a bird is brought down by one)
 		food, drink	left click: eaten, or drunk (survival.js: consume), and one fewer
+		flare gun	left click: its flare fired, up where it is aimed (flares.js). Empty, left click loads a flare shell, if there is one
 		compass		held face up in front: its card turns to keep its N to the north (the land's -z: survivalMap.js draws it north up),
 					and the bearing the walker faces is written under it
 		carry		the camp's big things (camp.js), carried in the arms: left click, the tent pitched in front, or the stove or the rain
@@ -53,12 +56,12 @@ import * as rabbits from './rabbits.js'
 const CHOPS = { least: 3, most: 6, metres: 8 };	// blows a tree takes: least, and one more for every so many metres tall, up to most
 const WOOD_METRES = 5;				// metres of tree a firewood (one at the least, six at the most)
 const THROW = { hatchet: 16, knife: 18, stone: 20 };	// metres a second
-const SWING = { chop: 0.42, stab: 0.3, throw: 0.32, eat: 1.3, light: 0.25 };
+const SWING = { chop: 0.42, stab: 0.3, throw: 0.32, eat: 1.3, light: 0.25, flare: 0.35, reload: 1.1 };
 const RAISE = 0.35;					// seconds the compass and the watch take to come up	// seconds
 const BUTCHER_REACH = 2.8;			// metres from the eye a dead deer is cut from
 const MARK = 90;					// metres the thrown things lying out are marked through anything
 const SHOW_REACH = 300;				// metres the props are drawn out to
-const TOOL_WEAPONS = ['lighter', 'hatchet', 'knife', 'stone', 'eat', 'compass', 'watch', 'carry'];
+const TOOL_WEAPONS = ['lighter', 'hatchet', 'knife', 'stone', 'eat', 'compass', 'watch', 'carry', 'flaregun'];
 const nowSeconds = () => performance.now() / 1000;
 
 // what is in the hands: its item (or one out of nowhere, god mode)
@@ -85,13 +88,15 @@ const usedUp = (count = 1) => {
 
 // THE MODELS in the hands
 const views = {};
-for (const name of ['lighter', 'hatchet', 'knife', 'stone', 'bread', 'sausage', 'venison', 'cookedVenison', 'rabbitMeat', 'cookedRabbit', 'smokedFish', 'water', 'beer', 'compass', 'watchArm', 'tentBundle', 'stovePacked', 'collectorPacked']) views[name] = new vm.Viewmodel('held ' + name, MESHES[name].data);
-const meshFor = (type) => views[type] ? type : null;
+for (const name of ['lighter', 'hatchet', 'knife', 'stone', 'bread', 'sausage', 'venison', 'cookedVenison', 'rabbitMeat', 'cookedRabbit', 'flaregun', 'smokedFish', 'water', 'beer', 'compass', 'watchArm', 'tentBundle', 'stovePacked', 'collectorPacked']) views[name] = new vm.Viewmodel('held ' + name, MESHES[name].data);
+// (the bigger animals' meat looks as venison does)
+const LOOKS_AS = { mooseMeat: 'venison', wolfMeat: 'venison', bearMeat: 'venison', cookedMoose: 'cookedVenison', cookedWolf: 'cookedVenison', cookedBear: 'cookedVenison' };
+const meshFor = (type) => views[type] ? type : LOOKS_AS[type] ?? null;
 
 const tool = { state: 'ready', t: 0, raised: false, lit: false, chops: 0, fired: false, up: 0 };
 const name = () => weapons.weaponState.current;
 const usable = () => TOOL_WEAPONS.includes(name()) && weapons.holding(name()) && !hunting.input.menuOpen && document.pointerLockElement == canvas;
-for (const w of TOOL_WEAPONS) weapons.addWeapon(w, { label: { lighter: 'Lighter', hatchet: 'Hatchet', knife: 'Small knife', stone: 'Throwing stones', eat: 'Food', compass: 'Compass', watch: 'Wristwatch', carry: 'Carried' }[w], detail: '', menu: null,
+for (const w of TOOL_WEAPONS) weapons.addWeapon(w, { label: { lighter: 'Lighter', hatchet: 'Hatchet', knife: 'Small knife', stone: 'Throwing stones', eat: 'Food', compass: 'Compass', watch: 'Wristwatch', carry: 'Carried', flaregun: 'Flare gun' }[w], detail: '', menu: null,
 	equip: () => { tool.state = 'ready'; tool.t = 0; tool.raised = false; tool.up = 0; if (w != 'lighter') tool.lit = false; },
 	reset: () => {}, help: () => helpFor(w), drawn: () => draw(w) });
 function helpFor(w) {
@@ -100,6 +105,7 @@ function helpFor(w) {
 	if (w == 'hatchet') return ['Hatchet', [['Left click', 'a blow (a tree: firewood)'], ['Right held + left', 'throw it']]];
 	if (w == 'knife') return ['Small knife', [['Left click', 'stab'], ['Right held + left', 'throw it']]];
 	if (w == 'stone') return ['Throwing stones', [['Left click', `throw one (${held.item?.count ?? 0} left)`]]];
+	if (w == 'flaregun') return ['Flare gun', [['Left click', held.item?.loaded > 0 || held.virtual ? 'fire the flare' : `load a flare shell (${inventory.everything().filter(({ item }) => item.type == 'flareRound').reduce((n, { item }) => n + item.count, 0)} carried)`]]];
 	if (w == 'compass') return ['Compass', [['Turn', 'its N stays to the north']]];
 	if (w == 'watch') return ['Wristwatch', [['T', 'put the wrist down again']]];
 	if (w == 'carry') return [it?.name ?? 'Carried', [['Left click', it?.camp == 'tent' ? 'pitch it here' : 'put it in the tent you look at']]];
@@ -114,6 +120,7 @@ window.addEventListener('mousedown', (e) => {
 	const w = name();
 	if (w == 'lighter') { lighterClick(); return; }
 	if (w == 'carry') { carryClick(); return; }
+	if (w == 'flaregun') { flareClick(); return; }
 	if (w == 'eat') { start('eat'); weapons.actionSound('eat'); return; }
 	if (w == 'stone' || ((w == 'hatchet' || w == 'knife') && tool.raised)) { start('throw'); weapons.actionSound('swish'); return; }
 	if (w == 'hatchet') { start('chop'); weapons.actionSound('swish'); return; }
@@ -121,6 +128,28 @@ window.addEventListener('mousedown', (e) => {
 });
 window.addEventListener('mouseup', (e) => { if (e.button == 2) tool.raised = false; });
 function start(state) { tool.state = state; tool.t = 0; tool.fired = false; }
+
+// THE FLARE GUN (see the top): fired, or loaded
+function flareClick() {
+	const item = held.item;
+	if (!item) return;
+	if (held.virtual || item.loaded > 0) {
+		const f = transformations.getCameraForward(), m = settings.forestUnitsPerMetre;
+		flares.fire([settings.camPosX + f[0] * 0.6 * m, settings.camPosY + f[1] * 0.6 * m, settings.camPosZ + f[2] * 0.6 * m], f);
+		if (!held.virtual) { item.loaded = 0; inventory.changed(); }
+		weapons.actionSound('cock');
+		start('flare');
+		return;
+	}
+	const shell = inventory.everything().find(({ item: o }) => o.type == 'flareRound')?.item;
+	if (!shell) { help.toast('No flare shells'); return; }
+	inventory.useOne(shell);
+	item.loaded = 1;
+	inventory.changed();
+	weapons.actionSound('load');
+	help.toast('A flare in it');
+	start('reload');
+}
 
 // CARRIED (see the top): the tent pitched, or an attachment into the tent looked at
 function carryClick() {
@@ -173,9 +202,10 @@ function act(dt) {
 	if (!tool.fired && tool.t > T * 0.45) {
 		tool.fired = true;
 		if (tool.state == 'chop' || tool.state == 'stab') {
-			const carcass = deer.corpseInReach(eye, f, BUTCHER_REACH * m), small = carcass == null ? rabbits.corpseInReach(eye, f, BUTCHER_REACH * m) : null;
+			const carcass = deer.corpseInReach(eye, f, BUTCHER_REACH * m), small = carcass == null ? rabbits.corpseInReach(eye, f, BUTCHER_REACH * m) : null, beast = carcass == null && small == null ? beasts.corpseInReach(eye, f, BUTCHER_REACH * m) : null;
 			if (carcass != null) butcher(carcass);
 			else if (small != null) skinRabbit(small);
+			else if (beast) cutBeast(beast.id);
 			else ballistics.fire(eye, f, { round: tool.state });
 			toolStats.blows++;
 		}
@@ -234,6 +264,13 @@ function gotMeat(kind) {
 }
 survivalNet.on('butcher', (msg, from) => { if (survivalNet.authority()) survivalNet.sendTo(from, 'butchered', { kind: deer.butcher(Number(msg.id)) }); });
 survivalNet.on('butchered', (msg) => gotMeat(ITEMS[msg.kind] ? msg.kind : null));
+// A DEAD BEAST (beasts.js): the next cut off it, the host's to say
+function cutBeast(id) {
+	weapons.actionSound('chop');
+	if (survivalNet.authority()) gotMeat(beasts.cut(id));
+	else survivalNet.send('beastCut', { id });
+}
+survivalNet.on('beastCut', (msg, from) => { if (survivalNet.authority()) survivalNet.sendTo(from, 'butchered', { kind: beasts.cut(Number(msg.id)) }); });
 // A DEAD RABBIT (rabbits.js): the host's to say what comes of it
 function skinRabbit(id) {
 	weapons.actionSound('chop');
@@ -252,6 +289,8 @@ hunting.addPrompt(() => {
 	const eye = [settings.camPosX, settings.camPosY, settings.camPosZ], look = transformations.getCameraForward(), reach = BUTCHER_REACH * settings.forestUnitsPerMetre;
 	const keys = name() == 'hatchet' || name() == 'knife' ? 'Left click: cut it up' : 'A hatchet or a knife: cut it up';
 	if (deer.corpseInReach(eye, look, reach) != null) return { name: 'Dead deer', keys };
+	const big = beasts.corpseInReach(eye, look, reach);
+	if (big) return { name: `Dead ${big.kind}`, keys };
 	return rabbits.corpseInReach(eye, look, reach) != null ? { name: 'Dead rabbit', keys } : null;
 });
 
@@ -280,7 +319,7 @@ ballistics.onStop((at, bullet, what) => {
 });
 
 // THE THINGS OUT IN THE WORLD (see the top), and the marks over this player's thrown ones lying out
-const MESH_OF = { rabbitMeat: 'rabbitMeat', cookedRabbit: 'cookedRabbit', rabbitPelt: 'rabbitPelt', smallBones: 'smallBones', antlers: 'antlersCut', sinew: 'sinewCoil', trap: 'trap', tent: 'tentBundle', tentStove: 'stovePacked', rainCollector: 'collectorPacked', compass: 'compass', smokedFish: 'smokedFish', hatchet: 'hatchet', knife: 'knife', stone: 'stone', bread: 'bread', sausage: 'sausage', venison: 'venison', cookedVenison: 'cookedVenison', water: 'water', beer: 'beer', firewood: 'firewood', bedroll: 'bedroll', lighter: 'lighter' };
+const MESH_OF = { mooseMeat: 'venison', wolfMeat: 'venison', bearMeat: 'venison', cookedMoose: 'cookedVenison', cookedWolf: 'cookedVenison', cookedBear: 'cookedVenison', bigBones: 'smallBones', flareGun: 'flaregun', rabbitMeat: 'rabbitMeat', cookedRabbit: 'cookedRabbit', rabbitPelt: 'rabbitPelt', smallBones: 'smallBones', antlers: 'antlersCut', sinew: 'sinewCoil', trap: 'trap', tent: 'tentBundle', tentStove: 'stovePacked', rainCollector: 'collectorPacked', compass: 'compass', smokedFish: 'smokedFish', hatchet: 'hatchet', knife: 'knife', stone: 'stone', bread: 'bread', sausage: 'sausage', venison: 'venison', cookedVenison: 'cookedVenison', water: 'water', beer: 'beer', firewood: 'firewood', bedroll: 'bedroll', lighter: 'lighter' };
 const marks = document.createElement('div');
 marks.style.cssText = 'position: fixed; inset: 0; pointer-events: none; z-index: 4; font: 11px system-ui, sans-serif;';
 document.body.appendChild(marks);
@@ -359,6 +398,11 @@ function draw(w) {
 	} else if (w == 'carry') {
 		// in both arms, low in front
 		x = 0.0; y = held.item?.type == 'tent' ? -0.42 : -0.62; z = held.item?.type == 'tent' ? -0.55 : -0.7; yaw = held.item?.type == 'tent' ? Math.PI / 2 : 0.2; pitch = 0;
+	} else if (w == 'flaregun') {
+		// held out, tipping up with the shot; broken open a moment to load
+		x = 0.15; y = -0.15; z = -0.46; pitch = 0.08;
+		if (s == 'flare') { pitch = 0.08 + Math.sin(k * Math.PI) * 0.55; z = -0.46 + Math.sin(k * Math.PI) * 0.05; }
+		if (s == 'reload') { pitch = -0.6 * Math.sin(k * Math.PI); y = -0.22; }
 	} else if (w == 'stone') {
 		x = 0.17; y = -0.18; z = -0.34;
 		if (s == 'throw') { y = -0.1 + k * 0.05; z = -0.34 - k * 0.4; }
@@ -407,4 +451,5 @@ export function survivalToolsUpdate() {
 	if (held.item && !held.virtual && TOOL_WEAPONS.includes(name()) && !HANDS.some((h) => inventory.inv.hands[h] === held.item)) { held.item = null; weapons.equipWeapon('none'); }
 }
 // for testing
+export const holdForTest = holdItem;
 export const toolForTest = () => ({ ...tool, held: held.item?.type ?? null });

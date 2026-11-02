@@ -13,11 +13,12 @@ import * as campfires from './campfires.js'
 import * as camp from './camp.js'
 import * as crafting from './crafting.js'
 import * as rabbits from './rabbits.js'
+import * as medical from './medical.js'
 
 /*
 	THE INVENTORY SCREEN of the Survival game mode: I (or E at a container, loot.js) opens it, I, Tab, Esc or F shuts it. Four columns, and a fifth
 	under its small Crafting tab (crafting.js: a six by six grid to lay things out in, any way round, and what they make in the output slot, dragged
-	out of it into the inventory or off on to the ground):
+	out of it into the inventory or off on to the ground), or its First Aid tab (medical.js: a man after Leonardo's, each limb as it is: right click one for what can be done for it):
 		GEAR		what is worn, a slot each (items.js: SLOTS)
 		EQUIPPED	the hands: primary, secondary, item 1 to 4 (what T offers, survival.js), the pocket (one cell: the money, say); and under
 					them how the walker is (the needs, what it feels like, what the clothes come to, what is carried against what can be)
@@ -32,7 +33,7 @@ import * as rabbits from './rabbits.js'
 const CELL = 42;					// pixels
 const SLOT = 68;
 
-const ui = { open: false, container: null, camp: null, drag: null, menu: null, crafting: false };
+const ui = { open: false, container: null, camp: null, drag: null, menu: null, crafting: false, aid: false };
 export const uiState = ui;
 const root = document.createElement('div');
 root.style.cssText = 'position: fixed; inset: 0; z-index: 20; display: none; background: rgba(10, 8, 6, 0.86); color: #e6dcc8; font: 12px Georgia, "Times New Roman", serif; user-select: none; overflow: auto;';
@@ -118,15 +119,39 @@ function render() {
 	const craftColumn = ui.crafting ? `<div>${panel('CRAFTING', `<div style="display:flex; gap:12px; align-items:center;">${gridBox('craft', inventory.CRAFT_GRID, I.craft, 'grid:craft')}
 		<div style="text-align:center;"><div style="font-size:18px; color:#b8a888; margin-bottom:4px;">⇒</div>${slotBox('craftOut', 'Output', crafting.outputNow(), 84, 84)}</div></div>
 		<div style="margin-top:8px; max-width:360px; color:#cfc2a8; line-height:1.5;">${recipe ? html(crafting.describe(recipe)) : 'Lay things out in the grid, any way round'}<br><span style="color:#9a8a70;">Makes: ${crafting.RECIPES.map((r) => html(crafting.describe(r))).join(' · ')}</span></div>`)}</div>` : '';
-	root.innerHTML = `<div style="position:fixed; left:24px; top:4px; z-index:1;">${tab('bag', 'INVENTORY', !ui.crafting)}${tab('craft', 'CRAFTING', ui.crafting)}</div><div style="display:flex; gap:16px; padding:24px; align-items:flex-start; min-width:max-content; margin:auto;">
+	root.innerHTML = `<div style="position:fixed; left:24px; top:4px; z-index:1;">${tab('bag', 'INVENTORY', !ui.crafting && !ui.aid)}${tab('craft', 'CRAFTING', ui.crafting)}${tab('aid', 'FIRST AID', ui.aid)}</div><div style="display:flex; gap:16px; padding:24px; align-items:flex-start; min-width:max-content; margin:auto;">
 		<div>${panel('GEAR', gear)}</div>
 		<div style="width:250px;">${panel('EQUIPPED', hands)}${panel('CONDITION', status)}</div>
 		<div>${pack}</div>
 		${found ? `<div>${found}</div>` : ''}
 		${craftColumn}
+		${ui.aid ? `<div>${firstAidPanel()}</div>` : ''}
 		<div style="position:fixed; left:24px; bottom:12px; color:rgba(220,200,170,0.6);">Drag to move · R turns · drop off the screen to put it down · double click: in or out · right click: more · Tab, I, Esc or F to close</div>
 	</div>`;
 }
+
+// THE FIRST AID TAB (see the top): the man in his circle and square, each limb coloured by the worst on it, and what is wrong by name
+const LIMB_SHAPES = {
+	head: '<circle cx="110" cy="52" r="13"/>',
+	torso: '<path d="M96 67 L124 67 L128 80 L124 118 L118 130 L102 130 L96 118 L92 80 Z"/>',
+	armL: '<path d="M93 72 L60 72 L24 66 L23 73 L58 83 L92 84 Z"/>',
+	armR: '<path d="M127 72 L160 72 L196 66 L197 73 L162 83 L128 84 Z"/>',
+	legL: '<path d="M101 130 L109 134 L104 170 L94 212 L82 212 L88 172 Z"/>',
+	legR: '<path d="M119 130 L111 134 L116 170 L126 212 L138 212 L132 172 Z"/>',
+};
+function firstAidPanel() {
+	const fill = (conditions) => conditions.length ? conditions[conditions.length - 1][1] : 'rgba(210, 190, 150, 0.55)';
+	const limbs = Object.keys(LIMB_SHAPES).map((k) => { const c = medical.conditionsOf(k); return `<g data-limb="${k}" style="cursor:context-menu;" fill="${fill(c)}" stroke="#3a2c1c" stroke-width="1"><title>${medical.LIMB_NAMES[k]}: right click to treat</title>${LIMB_SHAPES[k]}</g>`; }).join('');
+	const drawing = `<svg viewBox="0 0 220 240" width="300" height="327" style="display:block; background:#d9c9a6; border:1px solid #6a5a44; border-radius:3px;">
+		<circle cx="110" cy="122" r="104" fill="none" stroke="#6b5233" stroke-width="1.2"/><rect x="18" y="30" width="184" height="184" fill="none" stroke="#6b5233" stroke-width="1.2"/>
+		<path d="M93 74 L52 46 L24 30 M127 74 L168 46 L196 30 M101 130 L70 176 L44 214 M119 130 L150 176 L176 214" fill="none" stroke="#6b5233" stroke-width="1.6" opacity="0.55"/>
+		<path d="M110 30 L110 214 M18 122 L202 122" stroke="#6b5233" stroke-width="0.4" opacity="0.5"/>
+		${limbs}</svg>`;
+	const rows = Object.keys(LIMB_SHAPES).map((k) => { const c = medical.conditionsOf(k); return `<div style="padding:3px 0; border-bottom:1px solid rgba(200,180,140,0.15);"><b>${medical.LIMB_NAMES[k]}</b>: ${c.length ? c.map(([t, colour]) => `<span style="color:${colour};">${html(t)}</span>`).join(' · ') : '<span style="color:#9a8a70;">fine</span>'}</div>`; }).join('');
+	const sick = medical.moodles().filter(([key]) => medical.ILLNESS[key]).map(([key]) => { const I = medical.ILLNESS[key]; return `<div style="margin-top:4px;"><b style="color:#e0a050;">${html(I.name)}</b>: <span style="color:#cfc2a8;">${html(I.detail)}</span></div>`; }).join('');
+	return panel('FIRST AID', `<div style="display:flex; gap:12px; align-items:flex-start;">${drawing}<div style="width:260px; line-height:1.45;">${rows}${sick || '<div style="margin-top:8px; color:#9a8a70;">No illness</div>'}<div style="margin-top:8px; font-size:11px; color:#9a8a70;">Right click a limb to treat it</div></div></div>`);
+}
+medical.onChange(() => render());
 
 // OPEN AND SHUT
 export function openInventory(containerId = null) {
@@ -286,7 +311,7 @@ root.addEventListener('pointerdown', (e) => {
 	if (e.button != 0) return;
 	closeMenu();
 	const tabEl = e.target.closest('[data-tab]');
-	if (tabEl) { ui.crafting = tabEl.dataset.tab == 'craft'; render(); return; }
+	if (tabEl) { ui.crafting = tabEl.dataset.tab == 'craft'; ui.aid = tabEl.dataset.tab == 'aid'; render(); return; }
 	const el = e.target.closest('.it');
 	if (!el) return;
 	const item = find(el.dataset.src, Number(el.dataset.uid));
@@ -378,8 +403,18 @@ const menuBox = document.createElement('div');
 menuBox.style.cssText = 'position: fixed; z-index: 24; display: none; background: rgba(28, 22, 16, 0.97); border: 1px solid #6a5a44; border-radius: 4px; font: 13px Georgia, serif; color: #efe4cc; min-width: 140px;';
 document.body.appendChild(menuBox);
 function closeMenu() { menuBox.style.display = 'none'; ui.menu = null; }
+function showMenu(acts, e) {
+	menuBox.innerHTML = acts.map(([name], k) => `<div data-k="${k}" style="padding:6px 12px; cursor:pointer;" onmouseover="this.style.background='rgba(200,160,100,0.25)'" onmouseout="this.style.background=''">${html(name)}</div>`).join('');
+	menuBox.style.left = e.clientX + 'px';
+	menuBox.style.top = e.clientY + 'px';
+	menuBox.style.display = '';
+	ui.menu = acts;
+}
 root.addEventListener('contextmenu', (e) => {
 	e.preventDefault();
+	// a limb, on the first aid tab: what can be done for it
+	const limb = e.target.closest('[data-limb]');
+	if (limb) { showMenu(medical.actionsFor(limb.dataset.limb).map((a) => [a.label, a.act]), e); return; }
 	const el = e.target.closest('.it');
 	if (!el) { closeMenu(); return; }
 	const src = el.dataset.src, item = find(src, Number(el.dataset.uid));
@@ -395,7 +430,7 @@ root.addEventListener('contextmenu', (e) => {
 		if (it.use == 'pitch') acts.push(['Pitch tent', () => { if (camp.pitch(item)) closeInventory(); }]);
 		if (ui.camp && campSlotFor(item)) acts.push([ui.camp.kind == 'tent' ? 'Into the tent' : 'Into the saddlebags', () => camp.put(ui.camp, campSlotFor(item), item)]);
 		if (item.type == 'firewood') acts.push(['Build campfire', () => { const at = campfires.buildSpot(); if (!at) { help.toast('No room for a fire here'); return; } inventory.useOne(item); campfires.build(at); closeInventory(); help.toast('Campfire laid: light it with the lighter'); }]);
-		if (item.type == 'venison' || item.type == 'rabbitMeat') acts.push(['Cook on the fire', () => campfires.cook(item)]);
+		if (['venison', 'rabbitMeat', 'mooseMeat', 'wolfMeat', 'bearMeat'].includes(item.type)) acts.push(['Cook on the fire', () => campfires.cook(item)]);
 		if (it.use == 'trap') acts.push(['Set the snare', () => { if (rabbits.setSnare(item)) closeInventory(); }]);
 		const on = src.startsWith('worn') || src.startsWith('hand') || src.startsWith('attach');
 		if (on) acts.push(['Take off', () => quickEquip(item, src)]);
@@ -404,11 +439,7 @@ root.addEventListener('contextmenu', (e) => {
 		if (item.count > 1) acts.push(['Split', () => { const half = Math.floor(item.count / 2); item.count -= half; const part = { ...structuredClone(item), uid: Math.floor(Math.random() * 1e12), count: half }; if (!inventory.give(part)) { item.count += half; help.toast('No room to split it'); } inventory.changed(); }]);
 		acts.push(['Put down', () => dropOwn(item)]);
 	}
-	menuBox.innerHTML = acts.map(([name], k) => `<div data-k="${k}" style="padding:6px 12px; cursor:pointer;" onmouseover="this.style.background='rgba(200,160,100,0.25)'" onmouseout="this.style.background=''">${html(name)}</div>`).join('');
-	menuBox.style.left = e.clientX + 'px';
-	menuBox.style.top = e.clientY + 'px';
-	menuBox.style.display = '';
-	ui.menu = acts;
+	showMenu(acts, e);
 });
 menuBox.addEventListener('click', (e) => {
 	const k = Number(e.target.closest('[data-k]')?.dataset.k);

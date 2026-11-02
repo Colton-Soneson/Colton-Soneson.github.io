@@ -45,7 +45,7 @@ const TABLES = {
 		['coltRounds', 0.35, 18], ['sharpsRounds', 0.25, 8], ['mauserRounds', 0.3, 20], ['rucksack', 0.2], ['framePack', 0.08], ['ammoPouch', 0.3], ['utilityPouch', 0.25],
 		['bedrollStrap', 0.15], ['slungPack', 0.15], ['chestplate', 0.06], ['duster', 0.1], ['mackinaw', 0.1], ['buffaloCoat', 0.05], ['sweater', 0.08], ['canvasTrousers', 0.1],
 		['chaps', 0.06], ['silkLongJohns', 0.05], ['fleeceDrawers', 0.05], ['ridingBoots', 0.08], ['mukluks', 0.05], ['bootLiners', 0.06], ['kneeSocks', 0.06],
-		['trapperHat', 0.06], ['bowler', 0.04], ['furCollar', 0.05], ['balaclava', 0.06], ['bread', 0.4, 2], ['water', 0.5, 2], ['bedroll', 0.2], ['hatchet', 0.1], ['rainCollector', 0.04], ['tentStove', 0.03]],
+		['trapperHat', 0.06], ['bowler', 0.04], ['furCollar', 0.05], ['balaclava', 0.06], ['bread', 0.4, 2], ['water', 0.5, 2], ['bedroll', 0.2], ['hatchet', 0.1], ['rainCollector', 0.04], ['tentStove', 0.03], ['bandage', 0.4, 3], ['alcohol', 0.3, 2], ['antibiotics', 0.15, 2], ['splint', 0.15], ['sewingKit', 0.12], ['flareRound', 0.2, 2]],
 };
 // an NPC's, by its kind (npcs.js)
 //		(and what it was wearing, some of it: WORN_KEPT each, outfits.js)

@@ -8,6 +8,8 @@
 		onJoin(fn)			on the host, a joiner come in: fn(id), to send it what there is
 	authority(): whether this machine keeps the shared things (the host, or alone)
 */
+// (a blow from another player, heard by the host: net.js says, medical.js sees to it)
+export const meleeHit = { fn: null };
 export const link = { role: () => 'off', myId: () => 0, toHost: null, toAll: null, toOne: null };
 const handlers = new Map(), joinListeners = [];
 

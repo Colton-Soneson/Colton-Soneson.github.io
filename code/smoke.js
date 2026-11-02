@@ -23,7 +23,7 @@ import {uniformBufferLights} from './rotatingCube.js'
 	Smoke, fire and dust, as many puffs as there are at once (MAX_PUFFS), drawn together (vf_smoke.js: a ball each, an instance): the
 	houses burning and coming down (town.js), and whatever else puts a puff in (addPuff) or a ball of fire with its flash (blast).
 	A PUFF: where it is, how fast it goes (metres a second), how big it is at first and how many times over it grows by the end of its
-		life, its kind (0 fire burning out to smoke, 1 smoke, 2 dust) and, smoke, how dark. Each frame it is lifted (rise, metres a second
+		life, its kind (0 fire burning out to smoke, 1 smoke, 2 dust, 3 glare) and, smoke, how dark. Each frame it is lifted (rise, metres a second
 		a second, held back by the air as it goes up: RISE_DRAG), and carried off with the wind (WIND_TAKE of its speed, from the
 		weather: wind.js), more of it the higher it has gone over where it started. A puff further off than DRAW_DISTANCE is not drawn.
 	A BLAST: a ball of fire (puffs of fire flung out and up), and a flash of light for FLASH_SECONDS (pointLights.js, a moving light)

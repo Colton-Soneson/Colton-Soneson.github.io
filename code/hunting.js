@@ -113,7 +113,7 @@ export const hunterStats = { boxes: 0, gathers: 0, cornerReads: 0, grounded: fal
 export const input = { menuOpen: false, lookScale: 1 };
 export const crouch = { on: false, amount: 0 };		// C (see the top): crouching, and how far down, 0 to 1
 // (the Survival mode, survival.js: pace, how much of its walking pace it has; frozen, asleep: it does not move)
-export const effects = { pace: 1, frozen: false };
+export const effects = { pace: 1, frozen: false, noRun: false, noJump: false };	// (noRun, noJump: medical.js: a broken leg)
 
 const hunter = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, grounded: false, swimming: false,
 	on: 'land',					// land, ladder, deck or seat (see SAILING at the top), mast or nest (THE MASTS), saddle (RIDING), or aboard (SEATS)
@@ -701,7 +701,8 @@ export function updateHunter() {
 	stance.lying = Math.min(Math.max(stance.lying + (stance.hold ? 1 : -1) * seconds / LIE_SECONDS, 0), 1);
 	if (stance.hold || stance.lying > 0 || effects.frozen) { ahead = side = 0; jumpPressed = false; }
 	const length = Math.hypot(ahead, side) || 1;
-	const running = keysDown.has('ShiftLeft') || keysDown.has('ShiftRight');
+	const running = (keysDown.has('ShiftLeft') || keysDown.has('ShiftRight')) && !effects.noRun;
+	if (effects.noJump) jumpPressed = false;
 	// crouched (see C at the top): only on its feet on the land; up again to jump or to run
 	if (running && (ahead || side) || jumpPressed || hunter.swimming || hunter.on != 'land' || stance.hold || !hunterLife.alive) crouch.on = false;
 	crouch.amount = Math.min(Math.max(crouch.amount + (crouch.on ? 1 : -1) * seconds / CROUCH.seconds, 0), 1);

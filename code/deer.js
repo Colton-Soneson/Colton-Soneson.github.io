@@ -12,6 +12,7 @@ import { vf_deer } from '../shaders/js/vf_deer.js'
 import * as transformations from './transformations.js'
 import * as terrain from './terrain.js'
 import * as ballistics from './ballistics.js'
+import * as hearing from './hearing.js'
 
 //the deer fade into the horizon color, read from the sky view LUT (same as everything else)
 import {skyViewLUTtexture} from './atmosphere.js'
@@ -41,6 +42,8 @@ import {uniformBufferLights} from './rotatingCube.js'
 		apart from each other.
 		They keep off water and off ground too steep to walk: before each step a deer looks a little way ahead, and if
 		that is water or a cliff it tries turning a bit one way or the other until it finds ground it can walk on.
+
+	SPOOKED (the Survival mode): a player heard within SPOOK (hearing.js: further off running or coughing, nearer crouched or still), and the group runs off from them for FLEE seconds.
 
 	THE DEER'S DAY is the world's: a round of the sun (sunCycles in atmosphere.js, settings.dayLengthSeconds long). They go to the
 		water at three times spread through each day. While the sun is stood still no day goes by, and they only wander.
@@ -86,6 +89,7 @@ const lieOf = (corpse) => corpse.lie ?? (settings.gameMode == 'Hunting' ? SURVIV
 const SINK_DEPTH = 0.7;				// metres it goes down into the ground
 const RESPAWN_SECONDS = 120;
 const RESPAWN_AWAY = 60;			// metres
+const SPOOK = 22, FLEE = 9;			// metres, seconds
 // the hitbox, in the deer's own metres: x, y, z, radius, and whether it goes down with the head (see vf_deer.js)
 const DEER_SPHERES = [[0, 0.97, -0.42, 0.2], [0, 0.98, 0, 0.21], [0, 1.0, 0.38, 0.2], [0, 1.25, 0.56, 0.1, true], [0, 1.45, 0.8, 0.11, true], [0, 0.45, 0.4, 0.14], [0, 0.45, -0.45, 0.14]];
 
@@ -561,7 +565,19 @@ function advanceDeer(elapsed) {
 			group.stuckTimer = STUCK_SECONDS;
 		}
 
-		if (group.state == 'wander') {
+		// SPOOKED (see the top)
+		if (group.state != 'flee' && hearing.survivalMode()) {
+			const L = hearing.heardBy(group.deer[0].x, group.deer[0].z, SPOOK * m);
+			if (L) {
+				const a = Math.atan2(group.deer[0].x - L.x, group.deer[0].z - L.z), run = 45 * m;
+				group.state = 'flee'; group.timer = FLEE; group.target = [group.deer[0].x + Math.sin(a) * run, group.deer[0].z + Math.cos(a) * run];
+			}
+		}
+		if (group.state == 'flee') {
+			moveGroup(group, group.target, TROT * 1.5 * m, elapsed);
+			group.timer -= elapsed;
+			if (group.timer <= 0) { group.state = 'graze'; group.timer = between(GRAZE_SECONDS); }
+		} else if (group.state == 'wander') {
 			//------------------ROUND THE FOREST-----------------
 			if (moveGroup(group, group.target, WALK * m, elapsed) < 1 * m) {
 				group.state = 'graze';
@@ -694,6 +710,8 @@ export function nearestDeer(x, z, reach) {
 	for (const group of groups) for (const one of group.deer) { const d = Math.hypot(one.x - x, one.z - z); if (d < bestD) { bestD = d; best = one; } }
 	return best;
 }
+// host: a dead one all eaten (beasts.js: a pack's): nothing on it, and it goes
+export function eaten(id) { const corpse = corpses.find((c) => c.deer.id === id); if (corpse) { corpse.cuts = []; corpse.meat = 0; corpse.lie = Math.max(corpse.t - FALL_SECONDS, 0); } }
 export function deerById(id) { for (const group of groups) { const one = group.deer.find((d) => d.id === id); if (one) return one; } return null; }
 export function corpseOf(id) { const corpse = corpses.find((c) => c.deer.id === id && c.cuts.length); return corpse ? corpse.deer : null; }
 export function deerCorpses() {

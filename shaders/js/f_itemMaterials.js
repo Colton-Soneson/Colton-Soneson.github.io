@@ -14,6 +14,7 @@
 		(what lives, creatureMeshes.js)
 		63 rabbit's coat		64 rabbit's belly		65 bone					66 whale's back				67 whale's belly
 		68 flesh				69 blubber				70 antler				73 harpoon iron
+		80 moose				81 wolf					82 bear					84 a flare's fire			85 flare gun orange
 		74 trout				75 carp					76 herring				77 mackerel					78 cod					79 tuna
 */
 export const itemMaterials =
@@ -75,6 +76,11 @@ export const itemMaterials =
 			case 71: { return vec4f(mix(vec3f(0.26, 0.32, 0.44), vec3f(0.36, 0.42, 0.54), step(0.0, sin((at.x + at.z) * 18.0))), 0.04); }
 			case 72: { let u = fract(vec2f((at.x + at.z) * 6.0 + floor(at.y * 12.0) * 0.5, at.y * 12.0)); return vec4f(vec3f(0.4, 0.2, 0.14) * (0.65 + 0.35 * step(0.08, min(u.x, u.y))), 0.05); }
 			case 73: { return vec4f(0.2, 0.2, 0.22, 0.8); }
+			case 80: { return vec4f(mix(vec3f(0.3, 0.2, 0.13), vec3f(0.62, 0.5, 0.36), smoothstep(0.85, 0.4, at.y)) * (0.97 + 0.03 * sin(at.y * 9.0 + at.z * 5.0)), 0.04); }
+			case 81: { return vec4f(mix(vec3f(0.42, 0.41, 0.4), vec3f(0.78, 0.74, 0.66), smoothstep(0.66, 0.42, at.y)) * (0.95 + 0.05 * sin(at.y * 17.0 + at.z * 11.0)), 0.04); }
+			case 82: { return vec4f(vec3f(0.36, 0.23, 0.13) * (0.96 + 0.04 * sin(at.y * 11.0 + at.z * 7.0)), 0.04); }
+			case 84: { return vec4f(1.0, 0.8, 0.7, 0.0); }
+			case 85: { return vec4f(0.85, 0.32, 0.06, 0.5); }
 			case 74: { return vec4f(mix(vec3f(0.3, 0.34, 0.2) * (0.75 + 0.25 * step(0.2, sin(at.x * 300.0) * sin(at.z * 240.0))), vec3f(0.78, 0.66, 0.62), smoothstep(0.012, -0.018, at.y)), 0.7); }
 			case 75: { return vec4f(mix(vec3f(0.62, 0.44, 0.16), vec3f(0.86, 0.72, 0.42), smoothstep(0.02, -0.03, at.y)), 0.8); }
 			case 76: { return vec4f(mix(vec3f(0.22, 0.34, 0.46), vec3f(0.82, 0.86, 0.9), smoothstep(0.01, -0.012, at.y)), 1.3); }
@@ -88,6 +94,7 @@ export const itemMaterials =
 		if (m == 28) { return vec3f(2.4, 1.3, 0.35); }
 		if (m == 36) { return vec3f(1.6, 0.45, 0.08); }
 		if (m == 62) { return vec3f(1.5, 1.05, 0.5); }
+		if (m == 84) { return vec3f(9.0, 3.6, 2.4); }
 		return vec3f(0.0);
 	}
 `;

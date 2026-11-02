@@ -20,7 +20,7 @@ import { WHALE_STAGES } from './creatureMeshes.js'
 		Its cable runs out at CABLE, or it lands in the sea: it is hauled back. RELOAD seconds after it is back it can be fired again.
 	FAST TO A WHALE: a harpoon that meets one sticks. She REELs it in (at REEL, whatever it does), and once it is at her side it dies there, lying alongside, and is cut up: over an ninth of a day (FLENSE: by the
 		world's clock) it goes through WHALE_STAGES, four of them, down to just bones, and is gone. All that time oil and blubber go into her chest (OIL, BLUBBER, at the rate it goes), to be seen by E at it.
-	LANDED: whatever schooner has anything in her chest and is within PORT metres of the end of a town's dock, off the side of her hull: it is gone from the chest, and PAID goes to that town's treasury (treasury.js).
+	LANDED: a player's schooner with anything in her chest within PORT metres of the end of a town's dock, off the side of her hull: it is gone from the chest, and PAID goes to that town's treasury (treasury.js). A crew's is locked to the dock (npcShips.js) and lands it there (landAt).
 	A SCHOONER'S CREW (npcShips.js) hunts them (jobFor: chase, hold while reeling and cutting, home), and fires its own (npcFire).
 	MULTIPLAYER: the host keeps it all. The whales go with the animals (net.js: whaleShare, whaleFollow). The guns, harpoons and chests are sent GEAR_RATE times a second (whaleGear); a joiner's shot and aim are asked for (harpoonFire, harpoonAim).
 	In metres and seconds (their places world units).
@@ -217,7 +217,8 @@ function flyHarpoons(b, g, dt) {
 }
 // LANDED (see the top)
 function landed(b, g) {
-	if (g.chest.oil + g.chest.blubber < 0.01) return;
+	// (a crew's is landed at her dock: npcShips.js)
+	if (b.owner == 'npc' || g.chest.oil + g.chest.blubber < 0.01) return;
 	if (whales.some((w) => w.boat === b.id && (w.state == 'dead' || w.state == 'reel'))) return;
 	const m = metre(), half = 9;		// metres: her hull either way of her middle
 	const at = b.frame.toWorld([0, 0, 0]).map((v) => v / m);
@@ -232,6 +233,15 @@ function landed(b, g) {
 	}
 }
 
+// her crew's, locked at her town's dock (npcShips.js): landed, and paid
+export function landAt(b, t) {
+	const g = gearOf(b);
+	if (g.chest.oil + g.chest.blubber < 0.01) return false;
+	g.chest.oil = 0; g.chest.blubber = 0;
+	treasury.pay(t, PAID, 'Whale oil and blubber landed');
+	whalingStats.landed++;
+	return true;
+}
 //-------------------------------WHAT A CREW DOES (npcShips.js)-------------------------------
 /*
 	A schooner's job, from where she is (metres): { kind: 'hold' } (a whale on her line, or alongside: she lies there); { kind: 'home' } (her chest has something in it, and it is all aboard: back to her dock);

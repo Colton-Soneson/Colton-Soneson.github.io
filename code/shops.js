@@ -37,18 +37,20 @@ const SELL = 0.5;					// of the price
 const INTEREST = 0.03;				// a day
 const SAVED = 'survivalBank';
 const FOOD = Object.keys(ITEMS).filter((type) => ITEMS[type].food || ITEMS[type].drink);
-const GEAR = ['tent', 'tentStove', 'rainCollector', 'haversack', 'rucksack', 'framePack', 'ammoPouch', 'utilityPouch', 'bedrollStrap', 'bedroll', 'compass', 'watch', 'knife', 'hatchet', 'lighter'];
+const GEAR = ['flareGun', 'flareRound', 'bandage', 'alcohol', 'antibiotics', 'splint', 'sewingKit', 'tent', 'tentStove', 'rainCollector', 'haversack', 'rucksack', 'framePack', 'ammoPouch', 'utilityPouch', 'bedrollStrap', 'bedroll', 'compass', 'watch', 'knife', 'hatchet', 'lighter'];
 const ROOM = 2;						// dollars: a night in a room at the inn
-const HIDES = ['sinew', 'antlers', 'smallBones', 'rabbitPelt'];
+const HIDES = ['sinew', 'antlers', 'smallBones', 'bigBones', 'rabbitPelt', 'mooseHide', 'bearHide'];
+const MEDICINE = ['bandage', 'alcohol', 'antibiotics', 'splint', 'sewingKit'];
 const HORSE = 30;					// dollars: a saddled horse (the outfitter's: horse.js brings it round, its saddlebags for the camp, camp.js)
 const CLOTHING = Object.keys(CLOTHES);
 const TAILORED = CLOTHING.filter((type) => CLOTHES[type].slot != 'feetOuter' && CLOTHES[type].slot != 'extra');
 const OUTFITTED = [...CLOTHING.filter((type) => CLOTHES[type].slot == 'feetOuter' || CLOTHES[type].slot == 'extra'), ...GEAR];
 export const TRADES = {
+	// (the medicine: the outfitter's, in GEAR; the inn keeps the tincture and bandages)
 	baker: { title: 'Bakery', sells: ['bread'], buys: FOOD },
 	butcher: { title: 'Butcher', sells: ['sausage', 'venison', 'cookedVenison'], buys: [...FOOD, ...HIDES] },
 	fisherman: { title: 'Fish', sells: ['smokedFish', 'water'], buys: FOOD },
-	innkeeper: { title: 'Inn', sells: ['beer', 'water', 'bread', 'sausage', 'cookedVenison'], buys: FOOD, room: true },
+	innkeeper: { title: 'Inn', sells: ['beer', 'water', 'bread', 'sausage', 'cookedVenison', 'alcohol', 'bandage'], buys: [...FOOD, ...MEDICINE], room: true },
 	tailor: { title: 'Tailor', sells: TAILORED, buys: [...CLOTHING, ...GEAR] },
 	outfitter: { title: 'Outfitter', sells: OUTFITTED, buys: [...CLOTHING, ...GEAR], horse: true },
 	banker: { title: 'Bank', bank: true },

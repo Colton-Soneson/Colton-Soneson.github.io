@@ -9,6 +9,7 @@ import * as players from './players.js'
 import * as forest from './forest.js'
 import * as deer from './deer.js'
 import * as rabbits from './rabbits.js'
+import * as beasts from './beasts.js'
 import * as fish from './fish.js'
 import * as whaling from './whaling.js'
 import * as birds from './birds.js'
@@ -318,6 +319,7 @@ const ANIMALS = [
 	{ kind: 'hawk', share: birds.hawkShare, follow: birds.hawkFollow, kill: birds.killHawkById, shot: birds.hawkShot, angles: [4, 6] },
 	{ kind: 'goose', share: geese.geeseShare, follow: geese.geeseFollow, kill: geese.killGooseById, shot: geese.gooseShot, angles: [4, 6] },
 	{ kind: 'horde', share: horde.hordeShare, follow: horde.hordeFollow, kill: horde.killHordeById, shot: horde.hordeShot, angles: [4] },
+	{ kind: 'beast', share: beasts.beastShare, follow: beasts.beastFollow, kill: beasts.killBeastById, shot: beasts.beastShot, angles: [4] },
 	{ kind: 'rabbit', share: rabbits.rabbitShare, follow: rabbits.rabbitFollow, kill: rabbits.killRabbitById, shot: rabbits.rabbitShot, angles: [4] },
 	// (the schools' leaders, and the whales: nothing fired does anything to them, whaling.js has the harpoons)
 	{ kind: 'fish', share: fish.fishShare, follow: fish.fishFollow, kill: () => {}, shot: {}, angles: [4] },
@@ -735,10 +737,14 @@ function fromJoiner(joiner, message) {
 		const at = message.at.map(Number), radius = Math.min(Math.max(Number(message.r) || 0, 0), 60 * settings.forestUnitsPerMetre);
 		npcs.blast(at, radius, joiner.id);
 		npcs.war.blastFolk?.(at, radius);
+	} else if (message.t == 'selfHeal') {
+		const before = health.get(joiner.id);
+		if (before > 0) setHealth(joiner.id, Math.min(before + Math.min(Math.max(Number(message.a) || 0, 0), 5), players.HEALTH), joiner.id, '');
 	} else if (message.t == 'selfHurt') {
 		npcs.npcNet.hurt(joiner.id, Math.min(Math.max(Number(message.a) || 0, 0), 200), String(message.how ?? '').slice(0, 60));
 	}
 }
+const MELEE = new Set(['chop', 'stab', 'hatchet', 'knife']);
 // the host's word on a hit: DAMAGE off the target's health (the round's share of it), and at 0 it is down
 function applyHit(shooter, target, part, round) {
 	const before = health.get(target);
@@ -746,6 +752,8 @@ function applyHit(shooter, target, part, round) {
 	const shield = outfits.armourOf(target === myId ? 'me' : target);		// (the clothes: the Survival mode's armour)
 	const after = Math.max(before - Math.round(DAMAGE[part] * (ballistics.ROUNDS[round]?.damage ?? 1) * (1 - shield)), 0);
 	setHealth(target, after, shooter, part);
+	// (a blow or a thrown blade lays it open: the Survival mode's, medical.js)
+	if (MELEE.has(round)) survivalNet.meleeHit.fn?.(target === myId ? 'me' : target, part);
 	if (after <= 0) {
 		const killer = scores.get(shooter) ?? { kills: 0, deaths: 0 };
 		killer.kills++;
@@ -1203,6 +1211,10 @@ survivalNet.link.toAll = (message) => toAll(message);
 survivalNet.link.toOne = (id, message) => joiners.get(id)?.link.sendGame(message);
 npcs.npcNet.blast = (at, radius) => { const r3 = (v) => Math.round(v * 1000) / 1000; if (role == 'joined') hostLink.sendGame({ t: 'npcBlast', at: at.map(r3), r: r3(radius) }); };
 // this player hurt by its own doing (a fall): the host takes it off, as an NPC's round
+players.selfHurt.heal = (amount) => {
+	if (role == 'host') { const before = health.get(myId); if (before > 0) setHealth(myId, Math.min(before + amount, players.HEALTH), myId, ''); }
+	else if (role == 'joined') hostLink.sendGame({ t: 'selfHeal', a: amount });
+};
 players.selfHurt.send = (amount, how) => {
 	if (role == 'host') npcs.npcNet.hurt('me', amount, how);
 	else if (role == 'joined') hostLink.sendGame({ t: 'selfHurt', a: amount, how });

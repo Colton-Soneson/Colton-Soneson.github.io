@@ -57,6 +57,14 @@ const STARVE = 0.25;						// health a second, at the end of any of them
 const SHAKE = 0.012;						// radians, the most the view sways
 const SEASON_AIR = [13, 23, 10, -3];		// °C: spring, summer, fall, winter
 
+// WHAT IS WRONG WITH IT does to them (medical.js sets these each frame)
+export const modifiers = { pace: 1, tired: 1, hunger: 1, sway: 0, blur: 0, dark: 0 };
+export function resetModifiers() { Object.assign(modifiers, { pace: 1, tired: 1, hunger: 1, sway: 0, blur: 0, dark: 0 }); }
+const eatenListeners = [], roomListeners = [];
+let sickHarm = 0;
+export function sickHurt(amount) { sickHarm += amount; players.hurtQuietly(amount, 'Illness'); }
+export function onEaten(fn) { eatenListeners.push(fn); }
+export function onRoomSlept(fn) { roomListeners.push(fn); }
 export const status = { hunger: 10, thirst: 10, tired: 10, stress: 0, temperature: 0, feels: 20, wet: 0, asleep: 0 };
 export const survivalStats = { drinks: 0, eaten: 0, slept: 0, bodies: 0 };
 const on = () => inventory.survivalOn() && hunting.hunterPlace().active;
@@ -79,6 +87,7 @@ export function consume(type) {
 	if (it.drink) status.thirst = Math.min(Math.max(status.thirst - it.drink, 0), 100);
 	if (it.stress) status.stress = Math.max(status.stress + it.stress, 0);
 	if (it.tired) status.tired = Math.min(status.tired + it.tired, 100);
+	for (const fn of eatenListeners) fn(type);
 	return true;
 }
 export function sleep() {
@@ -161,7 +170,10 @@ export function survivalUpdate() {
 	wasAlive = life.alive;
 	if (!life.alive) { shown(true); return; }
 	// hurt: woken, and stressed
-	if (life.health < lastHealth - 0.5) { wake(); status.stress = Math.min(status.stress + STRESS.hurt, 100); calmFor = 0; }
+	// (what an illness takes neither wakes nor jolts: it is slept off)
+	const drop = lastHealth - life.health, sick = Math.min(Math.max(drop, 0), sickHarm);
+	sickHarm -= sick;
+	if (drop - sick > 0.5) { wake(); status.stress = Math.min(status.stress + STRESS.hurt, 100); calmFor = 0; }
 	lastHealth = life.health;
 
 	const moving = Math.hypot(p.vx ?? 0, p.vz ?? 0) / settings.forestUnitsPerMetre;
@@ -175,9 +187,9 @@ export function survivalUpdate() {
 	const worn = inventory.wornStats(), over = Math.max(worn.load / worn.capacity - 1, 0);
 	outfits.setArmour('me', worn.armour);
 	hunting.effects.pace = (1 - 0.18 * bad(status.hunger, 60)) * (1 - 0.25 * bad(status.thirst, 60)) * (1 - 0.25 * bad(status.tired, 60)) * (1 - 0.2 * bad(-status.temperature, 50))
-		* Math.max(1 - over * OVERLOAD.pace, OVERLOAD.least);
+		* Math.max(1 - over * OVERLOAD.pace, OVERLOAD.least) * modifiers.pace;
 	hunting.effects.frozen = status.asleep > 0 || performance.now() < roomUntil;
-	const shake = Math.max(bad(status.tired, 50), bad(status.stress, 40), bad(-status.temperature, 40), bad(status.hunger, 75));
+	const shake = Math.max(bad(status.tired, 50), bad(status.stress, 40), bad(-status.temperature, 40), bad(status.hunger, 75), modifiers.sway);
 	if (shake > 0 && status.asleep <= 0) {
 		wobble += dt;
 		const dy = Math.sin(wobble * 1.3) * Math.cos(wobble * 0.7), dp = Math.sin(wobble * 1.9 + 1);
@@ -207,12 +219,12 @@ function needs(dt, p, run = 1) {
 	else if (above > 0) status.temperature = Math.min(status.temperature + above * HEAT * slow * dt, 100);
 	else status.temperature += -Math.sign(status.temperature) * Math.min(Math.abs(status.temperature), RECOVER * dt);
 	const cold = status.temperature < -40 ? 1.3 : 1, hot = status.temperature > 40 ? 1.5 : 1;
-	status.hunger = Math.min(status.hunger + NEEDS.hunger * run * cold * slow * dt, 100);
+	status.hunger = Math.min(status.hunger + NEEDS.hunger * run * cold * slow * modifiers.hunger * dt, 100);
 	status.thirst = Math.min(status.thirst + NEEDS.thirst * run * hot * slow * dt, 100);
 	if (status.asleep > 0) {
 		status.asleep -= dt;
 		status.tired = Math.max(status.tired - SLEEP.rate * dt, 0);
-	} else status.tired = Math.min(status.tired + NEEDS.tired * (run > 1 ? 1.5 : 1) * (1 + Math.max(worn.load / worn.capacity - 1, 0)) * dt, 100);
+	} else status.tired = Math.min(status.tired + NEEDS.tired * (run > 1 ? 1.5 : 1) * (1 + Math.max(worn.load / worn.capacity - 1, 0)) * modifiers.tired * dt, 100);
 	// stress: the horde close jolts it; calm a while, it ebbs (faster by a fire)
 	if (hordeNear(p)) { status.stress = Math.min(status.stress + STRESS.horde * dt, 100); calmFor = 0; }
 	calmFor += dt;
@@ -293,6 +305,7 @@ export function sleepInRoom() {
 	roomShade.style.opacity = '1';
 	hunting.effects.frozen = true;
 	survivalStats.slept++;
+	for (const fn of roomListeners) fn(ROOM_SLEEP.hours);
 	if (survivalNet.authority()) hoursGone(ROOM_SLEEP.hours);
 	else survivalNet.send('roomSlept', { hours: ROOM_SLEEP.hours });
 	setTimeout(() => {
@@ -374,8 +387,8 @@ function shown(visible) {
 		: `Asleep${players.otherList().length ? ' (the night passes when everyone sleeps)' : ''}`} · E to wake</div>`;
 	box.innerHTML = html;
 	// the eyes: thirst and tiredness blur, and asleep the screen goes dark
-	const blur = Math.max(Math.max((status.thirst - 85) / 15, 0), Math.max((status.tired - 90) / 10, 0)) * 2;
-	const dark = status.asleep > 0 ? 0.92 : Math.max((status.tired - 80) / 20, 0) * 0.35;
+	const blur = Math.max(Math.max((status.thirst - 85) / 15, 0), Math.max((status.tired - 90) / 10, 0), modifiers.blur) * 2;
+	const dark = status.asleep > 0 ? 0.92 : Math.max(Math.max((status.tired - 80) / 20, 0) * 0.35, modifiers.dark);
 	veil.style.display = blur > 0 || dark > 0 ? '' : 'none';
 	veil.style.background = `radial-gradient(ellipse at center, rgba(0,0,0,${dark * 0.4}) 40%, rgba(0,0,0,${Math.min(dark * 1.2, 0.97)}) 100%)`;
 	veil.style.backdropFilter = blur > 0 ? `blur(${blur.toFixed(1)}px)` : '';

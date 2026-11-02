@@ -18,7 +18,7 @@ import { ITEMS, SLOTS, HANDS, makeItem, cleanItem, fits, placeFor, handSlots, si
 	laid out in it is still carried, and left on the body with the rest
 	THE AMMUNITION of a gun in the hands is the rounds of its kind carried in the grids (weapons.js: setAmmoSource): loading takes one off a
 	stack, a live round taken out goes back on one (or a new stack, where there is room).
-	A NEW PLAYER (START_KIT) has a lighter, a hatchet and a compass in the item slots, a wristwatch on (START_WORN), a haversack on
+	A NEW PLAYER (START_KIT) has a lighter, a hatchet, a compass and a flare gun (one flare in it) in the item slots, a wristwatch on (START_WORN), a haversack on
 	(START_PACK) with the bedroll straps on it and a canvas bedroll in them, and START_MONEY in its pocket. It comes into the Survival mode with nothing in its hands (whatever another mode left in them
 	is put away: inventoryUpdate), and so after being down. What it carries is kept in the browser (SAVED, with the KIT it started from: a
 	newer kit starts it again) from one visit to the next, and left on its body when it is down (loot.js), and it starts again from the
@@ -26,11 +26,11 @@ import { ITEMS, SLOTS, HANDS, makeItem, cleanItem, fits, placeFor, handSlots, si
 	Every change is told (onChange: the inventory screen, inventoryUI.js; and the others in a game see what it holds, net.js).
 */
 const SAVED = 'survivalInventory';
-const START_KIT = { item1: 'lighter', item2: 'hatchet', item3: 'compass' };
+const START_KIT = { item1: 'lighter', item2: 'hatchet', item3: 'compass', item4: 'flareGun' };
 const START_WORN = { wrist: 'watch' };
 const START_PACK = { pack: 'haversack', pouch: 'bedrollStrap', in: 'bedroll' };
 const START_MONEY = 500;				// cents
-const KIT = 3;
+const KIT = 4;
 const MONEY_GRIDS = (id) => id == 'pocket' || id == 'pack' || id.startsWith('attach');
 const INSULATION = 20;				// °C a whole share of insulation keeps the cold off
 const CARRY = 30;					// kg, with nothing on that adds to it or takes from it (wornStats: carry)

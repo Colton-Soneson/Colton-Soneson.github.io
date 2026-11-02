@@ -8,6 +8,7 @@ import * as help from './controlsHelp.js'
 import * as deer from './deer.js'
 import * as inventory from './inventory.js'
 import * as loot from './loot.js'
+import * as hearing from './hearing.js'
 import * as survivalNet from './survivalNet.js'
 
 /*
@@ -35,6 +36,7 @@ const BONES = 0.05;
 const DRAW = 180;					// metres
 const SNARE_AHEAD = 1.4;			// metres in front of the walker it is set
 const SPHERES = [[0, 0.13, -0.03, 0.1], [0, 0.18, 0.13, 0.06]];
+const SPOOK = 12;					// metres a player is heard from (hearing.js): off it goes
 
 const metre = () => settings.forestUnitsPerMetre;
 const hidden = () => settings.gameMode == 'Horde';
@@ -112,6 +114,14 @@ function advance(dt) {
 				rabbitStats.snared++;
 				continue;
 			}
+		} else if (hearing.survivalMode() && r.state != 'scared' && hearing.heardBy(r.x, r.z, SPOOK * m)) {
+			// spooked: off away from them
+			const L = hearing.heardBy(r.x, r.z, SPOOK * m), a = Math.atan2(r.x - L.x, r.z - L.z);
+			r.state = 'scared'; r.timer = 4; r.target = [r.x + Math.sin(a) * 25 * m, r.z + Math.cos(a) * 25 * m];
+		} else if (r.state == 'scared') {
+			r.moving += (1 - r.moving) * Math.min(dt * 5, 1);
+			hopTowards(r, r.target, DASH * 1.4, dt);
+			if ((r.timer -= dt) <= 0) { r.state = 'sit'; r.timer = SIT[0]; }
 		} else if (r.state == 'sit') {
 			r.moving += (0 - r.moving) * Math.min(dt * 5, 1);
 			if ((r.timer -= dt) <= 0) { r.state = 'hop'; r.target = wanderTarget(r); }
@@ -161,6 +171,9 @@ function kill(r) {
 	respawns.sort((a, b) => a.at - b.at);
 	rabbitStats.shot++;
 }
+// host: for the wolves (beasts.js): the nearest alive within reach (world units), and one by its id
+export function nearestRabbit(x, z, reach) { let best = null, bestD = reach; for (const r of rabbits) { const d = Math.hypot(r.x - x, r.z - z); if (d < bestD) { bestD = d; best = r; } } return best; }
+export const rabbitById = (id) => rabbits.find((r) => r.id === id) ?? null;
 export function killRabbitById(id) { const r = rabbits.find((o) => o.id === id); if (r) kill(r); }
 
 // A DEAD ONE: the one the eye is on (its id, or null), and what comes of cutting it up (the host's to say): the meat, a very small chance of small bones

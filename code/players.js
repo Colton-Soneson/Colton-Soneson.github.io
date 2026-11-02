@@ -317,13 +317,23 @@ export function blast(at, radius) {
 //-------------------------------------------------
 const local = { health: HEALTH, alive: true, downAt: 0, hurtAt: -1e9, by: '', how: '' };
 const HEAL_DELAY = 6, HEAL_RATE = 12;		// alone: seconds after it was last hurt, and health a second
+// what is holding it down (medical.js): the most it comes back to by itself, and whether it comes back at all
+export const healthLimits = { cap: HEALTH, noHeal: false };
 export function localLife() { return { ...local }; }
 // in the Horde game mode this player has health alone too (horde.js takes it off)
 const horde = () => settings.gameMode == 'Horde';
 
 // the host says how much health this player has now, and who took it (how: what is said when it is down, if not shot by them)
+// what an illness takes (medical.js): off the health as any is, but no flash of the screen for it
+let quietHarm = 0;
+export function hurtQuietly(amount, how) { quietHarm += amount; hurtSelf(amount, how); }
 export function setLocalHealth(health, by, how = '') {
-	if (health < local.health) { hurtFlash = 1; local.hurtAt = performance.now() / 1000; }
+	if (health < local.health) {
+		const drop = local.health - health, quiet = Math.min(drop, quietHarm);
+		quietHarm -= quiet;
+		if (drop - quiet > 0.01) hurtFlash = 1;
+		local.hurtAt = performance.now() / 1000;
+	}
 	local.health = Math.max(health, 0);
 	if (health <= 0 && local.alive) {
 		local.alive = false;
@@ -338,6 +348,12 @@ export function setLocalHealth(health, by, how = '') {
 // hurt by its own doing (a fall: hunting.js), how: what is said if it is down. Alone, here; in a game the host takes it off (net.js sets
 //		selfHurt.send)
 export const selfHurt = { send: null };
+// back by so much (medical.js, well again: in a game, the host's to put back: selfHurt.heal)
+export function healSelf(amount) {
+	if (!local.alive) return;
+	if (inGame && selfHurt.heal) selfHurt.heal(amount);
+	else local.health = Math.min(local.health + amount, HEALTH);
+}
 export function hurtSelf(amount, how) {
 	if (!local.alive) return;
 	if (inGame && selfHurt.send) selfHurt.send(amount, how);
@@ -498,7 +514,7 @@ export function playersUpdate() {
 	// down: up again after RESPAWN_SECONDS
 	if (!local.alive && now - local.downAt >= RESPAWN_SECONDS && !heldBy()) respawn();
 	// alone (not in a game, not the Horde): hurt (a crash), it heals by itself after a while
-	if (!inGame && !horde() && local.alive && local.health < HEALTH && now - local.hurtAt > HEAL_DELAY) local.health = Math.min(local.health + HEAL_RATE * elapsed, HEALTH);
+	if (!inGame && !horde() && local.alive && local.health < healthLimits.cap && !healthLimits.noHeal && now - local.hurtAt > HEAL_DELAY) local.health = Math.min(local.health + HEAL_RATE * elapsed, healthLimits.cap);
 	showOverlay(now, elapsed);
 }
 

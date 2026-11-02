@@ -136,6 +136,20 @@ function watchArm() {
 	stroke(m, y + 0.0009, [0, -0.003], [0, 0.016], 0.0005, LABEL, 3);
 	return m;
 }
+// the flare gun: under 200 triangles. Its barrel fat and short, orange, a grip, the hammer and trigger guard. Pointing +z from its breech at the origin
+const FLARE_ORANGE = 85;
+function flaregun() {
+	const m = vm.meshBuilder();
+	m.tube(0, 0, -0.03, 0.019, 0.13, 0.019, 8, FLARE_ORANGE, 0, [0, 1]);
+	m.tube(0, 0, 0.11, 0.022, 0.135, 0.022, 8, DARK, 0, []);
+	m.section(-0.07, [0.015, -0.02, 0.022], -0.02, [0.016, -0.022, 0.024], FLARE_ORANGE, 0, [0, 1]);
+	m.prismX([[-0.075, -0.012], [-0.03, -0.022], [-0.05, -0.11], [-0.095, -0.1]], -0.014, 0.014, FLARE_ORANGE);
+	m.strut([0, 0.02, -0.07], [0, 0.045, -0.085], 0.005, 0.005, 4, BLUED);
+	m.strut([0, -0.022, -0.03], [0, -0.05, -0.005], 0.003, 0.003, 4, BLUED);
+	m.strut([0, -0.05, -0.005], [0, -0.022, 0.02], 0.003, 0.003, 4, BLUED);
+	m.strut([0, -0.022, -0.018], [0, -0.04, -0.016], 0.003, 0.002, 4, BRASS);
+	return m;
+}
 // a rabbit's cut, a little one: raw or seared
 function rabbitCut(cooked) {
 	const m = vm.meshBuilder();
@@ -368,6 +382,6 @@ function campfire() {
 	return m;
 }
 
-const MAKERS = { tent, tentBundle, stove: () => stoveWithPipe(false), stoveLit: () => stoveWithPipe(true), stovePacked, collector, collectorPacked, waterSurface, compass, watchArm, smokedFish, lighter, hatchet, knife, stone, bread, sausage, venison: () => venison(false), cookedVenison: () => venison(true), rabbitMeat: () => rabbitCut(false), cookedRabbit: () => rabbitCut(true), water: () => bottle(false), beer: () => bottle(true), map, firewood, bedroll, bedrollFlat, crate, sack, campfire, campfireFull, campfireHalf, campfireEmbers, campfireDead, campfireLaid };
+const MAKERS = { tent, tentBundle, stove: () => stoveWithPipe(false), stoveLit: () => stoveWithPipe(true), stovePacked, collector, collectorPacked, waterSurface, compass, watchArm, smokedFish, lighter, hatchet, knife, stone, bread, sausage, venison: () => venison(false), cookedVenison: () => venison(true), flaregun, rabbitMeat: () => rabbitCut(false), cookedRabbit: () => rabbitCut(true), water: () => bottle(false), beer: () => bottle(true), map, firewood, bedroll, bedrollFlat, crate, sack, campfire, campfireFull, campfireHalf, campfireEmbers, campfireDead, campfireLaid };
 export const MESHES = Object.fromEntries(Object.entries(MAKERS).map(([name, make]) => { const m = make(); return [name, { data: m.done(), triangles: m.count() }]; }));
 export const meshStats = Object.fromEntries(Object.entries(MESHES).map(([name, mesh]) => [name, mesh.triangles]));

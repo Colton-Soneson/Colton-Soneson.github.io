@@ -32,7 +32,8 @@ import { VESSELS } from './vessels.js'
 		AIR.range) he shoots at in bursts (AIR.burst rounds, AIR.rest between), led for how it goes; a fresh pan as one runs out. With no
 		one else left aboard, a lookout comes down to the wheel.
 	WHALING (whaling.js: jobFor): when nothing else is after her, the town's own goes after the nearest whale under her auxiliary engine (ENGINE), and her man at the bow harpoons it (npcFire: her guns are not for that).
-		Fast to one she lies there while it is reeled in and cut up at her side; then, with her chest full, she goes home by sea (seaRoute) until she is at her dock, where it is landed, and out again.
+		Fast to one she lies there while it is reeled in and cut up at her side; then, with her chest full, she goes home by sea (seaRoute). Within DOCK.from of her dock she is taken in hand so she cannot run aground (dockStep): drawn in to the
+		berth at its end and locked there, sails down, coming in by a place off its end, so from the sea, whichever side of it she was. Her chest is landed and the town paid (whaling.landAt), DOCK.hold seconds on she lets go, bow out, and goes back to the hunt.
 	THE WAR (war.js): each side has schooners of its own (addWarShip), out of its town's dock, her flag its colour (boat.js: b.team). She
 		makes for the other side's town by sea (seaRoute: the shortest way through water deep enough for her, a cell off the shoals, A*
 		over a grid of it, to SEA_ROUTE.off off the end of its dock; she steers for the point of it SEA_ROUTE.ahead on, and aground is
@@ -74,6 +75,7 @@ const SEA_ROUTE = { cell: 40, off: 140, near: 60, ahead: 3 };
 const GUARD = { off: 320, hold: 120, reach: 1400, swing: [0, 1.1, -1.1] };	// THE PORT GUARD: metres out past her own dock's end (swung round it any of those radians), near enough there, and how far from there she goes after them
 const FLANK = { chance: 0.4, lane: 240, dear: 6, free: 450, turn: 0.9, longer: 1.08 };	// THE FLANK: a chance of it; metres either side of the straight way that are dear, how many times, metres from either end that are not;
 								//		radians her station is swung round; how much longer than the straight way it must be
+const DOCK = { from: 100, off: 40, least: 8, hold: 8 };		// WHALING: metres from her dock she is taken in hand, metres off its end she comes in by, seconds she is drawn in at the least, seconds she lies locked there
 const ENGINE = { speed: 7, push: 0.6 };	// THE WAR: her auxiliary engine, metres a second it drives her at, and a second to it	// THE WAR's way by sea: metres a cell of its grid, how far off the end of the other town's dock she lies, near enough a point on it						// seconds after the last of them is gone (or she is) before the next is put in at the dock
 
 const metre = () => settings.forestUnitsPerMetre;
@@ -450,6 +452,7 @@ function stepShip(s, dt) {
 	const at = b.frame.toWorld([0, 0, 0]);
 	if (s.war?.guard) { guardPort(s, b, at, dt, now); return; }
 	const enemy = quarry(s, at);
+	if (s.docking) { dockStep(s, b, at, dt, now); return; }
 	if (!s.war && !enemy && whaleWork(s, b, at, dt, now)) return;
 	if (!s.war) s.homeRoute = null;
 	let wanted;
@@ -495,6 +498,34 @@ function stepShip(s, dt) {
 	trim(b, { furl: Math.abs(b.stats.apparentAngle ?? 0) > 1.3 ? [] : ['Topsail'] });
 	fight(s, enemy && enemy.d < SHELL_REACH * m ? enemy : null, dt);
 }
+// LOCKED AT HER DOCK (see WHALING at the top): drawn in, held, landed, let go
+function dockStep(s, b, at, dt, now) {
+	const m = metre(), T = s.docking;
+	T.t += dt;
+	const k = Math.min(T.t / T.drawn, 1), e = 1 - (1 - k) * (1 - k), a = (1 - e) * (1 - e), c = 2 * (1 - e) * e, d = e * e;
+	const want = [a * T.from.at[0] + c * T.by[0] + d * T.to.x, a * T.from.at[2] + c * T.by[1] + d * T.to.z];
+	// (her origin to that, however her centre lies; and round to the way the berth points, the short way)
+	b.p[0] += (want[0] - at[0]) / m; b.p[2] += (want[1] - at[2]) / m;
+	b.v[0] = b.v[2] = 0; b.w = [0, 0, 0];
+	const heading = T.from.course + wrap(T.to.course - T.from.course) * k * k * (3 - 2 * k);
+	b.q = [Math.cos(heading / 2), 0, Math.sin(heading / 2), 0];
+	trim(b, { luff: true, furl: b.vessel.sails.map((sail) => sail.name) });
+	fight(s, null, dt);
+	if (k < 1) return;
+	if (!T.landed) { T.landed = true; T.since = T.t; whaling.landAt(b, s.town); }
+	if (T.t - T.since < DOCK.hold) return;
+	s.docking = null;
+	s.homeRoute = null;
+	s.leftAt = now;
+	s.tack = 0;
+}
+function takeInHand(s, b, at) {
+	const m = metre(), D = dockOf(s.town);
+	const berth = berthBeside(D) ?? { x: (D.end[0] + D.out[0] * 6 + D.side[0] * 9) * m, z: (D.end[1] + D.out[1] * 6 + D.side[1] * 9) * m, course: Math.atan2(D.out[0], D.out[1]) };
+	const by = [(D.end[0] + D.out[0] * DOCK.off) * m, (D.end[1] + D.out[1] * DOCK.off) * m], way = (Math.hypot(by[0] - at[0], by[1] - at[2]) + Math.hypot(berth.x - by[0], berth.z - by[1])) / m;
+	s.docking = { from: { at: [...at], course: courseOf(b) }, by, to: berth, t: 0, since: 0, landed: false, drawn: Math.max(2 * way / Math.max(Math.abs(b.stats.speed), 3), DOCK.least) };
+	s.homeRoute = null;
+}
 // WHALING (see the top): true if that is what she is doing this frame
 function whaleWork(s, b, at, dt, now) {
 	const job = whaling.jobFor(b), m = metre();
@@ -519,17 +550,15 @@ function whaleWork(s, b, at, dt, now) {
 		while (s.homeRoute && s.homeRoute.at < P.length - 1 && Math.hypot(P[s.homeRoute.at][0] - at[0] / m, P[s.homeRoute.at][1] - at[2] / m) < SEA_ROUTE.near) s.homeRoute.at++;
 		const next = P[Math.min((s.homeRoute?.at ?? 0) + 1, P.length - 1)] ?? off;
 		const toDock = dockOf(s.town).end;
-		wanted = next && Math.hypot(toDock[0] - at[0] / m, toDock[1] - at[2] / m) > 45 ? bearing(next[0] - at[0] / m, next[1] - at[2] / m) : bearing(toDock[0] - at[0] / m, toDock[1] - at[2] / m);
+		if (Math.hypot(toDock[0] - at[0] / m, toDock[1] - at[2] / m) < DOCK.from) { takeInHand(s, b, at); dockStep(s, b, at, dt, now); return true; }
+		wanted = next ? bearing(next[0] - at[0] / m, next[1] - at[2] / m) : bearing(toDock[0] - at[0] / m, toDock[1] - at[2] / m);
 	}
 	if (now - (s.leftAt ?? -1e9) < 25) wanted = courseOf(b);
-	const nearDock = job.kind == 'home' && Math.hypot(dockOf(s.town).end[0] - at[0] / m, dockOf(s.town).end[1] - at[2] / m) < 45;
-	const course = nearDock ? wanted : chooseCourse(s, b, wanted, b.vessel.spawn.keel, now);
+	const course = chooseCourse(s, b, wanted, b.vessel.spawn.keel, now);
 	steerFor(b, course, dt);
 	warpOff(s, b, dt);
-	// (aground on the way in: warped on towards her dock)
-	if (nearDock && b.stats.aground && Math.abs(b.stats.speed) < 1) { b.p[0] += Math.sin(course) * 2 * dt; b.p[2] += Math.cos(course) * 2 * dt; }
 	const upWind = Math.abs(wrap(course - windFrom())) < NO_GO + 0.2;
-	trim(b, { furl: upWind || nearDock ? b.vessel.sails.map((sail) => sail.name) : [] });
+	trim(b, { furl: upWind ? b.vessel.sails.map((sail) => sail.name) : [] });
 	engine(b, dt);
 	fight(s, null, dt);
 	return true;

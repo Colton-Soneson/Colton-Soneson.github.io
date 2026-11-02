@@ -7,6 +7,7 @@ import { skyLookupShapes } from './vfc_atmosphere.js';
 		kind 0	a ball of fire, glowing at first and burning out to dark smoke
 		kind 1	smoke, its darkness from the instance (0 grey to 1 black), a little lighter where the sun is on it
 		kind 2	dust and plaster, pale and brown
+		kind 3	the glare round something very bright (flares.js): all light, nothing of its own, its strength from the instance's darkness
 	The light is the sun's and the moon's, as on everything else, and it fades into the horizon colour far off.
 */
 export const vf_smoke =
@@ -76,6 +77,7 @@ export const vf_smoke =
 		let away = length(toPuff);
 		let N = normalize(input.normal);
 		let rim = saturate(dot(N, -toPuff / away));
+		if (kind == 3) { return vec4f(1.0, 0.8, 0.62, input.look.w * pow(rim, 2.5) * saturate(age * 12.0) * (1.0 - smoothstep(0.5, 1.0, age))); }
 		var albedo = vec3f(0.17, 0.16, 0.15);
 		var glow = vec3f(0.0);
 		var thick = 0.45;

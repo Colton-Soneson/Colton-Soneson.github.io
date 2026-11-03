@@ -68,7 +68,9 @@ export const npcNet = { roleNow: () => 'off', others: () => [], hurt: null, shot
 // THE WAR (see the top, war.js): whether it is on; a player's side ('me' or another's id: 'red', 'blue', or null for none chosen yet); the
 //		side of a shooter npcs.js does not know (a townsperson's: 'folk:' and its number); the nearest house of the other side's still standing
 //		(houseFor(side, from, world units): { x, y (its middle), z }); and the townsfolk round a shell's burst hurt (blastFolk(at, radius))
-export const war = { on: false, sideOf: () => null, shooterSide: () => null, houseFor: null, blastFolk: null };
+//		And whether two sides are enemies (the War game mode: any two; the Survival mode's wars: those at war with each other, survivalWar.js), and
+//		how one of the war's people is coloured to the one looking (tint: 1 red, 2 blue, 0 neither)
+export const war = { on: false, sideOf: () => null, shooterSide: () => null, houseFor: null, blastFolk: null, enemies: (a, b) => a != b, tint: null };
 const targetSources = [];
 // more for them to fight in the war (war.js: the townsfolk): fn(add), add({ id, kind, x, y (its chest), z, feet, alive, vehicle, sit, heading, side })
 export function addTargets(fn) { targetSources.push(fn); }
@@ -76,6 +78,7 @@ export const sideOfShooter = (id) => people.find((p) => p.id === id)?.side ?? wa
 // how one of the war's people is coloured to the one looking (vf_dummy.js): 1 the other side (red), 2 its own (blue); with no side chosen,
 //		each its own side's colour
 function sideTint(side) {
+	if (war.tint) return war.tint(side);
 	const mine = war.sideOf('me');
 	return mine ? (side == mine ? 2 : 1) : side == 'red' ? 1 : 2;
 }
@@ -129,7 +132,7 @@ const hostileThisFrame = new Map();
 export function enemiesOf(group, x, y, z) {
 	let list = hostileThisFrame.get(group);
 	if (!list) {
-		const hostile = war.on && group.side ? (t) => !!t.side && t.side != group.side : (t) => t.kind == 'player' && hostileTo(group, t.id);
+		const hostile = war.on && group.side ? (t) => !!t.side && war.enemies(t.side, group.side) : (t) => t.kind == 'player' && hostileTo(group, t.id);
 		list = targets().filter((t) => t.alive && hostile(t));
 		hostileThisFrame.set(group, list);
 	}

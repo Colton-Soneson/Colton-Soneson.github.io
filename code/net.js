@@ -27,7 +27,11 @@ import * as horde from './horde.js'
 import * as npcs from './npcs.js'
 import * as town from './town.js'
 import * as war from './war.js'
+import * as survivalWar from './survivalWar.js'
 import * as survivalNet from './survivalNet.js'
+import * as terrain from './terrain.js'
+import * as mining from './mining.js'
+import * as loot from './loot.js'
 import * as outfits from './outfits.js'
 import { onSpawn } from './radialMenu.js'
 import { PRESETS } from './graphicsPresets.js';
@@ -111,6 +115,12 @@ import { PRESETS } from './graphicsPresets.js';
 						when it is not). A joiner's shot that hits one of its deer says the part and the round, and the host says what
 						it earned (hpts). Their lunges take health off as the bullets do (by 'horde'), and the host gives it back
 						in time. Everyone's gunshots are heard by the horde, and the townsfolk's shots go to everyone for their trails
+	AWAY (a world of tiles, terrain.js): the host says which tiles it has (with the clock: tiles). A joiner on a tile that is not one of
+	them is away: it runs that tile's life itself, as one alone would (the NPCs, the houses, the animals, the forest: npcNet and townNet take
+	it as off, and what the host sends of those is not heard), keeps its caches, veins and mushrooms (survivalNet.js: away), and every
+	AWAY_SECONDS tells the host what of those, and of the houses' damage, is not as it was on the tiles it is away on (awayState: the host keeps
+	them for when it has those tiles, and for the save). Back on one of the host's, it follows the host again: its own taken away, the
+	host's forest asked for anew. Everything else (the economy, the wars, the bank, the camps, the players) is the host's all along.
 	The host can also move the players about (the Multiplayer window): Bring takes one to where the host is (tp), Go To takes the
 	host to one.
 */
@@ -126,7 +136,7 @@ const CLOCK_SECONDS = 1;
 const CLOCK_SLACK = 0.002;			// days: 0.6 seconds of a 5 minute day
 const MAX_PLAYERS = 8;
 const TREES_SECONDS = 0.25;
-const TREES_GROWTH = 400;			// trees' growth sent every TREES_SECONDS: 1600 a second, round a forest of 30 thousand in 20 seconds
+const TREES_GROWTH = 100;			// trees' growth sent every TREES_SECONDS: 400 a second, round a forest of 30 thousand in 75 seconds (forestLife.js visits each only every 20)
 const BIG_PIECE = 60000;			// characters
 const ANIMAL_RATE = 10;				// a second
 const ANIMAL_RECORD = 12;			// floats: id, x, y, z, heading, six of the animal's own, alive (see deerShare in deer.js, hawkShare in birds.js)
@@ -155,7 +165,7 @@ const LOCAL_KEYS = new Set([
 	'renderResolution', 'dynamicResolution', 'dynamicResolutionTarget', 'antiAliasing', 'smaaEdgeThreshold', 'fxaaSubpixel', 'fxaaEdgeThreshold', 'anisotropicFiltering',
 	'terrainResolution', 'terrainFarBake', 'terrainDetailDistance', 'terrainRockVeins', 'terrainGroundDetail', 'terrainDepthBias', 'terrainRockDetail',
 	'enableGrass', 'grassTotalBladeCount', 'grassTotalHARDLIMIT', 'grassDrawDistance', 'grassLodRings', 'grassLodNearDistance', 'grassLodFarBlades',
-	'landOcclusion', 'boulderDrawDistance',
+	'landOcclusion', 'boulderDrawDistance', 'worldViewDistance',
 	'forestDetailDistance', 'forestMidDistance', 'forestThinnedRings', 'forestBillboardDistance', 'forestDrawDistance',
 	'cloudSteps', 'cloudResolution', 'cloudDrawDistance', 'displayCloudCoverage',
 	'enableLightShafts', 'lightShaftStrength', 'enableUnderwater', 'causticStrength',
@@ -440,6 +450,8 @@ const nameOf = (id) => names.get(id) ?? 'someone';
 discgolf.setNameLookup((id) => role == 'host' || role == 'joined' ? nameOf(id) : null);
 const say = (status) => { netStats.status = status; refreshPanel(); };
 
+// (the save file's: saveGame.js) the world's settings, as a joiner would be given them
+export const worldSettings = () => worldNow();
 function worldNow() {
 	const world = {};
 	const keys = settings.atmosphereSunRotationDemo ? WORLD_KEYS : [...WORLD_KEYS, ...SUN_KEYS];
@@ -889,6 +901,7 @@ function heard(message) {
 			players.addFeed(nameOf(0) + ' brought you to them');
 			break;
 		case 'clock':
+			if (Array.isArray(message.tiles)) hostTiles = new Set(message.tiles.map(String));
 			if (settings.atmosphereSunRotationDemo && Math.abs(atmosphere.sunCycles - message.clock[0]) > CLOCK_SLACK) atmosphere.setSunClock(message.clock[0], message.clock[1]);
 			if (message.waves !== undefined && Math.abs(water.waveClock() - message.waves) > WAVE_SLACK) water.setWaveClock(message.waves);
 			if (message.folk !== undefined && Math.abs(townFolk.folkClock() - message.folk) > FOLK_SLACK) townFolk.setFolkClock(message.folk);
@@ -910,9 +923,10 @@ function heard(message) {
 			});
 			break;
 		case 'animals':
-			heardAnimals(message);
+			if (!away) heardAnimals(message);
 			break;
 		case 'trees':
+			if (away) break;
 			if (forestSync.have) forest.forestApplyChanges(textToFloats(message.r), textToFloats(message.g));
 			else if (forestSync.asked) forestSync.queue.push(message);	// (kept from the moment it asked: some can come before the forest's first piece)
 			break;
@@ -983,7 +997,7 @@ function heard(message) {
 			hunting.shoveHunter(message.v[0], message.v[1]);
 			break;
 		case 'npcs':
-			if (role == 'joined') npcs.peopleHeard(message.l);
+			if (role == 'joined' && !away) npcs.peopleHeard(message.l);
 			break;
 		case 'npcShots':
 			if (role == 'joined') for (const [from, dir, round, w] of message.l) ballistics.fireRemote(from, [dir], { shooter: 'npc', round, delay: heardDelay('host', w) });
@@ -1124,7 +1138,7 @@ function myState() {
 	const b = place.boat ? boat.boatById(place.boat) : null;
 	const sit = place.on == 'saddle' ? 2 : place.on == 'seat' && b && boat.helm(b).seated ? 1 : place.on == 'aboard' ? place.sit : 0;
 	return [...[place.x, place.y, place.z, Math.atan2(forward[0], forward[2]), settings.camPitch, Math.hypot(place.vx ?? 0, place.vz ?? 0) / metre,
-		hunting.hunterLife.alive ? 1 : 0, place.active ? 1 : 0].map(r), on, ...(on ? place.local.map(r) : [0, 0, 0]), sit, weapons.weaponState.current, place.chute ? 1 : 0, war.mySideNow() ?? 0, r(place.crouch ?? 0)];
+		hunting.hunterLife.alive ? 1 : 0, place.active ? 1 : 0].map(r), on, ...(on ? place.local.map(r) : [0, 0, 0]), sit, weapons.weaponState.current, place.chute ? 1 : 0, war.mySideNow() ?? survivalWar.mySide() ?? 0, r(place.crouch ?? 0)];
 }
 ballistics.onLocalFire((from, directions, round) => {
 	const r3 = (v) => Math.round(v * 1000) / 1000;
@@ -1176,8 +1190,10 @@ horde.hordeNet.shot = (from, directions, round) => {
 horde.hordeNet.pick = (id) => { if (role == 'joined') hostLink.sendGame({ t: 'hpick', id }); };
 
 // The NPCs (see the NPCs at the top): what npcs.js asks of the game
-npcs.npcNet.roleNow = () => role;
-town.townNet.roleNow = () => role;
+// (AWAY, see the top: what is of a tile taken as off, on a joiner away)
+const localRole = () => role == 'joined' && away ? 'off' : role;
+npcs.npcNet.roleNow = localRole;
+town.townNet.roleNow = localRole;
 horde.hordeNet.nameOf = (id) => id == 'me' || id === myId ? myName : nameOf(id);
 // the war's news (war.js: who won) to everyone
 war.warEvents.send = (e) => { if (role == 'host') toAll({ t: 'wfx', e }); };
@@ -1207,6 +1223,7 @@ npcs.npcNet.shot = (id, part, round) => { if (role == 'joined') hostLink.sendGam
 npcs.npcNet.attack = (vehicle) => { if (role == 'joined') hostLink.sendGame({ t: 'npcAttack', v: vehicle }); };
 // THE SURVIVAL game mode's messages (survivalNet.js)
 survivalNet.link.role = () => role;
+survivalNet.link.away = () => away;
 survivalNet.link.myId = () => role == 'off' ? 0 : myId;
 survivalNet.link.toHost = (message) => hostLink?.sendGame(message);
 survivalNet.link.toAll = (message) => toAll(message);
@@ -1239,11 +1256,50 @@ function heardDelay(source, w) {
 	return Math.min(Math.max(most - gap, 0), SHOT_BUFFER);
 }
 
+// AWAY (see the top)
+const AWAY_SECONDS = 3;
+let away = false, hostTiles = new Set(), awaySent = 0, awaySaid = '';
+function awayUpdate(now) {
+	const S = settings.terrainWorldSize;
+	const here = terrain.world ? Math.round(settings.camPosX / S) + ',' + Math.round(settings.camPosZ / S) : null;
+	const now_away = role == 'joined' && !!terrain.world && hostTiles.size > 0 && !hostTiles.has(here);
+	if (now_away != away) {
+		away = now_away;
+		if (away) {
+			// (its own from now on: the host's animals let go, its own forest, with the trees of the tiles the host has not got)
+			stopFollowingAnimals();
+			forest.forestFollow(false);
+			forest.bringTiles(terrain.tilesLoaded().map((t) => t.key).filter((key) => !hostTiles.has(key)));
+			say('Away from the host: this land is yours to keep');
+		} else {
+			// (the host's again: the forest asked for anew)
+			forest.forestFollow(true);
+			Object.assign(forestSync, { need: true, asked: false, have: false, queue: [] });
+			say('In the game');
+		}
+	}
+	netStats.away = away;
+	if (!away || now - awaySent < AWAY_SECONDS) return;
+	awaySent = now;
+	const keys = terrain.tilesLoaded().map((t) => t.key).filter((key) => !hostTiles.has(key));
+	const slots = new Set(terrain.townSlots.filter((t) => keys.includes(t.tile)).map((t) => t.slot));
+	const state = { caches: loot.cachesOfTiles(keys), mines: mining.minesOfTiles(keys), houses: town.housesRecord().filter(([index]) => slots.has(Math.floor(index / 1000))) };
+	const text = JSON.stringify(state);
+	if (text != awaySaid) { awaySaid = text; survivalNet.send('awayState', state); }
+}
+// host: what a joiner away has kept, kept here
+survivalNet.on('awayState', (m) => {
+	if (role != 'host') return;
+	loot.cachesHeard(m.caches);
+	mining.minesHeard(m.mines);
+	town.housesAdopt(m.houses);
+});
 export function netUpdate() {
 	if (!buttonAdded) addButton();
 	horde.hordeNet.role = role;
 	war.warNet.role = role;
 	if (role == 'joined') applyWorld();
+	awayUpdate(performance.now() / 1000);
 	if (role != 'host' && role != 'joined') { netStats.role = role; return; }
 	const now = performance.now() / 1000;
 	if (now - lastVehicles >= 1 / VEHICLE_RATE) {
@@ -1291,7 +1347,7 @@ export function netUpdate() {
 	if (role == 'host') {
 		if (now - lastClock >= CLOCK_SECONDS) {
 			lastClock = now;
-			toAll({ t: 'clock', clock: [atmosphere.sunCycles, settings.sunCycleAngle], forest: [forest.clock, forest.plantings], waves: water.waveClock(), folk: townFolk.folkClock() });
+			toAll({ t: 'clock', clock: [atmosphere.sunCycles, settings.sunCycleAngle], forest: [forest.clock, forest.plantings], waves: water.waveClock(), folk: townFolk.folkClock(), tiles: terrain.world ? terrain.tilesLoaded().map((t) => t.key) : null });
 		}
 		if (now - lastTrees >= TREES_SECONDS) {
 			lastTrees = now;
@@ -1330,7 +1386,7 @@ export function netUpdate() {
 
 // for testing
 export function netStatus() {
-	return { role, id: myId, vehicles: allVehicles().map(({ kind, v }) => ({ kind, id: v.id, owner: v.owner, authority: v.authority, crew: v.crew instanceof Map ? [...v.crew.keys()] : Object.values(v.crew ?? {}).filter(Boolean) })), waves: water.waveClock(), name: myName, names: Object.fromEntries(names), health: Object.fromEntries(health), scores: Object.fromEntries(scores), roomCode: netStats.roomCode, status: netStats.status, others: players.otherList(), forest: { ...forestSync, queue: forestSync.queue.length },
+	return { role, away, id: myId, vehicles: allVehicles().map(({ kind, v }) => ({ kind, id: v.id, owner: v.owner, authority: v.authority, crew: v.crew instanceof Map ? [...v.crew.keys()] : Object.values(v.crew ?? {}).filter(Boolean) })), waves: water.waveClock(), name: myName, names: Object.fromEntries(names), health: Object.fromEntries(health), scores: Object.fromEntries(scores), roomCode: netStats.roomCode, status: netStats.status, others: players.otherList(), forest: { ...forestSync, queue: forestSync.queue.length },
 		animals: Object.fromEntries(ANIMALS.map((animal) => [animal.kind, [...tracks.get(animal.kind).entries()].map(([id, samples]) => { const r = samples[samples.length - 1].r; return { id, x: r[1], y: r[2], z: r[3], alive: r[11] > 0.5 }; })])) };
 }
 

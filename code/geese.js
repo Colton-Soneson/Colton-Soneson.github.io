@@ -11,6 +11,7 @@ import { vf_geese } from '../shaders/js/vf_geese.js'
 
 import * as transformations from './transformations.js'
 import * as terrain from './terrain.js'
+import { tileAt } from './world.js'
 import * as ballistics from './ballistics.js'
 import { birdSpheres, fallen, moveFallen } from './fallenBirds.js'
 
@@ -148,7 +149,15 @@ const goosePipeline = device.createRenderPipeline({
 //-------------------------------------------------
 let geese = [];			// in their order in the V: the leader first, then the arms in turn
 let skein = null;		// { state, timer, target: [x, z], spot: { x, z, y }, leadTimer }
-let skeinLand = null;
+let skeinLand = null, skeinTile = null, skeinMiddle = [0, 0];
+// (in a world of tiles, terrain.js: over the tile of land the camera is on, made again there as it goes on to another; the sea's are left
+//		where they were)
+function flockLandHere() {
+	if (!terrain.world) return { key: 'land', land: terrain.land };
+	const key = tileAt(settings.camPosX, settings.camPosZ, settings.terrainWorldSize), here = terrain.landsHere().find((one) => one.key == key);
+	return here && terrain.world.tiles.get(key)?.kind == 'land' ? here : null;
+}
+
 let landingSpots = [];	// places on the lakes and the marshes to come down on
 let cruiseY = 0;		// the height they fly at: about the tops of the tallest peaks
 let lastTime = performance.now();
@@ -262,21 +271,24 @@ const surfaceAt = (x, z) => Math.max(terrain.land.heightAt(x, z), settings.water
 
 function farPoint() {
 	const angle = Math.random() * Math.PI * 2, out = ROAM * Math.sqrt(Math.random());
-	return [Math.cos(angle) * out, Math.sin(angle) * out];
+	return [skeinMiddle[0] + Math.cos(angle) * out, skeinMiddle[1] + Math.sin(angle) * out];
 }
 
 function makeSkein() {
 	skeinLand = terrain.land;
+	const over = flockLandHere() ?? { key: 'land', land: terrain.land };
+	skeinTile = over.key;
+	skeinMiddle = over.land.center ?? [0, 0];
 	skeinCount = settings.geeseCount;
 	fallenGeese = [];
 	respawns = [];
 	let highest = -Infinity;
-	for (const height of terrain.land.heights) highest = Math.max(highest, height);
+	for (const height of over.land.heights) highest = Math.max(highest, height);
 	cruiseY = Math.max(highest * 0.92, settings.waterWorldPosY + 400);
-	const near = [0, 0];
+	const near = skeinMiddle;
 	landingSpots = [
-		...terrain.land.findSpawnPoints(terrain.ZONE_LAKE, 16, { seed: 41, minSpacing: 200, near: near, radius: ROAM }),
-		...terrain.land.findSpawnPoints(terrain.ZONE_MARSH, 16, { seed: 43, minSpacing: 200, near: near, radius: ROAM, maxSlope: 0.15 }),
+		...over.land.findSpawnPoints(terrain.ZONE_LAKE, 16, { seed: 41, minSpacing: 200, near: near, radius: ROAM }),
+		...over.land.findSpawnPoints(terrain.ZONE_MARSH, 16, { seed: 43, minSpacing: 200, near: near, radius: ROAM, maxSlope: 0.15 }),
 	];
 
 	geese = [];
@@ -380,7 +392,8 @@ function advanceGeese(elapsed) {
 		return;
 	}
 	// (made again for a new land, or when the number of geese is changed: not when one is shot)
-	if (terrain.land !== skeinLand || settings.geeseCount !== skeinCount) {
+	const skeinHere = terrain.world ? flockLandHere()?.key ?? skeinTile : skeinTile;
+	if (terrain.land !== skeinLand || skeinHere !== skeinTile || settings.geeseCount !== skeinCount) {
 		makeSkein();
 	}
 	fallenGeese = moveFallen(fallenGeese, elapsed, surfaceAt, 0.25 * settings.geeseSize);

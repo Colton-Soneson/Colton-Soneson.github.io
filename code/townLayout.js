@@ -137,11 +137,13 @@ export function findTownSites(g, params, mountainThreshold, given = []) {
 	const count = Math.round(params.townCount ?? 0);
 	if (count <= 0) return [];
 	const { points, cells, cellSize, half, heights, covers, sea, toSea } = g;
+	// (a tile of the world's: its grid round its own middle; and none too near a seam with another land tile: world.js, terrainGenerator.js)
+	const ox = g.ox ?? 0, oz = g.oz ?? 0, keep = g.keep ?? (() => true);
 	const size = clamp(params.townSize ?? 1, 0.4, 2);
 	const length = TOWN_LENGTH * size, depth = TOWN_DEPTH * Math.sqrt(size);
 	// (the shore and the land behind are judged over where the houses will be, SITE_FIT of the core: the rest is open grass)
 	const fitLength = length * SITE_FIT[0], fitDepth = depth * SITE_FIT[1];
-	const index = (x, z) => Math.round(clamp((z + half) / cellSize, 0, cells)) * points + Math.round(clamp((x + half) / cellSize, 0, cells));
+	const index = (x, z) => Math.round(clamp((z - oz + half) / cellSize, 0, cells)) * points + Math.round(clamp((x - ox + half) / cellSize, 0, cells));
 	// how far every point is from bare mountain, in cells (as distanceTo in generateTerrain)
 	const toMountain = new Float32Array(points * points);
 	for (let i = 0; i < toMountain.length; i++) toMountain[i] = covers[i] >= mountainThreshold ? 0 : 1e9;
@@ -171,9 +173,10 @@ export function findTownSites(g, params, mountainThreshold, given = []) {
 			if (sea[i] || toSea[i] < 1 || toSea[i] > 2.5 || heights[i] < 0 || heights[i] > 9) continue;
 			const mountainAway = toMountain[i] * cellSize;
 			if (mountainAway < MOUNTAIN_NEAR[0] || mountainAway > MOUNTAIN_NEAR[1]) continue;
-			const x = col * cellSize - half, z = row * cellSize - half;
-			const fromHome = Math.hypot(x, z - 150);
+			const x = ox + col * cellSize - half, z = oz + row * cellSize - half;
+			const fromHome = Math.hypot(x - ox, z - oz - 150);
 			if (fromHome < HOME_CLEAR + length) continue;
+			if (!keep(x - length, z) || !keep(x + length, z) || !keep(x, z - length) || !keep(x, z + length)) continue;
 			// inland: the way the distance to the sea grows
 			let nx = seaAt(x + 24, z) - seaAt(x - 24, z), nz = seaAt(x, z + 24) - seaAt(x, z - 24);
 			const nl = Math.hypot(nx, nz);
@@ -274,18 +277,19 @@ function clusterOf(site, u, v, x, z, k = -1) {
 */
 export function planTownGround(g, sites, seed) {
 	const { points, cells, cellSize, half, sea, toSea, heights } = g;
+	const ox = g.ox ?? 0, oz = g.oz ?? 0;
 	const strength = new Float32Array(points * points), height = new Float32Array(points * points);
 	const noise = createNoise(seed * 13 + 5);
 	for (const site of sites) {
 		placeClusters(site, seed);
 		const reach = Math.max(site.length, site.depth) + FADE_MOST + 35 + 60;		// (35: the most the ragged edge reaches out)
-		const c0 = Math.max(Math.floor((site.x - reach + half) / cellSize), 0), c1 = Math.min(Math.ceil((site.x + reach + half) / cellSize), cells);
-		const r0 = Math.max(Math.floor((site.z - reach + half) / cellSize), 0), r1 = Math.min(Math.ceil((site.z + reach + half) / cellSize), cells);
+		const c0 = Math.max(Math.floor((site.x - ox - reach + half) / cellSize), 0), c1 = Math.min(Math.ceil((site.x - ox + reach + half) / cellSize), cells);
+		const r0 = Math.max(Math.floor((site.z - oz - reach + half) / cellSize), 0), r1 = Math.min(Math.ceil((site.z - oz + reach + half) / cellSize), cells);
 		for (let row = r0; row <= r1; row++) {
 			for (let col = c0; col <= c1; col++) {
 				const i = row * points + col;
 				if (sea[i]) continue;
-				const x = col * cellSize - half, z = row * cellSize - half;
+				const x = ox + col * cellSize - half, z = oz + row * cellSize - half;
 				const dx = x - site.x, dz = z - site.z;
 				const u = dx * site.tx + dz * site.tz, across = dx * site.nx + dz * site.nz;
 				if (across < -60) continue;

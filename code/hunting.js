@@ -265,9 +265,10 @@ function groundUnder(x, z) {
 		cornersFor = land;
 		cornersCell = cell;
 	}
-	const perSide = Math.round(settings.terrainWorldSize / cell) + 1;
+	// (each corner by its place in the world's grid of them: in a world of tiles, terrain.js, anywhere in it)
+	const perSide = Math.round(settings.terrainWorldSize / cell) + 1, world = !!terrain.world;
 	const corner = (i, j) => {
-		const key = j * perSide + i;
+		const key = world ? (j + 1e5) * 4e5 + (i + 1e5) : j * perSide + i;
 		let height = cornerHeights.get(key);
 		if (height === undefined) {
 			height = land.groundAt(-half + i * cell, -half + j * cell);
@@ -276,7 +277,7 @@ function groundUnder(x, z) {
 		}
 		return height;
 	};
-	const gx = Math.min(Math.max((x + half) / cell, 0), perSide - 1.0001), gz = Math.min(Math.max((z + half) / cell, 0), perSide - 1.0001);
+	const gx = world ? (x + half) / cell : Math.min(Math.max((x + half) / cell, 0), perSide - 1.0001), gz = world ? (z + half) / cell : Math.min(Math.max((z + half) / cell, 0), perSide - 1.0001);
 	const i = Math.floor(gx), j = Math.floor(gz), u = gx - i, v = gz - j;
 	// the two triangles of the square, split from (i + 1, j) to (i, j + 1)
 	if (u + v <= 1) {
@@ -772,9 +773,9 @@ export function updateHunter() {
 		}
 
 		// not off the edge of the world
-		const edge = settings.terrainWorldSize * 0.5 - 1;
-		hunter.x = Math.min(Math.max(hunter.x, -edge), edge);
-		hunter.z = Math.min(Math.max(hunter.z, -edge), edge);
+		const [lo, hi] = terrain.worldEdges(1);
+		hunter.x = Math.min(Math.max(hunter.x, lo), hi);
+		hunter.z = Math.min(Math.max(hunter.z, lo), hi);
 
 		// the boats: coming down on one's deck it is on board, otherwise it is pushed out of their hulls
 		const boarded = meetBoats();

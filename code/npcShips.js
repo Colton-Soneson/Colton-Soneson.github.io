@@ -21,6 +21,10 @@ import { VESSELS } from './vessels.js'
 	a fan of courses either side of the one wanted, each looked along (PROBES) for water too shallow for the keel, other boats and
 	the edge of the world; the nearest clear one is taken.
 	AGROUND for a while: warped off towards the deepest water near her (WARP).
+	OFF THE SHOALS (offShoals): whatever she is doing, an NPC's schooner is never let into water too shallow for her. At points along her
+		keel (SHOAL.points), where there is less than SHOAL.need under it, what of her way goes towards the shallows is taken off and she is
+		eased back the way the water deepens; her engine (ENGINE) does not drive her on at water too shallow ahead (SHOAL.ahead); and a whale
+		in water too shallow for her (SHOAL.whale) is let go. Not while she is taken in hand at her dock (dockStep), nor sailed by a player.
 	ON PATROL: round a few places off the town (PATROL: out from the dock, and along the shore either way), in deep water.
 	ATTACKED (npcs.js: a hit on her or on her crew): at whoever fired, if they are on the land or the water (not in the air: her guns
 		cannot reach a plane). Far off, she sails at them; within BROADSIDE she sails across them, her side to them, and every gun that
@@ -71,10 +75,11 @@ const AIR = { range: 450, burst: [6, 12], rest: 0.8, spread: 0.012, aloft: 12 };
 const NEW_SHIP = 8;
 const WAR_SHIP = 5;						// seconds after one of a side's is lost in THE WAR before the next sails
 const SHELL_REACH = 1500;				// metres her guns are laid out to
-const SEA_ROUTE = { cell: 40, off: 140, near: 60, ahead: 3 };
+const SEA_ROUTE = { cell: 40, off: 140, near: 60, ahead: 3, pad: 1500, most: 16000 };	// (pad, most: in a world of tiles, metres round the two ends the way is looked for in, and across at the most)
 const GUARD = { off: 320, hold: 120, reach: 1400, swing: [0, 1.1, -1.1] };	// THE PORT GUARD: metres out past her own dock's end (swung round it any of those radians), near enough there, and how far from there she goes after them
 const FLANK = { chance: 0.4, lane: 240, dear: 6, free: 450, turn: 0.9, longer: 1.08 };	// THE FLANK: a chance of it; metres either side of the straight way that are dear, how many times, metres from either end that are not;
 								//		radians her station is swung round; how much longer than the straight way it must be
+const SHOAL = { points: [-9, -4.5, 0, 4.5, 8.5], need: 1.5, look: 5, push: 1.5, ahead: [12, 28], whale: 8 };	// OFF THE SHOALS: metres along her keel (- aft), metres under it she keeps, metres round a point the way it deepens is looked for, metres a second she is eased off at for every metre short (to 2), metres ahead her engine looks, metres more than her keel a whale must have under it
 const DOCK = { from: 100, off: 40, least: 8, hold: 8 };		// WHALING: metres from her dock she is taken in hand, metres off its end she comes in by, seconds she is drawn in at the least, seconds she lies locked there
 const ENGINE = { speed: 7, push: 0.6 };	// THE WAR: her auxiliary engine, metres a second it drives her at, and a second to it	// THE WAR's way by sea: metres a cell of its grid, how far off the end of the other town's dock she lies, near enough a point on it						// seconds after the last of them is gone (or she is) before the next is put in at the dock
 
@@ -83,6 +88,9 @@ const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
 const { wrap } = npcs;
 const depthAt = (x, z) => (settings.waterWorldPosY - terrain.land.heightAt(x * metre(), z * metre())) / metre();	// (metres, at a place in metres)
 const halfWorld = () => settings.terrainWorldSize * 0.5 / metre();
+// (where a schooner may go, metres: in the one land, inside its edge; in a world of tiles, terrain.js, in a tile that is here)
+const inSea = (x, z, margin) => terrain.inWorld(x * metre(), z * metre(), margin * metre());
+const REGULAR = 4;		// in a world of tiles: schooners of the towns' own at the most, those nearest the camera
 // a target in the air: in a vehicle (a plane), AIR.aloft metres or more over the land or the sea
 const aloft = (e) => !!e.vehicle && e.y - Math.max(terrain.land.heightAt(e.x, e.z), settings.waterWorldPosY) > AIR.aloft * metre();
 
@@ -102,7 +110,7 @@ export function waterAlong(b, course, probes = PROBES) {
 	for (const d of probes) {
 		const x = at[0] + Math.sin(course) * d, z = at[2] + Math.cos(course) * d;
 		least = Math.min(least, depthAt(x, z));
-		if (Math.abs(x) > halfWorld() - 60 || Math.abs(z) > halfWorld() - 60) least = -1;
+		if (!inSea(x, z, 60)) least = -1;
 		for (const o of boat.boats) if (o !== b && o.destroyed < 0 && Math.hypot(o.p[0] - x, o.p[2] - z) < o.vessel.reach + b.vessel.reach * 0.6) least = -1;
 	}
 	return least;
@@ -172,9 +180,11 @@ export function warpOff(s, b, dt, probes = [15, 30]) {
 //		'helm', 'gun' (gun) or 'nest' (nest) }), where (person -> 'aboard', 'dock', 'dead'), fell (person -> where it lies on her deck), patrol,
 //		wp, wpAt, reload, lostAt, waiting, war (THE WAR: { side }, or null for the dock town's own, on patrol) }
 const ships = [];
-let builtFor = null;
+let builtFor = null, regularsDue = 0;
+const fromCamera = (t) => { const D = dockOf(t); return Math.hypot(D.end[0] * metre() - settings.camPosX, D.end[1] * metre() - settings.camPosZ); };
 const derelicts = [];
 const regular = () => ships.find((s) => !s.war) ?? null;
+const regulars = () => ships.filter((s) => !s.war);
 
 // a schooner and her crew, at a town's dock (war: { side } for one of a side's in THE WAR)
 function makeShip(town, war = null) {
@@ -274,11 +284,11 @@ function assignRoles(s) {
 }
 // the places it patrols round: off the dock, and along the shore either way, each pushed out to deep water
 function patrolOf(s) {
-	const D = s.dock, inside = halfWorld() - 200;
+	const D = s.dock, inside = terrain.world ? Infinity : halfWorld() - 200;
 	const make = (along, out) => {
 		for (let more = 0; more < 900; more += 40) {
 			const x = clamp(D.end[0] + D.side[0] * along + D.out[0] * (out + more), -inside, inside), z = clamp(D.end[1] + D.side[1] * along + D.out[1] * (out + more), -inside, inside);
-			if (depthAt(x, z) > PATROL.deep) return [x, z];
+			if (depthAt(x, z) > PATROL.deep && inSea(x, z, 200)) return [x, z];
 		}
 		return null;
 	};
@@ -537,6 +547,8 @@ function whaleWork(s, b, at, dt, now) {
 		fight(s, null, dt);
 		return true;
 	}
+	// (a whale in water too shallow for her let go: round the patrol instead)
+	if (job.kind == 'chase' && depthAt(...job.at) < b.vessel.spawn.keel + SHOAL.whale) return false;
 	let wanted;
 	if (job.kind == 'chase') {
 		s.homeRoute = null;
@@ -603,15 +615,23 @@ export function shipsUpdate(dt) {
 		return;
 	}
 	// (in THE WAR the dock town's own is laid up until it is over: only the sides' sail)
-	if (npcs.war.on) { const own = regular(); if (own) clearShip(own); builtFor = null; }
-	else if (land !== builtFor) {
+	if (npcs.war.on) { for (const own of regulars()) clearShip(own); builtFor = null; }
+	else if (land !== builtFor || (terrain.world && performance.now() > regularsDue)) {
+		// (the one land: its first town with a dock's. A world of tiles: each such town's that is here, the nearest REGULAR, looked at
+		//		every few seconds; one whose town has gone, gone with it, unless a player is aboard)
+		if (land !== builtFor) for (const own of regulars()) clearShip(own);
 		builtFor = land;
-		const own = regular();
-		if (own) clearShip(own);
-		const town = land.towns?.find((t) => t.dock);
-		if (town) makeShip(town);
+		regularsDue = performance.now() + 4000;
+		const docks = (land.towns ?? []).filter((t) => t.dock && t.buildings?.length);
+		const wanted = terrain.world ? docks.sort((a, b) => fromCamera(a) - fromCamera(b)).slice(0, REGULAR) : docks.slice(0, 1);
+		for (const own of regulars()) if (!wanted.includes(own.town) && !(own.boat && [...own.boat.crew.keys()].some((id) => !String(id).startsWith('npc')))) clearShip(own);
+		for (const town of wanted) if (!regulars().some((own) => own.town === town)) makeShip(town);
 	}
-	for (const s of [...ships]) stepShip(s, dt);
+	const me = hunting.hunterPlace();
+	for (const s of [...ships]) {
+		stepShip(s, dt);
+		if (s.boat && !s.docking && !s.waiting && !(me.boat === s.boat.id && me.on == 'seat')) offShoals(s.boat, dt);
+	}
 	shipStats.ships = ships.filter((s) => s.boat).length;
 }
 // a person on her who is shot: where it lies (its place on her, kept: placeCrew)
@@ -623,15 +643,37 @@ npcs.onDown((person) => {
 
 // THE WAR (see the top)
 //-------------------------------------------------
-// her auxiliary engine (see THE WAR at the top): driven on ahead, up to ENGINE.speed
+// OFF THE SHOALS (see the top): what of her way goes into water too shallow for her taken off, and she is eased back the way it deepens
+export const shoalStats = { eased: 0, shallowest: Infinity };
+function offShoals(b, dt) {
+	const m = metre(), need = b.vessel.spawn.keel + SHOAL.need, L = SHOAL.look;
+	for (const along of SHOAL.points) {
+		const p = b.frame.toWorld([0, 0, along]), x = p[0] / m, z = p[2] / m, depth = depthAt(x, z), short = need - depth;
+		shoalStats.shallowest = Math.min(shoalStats.shallowest, depth - b.vessel.spawn.keel);
+		if (short <= 0) continue;
+		const gx = depthAt(x + L, z) - depthAt(x - L, z), gz = depthAt(x, z + L) - depthAt(x, z - L), g = Math.hypot(gx, gz);
+		// (on the flat, out the way she came: back along her keel)
+		const f = b.frame.directionToWorld([0, 0, along >= 0 ? -1 : 1]), u = g > 1e-3 ? [gx / g, gz / g] : [f[0], f[2]];
+		const into = b.v[0] * u[0] + b.v[2] * u[1];
+		if (into < 0) { b.v[0] -= into * u[0]; b.v[2] -= into * u[1]; }
+		const step = Math.min(short, 2) * SHOAL.push * dt;
+		b.p[0] += u[0] * step; b.p[2] += u[1] * step;
+		shoalStats.eased++;
+	}
+}
+// her auxiliary engine (see THE WAR at the top): driven on ahead, up to ENGINE.speed, but not at water too shallow for her (SHOAL.ahead)
 function engine(b, dt) {
 	const ahead = b.frame.directionToWorld([0, 0, 1]), going = b.v[0] * ahead[0] + b.v[2] * ahead[2];
+	if (waterAlong(b, courseOf(b), SHOAL.ahead) < b.vessel.spawn.keel + SHOAL.need) {
+		if (going > 0) { const less = Math.min(going, ENGINE.speed * ENGINE.push * dt); b.v[0] -= ahead[0] * less; b.v[2] -= ahead[2] * less; }
+		return;
+	}
 	if (going >= ENGINE.speed) return;
 	const more = Math.min(ENGINE.speed - going, ENGINE.speed * ENGINE.push * dt);
 	b.v[0] += ahead[0] * more; b.v[2] += ahead[2] * more;
 }
 // where she lies off the other side's town: SEA_ROUTE.off out past the end of its dock (metres), or as near as there is deep water
-const otherTown = (s) => (terrain.land.towns ?? []).find((t) => t.dock && t !== s.town);
+const otherTown = (s) => s.war?.target ?? (terrain.land.towns ?? []).find((t) => t.dock && t !== s.town);	// (survivalWar.js's say which)
 function warStation(s) {
 	return stationOff(otherTown(s));
 }
@@ -651,13 +693,20 @@ function stationOff(other, swung = 0, off = SEA_ROUTE.off) {
 //		dear(x, z): how many times as dear a cell is there (metres), or every one the same
 function seaRoute(from, to, dear = null) {
 	if (!to) return null;
-	const C = SEA_ROUTE.cell, half = halfWorld() - 150, n = Math.floor(half * 2 / C);
-	const cellOf = ([x, z]) => [clamp(Math.floor((x + half) / C), 0, n - 1), clamp(Math.floor((z + half) / C), 0, n - 1)];
-	const middle = (i, j) => [-half + (i + 0.5) * C, -half + (j + 0.5) * C];
+	// (the one land's grid, inside its edge; in a world of tiles, a square over the two ends and SEA_ROUTE.pad round them)
+	const C = SEA_ROUTE.cell;
+	let half = halfWorld() - 150, x0 = -half, z0 = -half;
+	if (terrain.world) {
+		half = Math.min(Math.max(Math.abs(to[0] - from[0]), Math.abs(to[1] - from[1])) / 2 + SEA_ROUTE.pad, SEA_ROUTE.most / 2);
+		x0 = (from[0] + to[0]) / 2 - half; z0 = (from[1] + to[1]) / 2 - half;
+	}
+	const n = Math.floor(half * 2 / C);
+	const cellOf = ([x, z]) => [clamp(Math.floor((x - x0) / C), 0, n - 1), clamp(Math.floor((z - z0) / C), 0, n - 1)];
+	const middle = (i, j) => [x0 + (i + 0.5) * C, z0 + (j + 0.5) * C];
 	const need = VESSELS.Schooner.spawn.keel + KEEL_CLEAR;
 	// (a cell is open with deep water in it and in the cells round it: the way keeps a cell off the shoals)
 	const deep = new Map();
-	const wet = (i, j) => { const k = i * n + j; if (!deep.has(k)) deep.set(k, depthAt(...middle(i, j)) > need); return deep.get(k); };
+	const wet = (i, j) => { const k = i * n + j; if (!deep.has(k)) deep.set(k, depthAt(...middle(i, j)) > need && inSea(...middle(i, j), 0)); return deep.get(k); };
 	const open = (i, j) => wet(i, j) && wet(Math.max(i - 1, 0), j) && wet(Math.min(i + 1, n - 1), j) && wet(i, Math.max(j - 1, 0)) && wet(i, Math.min(j + 1, n - 1));
 	const [si, sj] = cellOf(from), [ti, tj] = cellOf(to);
 	const key = (i, j) => i * n + j, goal = key(ti, tj);
@@ -751,7 +800,9 @@ export function warSeaWay(home, other) {
 }
 // a side's schooners, out of its town's dock (null if it has none); and all of them gone when it is over (war.js)
 //		(guard: THE PORT GUARD, see the top)
-export function addWarShip(town, side, guard = false) { return town.dock ? makeShip(town, { side, guard }) : null; }
+export function addWarShip(town, side, guard = false, target = null) { return town.dock ? makeShip(town, target ? { side, guard, target } : { side, guard }) : null; }
+// one of them taken away (survivalWar.js: a town's that it can no longer keep)
+export function removeWarShip(s) { if (ships.includes(s)) clearShip(s); }
 export function clearWarShips() { for (const s of ships.filter((one) => one.war)) clearShip(s); }
 export function warShipList() { return ships.filter((s) => s.war).map((s) => ({ side: s.war.side, guard: !!s.war.guard, flank: s.war.flank ?? 0, boat: s.boat?.id ?? null, at: s.boat && s.boat.frame.toWorld([0, 0, 0]).map((v) => Math.round(v / metre())), crew: s.people.filter((p) => p.alive).length, route: s.route ? [s.route.at, s.route.points.length] : null })); }
 

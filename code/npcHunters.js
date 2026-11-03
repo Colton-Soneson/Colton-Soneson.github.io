@@ -58,10 +58,20 @@ function clear() {
 	for (const h of hunters) npcs.removePerson(h.person);
 	hunters.length = 0;
 }
+// (in a world of tiles, terrain.js: a town's own come with its tile and gone with it)
+terrain.onTiles((added, removed) => {
+	if (builtFor !== terrain.land || !terrain.tilesHaveTowns([...added, ...removed])) return;
+	for (const h of hunters.filter((one) => !one.town.buildings?.length)) npcs.removePerson(h.person);
+	hunters.splice(0, hunters.length, ...hunters.filter((one) => one.town.buildings?.length));
+	addHunters(terrain.land.towns.filter((t) => added.includes(t.tile) && !hunters.some((h) => h.town === t)));
+});
 function build(land) {
 	builtFor = land;
 	clear();
-	for (const t of land.towns ?? []) {
+	addHunters(land.towns ?? []);
+}
+function addHunters(towns) {
+	for (const t of towns) {
 		if (!t.buildings?.length) continue;
 		const door = doorOf(t);
 		if (!door) continue;
@@ -91,8 +101,8 @@ function routeTo(h, to) {
 	h.along = 0;
 }
 function blocked(x, z, feet) {
-	const m = metre(), land = terrain.land, half = settings.terrainWorldSize * 0.5 - 20;
-	if (Math.abs(x) > half || Math.abs(z) > half || land.heightAt(x, z) < settings.waterWorldPosY + 0.3 * m) return true;
+	const m = metre(), land = terrain.land;
+	if (!terrain.inWorld(x, z, 20) || land.heightAt(x, z) < settings.waterWorldPosY + 0.3 * m) return true;
 	let hit = false;
 	const box = (bx, bz, r, bottom, top) => { if (!hit && top > feet + 0.5 * m && bottom < feet + 1.8 * m && Math.abs(x - bx) < r + 0.4 * m && Math.abs(z - bz) < r + 0.4 * m) hit = true; };
 	if (settings.enableForest) forest.trunksNear(x, z, m, box);

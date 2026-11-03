@@ -42,17 +42,27 @@ const inWater = (K, x, z) => {
 	const d = depthAt(x, z), zone = terrain.land.zoneAt(x, z);
 	return K.water == 'pond' ? zone == terrain.ZONE_LAKE && d > POND_DEEP : zone == terrain.ZONE_OCEAN && d > SEA_DEEP[0] && d < SEA_DEEP[1];
 };
+// (in a world of tiles, terrain.js: each tile of land its own, made as it comes and gone with it)
+terrain.onTiles((added, removed) => {
+	if (builtFor !== terrain.land) return;
+	if (removed.length) schools = schools.filter((o) => !removed.includes(o.tile));
+	for (const { key, land } of terrain.landsHere()) if (added.includes(key)) schoolsOf(land, key);
+});
 function build() {
 	builtFor = terrain.land;
 	schools = [];
-	const half = settings.terrainWorldSize * 0.5 - 40;
+	for (const { key, land } of terrain.landsHere()) schoolsOf(land, key);
+}
+function schoolsOf(land, tile) {
 	KINDS.forEach((K, k) => {
 		const zone = K.water == 'pond' ? terrain.ZONE_LAKE : terrain.ZONE_OCEAN;
-		const spots = terrain.land.findSpawnPoints(zone, K.schools * 12, { seed: 300 + k * 13, minSpacing: K.water == 'pond' ? 30 : 120 }) ?? [];
+		const spots = land.findSpawnPoints(zone, K.schools * 12, { seed: 300 + k * 13, minSpacing: K.water == 'pond' ? 30 : 120 }) ?? [];
+		let made = 0;
 		for (const s of spots) {
-			if (schools.filter((o) => o.kind == k).length >= K.schools) break;
-			if (Math.abs(s.x) > half || Math.abs(s.z) > half || !inWater(K, s.x, s.z)) continue;
-			schools.push({ id: nextId++, kind: k, x: s.x, z: s.z, y: surface() - metre(), heading: Math.random() * 6.28, target: null });
+			if (made >= K.schools) break;
+			if (!terrain.inWorld(s.x, s.z, 40) || !inWater(K, s.x, s.z)) continue;
+			schools.push({ id: nextId++, kind: k, x: s.x, z: s.z, y: surface() - metre(), heading: Math.random() * 6.28, target: null, tile });
+			made++;
 		}
 	});
 }

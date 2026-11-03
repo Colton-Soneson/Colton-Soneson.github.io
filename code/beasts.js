@@ -63,31 +63,41 @@ function nearMountains(x, z) {
 	for (let a = 0; a < 8; a++) if (terrain.land.zoneAt(x + Math.cos(a * 0.785) * EDGE * m, z + Math.sin(a * 0.785) * EDGE * m) == terrain.ZONE_MOUNTAIN) return true;
 	return false;
 }
-function spawnMoose(k) {
-	const spots = terrain.land.findSpawnPoints(terrain.ZONE_MARSH, MOOSE_COUNT * 8, { seed: 91, minSpacing: 90, maxSlope: 0.4 }).filter((s) => deer.walkable(s.x, s.z));
+function spawnMoose(k, land = terrain.land) {
+	const spots = land.findSpawnPoints(terrain.ZONE_MARSH, MOOSE_COUNT * 8, { seed: 91, minSpacing: 90, maxSlope: 0.4 }).filter((s) => deer.walkable(s.x, s.z));
 	const s = spots[k % Math.max(spots.length, 1)];
 	return s ? make('moose', s.x, s.z, [s.x, s.z]) : null;
 }
-function spawnBear(k) {
-	const spots = terrain.land.findSpawnPoints(terrain.ZONE_FOREST, 400, { seed: 97, minSpacing: 40, maxSlope: 0.5 }).filter((s) => deer.walkable(s.x, s.z) && nearMountains(s.x, s.z));
+function spawnBear(k, land = terrain.land) {
+	const spots = land.findSpawnPoints(terrain.ZONE_FOREST, 400, { seed: 97, minSpacing: 40, maxSlope: 0.5 }).filter((s) => deer.walkable(s.x, s.z) && nearMountains(s.x, s.z));
 	const s = spots[k * 37 % Math.max(spots.length, 1)];
 	return s ? make('bear', s.x, s.z, [s.x, s.z]) : null;
 }
-function makePack(k) {
-	const spots = terrain.land.findSpawnPoints(terrain.ZONE_FOREST, 40, { seed: 103, minSpacing: 200, maxSlope: 0.5 }).filter((s) => deer.walkable(s.x, s.z));
+function makePack(k, land = terrain.land, tile = 'land') {
+	const spots = land.findSpawnPoints(terrain.ZONE_FOREST, 40, { seed: 103, minSpacing: 200, maxSlope: 0.5 }).filter((s) => deer.walkable(s.x, s.z));
 	const s = spots[k * 11 % Math.max(spots.length, 1)];
 	if (!s) return null;
-	const P = { id: k, home: [s.x, s.z], state: 'roam', target: null, prey: null, timer: 20 + Math.random() * 60, lunge: 0, enemy: null, size: PACK_SIZE[0] + Math.floor(Math.random() * (PACK_SIZE[1] - PACK_SIZE[0] + 1)) };
+	const P = { id: k, tile, home: [s.x, s.z], state: 'roam', target: null, prey: null, timer: 20 + Math.random() * 60, lunge: 0, enemy: null, size: PACK_SIZE[0] + Math.floor(Math.random() * (PACK_SIZE[1] - PACK_SIZE[0] + 1)) };
 	packs.push(P);
-	for (let n = 0; n < P.size; n++) { const w = make('wolf', s.x + (Math.random() - 0.5) * 12, s.z + (Math.random() - 0.5) * 12, P.home, P); w.side = (n / P.size) * Math.PI * 2; beasts.push(w); }
+	for (let n = 0; n < P.size; n++) { const w = make('wolf', s.x + (Math.random() - 0.5) * 12, s.z + (Math.random() - 0.5) * 12, P.home, P); w.side = (n / P.size) * Math.PI * 2; w.tile = tile; beasts.push(w); }
 	return P;
 }
+// (in a world of tiles, terrain.js: each tile of land its own, made as it comes and gone with it)
+terrain.onTiles((added, removed) => {
+	if (builtFor !== terrain.land) return;
+	if (removed.length) { beasts = beasts.filter((b) => !removed.includes(b.tile)); packs = packs.filter((P) => !removed.includes(P.tile)); respawns = respawns.filter((R) => !removed.includes(R.tile)); }
+	for (const { key, land } of terrain.landsHere()) if (added.includes(key)) beastsOf(land, key);
+});
+const landOf = (tile) => terrain.landsHere().find((one) => one.key == tile)?.land ?? terrain.land;
 function build() {
 	builtFor = terrain.land;
 	beasts = []; packs = []; corpses = []; respawns = [];
-	for (let k = 0; k < MOOSE_COUNT; k++) { const b = spawnMoose(k); if (b) { b.number = k; beasts.push(b); } }
-	for (let k = 0; k < BEAR_COUNT; k++) { const b = spawnBear(k); if (b) { b.number = k; beasts.push(b); } }
-	for (let k = 0; k < PACKS; k++) makePack(k);
+	for (const { key, land } of terrain.landsHere()) beastsOf(land, key);
+}
+function beastsOf(land, tile) {
+	for (let k = 0; k < MOOSE_COUNT; k++) { const b = spawnMoose(k, land); if (b) { b.number = k; b.tile = tile; beasts.push(b); } }
+	for (let k = 0; k < BEAR_COUNT; k++) { const b = spawnBear(k, land); if (b) { b.number = k; b.tile = tile; beasts.push(b); } }
+	for (let k = 0; k < PACKS; k++) makePack(k, land, tile);
 }
 
 // a step towards a place, round water and cliffs: how far off it still is
@@ -266,8 +276,8 @@ function advance(dt) {
 	for (let k = respawns.length - 1; k >= 0; k--) {
 		if (respawns[k].at > clock()) continue;
 		const R = respawns.splice(k, 1)[0];
-		if (R.kind == 'moose') { const b = spawnMoose(R.number); if (b) { b.number = R.number; beasts.push(b); } }
-		else if (R.kind == 'bear') { const b = spawnBear(R.number); if (b) { b.number = R.number; beasts.push(b); } }
+		if (R.kind == 'moose') { const b = spawnMoose(R.number, landOf(R.tile)); if (b) { b.number = R.number; b.tile = R.tile; beasts.push(b); } }
+		else if (R.kind == 'bear') { const b = spawnBear(R.number, landOf(R.tile)); if (b) { b.number = R.number; b.tile = R.tile; beasts.push(b); } }
 		else if (R.pack && beasts.filter((b) => b.pack === R.pack).length < R.pack.size) { const w = make('wolf', R.pack.home[0], R.pack.home[1], R.pack.home, R.pack); w.side = Math.random() * 6.28; beasts.push(w); }
 	}
 	for (const kind of Object.keys(KINDS)) beastStats[kind] = beasts.filter((b) => b.kind == kind).length;
@@ -300,7 +310,7 @@ function hurtBeast(b, velocity, round, who) {
 	const side = velocity[0] * Math.cos(b.heading) - velocity[2] * Math.sin(b.heading) > 0 ? 1 : -1;
 	// (a wolf has a little sinew on it, now and then)
 	corpses.push({ beast: b, t: 0, side, cuts: [...KINDS[b.kind].cuts, ...(b.kind == 'wolf' && Math.random() < WOLF_SINEW ? ['sinew'] : [])] });
-	respawns.push({ at: clock() + KINDS[b.kind].respawn, kind: b.kind, number: b.number, pack: b.pack });
+	respawns.push({ at: clock() + KINDS[b.kind].respawn, kind: b.kind, number: b.number, pack: b.pack, tile: b.tile });
 	beastStats.killed++;
 }
 export function killBeastById(id, velocity, part, round, who) { const b = beasts.find((o) => o.id === id); if (b) hurtBeast(b, velocity ?? [0, 0, 0], round, who ?? 'me'); }

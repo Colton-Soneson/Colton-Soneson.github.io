@@ -7,14 +7,17 @@
 		on(k, fn)			fn(data, from): from a joiner's id (on the host), or 'host' (on a joiner)
 		onJoin(fn)			on the host, a joiner come in: fn(id), to send it what there is
 	authority(): whether this machine keeps the shared things (the host, or alone)
+	away(): a joiner AWAY (net.js: in a world of tiles, on a tile the host has not got): it keeps what is of its tile itself (its caches, its
+		veins and mushrooms: loot.js, mining.js), and tells the host of them for the save (awayState)
 */
 // (a blow from another player, heard by the host: net.js says, medical.js sees to it)
 export const meleeHit = { fn: null };
-export const link = { role: () => 'off', myId: () => 0, toHost: null, toAll: null, toOne: null };
+export const link = { role: () => 'off', myId: () => 0, toHost: null, toAll: null, toOne: null, away: () => false };
 const handlers = new Map(), joinListeners = [];
 
 export const role = () => link.role();
 export const authority = () => role() != 'joined';
+export const away = () => link.away();
 export const myId = () => link.myId();
 export function on(kind, fn) { handlers.set(kind, fn); }
 export function onJoin(fn) { joinListeners.push(fn); }

@@ -114,6 +114,8 @@ export const c_water =
 		@location(33) chopK2: f32,
 		@location(34) swellHs: f32,				//significant wave height of the swell out at sea, and of the wind sea, world units
 		@location(35) windHs: f32,
+		@location(36) terrainCenterX: f32,		//the middle of the window of the land the terrain's water texture holds (terrain.js: THE WINDOW)
+		@location(37) terrainCenterZ: f32,
 	};
 	@group(0) @binding(1) var<uniform> WU: WaterUniforms;
 
@@ -196,16 +198,20 @@ fn worldTerrainAt(xz: vec2f) -> vec3f {
 	}
 	// off the edge of the map the sea bed carries on down from where it was at the edge, a unit deeper for every unit further out.
 	//		(a sheer drop to nothing there would start the deep sea swell at full height along a dead straight line)
-	let outside = max(max(abs(xz.x), abs(xz.y)) - WU.terrainHalfSize, 0.0);
+	//		(the texture is a window on to the land round its middle, each grid point at its place in the world's grid modulo its size: see
+	//		THE WINDOW in terrain.js. With the one land of old its middle is the origin and the window is the land)
+	let center = vec2f(WU.terrainCenterX, WU.terrainCenterZ);
+	let outside = max(max(abs(xz.x - center.x), abs(xz.y - center.y)) - WU.terrainHalfSize, 0.0);
 	let maxPoint = vec2f(textureDimensions(terrainWaterTexture)) - vec2f(1.001, 1.001);
-	let grid = clamp((xz + vec2f(WU.terrainHalfSize, WU.terrainHalfSize)) / WU.terrainCellSize, vec2f(0.0, 0.0), maxPoint);
-	let base = vec2i(floor(grid));
+	let grid = clamp((xz - center + vec2f(WU.terrainHalfSize, WU.terrainHalfSize)) / WU.terrainCellSize, vec2f(0.0, 0.0), maxPoint);
+	let base = vec2i(floor(grid)) + vec2i(round(center / WU.terrainCellSize));
 	let f = fract(grid);
+	let n = vec2i(textureDimensions(terrainWaterTexture));
 
-	let a = textureLoad(terrainWaterTexture, base, 0).xyz;
-	let b = textureLoad(terrainWaterTexture, base + vec2i(1, 0), 0).xyz;
-	let c = textureLoad(terrainWaterTexture, base + vec2i(0, 1), 0).xyz;
-	let d = textureLoad(terrainWaterTexture, base + vec2i(1, 1), 0).xyz;
+	let a = textureLoad(terrainWaterTexture, ((base % n) + n) % n, 0).xyz;
+	let b = textureLoad(terrainWaterTexture, (((base + vec2i(1, 0)) % n) + n) % n, 0).xyz;
+	let c = textureLoad(terrainWaterTexture, (((base + vec2i(0, 1)) % n) + n) % n, 0).xyz;
+	let d = textureLoad(terrainWaterTexture, (((base + vec2i(1, 1)) % n) + n) % n, 0).xyz;
 	let found = mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 	return vec3f(found.x - outside, found.y + outside, found.z);
 }

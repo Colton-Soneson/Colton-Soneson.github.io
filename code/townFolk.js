@@ -319,6 +319,14 @@ export function setFolkClock(seconds) { folkSeconds = seconds; }
 
 export const townFolkStats = { folk: 0, out: 0, drawn: 0, triangles: 0, errands: 0, shot: 0 };
 let folk = [];					// { town, ways, building, profession, seed, period, offset, side, dusk, hue, home (a spot), k, errand }
+// (in a world of tiles, terrain.js: made again as a tile with towns comes or goes, and a person's number its town's place times FOLK_SLOT and
+//		its building's place in the town, the same whatever else is here; with the one land of old, its place in the list)
+const FOLK_SLOT = 1000;
+const wayCache = new WeakMap();
+const folkNumbered = new Map();
+const personOf = (index) => folkNumbered.get(Number(index));
+let folkRebuild = false;
+terrain.onTiles((added, removed) => { if (terrain.tilesHaveTowns([...added, ...removed])) folkRebuild = true; });
 let builtFor = null;
 const metre = () => settings.forestUnitsPerMetre;
 
@@ -332,21 +340,31 @@ function doorOf(ways, b, out = 1.2, along = 0) {
 function build() {
 	const land = terrain.land;
 	builtFor = land;
+	// (made again for a tile come or gone: the people of the towns that are still here kept as they are, the same people)
+	const before = folkRebuild ? new Map(folkNumbered) : new Map();
 	folk = [];
+	folkNumbered.clear();
+	folkRebuild = false;
+	// (what each was doing kept, made again for a tile come or gone: the dead, the turned, the gone, a fight)
 	for (const [t, town] of (land?.towns ?? []).entries()) {
 		if (!town.buildings.length) continue;
-		const ways = makeWays(town);
+		// (a town still as it was keeps its ways)
+		let ways = wayCache.get(town)?.buildings === town.buildings ? wayCache.get(town).ways : null;
+		if (!ways) { ways = makeWays(town); wayCache.set(town, { buildings: town.buildings, ways }); }
 		if (!ways.nodes.length) continue;
 		town.buildings.forEach((b, k) => {
 			const type = BUILDING_TYPES[b.type].name;
 			// (the one house in the town that is the smithy: the first of a kind to spare)
 			const profession = b === smithyOf(town) ? BLACKSMITH : PROFESSIONS[type];
 			if (!profession) return;
+			const kept = terrain.world ? before.get(t * FOLK_SLOT + k) : null;
+			if (kept && kept.building === b) { folk.push(kept); folkNumbered.set(kept.index, kept); return; }
 			const random = seededRandom(settings.terrainSeed * 7919 + t * 104729 + k * 31337 + 17);
 			const period = ERRAND_SECONDS[0] + (ERRAND_SECONDS[1] - ERRAND_SECONDS[0]) * random();
 			folk.push({ town, ways, building: b, type, profession, seed: Math.floor(random() * 1e9), period, offset: random() * period,
 				side: (random() < 0.5 ? 1 : 0.6) * 1.5, dusk: 0.25 + 0.3 * random(), hue: random(), home: doorOf(ways, b, 1.2), k: -1, errand: null,
-				push: [0, 0], look: 0, hit: 0, flee: null, index: folk.length });
+				push: [0, 0], look: 0, hit: 0, flee: null, index: terrain.world ? t * FOLK_SLOT + k : folk.length });
+			folkNumbered.set(folk[folk.length - 1].index, folk[folk.length - 1]);
 		});
 	}
 	townFolkStats.folk = folk.length;
@@ -537,7 +555,7 @@ const shotListeners = [];
 export function onFolkShot(fn) { shotListeners.push(fn); }
 // shot, there or here: index (its place in the list, the same on every machine), at (folk time)
 export function folkShotHeard(index, at) {
-	const person = folk[index];
+	const person = personOf(index);
 	if (!person) return;
 	person.flee = fleeFrom(person, at);
 	person.hit = 1;
@@ -597,7 +615,7 @@ export function folkOut(each) {
 }
 // a person fighting: { x, y, z, heading, pitch, gun (players.js's HELD_LENGTH's names) }, or null to stop (goHome: it runs home from there)
 export function setFight(index, fight, goHome = false) {
-	const person = folk[index];
+	const person = personOf(index);
 	if (!person) return;
 	if (!fight && person.fight && goHome) {
 		const f = person.fight, time = folkSeconds + person.offset;
@@ -607,23 +625,23 @@ export function setFight(index, fight, goHome = false) {
 	person.fight = fight;
 }
 export function turnFolk(index) {
-	const person = folk[index];
+	const person = personOf(index);
 	if (person) { person.turned = true; person.fight = null; person.place = null; }
 }
 export function restoreFolk() { for (const person of folk) { person.turned = false; person.fight = null; person.led = null; person.gone = false; person.dead = false; } }
 // THE WAR (war.js): killed (it does not come back until the towns are whole again), and who is
-export function killFolk(index) { const person = folk[index]; if (person) { person.dead = true; person.fight = null; person.led = null; person.place = null; } }
+export function killFolk(index) { const person = personOf(index); if (person) { person.dead = true; person.fight = null; person.led = null; person.place = null; } }
 export function setDead(list) { const dead = new Set(list); for (const person of folk) { person.dead = dead.has(person.index); if (person.dead) person.fight = null; } }
 export function deadList() { return folk.filter((person) => person.dead).map((person) => person.index); }
 // a hit on one, for the war (war.js): take(person, bullet) true if it has seen to it (anyone's: the host sees the joiners' rounds too)
 export const folkHit = { take: null };
 // led (see THE HORDE at the top): where the horde has it now, { x, y, z, heading, stride, walking }, or null to let it go its own way again
-export function setLed(index, place) { const person = folk[index]; if (person) person.led = place; }
-export function boardFolk(index) { const person = folk[index]; if (person) { person.gone = true; person.led = null; person.fight = null; person.place = null; } }
+export function setLed(index, place) { const person = personOf(index); if (person) person.led = place; }
+export function boardFolk(index) { const person = personOf(index); if (person) { person.gone = true; person.led = null; person.fight = null; person.place = null; } }
 export function setBoarded(list) { const gone = new Set(list); for (const person of folk) { person.gone = gone.has(person.index); if (person.gone) person.led = null; } }
 // for the horde: fn(person) for every one, out of doors or not ({ index, town, home, place, turned, gone })
 export function folkEach(fn) { for (const person of folk) fn(person); }
-export const folkPerson = (index) => folk[index];
+export const folkPerson = (index) => personOf(index);
 export function setTurned(list) {
 	const turned = new Set(list);
 	for (const person of folk) { person.turned = turned.has(person.index); if (person.turned) person.fight = null; }
@@ -640,7 +658,7 @@ export function townFolkUpdate() {
 	const elapsed = Math.min((now - lastTime) / 1000, 0.1);
 	folkSeconds += elapsed;
 	lastTime = now;
-	if (terrain.land && terrain.land !== builtFor) build();
+	if (terrain.land && (terrain.land !== builtFor || folkRebuild)) { const was = new Map(folk.map((p) => [p.index, { dead: p.dead, turned: p.turned, gone: p.gone }])); const t0 = performance.now(); build(); townFolkStats.buildMs = Math.round(performance.now() - t0); for (const p of folk) Object.assign(p, was.get(p.index) ?? {}); }
 	if (!settings.enableTownFolk) return;
 	const m = metre(), about = playersAbout(), ease = Math.min(elapsed * 6, 1);
 	let out = 0;

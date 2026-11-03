@@ -12,6 +12,7 @@ import { buildFlightGrid, findFlightPath } from './birdPaths.js'
 
 import * as transformations from './transformations.js'
 import * as terrain from './terrain.js'
+import { tileAt } from './world.js'
 import * as ballistics from './ballistics.js'
 import { birdSpheres, fallen, moveFallen } from './fallenBirds.js'
 import * as forest from './forest.js'
@@ -193,7 +194,15 @@ const birdPipeline = device.createRenderPipeline({
 //-------------------------------------------------
 let groups = [];
 let flightGrid = null;
-let flockLand = null;			// the land the flock was made on
+let flockLand = null, flockTile = null, flockMiddle = [0, 0];	// the land the flock was made on (and its tile, and the middle of it)
+// (in a world of tiles, terrain.js: over the tile of land the camera is on, made again there as it goes on to another; the sea's are left
+//		where they were)
+function flockLandHere() {
+	if (!terrain.world) return { key: 'land', land: terrain.land };
+	const key = tileAt(settings.camPosX, settings.camPosZ, settings.terrainWorldSize), here = terrain.landsHere().find((one) => one.key == key);
+	return here && terrain.world.tiles.get(key)?.kind == 'land' ? here : null;
+}
+
 let openGround = [];			// places on the grassland to go to
 let lastTime = performance.now();
 let seconds = 0;
@@ -316,7 +325,7 @@ function pickTree(near) {
 	for (let attempt = 0; attempt < 60 && trees.length > 0; attempt++) {
 		const tree = trees[Math.floor(Math.random() * trees.length)];
 		if (!tree || tree.dead || !tree.height || tree.height < 9 * settings.forestUnitsPerMetre) continue;
-		if (Math.hypot(tree.x, tree.z) > ROAM) continue;
+		if (Math.hypot(tree.x - flockMiddle[0], tree.z - flockMiddle[1]) > ROAM) continue;
 		if (near && Math.hypot(tree.x - near[0], tree.z - near[1]) > near[2]) continue;
 		return tree;
 	}
@@ -359,8 +368,11 @@ export function summonHawks(x, z, owner = 0) {
 // Makes the flock, on the land as it is now
 function makeFlock() {
 	flockLand = terrain.land;
-	flightGrid = buildFlightGrid(terrain.land, settings.waterWorldPosY);
-	openGround = terrain.land.findSpawnPoints(terrain.ZONE_GRASSLAND, 40, { seed: 23, minSpacing: 260, near: [0, -600], radius: ROAM });
+	const over = flockLandHere() ?? { key: 'land', land: terrain.land };
+	flockTile = over.key;
+	flockMiddle = over.land.center ?? [0, 0];
+	flightGrid = buildFlightGrid(over.land, settings.waterWorldPosY);
+	openGround = over.land.findSpawnPoints(terrain.ZONE_GRASSLAND, 40, { seed: 23, minSpacing: 260, near: [flockMiddle[0], flockMiddle[1] - 600], radius: ROAM });
 
 	groups = groups.filter((group) => group.summoned || group.gone);		// (the ones called up stay)
 	const wanted = clamp(Math.round(settings.birdGroups), 0, MAX_GROUPS);
@@ -509,7 +521,8 @@ function advanceBirds(elapsed) {
 	}
 	// (a pair let go goes once it is out of sight, or long after)
 	groups = groups.filter((group) => !group.gone || seconds < group.leaveAt || (seconds < group.leaveAt + 300 && group.birds.some((bird) => Math.hypot(bird.x - settings.camPosX, bird.z - settings.camPosZ) < 400)));
-	if (terrain.land !== flockLand || groups.filter((group) => !group.summoned && !group.gone).length != clamp(Math.round(settings.birdGroups), 0, MAX_GROUPS)) {
+	const flockHere = terrain.world ? flockLandHere()?.key ?? flockTile : flockTile;
+	if (terrain.land !== flockLand || flockHere !== flockTile || groups.filter((group) => !group.summoned && !group.gone).length != clamp(Math.round(settings.birdGroups), 0, MAX_GROUPS)) {
 		makeFlock();
 	}
 	const day = lightNow().daylight > 0.35;

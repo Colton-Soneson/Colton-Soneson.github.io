@@ -165,6 +165,7 @@ export let life;					// the ForestLife that runs them, see forestLife.js
 export let clock = 0;				// the forest's clock, in years since it was planted
 let clockBase = 0;					// the clock time the GPU counts from, see rebaseClock
 let countedSunCycles = sunCycles;	// the sun cycles the clock has already been moved on for
+const MOST_CYCLES = 0.02;			// a frame (see forestUpdate)
 let yearsPerSecond = 0;				// how fast the clock has been running lately
 let lastAdvance = performance.now();
 let treeData = new Float32Array(0);	// every tree's GPU record, kept here too so one can be changed and sent on its own
@@ -477,9 +478,30 @@ export function crownsNear(x, z, reach, each) {
 		}
 	}
 }
+// THE TREES BROUGHT DOWN (the save file's: saveGame.js): where each was, the host's, the last FELLED_KEPT of them. The forest is planted
+//		from its seed again with the world, so these are what the players did to it: put back, each takes the tree that stands nearest there
+const FELLED_KEPT = 4000;
+let felled = [];
+export const felledRecord = () => felled.map(([x, z]) => [Math.round(x * 10) / 10, Math.round(z * 10) / 10]);
+export function felledAdopt(list) {
+	let down = 0;
+	for (const [x, z] of list ?? []) {
+		const t = treeNear(Number(x), Number(z), 1.5);
+		if (!t || t.planted || !life) continue;
+		const tree = trees[t.index];
+		life.kill(tree, clock);
+		Object.assign(tree, { dryYears: 0.0001, fallStart: clock - 1000 });
+		life.changed(t.index);
+		felled.push([tree.x, tree.z]);
+		down++;
+	}
+	return down;
+}
 export function fellTree(index, direction) {
 	const tree = trees[index];
 	if (!life || following || !tree || tree.dead || tree.planted) return 0;
+	felled.push([tree.x, tree.z]);
+	if (felled.length > FELLED_KEPT) felled = felled.slice(-FELLED_KEPT);
 	life.kill(tree, clock);
 	tree.dryYears = 0.0001;
 	tree.fallStart = clock;
@@ -521,7 +543,7 @@ function plantTrees() {
 	let listening = false;
 	life = new ForestLife({
 		trees: trees, archetypes: archetypes, variants: VARIANTS,
-		land: terrain.land, site: createSite(terrain.land, params), params: params,
+		land: terrain.land, site: siteOf(createSite(terrain.land, params)), params: params,
 		wind: [settings.windDirection[0], settings.windDirection[1]],
 		makeTree: makeTree, treeRoom: treeRoom,
 		random: seededRandom(params.seed * 7919 + 577),
@@ -551,9 +573,86 @@ function plantTrees() {
 	plantedParams = JSON.stringify(params);
 	plantedLand = terrain.land;
 	plantings++;
+	felled = [];
+	// (and the trees of the world's other tiles there are now, brought in again)
+	incoming = [];
+	sites.clear();
+	for (const t of terrain.tilesLoaded()) if (t.key != '0,0') bringTile(t.key);
 	if (sharing) sharing.clear();
 	forestStats.trees = life.count;
 	console.log("Forest planted: ", life.count, " trees in ", cells.length, " cells");
+}
+
+//-------------------------------THE WORLD'S OTHER TILES-------------------------------
+/*
+	In a world of tiles (terrain.js, world.js) the home tile's trees are planted here, as the one land's are. Every other tile's are planted
+	with its land off the main thread (tileWorker.js: terrain.tileExtras.forest, these planting settings), and brought in as it comes, a
+	few at a time (TILE_TREES a frame: bringInTrees), each knowing its tile; let go with it. Each lives as the rest do (ForestLife: adopt),
+	its seeds coming up by the ground of the tile they land on (siteOf). A joiner's trees are the host's (see MULTIPLAYER).
+*/
+const TILE_TREES = 800, TILE_RECORD = 12;
+let incoming = [];				// { key, records, at }
+terrain.tileExtras.forest = () => ({ params: getPlantingParams(), variants: VARIANTS });
+terrain.onTiles((added, removed) => {
+	for (const key of removed) letGoTile(key);
+	for (const key of added) bringTile(key);
+});
+export function bringTiles(keys) { for (const key of keys) if (key != '0,0') bringTile(key); }
+function bringTile(key) {
+	const t = terrain.tilesLoaded().find((one) => one.key == key);
+	if (t?.land.forestTrees && t.land.forestPlanted == JSON.stringify(getPlantingParams()) && !incoming.some((q) => q.key == key)) incoming.push({ key, records: t.land.forestTrees, at: 0 });
+}
+function letGoTile(key) {
+	incoming = incoming.filter((q) => q.key != key);
+	sites.delete(key);
+	if (!life || following) return;
+	trees.forEach((tree, index) => { if (tree && tree.tile === key) life.letGo(index); });
+	forestStats.trees = life.count;
+}
+function bringInTrees() {
+	if (!life || following || !incoming.length) return;
+	const t0 = performance.now();
+	const q = incoming[0], end = Math.min(q.at + TILE_TREES * TILE_RECORD, q.records.length);
+	makeRoom((end - q.at) / TILE_RECORD);
+	let lo = Infinity, hi = -1;
+	for (const r = q.records; q.at < end; q.at += TILE_RECORD) {
+		const tree = { x: r[q.at], y: r[q.at + 1], z: r[q.at + 2], species: r[q.at + 3], variant: r[q.at + 4], age: r[q.at + 5], scale: r[q.at + 6], yaw: r[q.at + 7],
+			leanX: r[q.at + 8], leanZ: r[q.at + 9], seed: r[q.at + 10], tile: q.key };
+		if (r[q.at + 11]) tree.planted = true;
+		tree.archetype = tree.species * VARIANTS + tree.variant;
+		const index = life.adopt(tree, clock);
+		lo = Math.min(lo, index); hi = Math.max(hi, index);
+	}
+	if (q.at >= q.records.length) {
+		incoming.shift();
+		// (the trees of it that were brought down before it went: down again, see THE TREES BROUGHT DOWN)
+		const S = settings.terrainWorldSize, [tx, tz] = q.key.split(',').map(Number);
+		const mine = felled.filter(([x, z]) => Math.round(x / S) == tx && Math.round(z / S) == tz);
+		felled = felled.filter((f) => !mine.includes(f));
+		felledAdopt(mine);
+	}
+	forestStats.trees = life.count;
+	// (their records to the GPU now, only the stretch of the list they went into: the clock may be standing still, and the records only
+	//		go with it otherwise, and then the whole list at once)
+	if (hi >= lo) {
+		const fresh = new Set();
+		for (let index = lo; index <= hi; index++) if (trees[index]) { packTree(trees[index], treeData, index); fresh.add(index); }
+		device.queue.writeBuffer(treeBuffer, lo * TREE_FLOATS * 4, treeData, lo * TREE_FLOATS, (hi - lo + 1) * TREE_FLOATS);
+		changedTrees = changedTrees.filter((index) => !fresh.has(index));
+	}
+	forestStats.bringLast = performance.now() - t0;
+	forestStats.bringMs = Math.max(forestStats.bringMs ?? 0, Math.round(forestStats.bringLast));
+}
+// where a seed lands, the ground of the tile it lands on (the home tile's: the one planted with the forest)
+const sites = new Map();
+function siteOf(homeSite) {
+	return (x, z) => {
+		const L = terrain.world ? terrain.tileLand(x, z) : null;
+		if (!L || !L.tile || L.tile == '0,0') return homeSite(x, z);
+		let s = sites.get(L.tile);
+		if (!s) { s = createSite(L, getPlantingParams()); sites.set(L.tile, s); }
+		return s(x, z);
+	};
 }
 
 //-------------------------------TIME-------------------------------
@@ -754,10 +853,10 @@ function applyRecord(data, at) {
 	changedTrees.push(index);
 	noteMoved(tree);
 }
-// room on the GPU for as many places in the list as there are now
-function makeRoom() {
-	if (trees.length * TREE_FLOATS <= treeData.length) return;
-	const capacity = Math.ceil(trees.length * 1.25);
+// room on the GPU for as many places in the list as there are now (or as many more as are on the way)
+function makeRoom(more = 0) {
+	if ((trees.length + more) * TREE_FLOATS <= treeData.length) return;
+	const capacity = Math.ceil((trees.length + more) * 1.25);
 	const data = new Float32Array(capacity * TREE_FLOATS);
 	data.set(treeData);
 	treeData = data;
@@ -1373,8 +1472,11 @@ export function forestUpdate() {
 	}
 
 	// the clock: on by however far the sun has gone round since last frame
-	const cycles = sunCycles - countedSunCycles;
+	// (no more than MOST_CYCLES a frame: the clock put on a long way at once, a save loaded or a joiner put right, is not centuries of the
+	//		forest's life in one frame, every tree in it dead of old age. Sleeping goes by far slower than that: bedrolls.js)
+	const cycles = Math.min(sunCycles - countedSunCycles, MOST_CYCLES);
 	countedSunCycles = sunCycles;
+	bringInTrees();
 	advanceForest(settings.forestLifeCycle ? Math.max(cycles, 0) * settings.forestYearsPerSunCycle : 0);
 	settings.forestYear = Math.round(clock * 10) / 10;		// for the controls to show
 	settings.forestTreeCount = forestStats.trees;

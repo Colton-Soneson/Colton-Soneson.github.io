@@ -106,7 +106,10 @@ export function cpuFrameDone() {
 	}
 	cpuTimes.length = 0;
 	for (const [name, ms] of cpuAverage) cpuTimes.push({ name: name, ms: ms });
+	cpuLastFrame.length = 0;
+	for (const [name, ms] of cpuThisFrame) cpuLastFrame.push({ name, ms });
 }
+export const cpuLastFrame = [];	// [{ name, ms }]: the last frame's, as it was (for a test to see what a slow one went on)
 
 /*
 	THE GRAPHS: the last SERIES_LENGTH frames of three things, for the graphs in the Performance window. While Enable is ticked

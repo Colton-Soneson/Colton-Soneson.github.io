@@ -124,14 +124,16 @@ export const c_leaves =
 
 	// the height of the ground at a place, bilinear between the 4 grid points around it. Water counts as ground: a leaf lands on it
 	fn groundAt(xz: vec2f) -> f32 {
-		let maxPoint = vec2f(textureDimensions(terrainFields)) - vec2f(1.001, 1.001);
-		let grid = clamp((xz + vec2f(PU.terrain.x, PU.terrain.x)) / PU.terrain.y, vec2f(0.0, 0.0), maxPoint);
+		// (the texture is a window on to the land round the camera, each grid point at its place in the world's grid modulo its size: see
+		//		THE WINDOW in terrain.js)
+		let n = vec2i(textureDimensions(terrainFields));
+		let grid = (xz + vec2f(PU.terrain.x, PU.terrain.x)) / PU.terrain.y;
 		let base = vec2i(floor(grid));
 		let f = fract(grid);
-		let a = textureLoad(terrainFields, base, 0).x;
-		let b = textureLoad(terrainFields, base + vec2i(1, 0), 0).x;
-		let c = textureLoad(terrainFields, base + vec2i(0, 1), 0).x;
-		let d = textureLoad(terrainFields, base + vec2i(1, 1), 0).x;
+		let a = textureLoad(terrainFields, ((base % n) + n) % n, 0).x;
+		let b = textureLoad(terrainFields, (((base + vec2i(1, 0)) % n) + n) % n, 0).x;
+		let c = textureLoad(terrainFields, (((base + vec2i(0, 1)) % n) + n) % n, 0).x;
+		let d = textureLoad(terrainFields, (((base + vec2i(1, 1)) % n) + n) % n, 0).x;
 		return max(mix(mix(a, b, f.x), mix(c, d, f.x), f.y), PU.terrain.z);
 	}
 

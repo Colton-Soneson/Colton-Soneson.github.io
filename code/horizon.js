@@ -45,6 +45,8 @@ export const horizonStats = { builds: 0, milliseconds: 0 };
 
 // height of the data grid at a world position, bilinear (land.heightAt, without its array)
 function landHeight(land, half, x, z) {
+	// (a world of tiles: each place from the tile it is in, terrain.js)
+	if (land.worldTiles) return land.heightAt(x, z);
 	const gx = Math.min(Math.max((x + half) / land.cellSize, 0), land.cells - 0.0001), gz = Math.min(Math.max((z + half) / land.cellSize, 0), land.cells - 0.0001);
 	const col = Math.floor(gx), row = Math.floor(gz), fx = gx - col, fz = gz - row, i = row * land.points + col;
 	const heights = land.heights, points = land.points;

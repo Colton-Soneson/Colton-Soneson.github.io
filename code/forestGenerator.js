@@ -47,11 +47,12 @@ const clamp01 = (x) => Math.min(Math.max(x, 0), 1);
 export function createSite(land, params) {
 	const noise = createNoise(params.seed * 31 + 7);
 	const half = land.cells * land.cellSize * 0.5;
+	const [cx, cz] = land.center ?? [0, 0];		// (a tile of the world's: world.js. Its grid round its own middle)
 	const out = { density: 0, conifer: 0, pioneer: 0, standAge: 0, gap: 0, quality: 0 };
 
 	// a value from one of the land's grids at a world position, bilinear between the 4 grid points around it
 	const sample = (grid, x, z, stride, offset) => {
-		const gx = Math.min(Math.max((x + half) / land.cellSize, 0), land.cells - 0.0001), gz = Math.min(Math.max((z + half) / land.cellSize, 0), land.cells - 0.0001);
+		const gx = Math.min(Math.max((x - cx + half) / land.cellSize, 0), land.cells - 0.0001), gz = Math.min(Math.max((z - cz + half) / land.cellSize, 0), land.cells - 0.0001);
 		const col = Math.floor(gx), row = Math.floor(gz), fx = gx - col, fz = gz - row;
 		const i = (row * land.points + col) * stride + offset, down = land.points * stride;
 		const top = grid[i] + (grid[i + stride] - grid[i]) * fx, bottom = grid[i + down] + (grid[i + down + stride] - grid[i + down]) * fx;
@@ -60,7 +61,7 @@ export function createSite(land, params) {
 
 	return function site(x, z) {
 		out.density = 0;
-		if (Math.abs(x) >= half || Math.abs(z) >= half) return out;
+		if (Math.abs(x - cx) >= half || Math.abs(z - cz) >= half) return out;
 		// the ground kept clear round the buildings (placeBuildings in terrain.js): nothing grows there, and no seed comes up there either
 		for (const clearing of land.clearings ?? []) {
 			if ((x - clearing.x) ** 2 + (z - clearing.z) ** 2 < clearing.radius ** 2) return out;
@@ -189,6 +190,7 @@ export function plantForest(land, params, variants) {
 	const random = seededRandom(params.seed * 7919 + 101);
 	const site = createSite(land, params);
 	const half = land.cells * land.cellSize * 0.5;
+	const [cx, cz] = land.center ?? [0, 0];		// (a tile of the world's: its grid round its own middle)
 
 	const leastDensity = 0.06;									// ground that carries less forest than this carries none
 	const farthest = params.spacing * 1.45 / Math.sqrt(leastDensity);	// the most room any tree asks for
@@ -213,8 +215,8 @@ export function plantForest(land, params, variants) {
 
 		// far enough from every tree near by? Two trees have to be the average of what each of them needs apart
 		const reach = (needs + farthest) * 0.5;
-		const fromCol = Math.max(Math.floor((x - reach + half) / bucketSize), 0), toCol = Math.min(Math.floor((x + reach + half) / bucketSize), bucketsPerSide - 1);
-		const fromRow = Math.max(Math.floor((z - reach + half) / bucketSize), 0), toRow = Math.min(Math.floor((z + reach + half) / bucketSize), bucketsPerSide - 1);
+		const fromCol = Math.max(Math.floor((x - cx - reach + half) / bucketSize), 0), toCol = Math.min(Math.floor((x - cx + reach + half) / bucketSize), bucketsPerSide - 1);
+		const fromRow = Math.max(Math.floor((z - cz - reach + half) / bucketSize), 0), toRow = Math.min(Math.floor((z - cz + reach + half) / bucketSize), bucketsPerSide - 1);
 		for (let row = fromRow; row <= toRow; row++) {
 			for (let col = fromCol; col <= toCol; col++) {
 				for (let other = firstInBucket[row * bucketsPerSide + col]; other >= 0; other = nextInBucket[other]) {
@@ -227,7 +229,7 @@ export function plantForest(land, params, variants) {
 
 		const tree = makeTree(x, z, picked.species, picked.age, where, land, params, random, variants);
 
-		const bucket = Math.floor((z + half) / bucketSize) * bucketsPerSide + Math.floor((x + half) / bucketSize);
+		const bucket = Math.floor((z - cz + half) / bucketSize) * bucketsPerSide + Math.floor((x - cx + half) / bucketSize);
 		nextInBucket.push(firstInBucket[bucket]);
 		firstInBucket[bucket] = trees.length;
 		trees.push(tree);
@@ -238,8 +240,8 @@ export function plantForest(land, params, variants) {
 
 	// starting trees, tried on a loose grid over the whole land
 	const startEvery = 56;
-	for (let z = -half; z < half && trees.length < params.maxTrees; z += startEvery) {
-		for (let x = -half; x < half && trees.length < params.maxTrees; x += startEvery) {
+	for (let z = cz - half; z < cz + half && trees.length < params.maxTrees; z += startEvery) {
+		for (let x = cx - half; x < cx + half && trees.length < params.maxTrees; x += startEvery) {
 			tryPlant(x + random() * startEvery, z + random() * startEvery);
 		}
 	}

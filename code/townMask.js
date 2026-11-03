@@ -28,11 +28,14 @@ export function setTownMask(stretches, boxes) {
 	const items = new Float32Array(4 + count * 8);
 	items.set([half, CELL, along, 0], 0);
 	const inCell = new Map();
+	// (each cell where it is in the world's grid of them, modulo how many there are along a side: in a world of tiles the shapes are those
+	//		round the camera, terrain.js: THE WINDOW. With the one land of old, the land's)
+	const wrap = (v) => ((v % along) + along) % along;
 	const sort = (k, x0, z0, x1, z1) => {
-		const c0 = Math.max(Math.floor((x0 + half) / CELL), 0), c1 = Math.min(Math.floor((x1 + half) / CELL), along - 1);
-		const r0 = Math.max(Math.floor((z0 + half) / CELL), 0), r1 = Math.min(Math.floor((z1 + half) / CELL), along - 1);
+		const c0 = Math.floor((x0 + half) / CELL), c1 = Math.floor((x1 + half) / CELL);
+		const r0 = Math.floor((z0 + half) / CELL), r1 = Math.floor((z1 + half) / CELL);
 		for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
-			const key = r * along + c;
+			const key = wrap(r) * along + wrap(c);
 			if (!inCell.has(key)) inCell.set(key, []);
 			inCell.get(key).push(k);
 		}
@@ -72,8 +75,8 @@ let cpu = { half: 0, along: 0, cells: new Map() };
 export function onTownWork(x, z) {
 	const { half, along, cells } = cpu;
 	if (!along) return false;
-	const c = Math.floor((x + half) / CELL), r = Math.floor((z + half) / CELL);
-	if (c < 0 || r < 0 || c >= along || r >= along) return false;
+	const wrap = (v) => ((v % along) + along) % along;
+	const c = wrap(Math.floor((x + half) / CELL)), r = wrap(Math.floor((z + half) / CELL));
 	return (cells.get(r * along + c) ?? []).some((test) => test(x, z));
 }
 setTownMask([], []);

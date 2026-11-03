@@ -10,6 +10,7 @@ import { PRESETS, PRESET_NAMES, PresetCheck, detectStartingPreset } from './grap
 import { reversedDepth, rememberDepthChoice } from './depthMode.js';
 
 export const imguiParams = {
+    worldViewDistance: settings.worldViewDistance,
     // Time
     step: settings.step,
     // Camera
@@ -101,6 +102,7 @@ export const imguiParams = {
     terrainSnowLine: settings.terrainSnowLine,
     terrainRockDetail: settings.terrainRockDetail,
     terrainTownCount: settings.terrainTownCount,
+    worldTiles: settings.worldTiles,
     terrainTownSize: settings.terrainTownSize,
     terrainLandingStrip: settings.terrainLandingStrip,
     terrainFootpaths: settings.terrainFootpaths,
@@ -282,6 +284,9 @@ document.body.appendChild(guiDock);
 
 export const gui = new GUI({ title: 'Controls', container: dockLeft });
 
+// the first of all: how far the whole world's tiles are streamed in and drawn (terrain.js: TILE_LOAD)
+gui.add(imguiParams, 'worldViewDistance', 1000, 8000, 250).name('World Render Distance (m)');
+
 //-----------------------GRAPHICS PRESETS----------------------------
 // At the top, outside the folders. The preset to start on is guessed from the GPU, then checked by the frame rate: see
 //		graphicsPresets.js. Preset Override stops the check (it ticks itself once the frame rate is good)
@@ -439,6 +444,7 @@ terrainFolder.add(imguiParams, 'terrainHillHeight', 0, 3, 0.05).name('Hill Heigh
 terrainFolder.add(imguiParams, 'terrainWoodland', 0, 1, 0.01).name('Woodland');
 terrainFolder.add(imguiParams, 'terrainLakes', 0, 1, 0.01).name('Lakes');
 terrainFolder.add(imguiParams, 'terrainTownCount', 0, 4, 1).name('Seaside Towns');
+terrainFolder.add(imguiParams, 'worldTiles').name('Whole World (many lands)');
 terrainFolder.add(imguiParams, 'terrainTownSize', 0.5, 1.6, 0.05).name('Town Size');
 terrainFolder.add(imguiParams, 'terrainLandingStrip').name('Landing Strip');
 terrainFolder.add(imguiParams, 'terrainFootpaths').name('Footpaths');

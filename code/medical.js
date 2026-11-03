@@ -289,6 +289,8 @@ function shift(by) {
 }
 let savedClock = 0;
 function save() { try { localStorage.setItem(SAVED, JSON.stringify({ body, clock: clock() })); } catch (e) { /* */ } }
+// (the save file's: saveGame.js, as it is kept here)
+export const medicalRecord = () => ({ key: SAVED, text: JSON.stringify({ body, clock: clock() }) });
 try { const raw = JSON.parse(localStorage.getItem(SAVED) ?? 'null'); if (raw?.body?.limbs) { body = { ...fresh(), ...raw.body }; savedClock = Number(raw.clock) || 0; } } catch (e) { /* (fresh) */ }
 window.addEventListener('beforeunload', save);
 // for testing

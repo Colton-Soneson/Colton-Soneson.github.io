@@ -253,6 +253,8 @@ export function takeAll() {
 export function save() {
 	try { localStorage.setItem(SAVED, JSON.stringify({ ...inv, kit: KIT })); } catch (e) { /* (nowhere to keep it) */ }
 }
+// (the save file's: saveGame.js, as it is kept here)
+export const inventoryRecord = () => ({ key: SAVED, text: JSON.stringify({ ...inv, kit: KIT }) });
 function load() {
 	try {
 		const raw = JSON.parse(localStorage.getItem(SAVED) ?? 'null');

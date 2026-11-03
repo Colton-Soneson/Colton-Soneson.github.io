@@ -49,7 +49,7 @@ const metre = () => settings.forestUnitsPerMetre;
 const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
 const wrap = (a) => a - Math.PI * 2 * Math.round(a / (Math.PI * 2));
 const clock = () => atmosphere.sunCycles;
-const here = () => survivalNet.authority();
+const here = () => survivalNet.authority() || survivalNet.away();	// (a joiner away keeps its own, net.js: AWAY)
 const locked = () => document.pointerLockElement == canvas;
 export const whalingStats = { whales: 0, fired: 0, struck: 0, flensed: 0, landed: 0 };
 
@@ -72,10 +72,12 @@ let whales = [], builtFor = null, nextId = 1, spawnQueue = [];
 let followed = null;			// joiner: the host's
 const surface = () => settings.waterWorldPosY;
 const depthAt = (x, z) => (surface() - terrain.land.heightAt(x, z)) / metre();
+// (in a world of tiles, terrain.js: anywhere in the tiles here, WHALES for each of them)
 function spot() {
-	const m = metre(), half = settings.terrainWorldSize * 0.5 - 200 * m;
+	const m = metre(), half = settings.terrainWorldSize * 0.5 - 200 * m, here = terrain.landsHere();
 	for (let k = 0; k < 60; k++) {
-		const x = (Math.random() * 2 - 1) * half, z = (Math.random() * 2 - 1) * half;
+		const [cx, cz] = here[Math.floor(Math.random() * here.length)]?.land.center ?? [0, 0];
+		const x = cx + (Math.random() * 2 - 1) * half, z = cz + (Math.random() * 2 - 1) * half;
 		if (depthAt(x, z) > DEEP && Math.hypot(x - settings.camPosX, z - settings.camPosZ) > 500 * m) return [x, z];
 	}
 	return null;
@@ -85,17 +87,24 @@ function newWhale() {
 	if (!at) return null;
 	return { id: nextId++, x: at[0], z: at[1], y: surface() - 4 * metre(), heading: Math.random() * 6.28, swim: Math.random() * 6.28, dive: Math.random() * 6.28, pitch: 0, roll: 0, own: Math.random(), state: 'swim', target: null, blown: 0, boat: null, side: 1, since: 0, stage: 0 };
 }
+const whalesWanted = () => WHALES * Math.max(terrain.landsHere().length, 1);
 function build() {
 	builtFor = terrain.land;
 	whales = []; spawnQueue = [];
-	for (let k = 0; k < WHALES; k++) { const w = newWhale(); if (w) whales.push(w); }
+	for (let k = 0; k < whalesWanted(); k++) { const w = newWhale(); if (w) whales.push(w); }
 }
+// (a tile come: its whales; gone: those in it, but one a boat is after)
+terrain.onTiles((added, removed) => {
+	if (builtFor !== terrain.land || !here()) return;
+	if (removed.length) whales = whales.filter((w) => w.boat !== null || terrain.inWorld(w.x, w.z));
+	while (whales.length < whalesWanted() && added.length) { const w = newWhale(); if (!w) break; whales.push(w); }
+});
 function swim(w, dt) {
 	const m = metre();
 	if (!w.target || Math.hypot(w.target[0] - w.x, w.target[1] - w.z) < 30 * m) {
 		for (let k = 0; k < 10; k++) {
-			const a = Math.random() * 6.28, x = w.x + Math.sin(a) * LEG * m, z = w.z + Math.cos(a) * LEG * m, half = settings.terrainWorldSize * 0.5 - 100 * m;
-			if (Math.abs(x) < half && Math.abs(z) < half && depthAt(x, z) > DEEP && depthAt((x + w.x) / 2, (z + w.z) / 2) > DEEP) { w.target = [x, z]; break; }
+			const a = Math.random() * 6.28, x = w.x + Math.sin(a) * LEG * m, z = w.z + Math.cos(a) * LEG * m;
+			if (terrain.inWorld(x, z, 100 * m) && depthAt(x, z) > DEEP && depthAt((x + w.x) / 2, (z + w.z) / 2) > DEEP) { w.target = [x, z]; break; }
 		}
 	}
 	const look = [w.x + Math.sin(w.heading) * 60 * m, w.z + Math.cos(w.heading) * 60 * m];

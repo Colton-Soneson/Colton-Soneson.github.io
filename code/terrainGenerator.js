@@ -224,6 +224,7 @@ function boxBlur(source, points, radius) {
 //						  marsh: 0 to 1, how close to a lake,
 //						  room: 0 to 1, how much room there is here for foothills (none by the coast, in a lake's valley or round the start) }
 //		foothillShape(x, z) -> how much of their full height the foothills stand to here (see FOOTHILLS)
+const homeOffsets = new Map();		// seed -> the window on to the noise findHomeOffset found for it (every tile of a world wants the same)
 export function createTerrainSampler(params) {
 	const noise = createNoise(params.seed);
 
@@ -264,7 +265,67 @@ export function createTerrainSampler(params) {
 	};
 
 	const half = params.worldSize * 0.5;
-	const seaThreshold = 0.06;	// how much of the continent noise is under water. Higher = less land
+	const seaThreshold = 0.06;
+	/*
+		THE WORLD'S TILES (world.js: params.world, the land tiles' keys, and their size). Without it, one land with open sea at its edge.
+		openSea: how hard the continent is pushed under the sea at a place. In a tile that is not land, all the way; in a land tile with no
+			land round it (the home island's), as the edge of the world has always done it (from the middle of the tile, its corners rounded
+			off); in one with land beside it, by how far it is to the nearest tile that is not land: so across a side shared with another
+			land tile there is no push at all, and the coast comes in from the sides that face the sea. Both tiles either side of a seam
+			work it out the same, so the land runs on across it
+		seamFade: 0 on a side (or a corner) shared with another land tile, 1 from SEAM in from it. What is worked out over the grid of
+			one tile alone (the mountains' ridges and their foothills, the lakes) is faded away towards it, so the two tiles meet on
+			ground that comes from the noise alone
+	*/
+	const SEAM = 1200, OPEN_HOLD = [1000, 2800];
+	const OPEN_COAST = { from: 0.45, wobble: 1100, wobbleLength: 1600, calm: 700 };	// (see openSea)
+	const world = params.world ? { S: params.world.size, land: new Set(params.world.land) } : null;
+	const isLand = (tx, tz) => world.land.has(tx + ',' + tz);
+	const edgeOfWorld = (lx, lz) => 1.4 * smoothstep(0.62, 1.0, Math.max(Math.abs(lx), Math.abs(lz), Math.hypot(lx, lz) * 0.8) / half);
+	const lonely = new Map();
+	function alone(tx, tz) {
+		const k = tx + ',' + tz;
+		if (!lonely.has(k)) { let none = true; for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) if ((dx || dz) && isLand(tx + dx, tz + dz)) none = false; lonely.set(k, none); }
+		return lonely.get(k);
+	}
+	// (how far a place is from the nearest tile that is not land: 0 in one, Infinity with none round it, or no world, or a lonely tile)
+	function openDistance(x, z) {
+		if (!world) return Infinity;
+		const tx = Math.round(x / world.S), tz = Math.round(z / world.S);
+		if (!isLand(tx, tz)) return 0;
+		if (alone(tx, tz)) return Infinity;
+		let D = Infinity;
+		for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
+			if ((!dx && !dz) || isLand(tx + dx, tz + dz)) continue;
+			const ex = Math.max(Math.abs(x - (tx + dx) * world.S) - half, 0), ez = Math.max(Math.abs(z - (tz + dz) * world.S) - half, 0);
+			D = Math.min(D, Math.hypot(ex, ez));
+		}
+		return D;
+	}
+	function openSea(x, z) {
+		if (!world) return edgeOfWorld(x, z);
+		const tx = Math.round(x / world.S), tz = Math.round(z / world.S);
+		if (!isLand(tx, tz)) return 1.4;
+		if (alone(tx, tz)) return edgeOfWorld(x - tx * world.S, z - tz * world.S);
+		const D = openDistance(x, z);
+		if (D == Infinity) return 0;
+		// (over a wider band than a lonely tile's, and the way in from the tile's edge rolled by noise, so the coast it makes is not a
+		//		straight line along the edge where the land is high. At the edge itself as hard as in the open sea, the same either side)
+		const wobble = OPEN_COAST.wobble * fbm(x / OPEN_COAST.wobbleLength + 91.3, z / OPEN_COAST.wobbleLength - 47.2, 3) * smoothstep(0, OPEN_COAST.calm, D);
+		return 1.4 * smoothstep(OPEN_COAST.from, 1.0, 1 - Math.max(D + wobble, 0) / half);
+	}
+	function seamFade(x, z) {
+		if (!world) return 1;
+		const tx = Math.round(x / world.S), tz = Math.round(z / world.S), lx = x - tx * world.S, lz = z - tz * world.S;
+		let d = Infinity;
+		for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
+			if ((!dx && !dz) || !isLand(tx + dx, tz + dz)) continue;
+			// (a side: how far in from it; a corner: how far from it)
+			if (!dx || !dz) d = Math.min(d, dx ? half - lx * dx : half - lz * dz);
+			else d = Math.min(d, Math.hypot(half - lx * dx, half - lz * dz));
+		}
+		return d == Infinity ? 1 : smoothstep(0, SEAM, d);
+	}	// how much of the continent noise is under water. Higher = less land
 	const shape = MOUNTAINS;
 
 	// The noise is endless, the world is one window on to it. originOffset picks which window (see findHomeOffset)
@@ -303,8 +364,7 @@ export function createTerrainSampler(params) {
 		// and a push to open sea at the edge of the world, so no land mass gets cut off by it. It starts well inside the edge and
 		//		comes on slowly, so the coast it makes still follows the noise instead of running in a straight line, and it is
 		//		measured part of the way round the corners, so they are cut off
-		const fromMiddle = Math.max(Math.abs(x), Math.abs(z), Math.hypot(x, z) * 0.8) / half;
-		continent -= 1.4 * smoothstep(0.62, 1.0, fromMiddle);
+		continent -= openSea(x, z);
 		const inland = continent - seaThreshold;	// > 0 is land, and it grows with distance from the shore
 
 		if (inland <= 0) {
@@ -319,6 +379,10 @@ export function createTerrainSampler(params) {
 		let mountain = clamp01(shape.spread + range * 1.7 + 0.7 * homeRange);
 		mountain *= smoothstep(shape.fromCoast[0], shape.fromCoast[1], inland);
 		mountain *= smoothstep(shape.fromHome[0], shape.fromHome[1], Math.hypot(x, z));
+		const seam = seamFade(x, z);
+		// (and in a land tile beside the open sea, held back from it: the push to the sea comes on over a short way, and a range right up
+		//		to it would end in a wall over the water. A lonely tile, the home island, is as it was)
+		mountain *= seam * smoothstep(OPEN_HOLD[0], OPEN_HOLD[1], openDistance(x, z));
 		const rise = Math.pow(smoothstep(FOREST_THRESHOLD, 1.0, mountain), 1.35);	// 0 at the forest edge of a range, 1 at its heart
 
 		//---base land: a gentle run up from the waterline (the beach), levelling off to a low plateau inland
@@ -342,7 +406,7 @@ export function createTerrainSampler(params) {
 		//		Not in the mountains or their forest, not hard up against the coast, and not on top of the start
 		const hollow = fbm(nx / 560 + 51.3, nz / 560 - 22.6, 3) + 0.3 * fbm(nx / 150 - 6.1, nz / 150 + 40.2, 2);
 		const wet = 0.5 - 0.42 * (params.lakes ?? 0.5);		// the noise has to be above this for there to be water: lower = more lakes
-		const allowed = smoothstep(0.1, 0.24, inland) * (1 - smoothstep(0, FOREST_THRESHOLD, mountain)) * smoothstep(420, 800, Math.hypot(x, z));
+		const allowed = smoothstep(0.1, 0.24, inland) * (1 - smoothstep(0, FOREST_THRESHOLD, mountain)) * smoothstep(420, 800, Math.hypot(x, z)) * seam;
 		// the valley: over a wide band of the noise the hills are levelled away and the ground brought down to just above the water.
 		//		A lake lies in the bottom of a broad dip, the land does not drop into it off a ledge
 		const valley = smoothstep(wet - 0.32, wet, hollow) * allowed;
@@ -360,7 +424,7 @@ export function createTerrainSampler(params) {
 
 		// foothills are kept back from the sea (a beach is not the foot of a mountain), out of the valley of every lake,
 		//		and clear of the start. And they give out towards the heart of a range: they are the outside of it
-		const room = smoothstep(0.06, 0.2, inland) * (1 - valley) * smoothstep(380, 820, Math.hypot(x, z + 70)) * (1 - 0.85 * smoothstep(0.45, 0.85, rise));
+		const room = smoothstep(0.06, 0.2, inland) * (1 - valley) * smoothstep(380, 820, Math.hypot(x, z + 70)) * (1 - 0.85 * smoothstep(0.45, 0.85, rise)) * seam;
 
 		return { height: height, mountain: mountain, rise: rise, woodland: woodland, marsh: marsh, room: room };
 	}
@@ -381,6 +445,8 @@ export function createTerrainSampler(params) {
 	// Looks through windows on to the noise until it finds one where the start of the world makes sense:
 	//		the origin (where the camera starts off looking) is on the shore, there is sea just south of it for the camera to sit over, and land to the north
 	function findHomeOffset() {
+		const known = homeOffsets.get(params.seed);
+		if (known) { offsetX = known[0]; offsetZ = known[1]; return; }
 		const random = seededRandom(params.seed ^ 0x9E3779B9);
 		let best = [0, 0], bestScore = -Infinity;
 		for (let attempt = 0; attempt < 600; attempt++) {
@@ -395,10 +461,11 @@ export function createTerrainSampler(params) {
 			if (atOrigin > 1.5 && atOrigin < 8 && south < -3 && farSouth < -10 && north > 12) { best = [offsetX, offsetZ]; break; }
 		}
 		offsetX = best[0]; offsetZ = best[1];
+		homeOffsets.set(params.seed, best);
 	}
 	findHomeOffset();
 
-	return { sample: sample, erodedFbm: (x, z, octaves) => erodedFbm(x + offsetX * 0.001, z + offsetZ * 0.001, octaves), foothillShape: foothillShape };
+	return { sample: sample, erodedFbm: (x, z, octaves) => erodedFbm(x + offsetX * 0.001, z + offsetZ * 0.001, octaves), foothillShape: foothillShape, seamFade };
 }
 
 //-------------------------------MOUNTAIN RIDGES-------------------------------
@@ -652,6 +719,7 @@ function makeFoothills(foothillShape) {
 	return foothills;
 }
 
+const BED_OUT = 400;		// world units: in a world of tiles, the most the sea bed is measured out past the drop-off (see THE SEA BED)
 // how much lower the sea bed is for being out past the middle of the drop-off (see generateTerrain). It comes on over the first 60
 //		or so units, not at a crease
 function bedFall(params, out) {
@@ -716,11 +784,12 @@ export function makeChunkBuilder(params, grids, sampler = createTerrainSampler(p
 	const points = cells + 1;
 	const cellSize = params.worldSize / cells;
 	const half = params.worldSize * 0.5;
+	const [ox, oz] = params.center ?? [0, 0];		// (a tile of the world's: world.js. Its grid round its own middle)
 	const foothills = makeFoothills(foothillShape);
 
 	// one of the data grids at a world position, bilinear between the 4 grid points around it
 	function gridAt(grid, x, z) {
-		const gx = Math.min(Math.max((x + half) / cellSize, 0), cells - 0.0001), gz = Math.min(Math.max((z + half) / cellSize, 0), cells - 0.0001);
+		const gx = Math.min(Math.max((x - ox + half) / cellSize, 0), cells - 0.0001), gz = Math.min(Math.max((z - oz + half) / cellSize, 0), cells - 0.0001);
 		const col = Math.floor(gx), row = Math.floor(gz), fx = gx - col, fz = gz - row, i = row * points + col;
 		const top = grid[i] + (grid[i + 1] - grid[i]) * fx, bottom = grid[i + points] + (grid[i + points + 1] - grid[i + points]) * fx;
 		return top + (bottom - top) * fz;
@@ -870,7 +939,7 @@ export function makeChunkBuilder(params, grids, sampler = createTerrainSampler(p
 		chunkGrids								the grids buildChunk reads, so another thread can make a builder of its own (see makeChunkBuilder)
 */
 export function generateTerrain(params) {
-	const { sample, erodedFbm, foothillShape } = createTerrainSampler(params);
+	const { sample, erodedFbm, foothillShape, seamFade } = createTerrainSampler(params);
 
 	// Two resolutions. The DATA grid (heights, zones, the ridge skeleton, what the water and the grass read) is always this fine.
 	//		The MESH is built separately, a chunk at a time (see buildChunk): finer than this near the camera, coarser far away
@@ -878,6 +947,9 @@ export function generateTerrain(params) {
 	const points = cells + 1;
 	const cellSize = params.worldSize / cells;
 	const half = params.worldSize * 0.5;
+	// (a tile of the world's, world.js: its grid round its own middle, everything in it in world units where it is in the world)
+	const [ox, oz] = params.center ?? [0, 0];
+	const xAt = (col) => ox + col * cellSize - half, zAt = (row) => oz + row * cellSize - half;
 
 	const heights = new Float32Array(points * points);		// world y
 	const mountains = new Float32Array(points * points);
@@ -893,7 +965,7 @@ export function generateTerrain(params) {
 	// the land without its mountains, and where the mountain ranges are
 	for (let row = 0; row < points; row++) {
 		for (let col = 0; col < points; col++) {
-			const result = sample(col * cellSize - half, row * cellSize - half);
+			const result = sample(xAt(col), zAt(row));
 			const i = row * points + col;
 			heights[i] = result.height;		// above sea level for now
 			mountains[i] = result.mountain;
@@ -981,17 +1053,20 @@ export function generateTerrain(params) {
 	if (seaBedGrade > 0) {
 		const out = distanceTo((i) => !(sea[i] && heights[i] < -0.5 * params.seaFloorDepth), true);
 		beyondDrop = boxBlur(out, points, 3).map((distance) => distance * cellSize);	// (blurred a little: the grid still leaves corners in it)
+		// (in a world of tiles, no further than BED_OUT: a tile of open sea has nothing to measure from, and the one beside it does, so
+		//		past that both lie at the same depth and meet)
+		if (params.world) beyondDrop = beyondDrop.map((distance) => Math.min(distance, BED_OUT));
 	}
 
 	// the mountains: the ridge skeleton, with the eroded noise roughing it up and carving the faces between the ridges
 	const { ridges, crests } = growRidges(rises, points, params.seed, cellSize, params.mountainHeight, MOUNTAINS);
-	const ridgeCrests = new Float32Array(crests.map((cell) => cell * cellSize - half));	// as world x, z
+	const ridgeCrests = new Float32Array(crests.map((cell, k) => (k % 2 ? zAt(cell) : xAt(cell))));	// as world x, z
 	const massif = new Float32Array(points * points);		// how high the mountains alone stand at each point, over the land they are on
 	for (let row = 0; row < points; row++) {
 		for (let col = 0; col < points; col++) {
 			const i = row * points + col;
 			if (rises[i] > 0) {
-				const eroded = erodedFbm((col * cellSize - half) / MOUNTAINS.erodeScale, (row * cellSize - half) / MOUNTAINS.erodeScale, 9);
+				const eroded = erodedFbm(xAt(col) / MOUNTAINS.erodeScale, zAt(row) / MOUNTAINS.erodeScale, 9);
 				const shape = ridges[i] * (0.62 + 0.76 * eroded) + 0.14 * eroded;
 				// the ridges set the profile of the mountain. The range only reins it in at its very edge, so it meets the forest without a step
 				massif[i] = params.mountainHeight * smoothstep(0, 0.3, rises[i]) * shape;
@@ -1024,7 +1099,7 @@ export function generateTerrain(params) {
 	for (let row = 0; row < points; row++) {
 		for (let col = 0; col < points; col++) {
 			const i = row * points + col;
-			heights[i] += foothills.raise(col * cellSize - half, row * cellSize - half, massif[i], footings[i], rooms[i]) - bedFall(params, beyondDrop[i]);
+			heights[i] += foothills.raise(xAt(col), zAt(row), massif[i], footings[i], rooms[i]) - bedFall(params, beyondDrop[i]);
 			woodlands[i] = Math.max(woodlands[i], foothills.wooded * (1 - marshes[i]));
 			covers[i] = coverOf(mountains[i], woodlands[i], marshes[i]);
 			zones[i] = classifyZone(heights[i], covers[i], params, !sea[i]);
@@ -1041,11 +1116,11 @@ export function generateTerrain(params) {
 		the land's grids, and the land is worked out again over each town with its streets cut into it
 	*/
 	const aboveSea = heights.map((h) => h - params.seaLevel);
-	const siteGrids = { points, cells, cellSize, half, heights: aboveSea, covers, sea, toSea };
+	const siteGrids = { points, cells, cellSize, half, ox, oz, heights: aboveSea, covers, sea, toSea, keep: (x, z) => seamFade(x, z) >= 1 };
 	let townSites = findTownSites(siteGrids, params, MOUNTAIN_THRESHOLD);
 	let townGround = null, town = null;
 	const gridValue = (grid, x, z) => {
-		const gx = Math.min(Math.max((x + half) / cellSize, 0), cells - 0.0001), gz = Math.min(Math.max((z + half) / cellSize, 0), cells - 0.0001);
+		const gx = Math.min(Math.max((x - ox + half) / cellSize, 0), cells - 0.0001), gz = Math.min(Math.max((z - oz + half) / cellSize, 0), cells - 0.0001);
 		const col = Math.floor(gx), row = Math.floor(gz), fx = gx - col, fz = gz - row, i = row * points + col;
 		const top = grid[i] + (grid[i + 1] - grid[i]) * fx, bottom = grid[i + points] + (grid[i + points + 1] - grid[i + points]) * fx;
 		return top + (bottom - top) * fz;
@@ -1056,7 +1131,7 @@ export function generateTerrain(params) {
 	//		found in its place, and the hills and layouts made again)
 	const givenUp = [];
 	for (let attempt = 0; attempt < 4; attempt++) {
-		townGround = planTownGround({ points, cells, cellSize, half, sea, toSea, heights: aboveSea }, townSites, params.seed);
+		townGround = planTownGround({ points, cells, cellSize, half, ox, oz, sea, toSea, heights: aboveSea }, townSites, params.seed);
 		chunkGrids.townStrength = townGround.strength;
 		chunkGrids.townHeight = townGround.height;
 		chunkGrids.townRoads = null;
@@ -1072,7 +1147,7 @@ export function generateTerrain(params) {
 	for (let i = 0; i < points * points; i++) {
 		if (townGround.strength[i] <= 0) continue;
 		const col = i % points, row = (i - col) / points;
-		heights[i] = params.seaLevel + landAt(col * cellSize - half, row * cellSize - half);
+		heights[i] = params.seaLevel + landAt(xAt(col), zAt(row));
 		if (townGround.strength[i] > 0.5 && heights[i] > params.seaLevel + 0.5) zones[i] = ZONE_TOWN;
 	}
 	const roadAt = makeRoadFlattener(town.segments).nearest;
@@ -1092,14 +1167,14 @@ export function generateTerrain(params) {
 	function planStrip() {
 		const site = townSites[0] ?? { x: 0, z: 0 };
 		const hAt = (x, z) => gridValue(aboveSea, x, z);
-		const zoneHere = (x, z) => { const gx = Math.round((x + half) / cellSize), gz = Math.round((z + half) / cellSize); return gx < 0 || gz < 0 || gx > cells || gz > cells ? ZONE_OCEAN : zones[gz * points + gx]; };
+		const zoneHere = (x, z) => { const gx = Math.round((x - ox + half) / cellSize), gz = Math.round((z - oz + half) / cellSize); return gx < 0 || gz < 0 || gx > cells || gz > cells ? ZONE_OCEAN : zones[gz * points + gx]; };
 		const dryEnough = params.beachHeight + params.bankHeight + 2;
 		const half2 = STRIP.length / 2 + 20;
 		let best = null;
 		for (let r = STRIP.reach[0]; r <= STRIP.reach[1]; r += 140) {
 			for (let a = 0; a < 32; a++) {
 				const around = a / 32 * Math.PI * 2, cx = site.x + Math.sin(around) * r, cz = site.z + Math.cos(around) * r;
-				if (Math.abs(cx) > half - 800 || Math.abs(cz) > half - 800) continue;
+				if (Math.abs(cx - ox) > half - 800 || Math.abs(cz - oz) > half - 800) continue;
 				for (let h = 0; h < 16; h++) {
 					const ax = Math.cos(h / 16 * Math.PI), az = Math.sin(h / 16 * Math.PI);
 					let ok = true, su = 0, sh = 0, suu = 0, suh = 0, n = 0, woods = 0;
@@ -1134,7 +1209,7 @@ export function generateTerrain(params) {
 						let met = Infinity;
 						for (let out = 8; out <= STRIP.banks && met == Infinity; out += 8) {
 							const u = u0 + du * out, v = v0 + dv * out, x = cx + ax * u - az * v, z = cz + az * u + ax * v;
-							if (Math.abs(x) > half - 50 || Math.abs(z) > half - 50 || townAt(x, z) > 0.02) break;
+							if (Math.abs(x - ox) > half - 50 || Math.abs(z - oz) > half - 50 || townAt(x, z) > 0.02) break;
 							if (Math.abs(hAt(x, z) - level) <= STRIP.bank * out - STRIP.round) met = out;
 						}
 						if (met == Infinity) { meets = false; met = STRIP.banks; }
@@ -1215,11 +1290,11 @@ export function generateTerrain(params) {
 	if (strip) {
 		chunkGrids.strip = strip;
 		const reach = strip.half + strip.flat + strip.reach + cellSize;
-		const c0 = Math.max(Math.floor((strip.x - reach + half) / cellSize), 0), c1 = Math.min(Math.ceil((strip.x + reach + half) / cellSize), cells);
-		const r0 = Math.max(Math.floor((strip.z - reach + half) / cellSize), 0), r1 = Math.min(Math.ceil((strip.z + reach + half) / cellSize), cells);
+		const c0 = Math.max(Math.floor((strip.x - ox - reach + half) / cellSize), 0), c1 = Math.min(Math.ceil((strip.x - ox + reach + half) / cellSize), cells);
+		const r0 = Math.max(Math.floor((strip.z - oz - reach + half) / cellSize), 0), r1 = Math.min(Math.ceil((strip.z - oz + reach + half) / cellSize), cells);
 		for (let row = r0; row <= r1; row++) {
 			for (let col = c0; col <= c1; col++) {
-				const x = col * cellSize - half, z = row * cellSize - half, [u, v] = stripPlace(strip, x, z);
+				const x = xAt(col), z = zAt(row), [u, v] = stripPlace(strip, x, z);
 				if (stripOut(strip, u, v) >= strip.reach) continue;
 				heights[row * points + col] = params.seaLevel + landAt(x, z);
 			}
@@ -1231,8 +1306,8 @@ export function generateTerrain(params) {
 		pressed into it (landAt), and the grid worked out again under them
 	*/
 	const footpaths = params.footpaths ? planFootpaths({
-		worldSize: params.worldSize, ground: landAt, heightAt: (x, z) => gridValue(heights, x, z) - params.seaLevel,
-		zoneAt: (x, z) => zones[Math.min(Math.max(Math.round((z + half) / cellSize), 0), cells) * points + Math.min(Math.max(Math.round((x + half) / cellSize), 0), cells)],
+		worldSize: params.worldSize, ox, oz, keep: siteGrids.keep, ground: landAt, heightAt: (x, z) => gridValue(heights, x, z) - params.seaLevel,
+		zoneAt: (x, z) => zones[Math.min(Math.max(Math.round((z - oz + half) / cellSize), 0), cells) * points + Math.min(Math.max(Math.round((x - ox + half) / cellSize), 0), cells)],
 		Z: { OCEAN: ZONE_OCEAN, BEACH: ZONE_BEACH, GRASSLAND: ZONE_GRASSLAND, FOREST: ZONE_FOREST, MOUNTAIN: ZONE_MOUNTAIN, SNOW: ZONE_SNOW, LAKE: ZONE_LAKE, MARSH: ZONE_MARSH, TOWN: ZONE_TOWN },
 		townAt, onRoad: (x, z) => roadAt(x, z) !== null, towns: town.towns, strip, stripAt: strip ? (x, z) => stripWeight(strip, x, z) : () => 0,
 	}) : null;
@@ -1240,11 +1315,11 @@ export function generateTerrain(params) {
 		chunkGrids.paths = { segments: footpaths.segments, clearings: footpaths.clearings };
 		const s = footpaths.segments, reach = PATHS.half + PATHS.reach + cellSize, redone = new Set();
 		for (let o = 0; o < s.length; o += 6) {
-			const c0 = Math.max(Math.floor((Math.min(s[o], s[o + 3]) - reach + half) / cellSize), 0), c1 = Math.min(Math.ceil((Math.max(s[o], s[o + 3]) + reach + half) / cellSize), cells);
-			const r0 = Math.max(Math.floor((Math.min(s[o + 1], s[o + 4]) - reach + half) / cellSize), 0), r1 = Math.min(Math.ceil((Math.max(s[o + 1], s[o + 4]) + reach + half) / cellSize), cells);
+			const c0 = Math.max(Math.floor((Math.min(s[o], s[o + 3]) - ox - reach + half) / cellSize), 0), c1 = Math.min(Math.ceil((Math.max(s[o], s[o + 3]) - ox + reach + half) / cellSize), cells);
+			const r0 = Math.max(Math.floor((Math.min(s[o + 1], s[o + 4]) - oz - reach + half) / cellSize), 0), r1 = Math.min(Math.ceil((Math.max(s[o + 1], s[o + 4]) - oz + reach + half) / cellSize), cells);
 			for (let row = r0; row <= r1; row++) for (let col = c0; col <= c1; col++) redone.add(row * points + col);
 		}
-		for (const i of redone) heights[i] = params.seaLevel + landAt((i % points) * cellSize - half, Math.floor(i / points) * cellSize - half);
+		for (const i of redone) heights[i] = params.seaLevel + landAt(xAt(i % points), zAt(Math.floor(i / points)));
 	}
 	const pathsLaid = footpaths ? makePathFlattener(chunkGrids.paths) : null, pathClear = pathsLaid?.clear;
 
@@ -1292,9 +1367,38 @@ export function generateTerrain(params) {
 		}
 	}
 
+	// (all of it as plain data, so a land made off the main thread can be sent back: wrapLand makes the look ups again from it)
+	return wrapLand(params, {
+		cells, points, cellSize, heights, mountains, woodlands, covers, marshes, lakes, zones, normals, shoreDistances, ridgeCrests, chunkGrids,
+		towns: town.towns, townStrength: townGround.strength, strip, paths: footpaths?.paths ?? [], pathPlaces: footpaths?.places ?? null, fireTowers: footpaths?.towers ?? [],
+	}, { landAt, buildChunk, roadAt, pathsLaid });
+}
+
+/*
+	A LAND FROM ITS DATA: the look ups made over the grids (heightAt and the rest), the exact ground (groundAt: the chunk builder's, over the
+	same grids), the towns' streets (roadAt), the footpaths, and the tag system (findSpawnPoints). generateTerrain makes a land with it;
+	terrain.js with what the tile worker (tileWorker.js) sends back, the lands of the world's other tiles (world.js), made off the main thread.
+	made: what generateTerrain has made already, so it is not made twice
+*/
+export function wrapLand(params, data, made = null) {
+	const { cells, points, cellSize, heights, zones, normals, chunkGrids, strip } = data;
+	const half = params.worldSize * 0.5;
+	const [ox, oz] = params.center ?? [0, 0];
+	const builder = made?.landAt ? made : makeChunkBuilder(params, chunkGrids);
+	const { landAt, buildChunk } = builder;
+	const roadAt = made?.roadAt ?? makeRoadFlattener(chunkGrids.townRoads ?? []).nearest;
+	const pathsLaid = made ? made.pathsLaid : chunkGrids.paths ? makePathFlattener(chunkGrids.paths) : null, pathClear = pathsLaid?.clear;
+	const gridValue = (grid, x, z) => {
+		const gx = Math.min(Math.max((x - ox + half) / cellSize, 0), cells - 0.0001), gz = Math.min(Math.max((z - oz + half) / cellSize, 0), cells - 0.0001);
+		const col = Math.floor(gx), row = Math.floor(gz), fx = gx - col, fz = gz - row, i = row * points + col;
+		const top = grid[i] + (grid[i + 1] - grid[i]) * fx, bottom = grid[i + points] + (grid[i + points + 1] - grid[i + points]) * fx;
+		return top + (bottom - top) * fz;
+	};
+	const townAt = (x, z) => gridValue(data.townStrength, x, z);
+
 	//-------------------------------LOOK UPS-------------------------------
 	// grid coordinates of a world position, clamped inside the grid
-	const toGrid = (x, z) => [Math.min(Math.max((x + half) / cellSize, 0), cells - 0.0001), Math.min(Math.max((z + half) / cellSize, 0), cells - 0.0001)];
+	const toGrid = (x, z) => [Math.min(Math.max((x - ox + half) / cellSize, 0), cells - 0.0001), Math.min(Math.max((z - oz + half) / cellSize, 0), cells - 0.0001)];
 
 	// world y of the ground at a world position
 	function heightAt(x, z) {
@@ -1327,13 +1431,13 @@ export function generateTerrain(params) {
 		const random = seededRandom((options.seed ?? 1) * 7919 + zone);
 		const spacing = options.minSpacing ?? 0;
 		const flatness = 1 - (options.maxSlope ?? 1);
-		const centerX = options.near ? options.near[0] : 0, centerZ = options.near ? options.near[1] : 0;
+		const centerX = options.near ? options.near[0] : ox, centerZ = options.near ? options.near[1] : oz;
 		const radius = options.radius ?? half;
 
 		const found = [];
 		for (let attempt = 0; attempt < count * 400 && found.length < count; attempt++) {
 			const x = centerX + (random() * 2 - 1) * radius, z = centerZ + (random() * 2 - 1) * radius;
-			if (Math.abs(x) >= half || Math.abs(z) >= half) continue;
+			if (Math.abs(x - ox) >= half || Math.abs(z - oz) >= half) continue;
 			if (zoneAt(x, z) !== zone) continue;
 			const normal = normalAt(x, z);
 			if (normal[1] < flatness) continue;
@@ -1345,8 +1449,7 @@ export function generateTerrain(params) {
 
 	const groundAt = (x, z) => params.seaLevel + landAt(x, z);
 
-	return { cells, points, cellSize, heights, mountains, woodlands, covers, marshes, lakes, zones, normals, shoreDistances, ridgeCrests, heightAt, groundAt, zoneAt, normalAt, findSpawnPoints, buildChunk, chunkGrids,
-		towns: town.towns, townStrength: townGround.strength, roadAt, strip, paths: footpaths?.paths ?? [], pathPlaces: footpaths?.places ?? null, fireTowers: footpaths?.towers ?? [],
+	return { ...data, center: [ox, oz], tile: params.tile ?? null, half, heightAt, groundAt, zoneAt, normalAt, findSpawnPoints, buildChunk, roadAt,
 		onPath: pathsLaid ? (x, z) => pathsLaid.on(x, z) : () => false,
 		// (kept clear of trees and boulders: the towns, the landing strip and its approaches, and the footpaths and their clearings)
 		townAt: strip || pathClear ? (x, z) => Math.max(townAt(x, z), strip ? stripClear(strip, x, z) : 0, pathClear ? pathClear(x, z) : 0) : townAt };

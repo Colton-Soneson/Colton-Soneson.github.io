@@ -161,15 +161,16 @@ export const vf_grass =
 	//------------------TERRAIN-----------------
 	// height, mountain value, normal.x and normal.z of the land at a world position, bilinear between the 4 grid points around it
 	fn terrainAt(xz: vec2f) -> vec4f {
-		let maxPoint = vec2f(textureDimensions(terrainFields)) - vec2f(1.001, 1.001);
-		let grid = clamp((xz + vec2f(UBO.terrain.x, UBO.terrain.x)) / UBO.terrain.y, vec2f(0.0, 0.0), maxPoint);
+		// (the texture is a window on to the land round the camera, each grid point at its place in the world's grid modulo its size: see
+		//		THE WINDOW in terrain.js)
+		let n = vec2i(textureDimensions(terrainFields));
+		let grid = (xz + vec2f(UBO.terrain.x, UBO.terrain.x)) / UBO.terrain.y;
 		let base = vec2i(floor(grid));
 		let f = fract(grid);
-
-		let a = textureLoad(terrainFields, base, 0);
-		let b = textureLoad(terrainFields, base + vec2i(1, 0), 0);
-		let c = textureLoad(terrainFields, base + vec2i(0, 1), 0);
-		let d = textureLoad(terrainFields, base + vec2i(1, 1), 0);
+		let a = textureLoad(terrainFields, ((base % n) + n) % n, 0);
+		let b = textureLoad(terrainFields, (((base + vec2i(1, 0)) % n) + n) % n, 0);
+		let c = textureLoad(terrainFields, (((base + vec2i(0, 1)) % n) + n) % n, 0);
+		let d = textureLoad(terrainFields, (((base + vec2i(1, 1)) % n) + n) % n, 0);
 		return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 	}
 
@@ -190,10 +191,11 @@ export const vf_grass =
 	fn onTownWork(xz: vec2f) -> bool {
 		let grid = townItems[0];		// half the world, the cell size, cells along a side (0: no towns)
 		let along = i32(grid.z);
-		let cell = vec2i(floor((xz + vec2f(grid.x, grid.x)) / grid.y));
-		if (any(cell < vec2i(0, 0)) || any(cell >= vec2i(along, along))) {
+		if (along <= 0) {
 			return false;
 		}
+		// (each cell where it is in the world's grid of them, modulo how many there are along a side: townMask.js)
+		let cell = ((vec2i(floor((xz + vec2f(grid.x, grid.x)) / grid.y)) % vec2i(along, along)) + vec2i(along, along)) % vec2i(along, along);
 		let range = townCells[cell.y * along + cell.x];
 		for (var k = 0u; k < range.y; k++) {
 			let item = townList[range.x + k];

@@ -85,6 +85,8 @@ export const settings = {
 	anisotropicFiltering: 8,			//1 (off), 2, 4, 8 or 16: keeps pictures sharp on surfaces seen at a low angle. See textureFiltering.js
 	//-------------------TERRAIN-------------------
 	enableTerrain: true,
+	worldViewDistance: 2500,			//metres: in the whole world (worldTiles), how near a tile of it has to be for it to be streamed in and drawn (its land, its forest, its towns, its people and animals). Further, it goes, and only the world tracker keeps its towns going (townEconomy.js)
+	worldTiles: true,					//the whole world (world.js): today's island the home tile of a world of 40 land tiles in continents and 30 of sea, the rest endless sea, each tile streamed in as you come near it. Off: the one island
 	terrainSeed: 11,					//which world. The same seed always makes the same islands
 	terrainWorldSize: 8192.0,			//width of the square of world that gets land, centered on the origin
 	terrainResolution: 4096,			//how fine the mesh is next to the camera: what the world would be across at that fineness. 256, 512, 1024 (1k), 2048, 4096 or 8192 (8k, a vertex every 1 unit). (Only these: the chunks halve in size, so anything in between draws the same as the next one down. At 256 they never halve at all, a vertex every 32 units)
@@ -109,6 +111,7 @@ export const settings = {
 	terrainTownSize: 1.0,				//how big each one is: 1 = about 340m along the shore and 165m up the hill
 	terrainLandingStrip: true,			//a landing strip by the first town: a straight, even path of packed earth for the biplane (see THE LANDING STRIP in terrainGenerator.js, plane.js)
 	terrainFootpaths: true,				//worn earth paths between the towns and the strip, over the passes, up to lookouts, through the forests, down to the lakes and the beaches (footpaths.js)
+	townEconomyPace: 1,					//how fast the towns' economy goes (townEconomy.js): its days, times this. 1: by the world's clock
 	enableTownFolk: true,				//the towns' people: one to every building, its trade the building's (townFolk.js)
 	enableNPCs: true,					//the people out in the world: riders between the towns, the airmen of the landing strip, the schooner's crew and the dinghies' sailors (npcs.js)
 	//--------------------GRASS--------------------
@@ -283,3 +286,25 @@ export const settings = {
 	displayLightingMode: 0,
 	debugTextureRescaleSize: 512.0
 };
+// A SAVE BEING LOADED (saveGame.js): it was put in the session's storage and the page loaded again. Here, before anything else reads the
+//		browser's storage or the settings (everything imports this first), what it keeps in the browser is written back (the inventory, the
+//		body, the bank, the cabins, the towns' treasuries and economy...) and its world's settings put in. The rest (the clock, where the
+//		player is, the houses, the camps...) saveGame.js puts back once the world is made
+export const SAVE_LOADING = 'survivalSaveLoading';
+export const savedWorld = (() => {
+	let save = null;
+	try {
+		const raw = sessionStorage.getItem(SAVE_LOADING);
+		if (!raw) return null;
+		sessionStorage.removeItem(SAVE_LOADING);
+		save = JSON.parse(raw);
+	} catch (e) { return null; }
+	try { for (const [key, text] of Object.entries(save.stored ?? {})) if (typeof text == 'string') localStorage.setItem(key, text); } catch (e) { /* (nowhere to keep it) */ }
+	for (const [key, value] of Object.entries(save.world?.settings ?? {})) {
+		if (!(key in settings)) continue;
+		if (ArrayBuffer.isView(settings[key]) && Array.isArray(value)) settings[key].set(value);
+		else if (typeof value == typeof settings[key]) settings[key] = value;
+	}
+	settings.gameMode = 'Hunting';
+	return save;
+})();

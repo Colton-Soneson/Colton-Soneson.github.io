@@ -22,14 +22,26 @@ export const iceStats = { cells: 0, drawn: 0 };
 const keyOf = (i, j) => i * 100000 + j;
 
 function build() {
-	const land = terrain.land;
-	builtFor = land;
+	builtFor = terrain.land;
 	cells = new Map();
+	for (const here of terrain.landsHere()) buildOf(here.land, here.key);
+	iceStats.cells = cells.size;
+}
+// (in a world of tiles, terrain.js: each tile of land's ponds, round its own middle, made as it comes and gone with it; a pond is never on two)
+terrain.onTiles((added, removed) => {
+	if (builtFor !== terrain.land) return;
+	for (const [key, c] of [...cells]) if (removed.includes(c.tile)) cells.delete(key);
+	for (const here of terrain.landsHere()) if (added.includes(here.key)) buildOf(here.land, here.key);
+	iceStats.cells = cells.size;
+});
+function buildOf(here, tile) {
+	const land = terrain.land;
 	const m = metre(), size = CELL * m, half = settings.terrainWorldSize / 2, sea = settings.waterWorldPosY, n = Math.ceil(half / size);
 	const wet = new Map();
-	for (let i = -n; i <= n; i++) for (let j = -n; j <= n; j++) {
+	const [ci, cj] = (here.center ?? [0, 0]).map((v) => Math.round(v / size));
+	for (let i = ci - n; i <= ci + n; i++) for (let j = cj - n; j <= cj + n; j++) {
 		const x = (i + 0.5) * size, z = (j + 0.5) * size;
-		if (land.zoneAt(x, z) != terrain.ZONE_LAKE) continue;
+		if (here.zoneAt(x, z) != terrain.ZONE_LAKE) continue;
 		// (a square with any of its water under it)
 		if ([[0, 0], [-0.45, -0.45], [0.45, -0.45], [-0.45, 0.45], [0.45, 0.45]].some(([a, b]) => land.heightAt(x + a * size, z + b * size) < sea)) wet.set(keyOf(i, j), { i, j, x, z, d: Infinity });
 	}
@@ -52,9 +64,8 @@ function build() {
 			most = Math.max(most, pond[k].d);
 			for (const [a, b] of near([pond[k].i, pond[k].j])) { const o = wet.get(keyOf(a, b)); if (o && !seen.has(o)) { seen.add(o); pond.push(o); } }
 		}
-		for (const c of pond) cells.set(keyOf(c.i, c.j), { x: c.x, z: c.z, shore: c.d / (most + 1) });
+		for (const c of pond) cells.set(keyOf(c.i, c.j), { x: c.x, z: c.z, shore: c.d / (most + 1), tile });
 	}
-	iceStats.cells = cells.size;
 }
 const frozen = (c) => seasonNow.ice > SOLID + (1 - SOLID) * c.shore;
 // the top of the ice at (x, z), or null: open water, or no pond

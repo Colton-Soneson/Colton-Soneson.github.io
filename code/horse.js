@@ -383,9 +383,9 @@ function stepHorse(h, dt) {
 		town.boxesNear(h.x, h.z, reach, (x, z, half, bottom, top) => { if (top > h.y + 0.5 * m && bottom < h.y + 1.6 * m) pushOut(x, z, half); });
 	}
 	if (bumped) h.speed *= Math.pow(0.05, dt);
-	const edge = settings.terrainWorldSize * 0.5 - 2 * m;
-	h.x = clamp(h.x, -edge, edge);
-	h.z = clamp(h.z, -edge, edge);
+	const [lo, hi] = terrain.worldEdges(2 * m);
+	h.x = clamp(h.x, lo, hi);
+	h.z = clamp(h.z, lo, hi);
 
 	// on the ground, tipped to its slope, or swimming
 	const ground = groundUnder(h);

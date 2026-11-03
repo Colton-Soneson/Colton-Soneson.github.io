@@ -14,6 +14,9 @@ import * as loot from './loot.js'
 import * as horse from './horse.js'
 import * as survival from './survival.js'
 import * as treasury from './treasury.js'
+import * as townEconomy from './townEconomy.js'
+import * as town from './town.js'
+import * as survivalWar from './survivalWar.js'
 
 /*
 	THE SHOPS of the Survival mode: E at one of the townsfolk (townFolk.js) who has a TRADE, within REACH and looked at, opens its shop (and
@@ -24,10 +27,12 @@ import * as treasury from './treasury.js'
 		clothes		the tailor (the clothes), the outfitter (boots, the backpacks and their pouches, the extras, the tools): each buys clothes and
 					gear back. A piece of clothing is bought in the colour chosen (clothing.js: its five)
 		bank		the banker: money put in or taken out (BANK)
+		hall		the librarian, at the library: the town's hall. Its nation, the wars, and a player's allegiance (survivalWar.js: hallHtml)
 	What a thing costs is its price (items.js, clothing.js), in dollars; what a shop pays for one is SELL of that. Money is items.js's money:
 	cents, any amount in one stack (inventory.js: pay, receive). The shops have no end of anything, and are the same for everyone, so there
 	is nothing about them to send.
-	THE TREASURY (treasury.js): every town's own account, at its bank, what its hunters and its whalers bring in: the banker's screen says how it stands.
+	THE TREASURY (treasury.js): every town's own account, at its bank, what its hunters and its whalers bring in: the banker's screen says how it stands,
+	and its budgets (townEconomy.js: ledger): its food stores, its works, its defense and the forces that bought, and its people.
 	THE BANK keeps every player's money by name, and adds INTEREST to it for every day of the world's clock (atmosphere.js: sunCycles: one
 	world clock) that goes by. In a game the host keeps the accounts (survivalNet.js): a joiner asks what it has (bankAsk), puts money in
 	(bankPut: paid out here first) and takes it out (bankTake: the host says how much it may, bankIs), and the host's are kept in its
@@ -58,6 +63,7 @@ export const TRADES = {
 	tailor: { title: 'Tailor', sells: TAILORED, buys: [...CLOTHING, ...GEAR] },
 	outfitter: { title: 'Outfitter', sells: OUTFITTED, buys: [...CLOTHING, ...GEAR], horse: true },
 	banker: { title: 'Bank', bank: true },
+	librarian: { title: 'Town Hall', hall: true },
 };
 const cents = (type) => Math.round((ITEMS[type]?.price ?? 0) * 100);
 const offer = (type) => Math.floor(cents(type) * SELL);
@@ -82,12 +88,14 @@ export function traderInView() {
 	return best;
 }
 hunting.onUse(() => { const person = traderInView(); if (!person) return false; openShop(person); return true; });
-hunting.addPrompt(() => { const person = traderInView(); return person ? { name: title(person.profession.name), keys: TRADES[person.profession.name].bank ? 'E bank' : 'E trade' } : null; });
+hunting.addPrompt(() => { const person = traderInView(); return person ? { name: title(person.profession.name), keys: TRADES[person.profession.name].bank ? 'E bank' : TRADES[person.profession.name].hall ? 'E town hall' : 'E trade' } : null; });
 
 // THE BANK (see the top): the accounts (where they are kept), and this player's as last heard
 const accounts = new Map();		// name -> { cents, day }
 try { for (const [name, a] of Object.entries(JSON.parse(localStorage.getItem(SAVED) ?? '{}'))) accounts.set(name, { cents: Math.max(0, Math.floor(a.cents) || 0), day: Number(a.day) || 0 }); } catch (e) { /* (none) */ }
 const keep = () => { try { localStorage.setItem(SAVED, JSON.stringify(Object.fromEntries(accounts))); } catch (e) { /* */ } };
+// (the save file's: saveGame.js, as it is kept here: on a joiner, its own account as the host last said it)
+export const bankRecord = () => ({ key: SAVED, text: JSON.stringify(survivalNet.authority() ? Object.fromEntries(accounts) : { [myName()]: { cents: bank.cents ?? 0, day: Math.floor(atmosphere.sunCycles) } }) });
 const today = () => Math.floor(atmosphere.sunCycles);
 const myName = () => { try { return localStorage.getItem('huntName') || 'me'; } catch (e) { return 'me'; } };
 function account(name) {
@@ -133,14 +141,33 @@ document.body.appendChild(root);
 const html = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const button = (act, label, more = '') => `<button data-act="${act}" ${more} style="padding:4px 10px; margin-left:6px; border:1px solid #8a7452; border-radius:4px; background:#4a3a28; color:#f0e4c8; font:inherit; cursor:pointer;">${label}</button>`;
 const picture = (type, tint) => `<svg viewBox="0 0 40 40" style="width:28px; height:28px; flex:none;"><path d="${ICONS[ITEMS[type].icon] ?? ICONS.pouch}" fill="${tint}" stroke="rgba(0,0,0,0.6)" fill-rule="evenodd"/></svg>`;
+// the town's budgets (townEconomy.js), for the banker's screen
+function ledger(k) {
+	const e = townEconomy.summaryOf(k);
+	if (!e) return '';
+	const line = (label, value, note = '') => `<div style="display:flex; gap:8px; padding:3px 0;"><span style="width:150px; color:#d8c8a8;">${label}</span><b>${value}</b><span style="font-size:11px; color:#b8a888;">${note}</span></div>`;
+	const count = (n, one, many = one + 's') => `${n} ${n == 1 ? one : many}`;
+	const F = e.forces, owned = e.root !== k ? ` · under ${html(survivalWar.nationName(typeof e.root == 'string' ? e.root : 'n' + e.root))}` : '';
+	return `<div style="margin:0 8px 8px; padding:8px 10px; border:1px solid rgba(200,180,140,0.25); border-radius:6px; background:rgba(0,0,0,0.2);">
+		<div style="font-weight:600; margin-bottom:4px;">${html(town.townName(k))}'s budgets${owned}</div>
+		${line('Food stores', dollars(Math.round(e.food * 100)), e.starving ? '<span style="color:#ff8a6a;">empty: its people are starving</span>' : `${e.foodDays.toFixed(1)} days of food`)}
+		${line('Construction', dollars(Math.round(e.works * 100)), e.rebuilding ? 'building a house again' : 'mends what is hurt, builds again what is down')}
+		${line('Defense', dollars(Math.round(e.defense * 100)), `${count(F.riders, 'horseman', 'horsemen')} · ${count(F.planes, 'biplane')} · ${count(F.ships, 'schooner')}`)}
+		${line('People', `${e.people.alive} of ${e.people.all}`, e.ruined ? '<span style="color:#ff8a6a;">ruins</span>' : '')}
+	</div>`;
+}
+townEconomy.onChange(() => render());
 function render() {
 	if (!shop.person) return;
 	const trade = shop.trade, carried = inventory.moneyCarried();
 	const row = (left, right) => `<div style="display:flex; align-items:center; gap:10px; padding:6px 8px; border-bottom:1px solid rgba(200,180,140,0.15);">${left}<div style="margin-left:auto; display:flex; align-items:center;">${right}</div></div>`;
 	let body = '';
-	if (trade.bank) {
+	if (trade.hall) {
+		body = survivalWar.hallHtml(treasury.townNumber(shop.person.town), button);
+	} else if (trade.bank) {
 		body = `<div style="padding:8px;">In the bank: <b>${bank.cents === null ? '…' : dollars(bank.cents)}</b> · it earns ${Math.round(INTEREST * 100)}% every day</div>
-			<div style="padding:0 8px 8px;">Town treasury: <b>${dollars(treasury.centsOf(treasury.townNumber(shop.person.town)))}</b> <span style="font-size:11px; color:#b8a888;">what the town's hunters and whalers have brought in</span></div>
+			<div style="padding:0 8px 8px;">Town treasury: <b>${dollars(treasury.centsOf(treasury.townNumber(shop.person.town)))}</b> <span style="font-size:11px; color:#b8a888;">its taxes, and what its hunters and whalers bring in, before it is shared out</span></div>
+			${ledger(treasury.townNumber(shop.person.town))}
 			<div style="padding:8px; display:flex; align-items:center;">$ <input data-amount value="${html(shop.amount)}" placeholder="0.00" style="width:90px; margin:0 6px; padding:4px; background:#1e1812; color:#f0e4c8; border:1px solid #6a5a44; border-radius:4px; font:inherit;">
 			${button('put', 'Put in')}${button('take', 'Take out')}${button('putAll', 'Put in all')}${button('takeAll', 'Take out all')}</div>`;
 	} else {
@@ -162,9 +189,9 @@ function render() {
 			<div style="flex:1; min-width:260px;"><div style="font-size:11px; letter-spacing:0.18em; color:#b8a888; margin:6px 8px;">YOURS TO SELL (from your bags)</div>${sell || '<div style="padding:8px; color:#9a8a70;">Nothing they would buy</div>'}</div></div>`;
 	}
 	root.innerHTML = `<div style="margin:auto; width:min(860px, calc(100vw - 32px)); background:rgba(40,32,24,0.96); border:1px solid #5a4a36; border-radius:6px; padding:12px 16px;">
-		<div style="display:flex; align-items:center; margin-bottom:8px;"><div style="font-size:16px; letter-spacing:0.12em;">${html(trade.title.toUpperCase())}${trade.title != title(shop.person.profession.name) ? ' · ' + html(title(shop.person.profession.name)) : ''}</div>
+		<div style="display:flex; align-items:center; margin-bottom:8px;"><div style="font-size:16px; letter-spacing:0.12em;">${html(trade.title.toUpperCase())}${trade.hall ? ' · Town clerk' : trade.title != title(shop.person.profession.name) ? ' · ' + html(title(shop.person.profession.name)) : ''}</div>
 		<div style="margin-left:auto;">You carry <b>${dollars(carried)}</b>${button('close', 'Close')}</div></div>${body}
-		<div style="margin-top:8px; font-size:11px; color:#9a8a70;">They pay ${Math.round(SELL * 100)}% of the price · Esc, Tab, F or E to leave</div></div>`;
+		<div style="margin-top:8px; font-size:11px; color:#9a8a70;">${trade.hall ? '' : `They pay ${Math.round(SELL * 100)}% of the price · `}Esc, Tab, F or E to leave</div></div>`;
 	const input = root.querySelector('[data-amount]');
 	if (input) input.addEventListener('input', () => { shop.amount = input.value; });
 }
@@ -227,6 +254,7 @@ root.addEventListener('click', (e) => {
 	if (!el) return;
 	const act = el.dataset.act;
 	if (act == 'close') { closeShop(); return; }
+	if (act.startsWith('sw:')) { survivalWar.hallAct(act, treasury.townNumber(shop.person.town)); render(); return; }
 	if (act == 'buy') buy(el.dataset.type, el.dataset.colour !== undefined ? Number(el.dataset.colour) : null);
 	if (act == 'horse') buyHorse();
 	if (act == 'room') { sleepInRoom(); return; }

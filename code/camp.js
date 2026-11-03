@@ -82,10 +82,14 @@ const changeListeners = [];
 export function onChange(fn) { changeListeners.push(fn); }
 const changed = () => changeListeners.forEach((fn) => fn());
 function cleanSlots(raw, slots) { return Object.fromEntries(Object.keys(slots).map((s) => [s, cleanItem(raw?.[s]) ?? null])); }
+const tentFrom = (h) => ({ id: h.id, at: h.at.map(Number), yaw: Number(h.yaw) || 0, slots: cleanSlots(h.slots, TENT_SLOTS), water: Number(h.water) || 0,
+	stove: { fuel: Number(h.stove?.fuel) || 0, since: Number(h.stove?.since) || clock(), lit: !!h.stove?.lit } });
+// (the save file's: saveGame.js)
+export const campRecord = () => [...tents.values()].map((t) => shareOf('tent', t));
+export function campAdopt(list) { tents.clear(); for (const h of list ?? []) if (h?.id && Array.isArray(h.at)) tents.set(String(h.id), tentFrom(h)); changed(); }
 survivalNet.on('campIs', (m) => {
 	if (survivalNet.authority() || !m.h) return;
-	if (m.kind == 'tent') tents.set(m.h.id, { id: m.h.id, at: m.h.at.map(Number), yaw: Number(m.h.yaw) || 0, slots: cleanSlots(m.h.slots, TENT_SLOTS), water: Number(m.h.water) || 0,
-		stove: { fuel: Number(m.h.stove?.fuel) || 0, since: Number(m.h.stove?.since) || clock(), lit: !!m.h.stove?.lit } });
+	if (m.kind == 'tent') tents.set(m.h.id, tentFrom(m.h));
 	else bags.set(m.h.id, { id: m.h.id, slots: cleanSlots(m.h.slots, BAG_SLOTS) });
 	changed();
 });

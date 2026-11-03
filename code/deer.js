@@ -338,8 +338,8 @@ const metre = () => settings.forestUnitsPerMetre;
 
 // ground a deer can stand on: not water, not too steep
 export function walkable(x, z) {
-	const land = terrain.land, half = settings.terrainWorldSize * 0.5 - 20;
-	if (Math.abs(x) > half || Math.abs(z) > half) return false;
+	const land = terrain.land;
+	if (!terrain.inWorld(x, z, 20)) return false;
 	const y = land.heightAt(x, z);
 	if (y < settings.waterWorldPosY + 0.05) return false;
 	const step = 2 * metre();
@@ -362,13 +362,25 @@ function scheduleTrips(group, day) {
 	group.scheduledDay = day;
 }
 
+// (in a world of tiles, terrain.js: a herd of its own for each tile of land, made as it comes and gone with it)
+terrain.onTiles((added, removed) => {
+	if (herdLand !== terrain.land) return;
+	if (removed.length) { groups = groups.filter((g) => !removed.includes(g.tile)); shoreSpots = shoreSpots.filter((s) => !removed.includes(s.tile)); }
+	for (const key of added) { const here = terrain.landsHere().find((one) => one.key == key); if (here) herdOf(here.land, key); }
+});
 function makeHerd() {
 	herdLand = terrain.land;
 	corpses = [];
-	const land = terrain.land, water = settings.waterWorldPosY;
+	shoreSpots = [];
+	groups = [];
+	for (const { key, land } of terrain.landsHere()) herdOf(land, key);
+}
+// one land's herd (a tile's): its places to drink, and its groups, each knowing its tile
+function herdOf(land, tile) {
+	const water = settings.waterWorldPosY;
+	const ownShore = [];
 	// where to drink: from points on the marsh, out to the nearest edge of the water. The spot is the last dry ground before it,
 	//		facing the water
-	shoreSpots = [];
 	for (const spot of land.findSpawnPoints(terrain.ZONE_MARSH, 120, { seed: 51, minSpacing: 30, maxSlope: 0.3 })) {
 		if (!walkable(spot.x, spot.z)) continue;
 		let best = null;
@@ -381,14 +393,15 @@ function makeHerd() {
 				}
 			}
 		}
-		if (best && walkable(best.x, best.z) && shoreSpots.every((s) => Math.hypot(s.x - best.x, s.z - best.z) > 25)) shoreSpots.push({ x: best.x, z: best.z, facing: best.facing });
+		if (best && walkable(best.x, best.z) && ownShore.every((s) => Math.hypot(s.x - best.x, s.z - best.z) > 25)) ownShore.push({ x: best.x, z: best.z, facing: best.facing, tile });
 	}
+	shoreSpots.push(...ownShore);
 	// homes: stretches of forest, the ones nearest to somewhere to drink first, well apart from each other. More than fit at the
 	//		widest spacing: more places to choose from, closer together (see THE GROUPS at the top)
 	const wanted = clamp(Math.round(settings.deerGroups), 0, MAX_GROUPS);
 	const many = wanted > 40;
 	const forestSpots = land.findSpawnPoints(terrain.ZONE_FOREST, many ? wanted * 5 : 60, { seed: 53, minSpacing: many ? 100 : 200, maxSlope: 0.4 }).filter((spot) => walkable(spot.x, spot.z));
-	const nearestShore = (x, z) => shoreSpots.reduce((best, s) => Math.min(best, Math.hypot(s.x - x, s.z - z)), Infinity);
+	const nearestShore = (x, z) => ownShore.reduce((best, s) => Math.min(best, Math.hypot(s.x - x, s.z - z)), Infinity);
 	forestSpots.sort((a, b) => nearestShore(a.x, a.z) - nearestShore(b.x, b.z));
 	const homes = [];
 	for (const spacing of HOME_SPACINGS) {
@@ -398,9 +411,8 @@ function makeHerd() {
 		}
 	}
 
-	groups = [];
 	for (const home of homes) {
-		const group = { home: { x: home.x, z: home.z }, deer: [], state: 'wander', target: null, timer: 0, trips: [], scheduledDay: -1, visits: {}, spot: null, respawns: [] };
+		const group = { home: { x: home.x, z: home.z }, deer: [], state: 'wander', target: null, timer: 0, trips: [], scheduledDay: -1, visits: {}, spot: null, respawns: [], tile };
 		const size = 1 + Math.floor(Math.random() * MAX_IN_GROUP);
 		for (let d = 0; d < size; d++) {
 			const x = home.x + (Math.random() - 0.5) * 8, z = home.z + (Math.random() - 0.5) * 8;

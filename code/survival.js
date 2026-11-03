@@ -402,6 +402,8 @@ function shown(visible) {
 const SAVED = 'survivalStatus';
 try { Object.assign(status, JSON.parse(localStorage.getItem(SAVED) ?? '{}'), { asleep: 0 }); } catch (e) { /* (fresh) */ }
 window.addEventListener('beforeunload', () => { try { localStorage.setItem(SAVED, JSON.stringify(status)); } catch (e) { /* */ } });
+// (the save file's: saveGame.js, as it is kept here)
+export const statusRecord = () => ({ key: SAVED, text: JSON.stringify({ ...status, asleep: 0 }) });
 
 // for testing
 export function setStatusForTest(values) { Object.assign(status, values); }

@@ -5,7 +5,8 @@ import {canvasFormat} from './deviceSelection.js'
 
 import { settings } from './settings.js';
 
-import { generateTerrain, chunkIndices } from './terrainGenerator.js'
+import { generateTerrain, chunkIndices, wrapLand } from './terrainGenerator.js'
+import { layoutWorld, tileParams, tileAt, HOME, GRID } from './world.js'
 import { TERRAIN_ZONES, ZONE_OCEAN, ZONE_BEACH, ZONE_GRASSLAND, ZONE_FOREST, ZONE_MOUNTAIN, ZONE_SNOW, ZONE_LAKE, ZONE_MARSH, ZONE_TOWN } from './terrainGenerator.js'
 import { FOREST_THRESHOLD, MOUNTAIN_THRESHOLD } from './terrainGenerator.js'
 
@@ -50,6 +51,24 @@ export { TERRAIN_ZONES, ZONE_OCEAN, ZONE_BEACH, ZONE_GRASSLAND, ZONE_FOREST, ZON
 		until they are ready. They are kept while there is room and the ones not used for longest are thrown away.
 		Nothing is lost by that: the land comes from the seed, so a chunk made again is the same chunk.
 
+	THE WORLD OF TILES (settings.worldTiles: world.js): the lands and seas of a whole world, a tile of it each the size of the one land. The home
+	tile (today's island) is made with the world, as the one land is; the others are made off the main thread (tileWorker.js) as the camera
+	comes within tileLoad of them (settings.worldViewDistance), the nearest first, one at a time, and let go again TILE_DROP past that (tilesKept at the most). land is then
+	the world's (makeWorldLand): the same land all along, whatever tiles come and go, its look ups each asking the tile the place is in (in
+	none: the endless sea), its grids the home tile's. The chunks' tree has the top of each tile's in it (made as the tile comes, by the
+	worker), and the textures the shaders read the land from are a window on to the tiles round the camera (THE WINDOW). onTiles(fn) is
+	told whenever a tile comes or goes.
+	THE TOWNS OF THE WORLD (townSlots): land.towns has a place for every town the world's layout has room for (world.js: each land tile's
+	towns, the home tile's first, as the one land has them), the same place all along, so a town's number (its place: the economy's,
+	treasury.js's) is the same whatever tiles are here. A tile's towns fill their places as it comes (each the town its land made: the
+	place takes on all of it) and are emptied again as it goes: an empty one has no buildings, and says its tile and about where it is
+	(approx); one its land found no room for is none. onWindow(fn) is told whenever the window moves (town.js: the grass's mask).
+	THE WINDOW: the land textures are the same size as ever, but in a world of tiles they hold the tiles' grid points round the camera
+	(landWindow: its middle, moved on once the camera is WINDOW_MOVE from it), each grid point at its place in the world's grid of them
+	modulo the texture's size (so a shader reads it from where a point is in the world, with no middle to know: vfc_grass.js,
+	vfc_particles.js). The terrain and the water also know where the window is, and past its edge take the open sea (vf_terrain.js,
+	vfc_water.js). With the one land of old the window is the land and its middle the origin, as it always was.
+
 	To place things by zone from anywhere:
 		import * as terrain from './terrain.js'
 		const spots = terrain.land.findSpawnPoints(terrain.ZONE_FOREST, 200, { minSpacing: 12, maxSlope: 0.4 });	// [{ x, y, z, normal }, ...]
@@ -67,6 +86,7 @@ const MAX_BAKES = 200;				// the most chunks that keep a bake: about 35MB on the
 const BAKE_TEXELS_PER_FRAME = 128 * 128 * 8;	// how much baking one frame does: 8 chunks at 128, 2 at 256
 
 // every setting the shape of the land depends on. If one of these changes the land is generated again
+export const terrainParams = () => getTerrainParams();
 function getTerrainParams() {
 	return {
 		seed: settings.terrainSeed,
@@ -87,6 +107,7 @@ function getTerrainParams() {
 		townSize: settings.terrainTownSize,
 		landingStrip: settings.terrainLandingStrip,
 		footpaths: settings.terrainFootpaths,
+		worldTiles: settings.worldTiles,
 	};
 }
 
@@ -108,6 +129,43 @@ const chunkIndexBuffer = device.createBuffer({
 	usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
 });
 device.queue.writeBuffer(chunkIndexBuffer, 0, chunkIndexData);
+// THE WORLD OF TILES (see the top)
+// world units from a tile's edge it is streamed in within (settings.worldViewDistance, the controls' first), let go past (TILE_DROP more), and
+//		how many are kept at the most (more the further it reaches)
+const tileLoad = () => Math.max(settings.worldViewDistance ?? 2500, 500) * settings.forestUnitsPerMetre;
+const TILE_DROP = 4000;
+const tilesKept = () => Math.max(6, Math.ceil((2 * tileLoad() / settings.terrainWorldSize + 1) ** 2) + 2);
+const WINDOW_MOVE = 2048;					// world units
+const VOID_DEPTH = 600;						// world units under the sea: the bed of the endless sea, where there is no tile
+export let world = null;					// the world's layout (world.js); null with the one land of old
+const tiles = new Map();					// key -> { key, kind, land, params, usedAt }
+export const tilesLoaded = () => [...tiles.values()];
+export const tileLand = (x, z) => world ? tiles.get(tileAt(x, z, settings.terrainWorldSize))?.land ?? null : land;
+const tileListeners = [];
+export function onTiles(fn) { tileListeners.push(fn); }
+// what more is made with a tile, off the main thread (tileWorker.js): forest.js's trees ({ forest: () => its planting })
+export const tileExtras = {};
+export const landWindow = { x: 0, z: 0 };
+// the edge of the world (world units, [low, high] either way, margin in from it): the one land's square, or the whole world's grid of tiles
+export function worldEdges(margin = 0) {
+	const S = settings.terrainWorldSize;
+	if (!world) return [-S * 0.5 + margin, S * 0.5 - margin];
+	return [(-GRID / 2 - 0.5) * S + margin, (GRID / 2 - 0.5) * S - margin];
+}
+// whether a place is on the land there is here: inside the one land (margin in from its edge), or in a tile of the world that is here
+export function inWorld(x, z, margin = 0) {
+	if (!world) { const half = settings.terrainWorldSize * 0.5 - margin; return Math.abs(x) < half && Math.abs(z) < half; }
+	return !!tileLand(x, z);
+}
+// the lands here: { key, land } for each tile of the world that is here (the home tile's is land itself, the world's), or the one land
+export function landsHere() {
+	if (!world) return land ? [{ key: 'land', land }] : [];
+	return [...tiles.values()].map((t) => ({ key: t.key, land: t.key == HOME ? land : t.land }));
+}
+const windowListeners = [];
+export function onWindow(fn) { windowListeners.push(fn); }
+export let townSlots = [];
+let tileWorker = null, tileAsked = null;
 let generatedParams = "";		// the params the current land was made from
 let pendingParams = "";			// and the ones waiting to be made, see terrainUpdate
 let pendingSince = 0;
@@ -219,8 +277,8 @@ try {
 		const made = event.data;
 		const name = chunkName(made.x0, made.z0, made.size);
 		inFlight.delete(name);
-		if (made.generation == landGeneration && made.vertices && !chunks.has(name)) {
-			addChunk(made.x0, made.z0, made.size, made);
+		if (made.generation == landGeneration && made.vertices && !chunks.has(name) && (!world || tiles.has(made.tile))) {
+			addChunk(made.x0, made.z0, made.size, made, made.tile);
 		}
 	};
 	chunkWorker.onerror = (event) => {
@@ -233,13 +291,16 @@ try {
 	chunkWorker = null;
 }
 
+// the tile a chunk is of (its key; 'land' for the one land of old)
+const chunkTile = (x0, z0, size) => world ? tileAt(x0 + size / 2, z0 + size / 2, settings.terrainWorldSize) : 'land';
 // Makes the chunk covering a square of the land here, and puts its mesh on the GPU
 function buildChunk(x0, z0, size) {
-	return addChunk(x0, z0, size, land.buildChunk(x0, z0, size, CHUNK_CELLS));
+	const tile = chunkTile(x0, z0, size), of = world ? tiles.get(tile)?.land : land;
+	return of ? addChunk(x0, z0, size, of.buildChunk(x0, z0, size, CHUNK_CELLS), tile) : null;
 }
 
 // Puts a chunk's mesh (see buildChunk in terrainGenerator.js) on the GPU
-function addChunk(x0, z0, size, mesh) {
+function addChunk(x0, z0, size, mesh, tile = 'land') {
 	const vertexBuffer = device.createBuffer({
 		label: "terrain chunk vertices",
 		size: mesh.vertices.byteLength,
@@ -247,8 +308,10 @@ function addChunk(x0, z0, size, mesh) {
 	});
 	device.queue.writeBuffer(vertexBuffer, 0, mesh.vertices);
 
-	const chunk = { x0: x0, z0: z0, size: size, minY: mesh.minY, maxY: mesh.maxY, vertexBuffer: vertexBuffer, lastUsed: chunkFrame };
+	const chunk = { x0: x0, z0: z0, size: size, minY: mesh.minY, maxY: mesh.maxY, vertexBuffer: vertexBuffer, lastUsed: chunkFrame, tile };
 	chunks.set(chunkName(x0, z0, size), chunk);
+	// (a tile's top of the tree, come from the worker: in the tree)
+	if (world && size == settings.terrainWorldSize / ROOT_CHUNKS && !rootChunks.includes(chunk)) rootChunks.push(chunk);
 	builtSince++;
 	return chunk;
 }
@@ -329,7 +392,7 @@ function buildWantedChunks(milliseconds) {
 			const name = chunkName(wanted.x0, wanted.z0, wanted.size);
 			if (!chunks.has(name) && !inFlight.has(name)) {
 				inFlight.add(name);
-				chunkWorker.postMessage({ generation: landGeneration, x0: wanted.x0, z0: wanted.z0, size: wanted.size, cells: CHUNK_CELLS });
+				chunkWorker.postMessage({ generation: landGeneration, tile: chunkTile(wanted.x0, wanted.z0, wanted.size), x0: wanted.x0, z0: wanted.z0, size: wanted.size, cells: CHUNK_CELLS });
 			}
 		}
 		milliseconds = -1;		// (and none made here)
@@ -365,8 +428,12 @@ function resetChunks() {
 
 	const size = settings.terrainWorldSize / ROOT_CHUNKS, half = settings.terrainWorldSize * 0.5;
 	rootChunks = [];
-	for (let k = 0; k < ROOT_CHUNKS * ROOT_CHUNKS; k++) {
-		rootChunks.push(buildChunk(-half + (k % ROOT_CHUNKS) * size, -half + Math.floor(k / ROOT_CHUNKS) * size, size));
+	// (each tile's, in a world of tiles: those there are now)
+	for (const [cx, cz] of world ? [...tiles.values()].map((t) => t.land.center) : [[0, 0]]) {
+		for (let k = 0; k < ROOT_CHUNKS * ROOT_CHUNKS; k++) {
+			const chunk = buildChunk(cx - half + (k % ROOT_CHUNKS) * size, cz - half + Math.floor(k / ROOT_CHUNKS) * size, size);
+			if (chunk && !rootChunks.includes(chunk)) rootChunks.push(chunk);
+		}
 	}
 
 	// and everything the camera needs where it is now, before anything is drawn, so the land doesnt sharpen into focus on screen.
@@ -378,9 +445,294 @@ function resetChunks() {
 	} while (wantedChunks.length > 0 && performance.now() - started < 1500);
 }
 
+// THE WORLD OF TILES (see the top)
+//-------------------------------------------------
+// the world's land: the home tile's grids and what was made with it, and every look up asking the tile the place is in (none: the endless sea)
+function makeWorldLand(home) {
+	const deep = () => settings.waterWorldPosY - VOID_DEPTH;
+	const at = (x, z) => tileLand(x, z);
+	makeTownSlots(home);
+	return {
+		...home, worldTiles: true, towns: townSlots,
+		heightAt: (x, z) => at(x, z)?.heightAt(x, z) ?? deep(),
+		groundAt: (x, z) => at(x, z)?.groundAt(x, z) ?? deep(),
+		zoneAt: (x, z) => at(x, z)?.zoneAt(x, z) ?? ZONE_OCEAN,
+		normalAt: (x, z) => at(x, z)?.normalAt(x, z) ?? [0, 1, 0],
+		townAt: (x, z) => at(x, z)?.townAt(x, z) ?? 0,
+		onPath: (x, z) => at(x, z)?.onPath(x, z) ?? false,
+		roadAt: (x, z) => at(x, z)?.roadAt(x, z) ?? null,
+		// (near a place: in the tile it is in; or the home tile's)
+		findSpawnPoints: (zone, count, options = {}) => (options.near ? at(options.near[0], options.near[1]) : null)?.findSpawnPoints(zone, count, options) ?? home.findSpawnPoints(zone, count, options),
+		buildChunk: home.buildChunk,
+	};
+}
+// THE TOWNS OF THE WORLD (see the top)
+let townTemplate = {};
+function makeTownSlots(home) {
+	const S = settings.terrainWorldSize;
+	// (what an empty one has: every list of a town's empty, everything else nothing)
+	townTemplate = {};
+	for (const [key, value] of Object.entries(home.towns[0] ?? {})) townTemplate[key] = Array.isArray(value) ? [] : typeof value == 'number' ? 0 : typeof value == 'boolean' ? false : null;
+	townTemplate.buildings = [];
+	townSlots = [...home.towns];
+	home.towns.forEach((t, k) => Object.assign(t, { slot: k, tile: HOME, k, approx: [0, 0], loaded: true, none: false }));
+	for (const key of world.landKeys) {
+		if (key == HOME) continue;
+		const T = world.tiles.get(key);
+		for (let k = 0; k < T.towns; k++) townSlots.push({ ...structuredClone(townTemplate), slot: townSlots.length, tile: key, k, approx: [T.tx * S, T.tz * S], loaded: false, none: false });
+	}
+}
+function fillTowns(key, made) {
+	for (const t of townSlots) {
+		if (t.tile !== key) continue;
+		const real = made.towns[t.k];
+		if (real) Object.assign(t, real, { slot: t.slot, tile: key, k: t.k, approx: t.approx, surveyed: t.surveyed, loaded: true, none: false });
+		else t.none = true;
+	}
+}
+function emptyTowns(key) {
+	for (const t of townSlots) if (t.tile === key) { const keep = { slot: t.slot, tile: key, k: t.k, approx: t.approx, none: t.none, surveyed: t.surveyed }; for (const k of Object.keys(t)) delete t[k]; Object.assign(t, structuredClone(townTemplate), keep, { loaded: false }); }
+}
+// (whether any of those tiles has a town there is, or had: the towns' houses and people are made again only then)
+// THE SURVEY (see THE TOWNS OF THE WORLD at the top): while no tile is wanted near, each land tile is made once off the main thread for
+//		what towns it has (tileWorker.js: survey): each place told about where its town is (approx), what its buildings are and whether it
+//		has a dock (surveyed), or that there is none (none). So the world tracker (townEconomy.js) knows the world's towns before they are here
+export const surveys = new Map();		// key -> [{ x, z, types, dock }]
+const surveyListeners = [];
+export function onSurvey(fn) { surveyListeners.push(fn); }
+function surveyed(key, list) {
+	surveys.set(key, list);
+	for (const t of townSlots) {
+		if (t.tile !== key) continue;
+		const s = list[t.k];
+		if (!s) { t.none = true; continue; }
+		if (!t.loaded) t.approx = [s.x, s.z];
+		t.surveyed = s;
+	}
+	for (const fn of surveyListeners) fn(key, list);
+}
+export const tilesHaveTowns = (keys) => keys.some((key) => townSlots.some((t) => t.tile === key && !t.none));
+function tellTiles(added, removed) { for (const fn of tileListeners) fn(added, removed); }
+// how far a tile's square is from the camera (world units, 0 inside it)
+function tileDistance(t) {
+	const S = settings.terrainWorldSize, h = S / 2;
+	return Math.hypot(Math.max(Math.abs(settings.camPosX - t.tx * S) - h, 0), Math.max(Math.abs(settings.camPosZ - t.tz * S) - h, 0));
+}
+function startTileWorker() {
+	if (tileWorker !== null) return tileWorker;
+	try {
+		tileWorker = new Worker(new URL('./tileWorker.js', import.meta.url), { type: 'module' });
+		// (the two workers joined: a tile's grids go from the one to the other)
+		if (chunkWorker) { const pipe = new MessageChannel(); tileWorker.postMessage({ port: pipe.port1 }, [pipe.port1]); chunkWorker.postMessage({ port: pipe.port2 }, [pipe.port2]); }
+		tileWorker.onmessage = (event) => {
+			const r0 = performance.now();
+			const { tile, params, data, error, survey } = event.data;
+			if (survey) { if (tileAsked == tile) tileAsked = null; surveyed(tile, survey); return; }
+			terrainStats.tileReadMs = Math.round(performance.now() - r0);
+			if (tileAsked == tile) tileAsked = null;
+			if (error) { console.warn('A tile of the world could not be made:', tile, error); return; }
+			if (!world || params.seed !== world.seed || tiles.has(tile) || JSON.stringify({ ...params, center: 0, tile: 0, townCount: 0, landingStrip: 0, footpaths: 0, world: 0 }) != tileBase) return;
+			const t0 = performance.now(), made = wrapLand(params, data), t1 = performance.now();
+			addTile(tile, made, params);
+			const t2 = performance.now();
+			terrainStats.tileMs = Math.max(terrainStats.tileMs ?? 0, Math.round(t1 - t0));
+			terrainStats.addMs = Math.max(terrainStats.addMs ?? 0, Math.round(t2 - t1));
+		};
+		tileWorker.onerror = (event) => { console.warn('The tile worker stopped:', event.message); tileWorker = false; tileAsked = null; };
+	} catch (error) {
+		console.warn('No tile worker: the world is the home tile alone', error);
+		tileWorker = false;
+	}
+	return tileWorker;
+}
+let tileBase = '';
+function addTile(key, tileLandMade, params) {
+	const t = world.tiles.get(key);
+	tiles.set(key, { key, kind: t.kind, land: tileLandMade, params, usedAt: performance.now() });
+	fillTowns(key, tileLandMade);
+	// (its chunk grids are with the chunk worker already, from the tile worker)
+	askRoots(tiles.get(key));
+	tileInWindow(t);
+	tellTiles([key], []);
+}
+// a tile's top of the tree: from the worker, as wanted chunks are, those not made yet and not asked for (its grids may not have got to the
+//		worker yet: it says so, and they are asked for again); or here
+function askRoots(t) {
+	const size = settings.terrainWorldSize / ROOT_CHUNKS, half = settings.terrainWorldSize * 0.5, [cx, cz] = t.land.center;
+	let missing = 0;
+	for (let k = 0; k < ROOT_CHUNKS * ROOT_CHUNKS; k++) {
+		const x0 = cx - half + (k % ROOT_CHUNKS) * size, z0 = cz - half + Math.floor(k / ROOT_CHUNKS) * size, name = chunkName(x0, z0, size);
+		if (chunks.has(name)) continue;
+		missing++;
+		if (inFlight.has(name)) continue;
+		if (chunkWorker) { inFlight.add(name); chunkWorker.postMessage({ generation: landGeneration, tile: t.key, x0, z0, size, cells: CHUNK_CELLS }); }
+		else buildChunk(x0, z0, size);
+	}
+	t.rooted = missing == 0;
+}
+function dropTile(key) {
+	tiles.delete(key);
+	emptyTowns(key);
+	for (const [name, chunk] of [...chunks]) {
+		if (chunk.tile !== key) continue;
+		chunk.vertexBuffer.destroy();
+		destroyBake(chunk);
+		chunks.delete(name);
+	}
+	rootChunks = rootChunks.filter((chunk) => chunk.tile !== key);
+	if (chunkWorker) chunkWorker.postMessage({ drop: key });
+	tileInWindow(world.tiles.get(key));
+	tellTiles([], [key]);
+}
+// each frame: the nearest tile wanted and not here asked for, those far off let go, and the window moved on with the camera
+function streamTiles() {
+	const params = getTerrainParams();
+	tileBase = JSON.stringify({ ...params, center: 0, tile: 0, townCount: 0, landingStrip: 0, footpaths: 0, world: 0 });
+	let nearest = null, nearestD = Infinity;
+	for (const t of world.tiles.values()) {
+		const d = tileDistance(t), here = tiles.get(t.key);
+		if (here) { if (d < tileLoad()) here.usedAt = performance.now(); continue; }
+		if (d < tileLoad() && d < nearestD) { nearest = t; nearestD = d; }
+	}
+	for (const t of tiles.values()) if (!t.rooted) askRoots(t);
+	// (nothing wanted near: the next land tile not yet surveyed, see THE SURVEY)
+	if (!nearest && tileAsked === null && startTileWorker()) {
+		const next = world.landKeys.find((key) => key != HOME && !surveys.has(key) && !tiles.has(key));
+		if (next) { tileAsked = next; tileWorker.postMessage({ tile: next, params: tileParams(params, world, next), survey: true }); }
+	}
+	if (nearest && tileAsked === null && startTileWorker()) {
+		tileAsked = nearest.key;
+		tileWorker.postMessage({ tile: nearest.key, params: tileParams(params, world, nearest.key), generation: landGeneration, forest: tileExtras.forest?.() ?? null, unitsPerMetre: settings.forestUnitsPerMetre });
+	}
+	// (far off, or too many: the ones gone longest without being near go. Never the home tile: the world's grids are its)
+	const loose = [...tiles.values()].filter((t) => t.key != HOME && tileDistance(world.tiles.get(t.key)) > tileLoad() + TILE_DROP);
+	for (const t of loose) dropTile(t.key);
+	const spare = [...tiles.values()].filter((t) => t.key != HOME && tileDistance(world.tiles.get(t.key)) >= tileLoad()).sort((a, b) => a.usedAt - b.usedAt);
+	while (tiles.size > tilesKept() && spare.length) dropTile(spare.shift().key);
+	// (the window moved on with the camera, its new texels filled a few rows at a time: see THE WINDOW)
+	if (Math.max(Math.abs(settings.camPosX - landWindow.x), Math.abs(settings.camPosZ - landWindow.z)) > WINDOW_MOVE) moveWindow();
+	const w0 = performance.now();
+	fillJobs(WINDOW_ROWS);
+	terrainStats.windowLast = performance.now() - w0;
+	terrainStats.windowMs = Math.max(terrainStats.windowMs ?? 0, Math.round(terrainStats.windowLast));
+}
+const WINDOW_ROWS = 16;
+
+/*
+	THE WINDOW (see the top): the land textures filled from the tiles round the camera (or the one land). A grid point of the world's (gx, gz:
+	at x = gx times a cell, less half a land) is at texel (gx, gz) modulo the textures' size, so as the window moves on only the grid points
+	that come into it are filled in (the rest are where they were, and the same): a strip along each side it moved towards (moveWindow).
+	And a tile that comes or goes, its part of the window (tileInWindow). Each is a job, a rectangle of grid points, filled WINDOW_ROWS
+	rows a frame and each lot of rows put on the GPU as it is done (fillJobs). Until then the old ones are read there, at the far edge
+	of the window. With the one land of old, the whole of it, at once (fillWindow).
+*/
+let windowAt = null;			// the window's first grid point [gx, gz], or null before there is one
+let windowJobs = [];			// rectangles of grid points to fill: [gx0, gz0, gx1, gz1] (the ends not in it)
+function fillWindow() {
+	windowAt = [0, 0];
+	landWindow.x = 0;
+	landWindow.z = 0;
+	windowJobs = [[0, 0, land.points, land.points]];
+	if (world) moveWindow(true);
+	fillJobs(Infinity);
+}
+function moveWindow(anew = false) {
+	const N = land.points, cell = land.cellSize;
+	const next = [Math.round(settings.camPosX / cell), Math.round(settings.camPosZ / cell)];
+	const [ox, oz] = windowAt ?? [Infinity, Infinity];
+	const [nx, nz] = next;
+	windowAt = next;
+	landWindow.x = nx * cell;
+	landWindow.z = nz * cell;
+	terrainStats.windows = (terrainStats.windows ?? 0) + 1;
+	if (anew || Math.abs(nx - ox) >= N || Math.abs(nz - oz) >= N) windowJobs = [[nx, nz, nx + N, nz + N]];
+	else {
+		// (the columns it moved towards, the whole height of it; then the rows, across the rest)
+		const cols = nx > ox ? [ox + N, nx + N] : nx < ox ? [nx, ox] : null;
+		if (cols) windowJobs.push([cols[0], nz, cols[1], nz + N]);
+		const rest = nx > ox ? [nx, ox + N] : nx < ox ? [ox, nx + N] : [nx, nx + N];
+		if (nz > oz) windowJobs.push([rest[0], oz + N, rest[1], nz + N]);
+		if (nz < oz) windowJobs.push([rest[0], nz, rest[1], oz]);
+	}
+	// (a job of what is no longer in the window is cut to what is)
+	windowJobs = windowJobs.map(([a, b, c, d]) => [Math.max(a, nx), Math.max(b, nz), Math.min(c, nx + N), Math.min(d, nz + N)]).filter(([a, b, c, d]) => c > a && d > b);
+	for (const fn of windowListeners) fn();
+}
+// a tile come or gone: its part of the window filled again
+function tileInWindow(t) {
+	if (!windowAt) return;
+	const N = land.points, cell = land.cellSize, S = settings.terrainWorldSize;
+	const gx = Math.round((t.tx * S) / cell), gz = Math.round((t.tz * S) / cell);		// (a tile's first grid point: its middle's, less half, as a window's)
+	const [wx, wz] = windowAt;
+	const job = [Math.max(gx, wx), Math.max(gz, wz), Math.min(gx + N, wx + N), Math.min(gz + N, wz + N)];
+	if (job[2] > job[0] && job[3] > job[1]) windowJobs.push(job);
+}
+// so many rows of the jobs filled, and each lot put on the GPU (as up to two runs of texels across, where it wraps round)
+function fillJobs(rows) {
+	const N = land.points, cell = land.cellSize, half = (N - 1) * cell / 2, S = settings.terrainWorldSize;
+	const deep = settings.waterWorldPosY - VOID_DEPTH;
+	const wrap = (v) => ((v % N) + N) % N;
+	while (rows > 0 && windowJobs.length) {
+		const job = windowJobs[0];
+		const [x0, z0, x1] = job;
+		// (as many rows as there are left to do, up to where the texels wrap round)
+		const z1 = Math.min(job[3], z0 + rows, z0 + (N - wrap(z0)));
+		const width = x1 - x0, height = z1 - z0;
+		const fields = new Float32Array(width * height * 4), waterFields = new Float32Array(width * height * 4);
+		for (let j = 0; j < height; j++) {
+			const gz = z0 + j, z = gz * cell - half, tileZ = Math.round(z / S);
+			let T = null, row = -1, lastTile = null;
+			for (let i = 0; i < width; i++) {
+				const gx = x0 + i, x = gx * cell - half, o = (j * width + i) * 4;
+				// (the tile it is in: looked for again only where the row goes into another)
+				const tileX = world ? Math.round(x / S) : 0;
+				if (tileX !== lastTile) {
+					lastTile = tileX;
+					T = world ? tiles.get(tileX + ',' + tileZ)?.land ?? null : land;
+					row = T ? Math.round((z - (T.center?.[1] ?? 0) + half) / cell) : -1;
+				}
+				if (!T || row < 0 || row > N - 1) { fields[o] = deep; waterFields[o] = deep; waterFields[o + 1] = 100000; continue; }
+				const col = Math.min(Math.max(Math.round((x - (T.center?.[0] ?? 0) + half) / cell), 0), N - 1), k = row * N + col;
+				fields[o] = T.heights[k];
+				// (a town is grassland, round its streets and houses: the grass is kept off those by townMask.js)
+				fields[o + 1] = T.covers[k] + (Math.min(T.covers[k], 0.04) - T.covers[k]) * Math.min(T.townStrength[k] * 1.5, 1);
+				fields[o + 2] = T.normals[k * 3];
+				fields[o + 3] = T.normals[k * 3 + 2];
+				waterFields[o] = T.heights[k];
+				waterFields[o + 1] = T.shoreDistances[k];
+				waterFields[o + 2] = T.lakes[k];
+			}
+		}
+		// (up to two runs across: before and after the texels wrap round)
+		const tx = wrap(x0), first = Math.min(width, N - tx);
+		for (const [from, count, at] of [[0, first, tx], [first, width - first, 0]]) {
+			if (count <= 0) continue;
+			const layout = { offset: from * 16, bytesPerRow: width * 16, rowsPerImage: height };
+			device.queue.writeTexture({ texture: terrainFieldsTexture, origin: [at, wrap(z0)] }, fields, layout, [count, height]);
+			device.queue.writeTexture({ texture: terrainWaterTexture, origin: [at, wrap(z0)] }, waterFields, layout, [count, height]);
+		}
+		rows -= height;
+		if (z1 >= job[3]) windowJobs.shift();
+		else job[1] = z1;
+	}
+}
+
 function regenerateTerrain() {
 	const params = getTerrainParams();
-	land = generateTerrain(params);
+	// (in a world of tiles: the home tile made here, the rest as the camera comes near them)
+	tiles.clear();
+	surveys.clear();
+	tileAsked = null;
+	windowAt = null;
+	windowJobs = [];
+	world = params.worldTiles ? layoutWorld(params.seed, params.townCount) : null;
+	if (world) {
+		const homeParams = tileParams(params, world, HOME);
+		tiles.set(HOME, { key: HOME, kind: 'land', land: generateTerrain(homeParams), params: homeParams, usedAt: performance.now() });
+		land = makeWorldLand(tiles.get(HOME).land);
+	} else land = generateTerrain(params);
+	landWindow.x = 0;
+	landWindow.z = 0;
 
 	// the same land as a texture, for shaders that need to know about the ground under a point. The y of the normal isnt stored,
 	//		a normal has length 1 and always points up here, so it can be worked back out from the other two
@@ -395,15 +747,6 @@ function regenerateTerrain() {
 			usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
 		});
 	}
-	const fields = new Float32Array(land.points * land.points * 4);
-	for (let i = 0; i < land.points * land.points; i++) {
-		fields[i * 4 + 0] = land.heights[i];
-		// (a town is grassland, round its streets and houses: the grass is kept off those by townMask.js)
-		fields[i * 4 + 1] = land.covers[i] + (Math.min(land.covers[i], 0.04) - land.covers[i]) * Math.min(land.townStrength[i] * 1.5, 1);
-		fields[i * 4 + 2] = land.normals[i * 3 + 0];
-		fields[i * 4 + 3] = land.normals[i * 3 + 2];
-	}
-	device.queue.writeTexture({ texture: terrainFieldsTexture }, fields, { bytesPerRow: land.points * 16, rowsPerImage: land.points }, [land.points, land.points]);
 
 	// and one for the water: the top down height map only shows it the land around the camera, this covers the whole world.
 	//		Without it the waves have no idea a far off coast is there and roll straight over the land
@@ -418,23 +761,17 @@ function regenerateTerrain() {
 			usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
 		});
 	}
-	const waterFields = new Float32Array(land.points * land.points * 4);
-	for (let i = 0; i < land.points * land.points; i++) {
-		waterFields[i * 4 + 0] = land.heights[i];
-		waterFields[i * 4 + 1] = land.shoreDistances[i];
-		waterFields[i * 4 + 2] = land.lakes[i];
-	}
-	device.queue.writeTexture({ texture: terrainWaterTexture }, waterFields, { bytesPerRow: land.points * 16, rowsPerImage: land.points }, [land.points, land.points]);
+	fillWindow();
 
 	placeBuildings();
-	resetChunks();
-
-	// the worker makes its chunks from the same land (a copy of the grids: about 17MB, once a land)
+	// the worker makes its chunks from the same land (a copy of the grids: about 17MB, once a land; once a tile, in a world of tiles)
 	landGeneration++;
 	inFlight.clear();
 	if (chunkWorker) {
-		chunkWorker.postMessage({ land: landGeneration, params: params, grids: land.chunkGrids });
+		if (world) for (const t of tiles.values()) chunkWorker.postMessage({ land: landGeneration, tile: t.key, params: t.params, grids: t.land.chunkGrids });
+		else chunkWorker.postMessage({ land: landGeneration, tile: 'land', params: params, grids: land.chunkGrids });
 	}
+	resetChunks();
 
 	generatedParams = JSON.stringify(params);
 	console.log("Terrain generated: ", chunks.size, " chunks to start with");
@@ -519,6 +856,8 @@ function terrainUniformBufferUpdates() {
 	//how much snow is lying and how far the grass has gone to hay (weather.js), and the top down camera, to tell what the snow could not get to
 	bufferResult.push(weatherNow.snowCover);
 	bufferResult.push(seasonNow.hay);
+	//where the land data texture's window is (see THE WINDOW)
+	bufferResult.push(landWindow.x, landWindow.z, 0, 0);
 	for(let i = 0; i < 16; i++) {
 		bufferResult.push(topDownViewProjMat[i]);
 	}
@@ -990,6 +1329,8 @@ export function terrainUpdate() {
 			regenerateTerrain();
 		}
 	}
+
+	if (world) streamTiles();
 
 	// the mesh: which chunks are the land from where the camera is now, and a few more of the ones that are still to be made
 	chooseChunks();

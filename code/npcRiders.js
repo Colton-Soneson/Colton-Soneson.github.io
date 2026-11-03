@@ -1,6 +1,7 @@
 import { settings } from './settings.js';
 
 import * as terrain from './terrain.js'
+import { tileAt } from './world.js'
 import * as forest from './forest.js'
 import * as boulders from './boulders.js'
 import * as town from './town.js'
@@ -150,11 +151,27 @@ function farEnds(land) {
 const riders = [];
 let places = [];		// the inns, or the far ends of the footpaths
 
+// (in a world of tiles, terrain.js: a town's own come with its tile, gone with it, and the roads made again over the towns there are)
+terrain.onTiles((added, removed) => {
+	if (builtFor !== terrain.land || npcs.war.on || !terrain.tilesHaveTowns([...added, ...removed])) return;
+	clearRiders((r) => !r.war && !r.inn.town?.buildings?.length);
+	const land = terrain.land;
+	roads = buildRoads(land);
+	const inns = (land.towns ?? []).filter((t) => t.buildings?.length).map(innOf).filter(Boolean);
+	places = inns.length > 1 ? inns : farEnds(land);
+	addRiders(inns.filter((inn) => added.includes(inn.town?.tile)));
+});
+// (in a world of tiles: the continent a place is on, world.js; a rider rides to the places of its own)
+const continentAt = (x, z) => terrain.world?.tiles.get(tileAt(x, z, settings.terrainWorldSize))?.continent ?? 0;
 function makeRiders(land) {
 	clearRiders();
 	roads = buildRoads(land);
 	const inns = (land.towns ?? []).filter((t) => t.buildings?.length).map(innOf).filter(Boolean);
 	places = inns.length > 1 ? inns : farEnds(land);
+	addRiders(inns);
+	riderStats.riders = riders.length;
+}
+function addRiders(inns) {
 	inns.forEach((inn, t) => {
 		for (let k = 0; k < PER_TOWN; k++) {
 			const person = npcs.makePerson('rider', { hat: 'stetson', gun: 'revolver', home: inn, name: 'rider' });
@@ -183,7 +200,8 @@ function setOff(r) {
 		planRoute(r);
 		return;
 	}
-	const choices = places.filter((p) => Math.hypot(p.x - r.horse.x, p.z - r.horse.z) > 60 * metre());
+	const own = continentAt(r.horse.x, r.horse.z);
+	const choices = places.filter((p) => Math.hypot(p.x - r.horse.x, p.z - r.horse.z) > 60 * metre() && continentAt(p.x, p.z) == own);
 	r.going = choices.length ? choices[Math.floor(Math.random() * choices.length)] : r.inn;
 	planRoute(r);
 }
@@ -207,11 +225,11 @@ function warRoute(r) {
 	const E = r.war.middle ??= town.townMiddle(r.war.enemy);
 	const toE = [E.x - h.x, E.z - h.z], d = Math.hypot(...toE);
 	if (r.war.flank && d > E.reach + 250 * m) {
-		const half = settings.terrainWorldSize * 0.5 - 60 * m, dry = settings.waterWorldPosY + 1.5 * m;
+		const dry = settings.waterWorldPosY + 1.5 * m;
 		let P = null;
 		for (const side of [r.war.flank, -r.war.flank]) for (const out of FLANK.out) {
 			const at = [h.x + toE[0] * 0.5 - toE[1] / d * side * out * m, h.z + toE[1] * 0.5 + toE[0] / d * side * out * m];
-			if (!P && Math.abs(at[0]) < half && Math.abs(at[1]) < half && terrain.land.heightAt(at[0], at[1]) > dry) P = at;
+			if (!P && terrain.inWorld(at[0], at[1], 60 * m) && terrain.land.heightAt(at[0], at[1]) > dry) P = at;
 		}
 		r.war.flank = 0;
 		if (P) {
@@ -227,7 +245,7 @@ function warRoute(r) {
 // ACROSS COUNTRY (see the top): A* over a grid of OFF_ROAD.cell round from and to (world units, [x, z]), through dry land not too steep, the
 //		steeper the dearer; its points (world units), the last to itself. None: null
 function landRoute(from, to) {
-	const m = metre(), land = terrain.land, C = OFF_ROAD.cell * m, pad = OFF_ROAD.pad * m, half = settings.terrainWorldSize * 0.5 - 20 * m;
+	const m = metre(), land = terrain.land, C = OFF_ROAD.cell * m, pad = OFF_ROAD.pad * m, half = terrain.world ? Infinity : settings.terrainWorldSize * 0.5 - 20 * m;
 	const x0 = Math.max(Math.min(from[0], to[0]) - pad, -half), z0 = Math.max(Math.min(from[1], to[1]) - pad, -half);
 	const nx = Math.max(Math.ceil((Math.min(Math.max(from[0], to[0]) + pad, half) - x0) / C), 1), nz = Math.max(Math.ceil((Math.min(Math.max(from[1], to[1]) + pad, half) - z0) / C), 1);
 	const cellOf = (x, z) => [clamp(Math.floor((x - x0) / C), 0, nx - 1), clamp(Math.floor((z - z0) / C), 0, nz - 1)];
@@ -477,6 +495,8 @@ export function addWarRider(side, home, enemy, k = 0) {
 	return r;
 }
 export function clearWarRiders() { clearRiders((r) => !!r.war); }
+// one of them taken away (survivalWar.js: a town's that it can no longer keep)
+export function removeWarRider(r) { clearRiders((one) => one === r); }
 // for testing: a side's horsemen put in the other town (world units: at, spread round it), and on their way about it
 export function warRidersToForTest(side, at) {
 	riders.filter((r) => r.war?.side == side && r.horse?.exists).forEach((r, k) => {

@@ -209,7 +209,7 @@ export function sproutChance(speciesIndex, where, shade) {
 	and a dead one:
 		dead, dryStart, dryYears, fallStart, fallDirection, fallAngle		see planFall. The times are on the forest's clock
 */
-const VISIT_EVERY = 2.5;		// years of the forest's clock between a tree's visits
+const VISIT_EVERY = 10;		// years of the forest's clock between a tree's visits (20 seconds at the default clock: settings.js). Each visit makes up for all the years since the last, so a longer wait costs nothing but how soon a tree answers its light
 const LEAST_DENSITY = 0.06;		// ground that carries less forest than this carries none (the same as in plantForest)
 
 export class ForestLife {
@@ -293,6 +293,31 @@ export class ForestLife {
 		tree.fallAngle = fall.angle;
 		this.measure(tree);
 		this.stats.died++;
+	}
+
+	// A tree brought in from elsewhere (a tile of the world come into reach: forest.js), living, into the list as it is: its index
+	adopt(tree, clock) {
+		tree.ageTime = clock;
+		tree.rate = 1;
+		tree.visited = clock - this.random() * VISIT_EVERY;
+		tree.density = Math.max(this.site(tree.x, tree.z).density, LEAST_DENSITY);
+		this.measure(tree);
+		const index = this.holes.length > 0 ? this.holes.pop() : this.trees.length;
+		this.trees[index] = tree;
+		this.grid.add(index, tree.x, tree.z);
+		this.count++;
+		this.added(index);
+		return index;
+	}
+	// and one let go with its tile, as it is (not fallen: gone)
+	letGo(index) {
+		const tree = this.trees[index];
+		if (!tree) return;
+		this.grid.remove(index, tree.x, tree.z);
+		this.trees[index] = undefined;
+		this.holes.push(index);
+		this.count--;
+		this.removed(index, tree);
 	}
 
 	// A seed has landed at x, z. A tree comes up if the ground carries forest, the seed gets enough light, and there is room

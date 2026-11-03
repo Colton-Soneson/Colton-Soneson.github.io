@@ -49,6 +49,9 @@ function add(roll, tell) {
 	rolls.set(roll.id, roll);
 	if (tell) survivalNet.send('rollAdd', roll);
 }
+// (the save file's: saveGame.js)
+export const rollsRecord = () => [...rolls.values()];
+export function rollsAdopt(list) { rolls.clear(); for (const r of list ?? []) if (r?.id && Array.isArray(r.at)) add({ id: String(r.id), at: r.at.map(Number), yaw: Number(r.yaw) || 0 }, false); }
 function take(id) {
 	if (!rolls.delete(id)) return false;
 	survivalNet.send('rollDel', { id });

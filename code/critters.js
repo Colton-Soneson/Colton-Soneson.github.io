@@ -85,17 +85,30 @@ function newPack(home, ways = null) {
 	for (let k = 0; k < P.size; k++) rats.push(newRat(P));
 	return P;
 }
+// (in a world of tiles, terrain.js: each tile of land its own, made as it comes and gone with it)
+terrain.onTiles((added, removed) => {
+	if (builtFor !== terrain.land) return;
+	if (removed.length) { cats = cats.filter((c) => !removed.includes(c.tile)); packs = packs.filter((P) => !removed.includes(P.tile)); rats = rats.filter((r) => !removed.includes(r.pack?.tile)); respawns = respawns.filter((R) => !removed.includes(R.tile)); }
+	for (const { key, land } of terrain.landsHere()) if (added.includes(key)) crittersOf(land, key);
+});
 function build() {
 	builtFor = terrain.land;
 	cats = []; rats = []; packs = []; corpses = []; respawns = [];
-	for (const town of terrain.land.towns ?? []) {
+	for (const { key, land } of terrain.landsHere()) crittersOf(land, key);
+}
+function crittersOf(land, tile) {
+	const before = { cats: cats.length, packs: packs.length };
+	// (a tile's towns: the world's places for them, terrain.js: townSlots)
+	for (const town of terrain.world ? terrain.land.towns.filter((t) => t.tile == tile) : land.towns ?? []) {
 		if (!town.buildings?.length) continue;
 		const ways = makeWays(town);
 		if (!ways.nodes.length) continue;
 		for (let k = 0; k < CATS_PER_TOWN; k++) cats.push(newCat(town, ways, k));
 		for (let k = 0; k < RAT_TOWN; k++) { const N = ways.nodes[Math.floor(Math.random() * ways.nodes.length)]; newPack([N.x, N.z], ways); }
 	}
-	for (const s of terrain.land.findSpawnPoints(terrain.ZONE_GRASSLAND, RAT_FIELDS, { seed: 191, minSpacing: 150, maxSlope: 0.3 })) newPack([s.x, s.z]);
+	for (const s of land.findSpawnPoints(terrain.ZONE_GRASSLAND, RAT_FIELDS, { seed: 191, minSpacing: 150, maxSlope: 0.3 })) newPack([s.x, s.z]);
+	for (const c of cats.slice(before.cats)) c.tile = tile;
+	for (const P of packs.slice(before.packs)) P.tile = tile;
 }
 
 // THE CATS (see the top)

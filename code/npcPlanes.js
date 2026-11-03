@@ -635,6 +635,8 @@ export function addWarFlight(side, home, enemy, task, index) {
 	return f;
 }
 export function clearWarFlights() { clearFlights((f) => !!f.war); }
+// one of them taken away (survivalWar.js: a town's that it can no longer keep)
+export function removeWarFlight(f) { clearFlights((one) => one === f); for (const o of flights) if (o.wingmen) o.wingmen = o.wingmen.filter((x) => x !== f); }
 plane.onPlaneShot((p) => { const f = flights.find((x) => x.plane === p); if (f) f.shotAt = npcs.now(); });
 // up over its own town, on its way round it
 function launchOverTown(f) {

@@ -30,6 +30,7 @@ import * as vm from './viewmodel.js'
 import * as help from './controlsHelp.js'
 import * as pointLights from './pointLights.js'
 import { addChoice, announceSpawn } from './radialMenu.js'
+import { sides } from './sides.js'
 
 //the planes fade into the horizon color, read from the sky view LUT (same as everything else)
 import {skyViewLUTtexture} from './atmosphere.js'
@@ -745,10 +746,10 @@ function stepPlane(p, dt) {
 	// stopped on the ground: still (no creeping)
 	if (!p.floats && p.contacts == 3 && Math.hypot(...p.v) < 0.05 && p.engine.rpm < RPM_IDLE * 1.2 && (p.brake || p.throttle < 0.02)) { p.v = [0, p.v[1] * 0.5, 0]; p.w = p.w.map((v) => v * 0.5); }
 	// not off the edge of the world: it slides along it (going out over it is taken away), and the pilot is told to turn back
-	const edge = settings.terrainWorldSize * 0.5 / metre() - 20;
+	const [lo, hi] = terrain.worldEdges(20 * metre()).map((v) => v / metre());
 	for (const k of [0, 2]) {
-		if (Math.abs(p.p[k]) <= edge) continue;
-		p.p[k] = clamp(p.p[k], -edge, edge);
+		if (p.p[k] >= lo && p.p[k] <= hi) continue;
+		p.p[k] = clamp(p.p[k], lo, hi);
 		if (p.v[k] * Math.sign(p.p[k]) > 0) p.v[k] = 0;
 		if (p.crew.pilot === 'me' && !(p.edgeSaid > performance.now() - 4000)) { p.edgeSaid = performance.now(); help.toast('The edge of the world: turn back', 2.5); }
 	}
@@ -1150,7 +1151,7 @@ function bombStep(p, dt) {
 //		others in a game)
 export function dropBombs(p, shooter, fired = null) { p.bombShooter = shooter; p.bombFired = fired; releaseBombs(p); }
 // the side a plane is on in the war (war.js: p.team), as the shader has it
-const sideCode = (team) => team == 'red' ? 1 : team == 'blue' ? 2 : 0;
+const sideCode = (team) => sides.code(team);
 // the racks with a bomb on each (drawn): not while they are being loaded, nor with none left
 const racksFull = (p) => p.bombs > 0 && p.bombWait <= 0 && !p.dropping.length && p.destroyed < 0;
 

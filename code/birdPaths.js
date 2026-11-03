@@ -37,12 +37,13 @@ const PEAK_HEIGHT = 820;		// and higher than this cannot be crossed
 		land		generateTerrain's result
 		seaLevel	world y of the sea
 		cells		squares along each side of the world
-	Returns { cells, cellSize, half, price, ground }
+	Returns { cells, cellSize, half, ox, oz (its middle: a tile of the world's, world.js), price, ground }
 		price		per square, what crossing it costs for each unit of distance. Infinity: cannot be crossed
 		ground		per square, the highest ground in it, world y
 */
 export function buildFlightGrid(land, seaLevel, cells = 64) {
 	const half = land.cells * land.cellSize * 0.5;
+	const [ox, oz] = land.center ?? [0, 0];
 	const cellSize = 2 * half / cells;
 	const price = new Float32Array(cells * cells), ground = new Float32Array(cells * cells);
 	for (let row = 0; row < cells; row++) {
@@ -51,7 +52,7 @@ export function buildFlightGrid(land, seaLevel, cells = 64) {
 			let highest = -Infinity, wet = 0;
 			for (let j = 0; j < 4; j++) {
 				for (let i = 0; i < 4; i++) {
-					const height = land.heightAt(-half + (col + (i + 0.5) / 4) * cellSize, -half + (row + (j + 0.5) / 4) * cellSize);
+					const height = land.heightAt(ox - half + (col + (i + 0.5) / 4) * cellSize, oz - half + (row + (j + 0.5) / 4) * cellSize);
 					highest = Math.max(highest, height);
 					if (height < seaLevel) wet++;
 				}
@@ -66,20 +67,20 @@ export function buildFlightGrid(land, seaLevel, cells = 64) {
 			ground[row * cells + col] = Math.max(highest, seaLevel);
 		}
 	}
-	return { cells, cellSize, half, price, ground };
+	return { cells, cellSize, half, ox, oz, price, ground };
 }
 
 // which square of the grid a place is in (the nearest one, for a place off the edge of the world)
 export function flightCell(grid, x, z) {
-	const col = Math.min(Math.max(Math.floor((x + grid.half) / grid.cellSize), 0), grid.cells - 1);
-	const row = Math.min(Math.max(Math.floor((z + grid.half) / grid.cellSize), 0), grid.cells - 1);
+	const col = Math.min(Math.max(Math.floor((x - grid.ox + grid.half) / grid.cellSize), 0), grid.cells - 1);
+	const row = Math.min(Math.max(Math.floor((z - grid.oz + grid.half) / grid.cellSize), 0), grid.cells - 1);
 	return row * grid.cells + col;
 }
 
 // the middle of a square, as [x, z]
 export function flightCellMiddle(grid, cell) {
 	const col = cell % grid.cells, row = (cell - col) / grid.cells;
-	return [-grid.half + (col + 0.5) * grid.cellSize, -grid.half + (row + 0.5) * grid.cellSize];
+	return [grid.ox - grid.half + (col + 0.5) * grid.cellSize, grid.oz - grid.half + (row + 0.5) * grid.cellSize];
 }
 
 // A queue that always hands back whatever was put in with the lowest key (a binary heap: a tree kept in an array, every

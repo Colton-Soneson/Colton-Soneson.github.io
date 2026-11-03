@@ -45,9 +45,10 @@ export const dinghyStats = { dinghies: 0, homes: 0, lakes: 0, newBoats: 0, fled:
 //-------------------------------------------------
 function findHomes(land) {
 	const m = metre(), half = halfWorld() - 150, spots = [];
+	const [cx, cz] = (land.center ?? [0, 0]).map((v) => v / m);		// (a tile of the world's: round its own middle)
 	const ways = Array.from({ length: 8 }, (_, k) => [Math.cos(k / 8 * Math.PI * 2), Math.sin(k / 8 * Math.PI * 2)]);
-	for (let x = -half; x <= half; x += HOME.grid) {
-		for (let z = -half; z <= half; z += HOME.grid) {
+	for (let x = cx - half; x <= cx + half; x += HOME.grid) {
+		for (let z = cz - half; z <= cz + half; z += HOME.grid) {
 			const d = depthAt(x, z);
 			if (d < HOME.least || d > HOME.most) continue;
 			if (!ways.some(([cx, cz]) => depthAt(x + cx * HOME.land, z + cz * HOME.land) < 0)) continue;
@@ -96,15 +97,25 @@ function wanderSpot(d, from) {
 const dinghies = [];
 let builtFor = null;
 
+// (in a world of tiles, terrain.js: each tile of land's own, come and gone with it)
+terrain.onTiles((added, removed) => {
+	if (builtFor !== terrain.land) return;
+	for (const d of dinghies.filter((one) => removed.includes(one.tile))) { npcs.removePerson(d.person); if (d.boat?.exists && d.boat.crew.size <= 1) { boat.removeBoat(d.boat); npcs.announce('boat', null, d.boat); } }
+	dinghies.splice(0, dinghies.length, ...dinghies.filter((one) => !removed.includes(one.tile)));
+	for (const { key, land } of terrain.landsHere()) if (added.includes(key)) dinghiesOf(land, key);
+});
 function makeDinghies(land) {
 	clearDinghies();
+	for (const here of terrain.landsHere()) dinghiesOf(here.land, here.key);
+	dinghyStats.dinghies = dinghies.length;
+}
+function dinghiesOf(land, tile) {
 	for (const home of findHomes(land)) {
 		const person = npcs.makePerson('sailor', { hat: 'beanie', gun: 'none', home: { x: home.x * metre(), z: home.z * metre(), heading: 0 }, name: 'dinghy sailor' });
-		const d = { person, home, boat: null, goal: null, goalAt: 0, calm: 1e9 };
+		const d = { person, home, boat: null, goal: null, goalAt: 0, calm: 1e9, tile };
 		dinghies.push(d);
 		launch(d);
 	}
-	dinghyStats.dinghies = dinghies.length;
 }
 function clearDinghies() {
 	for (const d of dinghies) { npcs.removePerson(d.person); if (d.boat?.exists && d.boat.crew.size <= 1) { boat.removeBoat(d.boat); npcs.announce('boat', null, d.boat); } }

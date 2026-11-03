@@ -686,10 +686,13 @@ function saveSoon() { saveIn = saveIn || 3; }
 stations.onSave(saveSoon);
 farms.onChange(saveSoon);
 loot.onChest(saveSoon);
+const everything = () => JSON.stringify({ cabins: [...cabins.values()].map(share), stations: stations.stationsSave(), farms: farms.farmsSave(), chests: loot.chestsSave() });
 function save() {
 	if (!survivalNet.authority()) return;
-	try { localStorage.setItem(savedKey(), JSON.stringify({ cabins: [...cabins.values()].map(share), stations: stations.stationsSave(), farms: farms.farmsSave(), chests: loot.chestsSave() })); } catch (e) { /* */ }
+	try { localStorage.setItem(savedKey(), everything()); } catch (e) { /* */ }
 }
+// (the save file's: saveGame.js, as it is kept here)
+export const cabinsRecord = () => ({ key: savedKey(), text: everything() });
 function load() {
 	if (loadedFor === savedKey() || !terrain.land) return;
 	loadedFor = savedKey();

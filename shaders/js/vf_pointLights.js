@@ -69,7 +69,9 @@ export const vf_pointLights =
 		var movers = vec3f(0.0, 0.0, 0.0);
 		// the still lights of the cell it is in
 		let cellsAlong = u32(LU.grid.z);
-		let c = vec2u(clamp((P.xz + vec2f(LU.grid.x, LU.grid.x)) / LU.grid.y, vec2f(0.0, 0.0), vec2f(LU.grid.z - 1.0, LU.grid.z - 1.0)));
+		// (each cell where it is in the world's grid of them, modulo how many there are along a side: pointLights.js)
+		let along = i32(LU.grid.z);
+		let c = vec2u(((vec2i(floor((P.xz + vec2f(LU.grid.x, LU.grid.x)) / LU.grid.y)) % vec2i(along, along)) + vec2i(along, along)) % vec2i(along, along));
 		let cell = cells[c.y * cellsAlong + c.x];
 		for (var k = 0u; k < cell.y; k++) {
 			let i = list[cell.x + k];

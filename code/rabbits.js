@@ -62,11 +62,20 @@ function wanderTarget(r) {
 function newRabbit(home, x = home[0], z = home[1]) {
 	return { id: nextId++, x, z, y: 0, heading: Math.random() * 6.28, hop: Math.random() * 6.28, moving: 0, own: Math.random(), home, state: 'sit', timer: SIT[0] + Math.random() * (SIT[1] - SIT[0]), target: null, look: Math.random() * LOOK, trap: null, nearest: Infinity, stuck: 0, ignore: new Map(), ground: null };
 }
+// (in a world of tiles, terrain.js: each tile of land its own, made as it comes and gone with it)
+terrain.onTiles((added, removed) => {
+	if (builtFor !== terrain.land) return;
+	if (removed.length) { rabbits = rabbits.filter((r) => !removed.includes(r.tile)); respawns = respawns.filter((r) => !removed.includes(r.tile)); }
+	for (const { key, land } of terrain.landsHere()) if (added.includes(key)) rabbitsOf(land, key);
+});
 function build() {
 	builtFor = terrain.land;
 	rabbits = []; corpses = []; respawns = [];
-	const spots = terrain.land.findSpawnPoints(terrain.ZONE_FOREST, COUNT, { seed: 71, minSpacing: 30, maxSlope: 0.5 }).filter((s) => deer.walkable(s.x, s.z));
-	for (const s of spots) rabbits.push(newRabbit([s.x, s.z]));
+	for (const { key, land } of terrain.landsHere()) rabbitsOf(land, key);
+}
+function rabbitsOf(land, tile) {
+	const spots = land.findSpawnPoints(terrain.ZONE_FOREST, COUNT, { seed: 71, minSpacing: 30, maxSlope: 0.5 }).filter((s) => deer.walkable(s.x, s.z));
+	for (const s of spots) { const r = newRabbit([s.x, s.z]); r.tile = tile; rabbits.push(r); }
 }
 function hopTowards(r, to, pace, dt) {
 	const m = metre(), dx = to[0] - r.x, dz = to[1] - r.z, far = Math.hypot(dx, dz);
@@ -111,7 +120,7 @@ function advance(dt) {
 			if (left < r.nearest - 0.5 * m) { r.nearest = left; r.stuck = 0; } else if ((r.stuck += dt) > GIVE_UP) { r.ignore.set(trap.id, clock + GIVE_UP); r.trap = null; }
 			if (left < SNARED_AT * m && loot.fillTrap(trap.id)) {
 				rabbits.splice(rabbits.indexOf(r), 1);
-				respawns.push({ at: clock + RESPAWN, home: r.home });
+				respawns.push({ at: clock + RESPAWN, home: r.home, tile: r.tile });
 				rabbitStats.snared++;
 				continue;
 			}
@@ -135,9 +144,10 @@ function advance(dt) {
 	for (const c of corpses) c.t += dt;
 	corpses = corpses.filter((c) => c.t < (settings.gameMode == 'Hunting' ? LIE_SURVIVAL : LIE));
 	while (respawns.length && respawns[0].at <= clock) {
-		const { home } = respawns.shift();
+		const { home, tile } = respawns.shift();
 		// (out of sight of the camera, somewhere in its home woods)
 		const r = newRabbit(home);
+		r.tile = tile;
 		const [x, z] = wanderTarget(r);
 		if (Math.hypot(x - settings.camPosX, z - settings.camPosZ) > 40 * m && deer.walkable(x, z)) { r.x = x; r.z = z; }
 		rabbits.push(r);

@@ -74,10 +74,29 @@ function makeFixed() {
 	if (!land || madeFor === land) return;
 	madeFor = land;
 	for (const [id, c] of containers) if (c.kind == 'cache') containers.delete(id);
-	const m = metre();
-	const spots = [...land.findSpawnPoints(terrain.ZONE_FOREST, CACHES / 2, { seed: 4441, maxSlope: 0.3 }), ...land.findSpawnPoints(terrain.ZONE_GRASSLAND, CACHES / 2, { seed: 5113, maxSlope: 0.3 })];
-	spots.forEach((s, k) => { const y = land.heightAt(s.x, s.z); if (y > settings.waterWorldPosY + 0.5 * m) add({ id: 'w' + k, kind: 'cache', at: [s.x, y, s.z], yaw: k * 1.7 }); });
+	cacheMemory.clear();
+	for (const here of terrain.landsHere()) cachesOf(here.land, here.key);
 }
+// (in a world of tiles, terrain.js: each tile of land's own, its number 'w' and the tile and its place; the home tile's as the one land's.
+//		A tile gone, what was in its caches kept for when it comes again, and in the save file)
+const cacheMemory = new Map();		// a cache's id -> { items, restockAt }, while its tile is not here
+function cachesOf(land, tile) {
+	const m = metre(), name = tile == 'land' || tile == '0,0' ? 'w' : 'w:' + tile + ':';
+	const spots = [...land.findSpawnPoints(terrain.ZONE_FOREST, CACHES / 2, { seed: 4441, maxSlope: 0.3 }), ...land.findSpawnPoints(terrain.ZONE_GRASSLAND, CACHES / 2, { seed: 5113, maxSlope: 0.3 })];
+	spots.forEach((s, k) => {
+		const y = land.heightAt(s.x, s.z);
+		if (y <= settings.waterWorldPosY + 0.5 * m) return;
+		const id = name + k;
+		add({ id, kind: 'cache', at: [s.x, y, s.z], yaw: k * 1.7, tile, ...(cacheMemory.get(id) ?? {}) });
+		cacheMemory.delete(id);
+	});
+}
+terrain.onTiles((added, removed) => {
+	if (madeFor !== terrain.land) return;
+	for (const [id, c] of [...containers]) if (c.kind == 'cache' && removed.includes(c.tile)) { if (c.items !== null) cacheMemory.set(id, { items: c.items, restockAt: c.restockAt }); containers.delete(id); told(id); }
+	for (const here of terrain.landsHere()) if (added.includes(here.key)) cachesOf(here.land, here.key);
+	lootStats.containers = containers.size;
+});
 function add(c) {
 	containers.set(c.id, { grid: GRIDS[c.kind], items: null, restockAt: -1, until: -1, ...c });
 	lootStats.containers = containers.size;
@@ -94,7 +113,7 @@ function roll(c, table) {
 	return items;
 }
 function contentsHere(c) {
-	if (!survivalNet.authority()) return c.items;
+	if (!mine(c)) return c.items;
 	if (c.items === null || (c.restockAt >= 0 && atmosphere.sunCycles >= c.restockAt)) { c.items = TABLES[c.kind] ? roll(c, TABLES[c.kind]) : []; c.restockAt = -1; }
 	return c.items;
 }
@@ -105,11 +124,13 @@ function emptied(c) { if (c.items.length == 0 && TABLES[c.kind] && c.restockAt <
 const contentListeners = [];
 export function onContents(fn) { contentListeners.push(fn); }
 const told = (id) => contentListeners.forEach((fn) => fn(id));
+// whether this machine keeps a container: the host (or alone) does, and a joiner AWAY its tile's caches (survivalNet.js: away)
+const mine = (c) => survivalNet.authority() || (survivalNet.away() && c?.kind == 'cache');
 export function open(id) {
 	const c = containers.get(id);
 	if (!c) return null;
 	lootStats.opened++;
-	if (survivalNet.authority()) { contentsHere(c); told(id); }
+	if (mine(c)) { contentsHere(c); told(id); }
 	else survivalNet.send('lootOpen', { id });
 	return c;
 }
@@ -117,7 +138,7 @@ export function open(id) {
 export function take(id, uid, where = null, done = () => {}) {
 	const c = containers.get(id);
 	if (!c?.items) return done(false);
-	if (!survivalNet.authority()) { pending.set(uid, { where, done }); survivalNet.send('lootTake', { id, uid }); return; }
+	if (!mine(c)) { pending.set(uid, { where, done }); survivalNet.send('lootTake', { id, uid }); return; }
 	const item = c.items.find((i) => i.uid == uid);
 	if (!item) return done(false);
 	if (!landIn(item, where)) return done(false);
@@ -141,7 +162,7 @@ export function putInto(id, item, x = null, y = null, rot = item.rot) {
 		if (!at) return false;
 		({ x, y, rot } = at);
 	}
-	if (!survivalNet.authority()) { c.items.push(Object.assign(item, { x, y, rot })); survivalNet.send('lootPut', { id, item, x, y, rot }); told(id); return true; }
+	if (!mine(c)) { c.items.push(Object.assign(item, { x, y, rot })); survivalNet.send('lootPut', { id, item, x, y, rot }); told(id); return true; }
 	c.items.push(Object.assign(item, { x, y, rot }));
 	lootStats.put++;
 	changedHere(c);
@@ -152,7 +173,7 @@ export function moveIn(id, uid, x, y, rot) {
 	const c = containers.get(id), item = c?.items?.find((i) => i.uid == uid);
 	if (!item || !fits(c.grid, c.items, item, x, y, rot)) return false;
 	Object.assign(item, { x, y, rot });
-	if (survivalNet.authority()) changedHere(c);
+	if (mine(c)) changedHere(c);
 	else { survivalNet.send('lootMove', { id, uid, x, y, rot }); told(id); }
 	return true;
 }
@@ -204,6 +225,39 @@ export function addChest(id, at, yaw, kind) {
 }
 export const chestsSave = () => [...containers.values()].filter((c) => c.kind == 'chest' || c.kind == 'chestBig').map(shareOf);
 export function chestsLoad(list) { for (const c of list ?? []) if (Array.isArray(c.at)) add({ id: c.id, kind: c.kind, at: c.at.map(Number), items: c.items ?? [], grid: c.grid, until: -1, yaw: Number(c.yaw) || 0 }); }
+// THE SAVE FILE's (saveGame.js): every container but the cabins' chests (cabins.js keeps them) and the soldiers' bodies (gone soon anyway):
+//		the caches only for what is in them now, and when they fill again
+export function lootRecord() {
+	const out = [];
+	for (const c of containers.values()) {
+		if (c.kind == 'chest' || c.kind == 'chestBig' || c.kind == 'npcBody') continue;
+		if (c.kind == 'cache') { if (c.items !== null) out.push({ id: c.id, kind: c.kind, items: c.items, restockAt: c.restockAt }); continue; }
+		out.push({ ...shareOf(c), restockAt: c.restockAt });
+	}
+	// (and the caches of the tiles not here, as they were left)
+	for (const [id, c] of cacheMemory) out.push({ id, kind: 'cache', items: c.items, restockAt: c.restockAt });
+	return out;
+}
+export function lootAdopt(list) {
+	for (const [id, c] of [...containers]) if (c.kind != 'cache' && c.kind != 'chest' && c.kind != 'chestBig') containers.delete(id);
+	for (const r of list ?? []) {
+		const items = (r?.items ?? []).map(cleanItem).filter(Boolean), restockAt = Number.isFinite(Number(r?.restockAt)) ? Number(r.restockAt) : -1;
+		if (r?.kind == 'cache') { const c = containers.get(r.id); if (c) Object.assign(c, { items, restockAt }); else cacheMemory.set(String(r.id), { items, restockAt }); continue; }
+		if (!r?.id || !Array.isArray(r.at) || !GRIDS[r.kind]) continue;
+		add({ id: String(r.id), kind: r.kind, at: r.at.map(Number), grid: Array.isArray(r.grid) ? r.grid.map(Number) : [...GRIDS[r.kind]], items, name: r.name ?? null, yaw: Number(r.yaw) || 0, restockAt });
+	}
+	lootStats.containers = containers.size;
+	for (const id of containers.keys()) told(id);
+}
+// (the host's: the caches a joiner away has kept, for the save: [id, items, restockAt] each, net.js)
+export function cachesHeard(list) {
+	for (const [id, rawItems, restockAt] of list ?? []) {
+		const items = (rawItems ?? []).map(cleanItem).filter(Boolean), c = containers.get(String(id));
+		if (c && c.kind == 'cache') Object.assign(c, { items, restockAt: Number(restockAt) });
+		else cacheMemory.set(String(id), { items, restockAt: Number(restockAt) });
+	}
+}
+export const cachesOfTiles = (keys) => [...containers.values()].filter((c) => c.kind == 'cache' && keys.includes(c.tile) && c.items !== null).map((c) => [c.id, c.items, c.restockAt]);
 // THE SNARES (see the top; rabbits.js): set here (the host's to make, a joiner asks: trapSet), taken up (trapUp: trapGot back), and a rabbit
 //		caught in one. Everyone hears of each as of any container (lootAdd, lootIs, lootDel)
 export function setTrap(at, yaw) {

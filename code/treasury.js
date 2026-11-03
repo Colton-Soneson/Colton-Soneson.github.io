@@ -7,7 +7,8 @@ import * as hunting from './hunting.js'
 
 /*
 	THE TOWNS' TREASURIES: every town has an account at its bank (shops.js shows it), in cents, by the town's place in the land's list. What its
-	hunters bring back to the butcher (npcHunters.js) and what its schooner lands from a whale (npcShips.js, whaling.js) goes into it.
+	hunters bring back to the butcher (npcHunters.js) and what its schooner lands from a whale (npcShips.js, whaling.js) goes into it, and its
+	taxes; and out of it into its budgets (townEconomy.js: take).
 	In a game the host keeps them (survivalNet.js): pay() does nothing on a joiner (the NPCs are the host's), everyone is told each one as it changes
 	(treasuryIs) and a joiner come in of all of them, and the host keeps them in its browser (SAVED) from one visit to the next, by the land's seed.
 */
@@ -46,6 +47,28 @@ export function pay(t, dollars, why = '') {
 	if (why) said(at, dollars, why);
 	told();
 	return true;
+}
+// so much out of a town's account, for its budgets (townEconomy.js): false if it has not got it (the host's, or alone)
+export function take(t, dollars) {
+	const k = townNumber(t), cents = Math.round(dollars * 100);
+	if (k < 0 || !survivalNet.authority() || cents <= 0) return false;
+	load();
+	if (centsOf(k) < cents) return false;
+	accounts.set(k, centsOf(k) - cents);
+	try { localStorage.setItem(savedKey(), JSON.stringify(Object.fromEntries(accounts))); } catch (e) { /* */ }
+	survivalNet.send('treasuryIs', { list: [[k, accounts.get(k)]] });
+	told();
+	return true;
+}
+// (the save file's: survivalSave.js)
+export const treasuryRecord = () => { load(); return { key: savedKey(), text: JSON.stringify(Object.fromEntries(accounts)) }; };
+export function treasuryAdopt(list) {
+	accounts.clear();
+	for (const [k, v] of Object.entries(list ?? {})) accounts.set(Number(k), Math.max(0, Math.floor(v) || 0));
+	loadedFor = savedKey();
+	try { localStorage.setItem(savedKey(), JSON.stringify(Object.fromEntries(accounts))); } catch (e) { /* */ }
+	survivalNet.send('treasuryIs', everything());
+	told();
 }
 survivalNet.on('treasuryIs', (m) => {
 	if (survivalNet.authority()) return;

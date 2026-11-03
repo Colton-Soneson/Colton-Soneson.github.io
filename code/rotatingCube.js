@@ -99,6 +99,9 @@ import * as npcRiders from './npcRiders.js'
 import * as npcPlanes from './npcPlanes.js'
 import * as npcShips from './npcShips.js'
 import * as war from './war.js'
+import * as townEconomy from './townEconomy.js'
+import * as survivalWar from './survivalWar.js'
+import * as saveGame from './saveGame.js'
 import * as npcDinghies from './npcDinghies.js'
 import * as pointLights from './pointLights.js'
 import { settings } from './settings.js';
@@ -417,6 +420,9 @@ export function updateRotatingCubePass() {
 	const npcSeconds = npcs.npcUpdate();	//the people out in the world decide what to do (their horses, planes and boats then go on with the rest)
 	profiler.cpuMark('NPCs: War');
 	war.warUpdate();				//(and in the War game mode, the two towns' forces put out, and the townsfolk at it)
+	townEconomy.economyUpdate();	//(and in the Survival mode, the towns' taxes, budgets, forces and people)
+	survivalWar.survivalWarUpdate();	//(and its wars between the towns' nations)
+	saveGame.savesUpdate();			//(a save file being loaded: what is not kept in the browser put back once the world is made)
 	profiler.cpuMark('NPCs: Riders');
 	npcRiders.ridersUpdate(npcSeconds);
 	profiler.cpuMark('NPCs: Airmen');

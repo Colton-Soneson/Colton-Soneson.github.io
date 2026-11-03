@@ -27,6 +27,9 @@ import * as survival from './survival.js'
 		the airstrip			outlined, and named
 		the paths				dashed
 	There is nothing of where the walker is on it: it has to be read.
+	IN A WORLD OF TILES (terrain.js, world.js): the land of the tile the walker is on (drawn again as it goes on to another), and in a
+	corner THE CHART of the whole world: each land tile (shaded by its continent) and each tile of sea, the towns the world knows of (as
+	the survey found them, terrain.js) each a dot and its name, and the tile drawn here ringed.
 */
 const SIZE = 1600;					// pixels across the map's drawing
 const GRID = 300;					// heights looked at across it
@@ -34,7 +37,42 @@ const CONTOUR = 25, INDEX = 4;		// metres, and every how many a heavy one
 const PULL = 0.55, OPEN = 0.25;		// seconds
 
 const ink = '#2b2520';
-let drawnFor = null;
+let drawnFor = null, drawnTile = '';
+// THE CHART (see the top): the whole world, in the top left corner
+const CHART = { size: 420, at: [40, 40] };
+function chart(ctx, here) {
+	const W = terrain.world, S = settings.terrainWorldSize, { size, at } = CHART;
+	const keys = [...W.tiles.values()], lo = Math.min(...keys.map((t) => Math.min(t.tx, t.tz))), hi = Math.max(...keys.map((t) => Math.max(t.tx, t.tz)));
+	const span = hi - lo + 1, cell = size / span;
+	const cx = (tx) => at[0] + (tx - lo) * cell, cz = (tz) => at[1] + (tz - lo) * cell;
+	ctx.save();
+	ctx.fillStyle = 'rgba(230, 220, 196, 0.92)';
+	ctx.fillRect(at[0] - 12, at[1] - 12, size + 24, size + 60);
+	charcoal(ctx, [[at[0] - 12, at[1] - 12], [at[0] + size + 12, at[1] - 12], [at[0] + size + 12, at[1] + size + 48], [at[0] - 12, at[1] + size + 48], [at[0] - 12, at[1] - 12]], { width: 2, passes: 2, alpha: 0.7 });
+	for (const t of keys) {
+		const x = cx(t.tx), z = cz(t.tz);
+		if (t.kind == 'sea') { ctx.globalAlpha = 0.25; for (let s = 2; s < cell; s += 5) charcoal(ctx, [[x + 2, z + s], [x + cell - 2, z + s]], { width: 0.6, passes: 1, alpha: 0.5, jitter: 0.3 }); continue; }
+		ctx.globalAlpha = 0.18 + 0.06 * (t.continent % 4);
+		ctx.fillStyle = ink;
+		ctx.fillRect(x + 1, z + 1, cell - 2, cell - 2);
+	}
+	ctx.globalAlpha = 1;
+	// (the towns: where the survey or the land put them)
+	ctx.font = 'italic 12px "Segoe Print", "Bradley Hand", cursive';
+	for (const t of terrain.townSlots) {
+		if (t.none || (!t.surveyed && !t.loaded)) continue;
+		const mid = town.townMiddle(t), x = at[0] + (mid.x / S + 0.5 - lo) * cell, z = at[1] + (mid.z / S + 0.5 - lo) * cell;
+		ctx.fillStyle = ink;
+		ctx.beginPath(); ctx.arc(x, z, 3, 0, Math.PI * 2); ctx.fill();
+		ctx.fillText(town.townName(t.slot), x + 4, z - 3);
+	}
+	// (and the tile drawn here, ringed)
+	charcoal(ctx, [[cx(here[0]) - 3, cz(here[1]) - 3], [cx(here[0]) + cell + 3, cz(here[1]) - 3], [cx(here[0]) + cell + 3, cz(here[1]) + cell + 3], [cx(here[0]) - 3, cz(here[1]) + cell + 3], [cx(here[0]) - 3, cz(here[1]) - 3]], { width: 2.6, passes: 3, alpha: 0.9 });
+	ctx.font = 'italic 22px "Segoe Print", "Bradley Hand", cursive';
+	ctx.fillStyle = ink;
+	ctx.fillText('The Known World', at[0], at[1] + size + 34);
+	ctx.restore();
+}
 const sheet = document.createElement('canvas');
 sheet.width = sheet.height = SIZE;
 
@@ -56,11 +94,15 @@ function charcoal(ctx, points, { width = 1.6, passes = 3, alpha = 0.55, jitter =
 }
 function drawMap() {
 	const land = terrain.land;
-	if (!land || drawnFor === land) return;
+	const TILE = settings.terrainWorldSize, p0 = hunting.hunterPlace();
+	const tile = terrain.world ? [Math.round(p0.x / TILE), Math.round(p0.z / TILE)] : [0, 0], key = land && land.worldTiles ? tile.join(',') : '';
+	if (!land || (drawnFor === land && drawnTile === key)) return;
 	drawnFor = land;
+	drawnTile = key;
 	const ctx = sheet.getContext('2d');
 	const half = settings.terrainWorldSize / 2, m = settings.forestUnitsPerMetre, sea = settings.waterWorldPosY;
-	const px = (x) => (x + half) / (half * 2) * SIZE, pz = (z) => (z + half) / (half * 2) * SIZE;
+	const ox = tile[0] * TILE, oz = tile[1] * TILE;		// (the tile drawn: its middle)
+	const px = (x) => (x - ox + half) / (half * 2) * SIZE, pz = (z) => (z - oz + half) / (half * 2) * SIZE;
 	// the paper: warm, uneven, folded twice
 	ctx.fillStyle = '#e6dcc4';
 	ctx.fillRect(0, 0, SIZE, SIZE);
@@ -74,7 +116,7 @@ function drawMap() {
 	// the heights over the sea (metres) on a grid across it, and the zones
 	const N = GRID, cell = SIZE / (N - 1), H = new Float32Array(N * N), Z = new Uint8Array(N * N);
 	for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
-		const x = -half + i / (N - 1) * half * 2, z = -half + j / (N - 1) * half * 2;
+		const x = ox - half + i / (N - 1) * half * 2, z = oz - half + j / (N - 1) * half * 2;
 		H[j * N + i] = (land.heightAt(x, z) - sea) / m;
 		Z[j * N + i] = land.zoneAt(x, z);
 	}
@@ -163,6 +205,7 @@ function drawMap() {
 	charcoal(ctx, [[SIZE - 90, 118], [SIZE - 78, 100], [SIZE - 66, 118]], { width: 3, passes: 3, alpha: 0.8 });
 	ctx.font = 'italic 34px "Segoe Print", "Bradley Hand", cursive';
 	ctx.fillText('Survey of the Country', 50, SIZE - 50);
+	if (terrain.world) chart(ctx, tile);
 	// the smudges of the charcoal
 	for (let k = 0; k < 40; k++) {
 		const x = Math.random() * SIZE, y = Math.random() * SIZE, r = 30 + Math.random() * 90;

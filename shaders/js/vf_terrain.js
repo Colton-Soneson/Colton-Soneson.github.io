@@ -218,6 +218,7 @@ export const vf_terrain =
 		grassDistance : f32,		// how far from the camera the blades of grass are drawn. 0 if there are none
 		snowCover : f32,			// how much snow has fallen and is lying, 0 to 1 (see SNOWBUILD)
 		hay : f32,					// how far the grass has gone the color of hay, 0 to 1 (the fall and the winter)
+		landWindow : vec4f,			// xy: the middle of the land data texture's window (terrain.js: THE WINDOW). The origin with the one land of old
 		topDownViewProj : mat4x4f,	// the camera the top down height map is taken with
 	}
 	@group(0) @binding(0) var<uniform> UBO: TerrainUniforms;
@@ -299,15 +300,25 @@ export const vf_terrain =
 	${groundTextures}
 	//------------------THE LAND DATA-----------------
 	// The slope of the ground at a place, from the land data texture: normal.x and normal.z, bilinear between the 4 grid points around it
+	//		(the texture is a window on to the land round its middle, each grid point at its place in the world's grid modulo its size: see
+	//		THE WINDOW in terrain.js. dataInWindow says whether a place is in it)
+	fn dataInWindow(xz: vec2f) -> bool {
+		let off = abs(xz - UBO.landWindow.xy);
+		return max(off.x, off.y) < UBO.worldHalf - UBO.dataCell;
+	}
+	fn dataTexel(p: vec2i) -> vec2i {
+		let n = vec2i(textureDimensions(terrainFields));
+		return ((p % n) + n) % n;
+	}
 	fn dataNormal(xz: vec2f) -> vec3f {
 		let maxPoint = vec2f(textureDimensions(terrainFields)) - vec2f(1.001, 1.001);
-		let grid = clamp((xz + vec2f(UBO.worldHalf, UBO.worldHalf)) / UBO.dataCell, vec2f(0.0, 0.0), maxPoint);
-		let base = vec2i(floor(grid));
+		let grid = clamp((xz - UBO.landWindow.xy + vec2f(UBO.worldHalf, UBO.worldHalf)) / UBO.dataCell, vec2f(0.0, 0.0), maxPoint);
+		let base = vec2i(floor(grid)) + vec2i(round(UBO.landWindow.xy / UBO.dataCell));
 		let f = fract(grid);
-		let a = textureLoad(terrainFields, base, 0).zw;
-		let b = textureLoad(terrainFields, base + vec2i(1, 0), 0).zw;
-		let c = textureLoad(terrainFields, base + vec2i(0, 1), 0).zw;
-		let d = textureLoad(terrainFields, base + vec2i(1, 1), 0).zw;
+		let a = textureLoad(terrainFields, dataTexel(base), 0).zw;
+		let b = textureLoad(terrainFields, dataTexel(base + vec2i(1, 0)), 0).zw;
+		let c = textureLoad(terrainFields, dataTexel(base + vec2i(0, 1)), 0).zw;
+		let d = textureLoad(terrainFields, dataTexel(base + vec2i(1, 1)), 0).zw;
 		let n = mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 		return vec3f(n.x, sqrt(max(1.0 - dot(n, n), 0.0)), n.y);
 	}
@@ -446,7 +457,7 @@ export const vf_terrain =
 
 		//------------------THE LIE OF THE GROUND-----------------
 		// from the mesh where it is fine, from the land data where the mesh is coarser than that
-		let groundNormal = normalize(mix(normalize(fragNormal), dataNormal(worldPos.xz), smoothstep(UBO.dataCell, UBO.dataCell * 2.5, meshCell)));
+		let groundNormal = normalize(mix(normalize(fragNormal), dataNormal(worldPos.xz), smoothstep(UBO.dataCell, UBO.dataCell * 2.5, meshCell) * select(0.0, 1.0, dataInWindow(worldPos.xz))));
 
 		//------------------ZONES-----------------
 		// how much of each zone this pixel is, 0 to 1. Same rules as classifyZone in terrainGenerator.js, with soft edges

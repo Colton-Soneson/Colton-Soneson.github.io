@@ -8,6 +8,7 @@ import * as profiler from './profiler.js'
 import { mat4 } from 'https://wgpu-matrix.org/dist/3.x/wgpu-matrix.module.js';
 
 import { settings } from './settings.js';
+import { sides } from './sides.js'
 
 import { vf_boat } from '../shaders/js/vf_boat.js'
 import { VESSELS, ROLE, MAX_GROUPS, MAX_ROPES, MAX_PIECES, MAX_PARTS } from './vessels.js'
@@ -515,9 +516,9 @@ function stepBoat(b, dt, now) {
 	steady(b, dt);
 
 	// not off the edge of the world
-	const edge = settings.terrainWorldSize * 0.5 / m - 5;
-	b.p[0] = clamp(b.p[0], -edge, edge);
-	b.p[2] = clamp(b.p[2], -edge, edge);
+	const [lo, hi] = terrain.worldEdges(5 * m).map((v) => v / m);
+	b.p[0] = clamp(b.p[0], lo, hi);
+	b.p[2] = clamp(b.p[2], lo, hi);
 
 	const mainAt = placeOnBoat(b, V.sails[V.mainSail].centre, V.sails[V.mainSail].group, ROLE.CLOTH);
 	const apparent = unrotate(b.q, sub(wind, velocityAt(b, mainAt)));
@@ -564,8 +565,8 @@ export function footprintClear(V, x, z, yaw) {
 	if (!land || !settings.enableTerrain) return null;
 	const m = metre();
 	const sea = settings.waterWorldPosY;
-	const half = settings.terrainWorldSize * 0.5 - 30 * m;
-	if (Math.abs(x) > half || Math.abs(z) > half) return 'Too near the edge of the world';
+	const [lo, hi] = terrain.worldEdges(30 * m);
+	if (x < lo || x > hi || z < lo || z > hi) return 'Too near the edge of the world';
 	const ahead = [Math.sin(yaw), -Math.cos(yaw)], side = [-ahead[1], ahead[0]];
 	const need = V.spawn.keel + SPAWN_CLEARANCE;
 	for (const along of V.footprint) {
@@ -1207,7 +1208,7 @@ function writeBoatUniforms(b) {
 	u.set([...P.bottom, P.bandY[1]], 48);
 	u.set([...P.inside, 0], 52);
 	u.set(P.ports ? [P.ports.z0, P.ports.spacing, P.ports.count, P.ports.half] : [0, 1, 0, 0], 56);
-	u.set([b.team == 'red' ? 1 : b.team == 'blue' ? 2 : 0, 0, 0, 0], 60);		// (her side in the war: war.js)
+	u.set([sides.code(b.team), 0, 0, 0], 60);		// (her side in the war: war.js, survivalWar.js; sides.js)
 	// the groups: where each turns about, how far, and how its sail is hoisted, filled and shaking
 	V.groups.forEach((group, g) => {
 		const o = 64 + g * 16;

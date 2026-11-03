@@ -3,6 +3,7 @@ import {canvasFormat} from './deviceSelection.js'
 import * as profiler from './profiler.js'
 
 import { settings } from './settings.js';
+import * as terrain from './terrain.js'
 
 import { vf_pointLights } from '../shaders/js/vf_pointLights.js'
 
@@ -45,19 +46,25 @@ const pipeline = device.createRenderPipeline({
 const uniformBuffer = device.createBuffer({ label: "point lights Uniform", size: (16 + 4 + 4 + 4 + MOST_MOVING * 8) * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 let buffers = null, bindGroup = null, boundDepth = null;
 
+// (the window moved: sorted again, terrain.js)
+terrain.onWindow(() => { if (terrain.world) dirty = true; });
 // the still lights sorted into the grid, and on the GPU
 function sortLights() {
 	dirty = false;
-	const all = [...still.values()].flat();
+	// (each cell where it is in the world's grid of them, modulo how many there are along a side; in a world of tiles, terrain.js, only the
+	//		lights round the camera, sorted again as the window moves: THE WINDOW)
+	const W = terrain.world ? terrain.landWindow : null, reach = settings.terrainWorldSize * 0.5 - 100;
+	const all = [...still.values()].flat().filter((l) => !W || (Math.abs(l.at[0] - W.x) < reach && Math.abs(l.at[2] - W.z) < reach));
 	const half = settings.terrainWorldSize * 0.5, along = Math.ceil(settings.terrainWorldSize / CELL);
+	const wrap = (v) => ((v % along) + along) % along;
 	const lights = new Float32Array(Math.max(all.length, 1) * 8);
 	const inCell = new Map();
 	all.forEach((l, k) => {
 		lights.set([...l.at, l.radius, ...l.colour, l.strength], k * 8);
-		const c0 = Math.max(Math.floor((l.at[0] - l.radius + half) / CELL), 0), c1 = Math.min(Math.floor((l.at[0] + l.radius + half) / CELL), along - 1);
-		const r0 = Math.max(Math.floor((l.at[2] - l.radius + half) / CELL), 0), r1 = Math.min(Math.floor((l.at[2] + l.radius + half) / CELL), along - 1);
+		const c0 = Math.floor((l.at[0] - l.radius + half) / CELL), c1 = Math.floor((l.at[0] + l.radius + half) / CELL);
+		const r0 = Math.floor((l.at[2] - l.radius + half) / CELL), r1 = Math.floor((l.at[2] + l.radius + half) / CELL);
 		for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
-			const key = r * along + c;
+			const key = wrap(r) * along + wrap(c);
 			if (!inCell.has(key)) inCell.set(key, []);
 			inCell.get(key).push(k);
 		}

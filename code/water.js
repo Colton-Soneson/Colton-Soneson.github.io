@@ -710,6 +710,8 @@ function getwaterComputeInfo(tileOffsetX = 0, tileOffsetZ = 0, tile = null) {
 	waterCompBuffer.push(Math.sqrt(bands[1][0] * bands[1][1]), Math.sqrt(bands[2][0] * bands[2][1]));
 	// and the heights of the swell and the wind sea out at sea, for the surf zone to hold them to the depth
 	waterCompBuffer.push(settings.waterSwellHeight, spectrum.windSeaHeight);
+	// and where the window of the land in the terrain's water texture is (terrain.js: THE WINDOW)
+	waterCompBuffer.push(terrain.landWindow.x, terrain.landWindow.z);
 	
 		
 	return new Float32Array(waterCompBuffer);

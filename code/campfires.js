@@ -85,7 +85,11 @@ export function addWood(id) {
 survivalNet.on('fireBuild', (m) => { if (Array.isArray(m.at)) build(m.at.map(Number)); });
 survivalNet.on('fireLight', (m) => light(m.id));
 survivalNet.on('fireWood', (m) => addWood(m.id));
-survivalNet.on('fireIs', (m) => { if (!survivalNet.authority()) fires.set(m.id, { id: m.id, at: m.at.map(Number), fuel: Number(m.fuel), since: Number(m.since), lit: !!m.lit, born: Number(m.born) }); });
+const fireFrom = (m) => ({ id: m.id, at: m.at.map(Number), fuel: Number(m.fuel), since: Number(m.since), lit: !!m.lit, born: Number(m.born) });
+survivalNet.on('fireIs', (m) => { if (!survivalNet.authority()) fires.set(m.id, fireFrom(m)); });
+// (the save file's: saveGame.js)
+export const firesRecord = () => [...fires.values()].map(share);
+export function firesAdopt(list) { fires.clear(); for (const f of list ?? []) if (f?.id && Array.isArray(f.at)) fires.set(String(f.id), fireFrom(f)); }
 survivalNet.on('fireDel', (m) => fires.delete(m.id));
 survivalNet.onJoin((id) => { for (const f of fires.values()) survivalNet.sendTo(id, 'fireIs', share(f)); });
 

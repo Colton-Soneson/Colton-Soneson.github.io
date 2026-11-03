@@ -70,9 +70,11 @@ const BUCKET = 32;
 */
 export function planFootpaths(land) {
 	const { worldSize, Z } = land;
+	// (a tile of the world's: its grid round its own middle, and kept off a seam with another land tile: world.js)
+	const ox = land.ox ?? 0, oz = land.oz ?? 0, keep = land.keep ?? (() => true);
 	const C = PATHS.cell, G = Math.round(worldSize / C), side = G + 1, n = side * side, half = worldSize / 2;
-	const xOf = (k) => (k % side) * C - half, zOf = (k) => Math.floor(k / side) * C - half;
-	const nodeAt = (x, z) => Math.min(Math.max(Math.round((z + half) / C), 0), G) * side + Math.min(Math.max(Math.round((x + half) / C), 0), G);
+	const xOf = (k) => ox + (k % side) * C - half, zOf = (k) => oz + Math.floor(k / side) * C - half;
+	const nodeAt = (x, z) => Math.min(Math.max(Math.round((z - oz + half) / C), 0), G) * side + Math.min(Math.max(Math.round((x - ox + half) / C), 0), G);
 
 	// the grid: each point's height, whether it can be walked on, and how much dearer it is to go through
 	const h = new Float32Array(n), dearer = new Float32Array(n), zone = new Uint8Array(n);
@@ -82,7 +84,7 @@ export function planFootpaths(land) {
 		const x = xOf(k), z = zOf(k);
 		h[k] = land.heightAt(x, z);
 		zone[k] = land.zoneAt(x, z);
-		const edge = Math.abs(x) > half - 60 || Math.abs(z) > half - 60;
+		const edge = Math.abs(x - ox) > half - 60 || Math.abs(z - oz) > half - 60 || !keep(x, z);
 		const wet = zone[k] == Z.OCEAN || zone[k] == Z.LAKE || h[k] < 0.3;
 		if (edge || wet || zone[k] == Z.SNOW || zone[k] == Z.BEACH) { dearer[k] = Infinity; continue; }
 		dearer[k] = 1 + (zone[k] == Z.MARSH ? 1.5 : 0) + land.townAt(x, z) * 0.6 + (land.stripAt(x, z) > 0 ? 5 : 0) + (zone[k] == Z.FOREST ? 0.1 : 0);

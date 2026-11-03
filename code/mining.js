@@ -37,10 +37,26 @@ const metre = () => settings.forestUnitsPerMetre;
 const clock = () => atmosphere.sunCycles;
 let builtFor = null, veins = [], mushrooms = [];
 export const miningStats = { veins: 0, mushrooms: 0, ore: 0, rock: 0, stones: 0, picked: 0 };
+// (in a world of tiles, terrain.js: each tile of land's own, numbered by its tile and its place, the home tile's as the one land's. A tile
+//		gone, what was taken from its veins and its mushrooms kept for when it comes again, and in the save file)
+const veinById = new Map(), mushroomById = new Map();
+const minedMemory = new Map();		// a vein's id -> ore left, or a mushroom's ('m' and its id) -> when it is back, while its tile is not here
 function build() {
 	const land = terrain.land;
 	builtFor = land;
-	const m = metre();
+	veins = []; mushrooms = []; veinById.clear(); mushroomById.clear(); minedMemory.clear();
+	for (const here of terrain.landsHere()) buildOf(here.land, here.key);
+}
+terrain.onTiles((added, removed) => {
+	if (builtFor !== terrain.land) return;
+	for (const v of veins) if (removed.includes(v.tile)) { if (v.ore < SIZES[v.size].ore) minedMemory.set(v.id, v.ore); veinById.delete(v.id); }
+	for (const s of mushrooms) if (removed.includes(s.tile)) { if (!mushroomUp(s)) minedMemory.set('m' + s.id, s.backAt); mushroomById.delete(s.id); }
+	veins = veins.filter((v) => !removed.includes(v.tile));
+	mushrooms = mushrooms.filter((s) => !removed.includes(s.tile));
+	for (const here of terrain.landsHere()) if (added.includes(here.key)) buildOf(here.land, here.key);
+});
+function buildOf(land, tile) {
+	const m = metre(), name = (k) => tile == 'land' || tile == '0,0' ? k : tile + ':' + k;
 	// (the lowest of the mountain zone: how high the mountains start, by what is found of them)
 	const spots = land.findSpawnPoints(terrain.ZONE_MOUNTAIN, VEINS * 14, { seed: 7741, minSpacing: 30, maxSlope: 1.5 });
 	const heights = spots.map((s) => land.heightAt(s.x, s.z)).sort((a, b) => a - b), foot = heights[Math.floor(heights.length * 0.08)] ?? 0;
@@ -48,13 +64,17 @@ function build() {
 		const y = land.heightAt(s.x, s.z);
 		return y < foot + VEIN_BAND * m && 1 - (s.normal?.[1] ?? 1) > VEIN_SLOPE * 0.3 && y > settings.waterWorldPosY + 2 * m;
 	});
-	veins = low.slice(0, VEINS).map((s, k) => {
+	const newVeins = low.slice(0, VEINS).map((s, k) => {
 		const r = Math.abs(Math.sin(k * 12.9898) * 43758.5453) % 1, size = r < 0.45 ? 0 : r < 0.82 ? 1 : 2, n = s.normal ?? [0, 1, 0];
 		// (sunk into the slope, tilted with it)
 		const pitch = Math.atan2(Math.hypot(n[0], n[2]), n[1]) * 0.6, heading = Math.atan2(n[0], n[2]);
-		return { id: k, x: s.x, y: land.heightAt(s.x, s.z) - SIZES[size].r * 0.12 * m, z: s.z, size, ore: SIZES[size].ore, heading, pitch, backAt: -1 };
+		return { id: name(k), tile, x: s.x, y: land.heightAt(s.x, s.z) - SIZES[size].r * 0.12 * m, z: s.z, size, ore: SIZES[size].ore, heading, pitch, backAt: -1 };
 	});
-	mushrooms = land.findSpawnPoints(terrain.ZONE_FOREST, MUSHROOMS, { seed: 3313, minSpacing: 14, maxSlope: 0.5 }).map((s, k) => ({ id: k, x: s.x, y: land.heightAt(s.x, s.z), z: s.z, heading: k * 2.1, backAt: -1 }));
+	const newMushrooms = land.findSpawnPoints(terrain.ZONE_FOREST, MUSHROOMS, { seed: 3313, minSpacing: 14, maxSlope: 0.5 }).map((s, k) => ({ id: name(k), tile, x: s.x, y: land.heightAt(s.x, s.z), z: s.z, heading: k * 2.1, backAt: -1 }));
+	for (const v of newVeins) { if (minedMemory.has(v.id)) { v.ore = minedMemory.get(v.id); minedMemory.delete(v.id); } veinById.set(v.id, v); }
+	for (const s of newMushrooms) { if (minedMemory.has('m' + s.id)) { s.backAt = minedMemory.get('m' + s.id); minedMemory.delete('m' + s.id); } mushroomById.set(s.id, s); }
+	veins.push(...newVeins);
+	mushrooms.push(...newMushrooms);
 	miningStats.veins = veins.length;
 	miningStats.mushrooms = mushrooms.length;
 }
@@ -100,7 +120,7 @@ export function pickBlow(eye, f) {
 		weapons.actionSound('knock');
 		dust([v.x, v.y + SIZES[v.size].r * 0.5 * metre(), v.z]);
 		if (!blowOn('v' + v.id, HITS.ore)) { help.toast(`Breaking out ore: ${count} of ${HITS.ore}`, 0.7); return true; }
-		if (survivalNet.authority()) oreGot(hostOre(v.id));
+		if (survivalNet.authority() || survivalNet.away()) oreGot(hostOre(v.id));
 		else survivalNet.send('veinHit', { id: v.id });
 		return true;
 	}
@@ -125,7 +145,7 @@ export function pickBlow(eye, f) {
 	return false;
 }
 function hostOre(id) {
-	const v = veins[id];
+	const v = veinById.get(id);
 	if (!v || !veinOut(v)) return false;
 	v.ore--;
 	if (v.ore <= 0) { v.backAt = clock() + VEIN_BACK; told(); }
@@ -138,7 +158,7 @@ function oreGot(ok) {
 	miningStats.ore++;
 	help.toast('Iron ore', 1.5);
 }
-survivalNet.on('veinHit', (msg, from) => { if (survivalNet.authority() && here()) survivalNet.sendTo(from, 'oreGot', { ok: hostOre(Number(msg.id)) }); });
+survivalNet.on('veinHit', (msg, from) => { if (survivalNet.authority() && here()) survivalNet.sendTo(from, 'oreGot', { ok: hostOre(typeof msg.id == 'string' ? msg.id : Number(msg.id)) }); });
 survivalNet.on('oreGot', (msg) => oreGot(!!msg.ok));
 
 // THE MUSHROOMS (see the top)
@@ -156,7 +176,7 @@ export function mushroomInView() {
 	return best;
 }
 function hostMushroom(id) {
-	const s = mushrooms[id];
+	const s = mushroomById.get(id);
 	if (!s || !mushroomUp(s)) return false;
 	s.backAt = clock() + MUSHROOM_BACK;
 	told();
@@ -172,12 +192,12 @@ function mushroomGot(ok) {
 hunting.onUse(() => {
 	const s = mushroomInView();
 	if (!s) return false;
-	if (survivalNet.authority()) mushroomGot(hostMushroom(s.id));
+	if (survivalNet.authority() || survivalNet.away()) mushroomGot(hostMushroom(s.id));
 	else survivalNet.send('mushroomPick', { id: s.id });
 	return true;
 });
 hunting.addPrompt(() => mushroomInView() ? { name: 'Mushrooms', keys: 'E pick' } : null);
-survivalNet.on('mushroomPick', (msg, from) => { if (survivalNet.authority() && here()) survivalNet.sendTo(from, 'mushroomGot', { ok: hostMushroom(Number(msg.id)) }); });
+survivalNet.on('mushroomPick', (msg, from) => { if (survivalNet.authority() && here()) survivalNet.sendTo(from, 'mushroomGot', { ok: hostMushroom(typeof msg.id == 'string' ? msg.id : Number(msg.id)) }); });
 survivalNet.on('mushroomGot', (msg) => mushroomGot(!!msg.ok));
 hunting.addPrompt(() => {
 	if (!inventory.survivalOn() || !here() || weapons.weaponState.current != 'pickaxe') return null;
@@ -189,12 +209,29 @@ hunting.addPrompt(() => {
 const shareOf = () => ({ veins: veins.filter((v) => v.ore < SIZES[v.size].ore).map((v) => [v.id, v.ore]), gone: mushrooms.filter((s) => !mushroomUp(s)).map((s) => s.id) });
 let toTell = 0;
 function told() { toTell = 0.5; }
-survivalNet.on('landTaken', (msg) => {
-	if (survivalNet.authority() || !here()) return;
+// (the save file's: saveGame.js): the veins worked, and the mushrooms picked (when they come back)
+export const miningRecord = () => ({ veins: [...veins.filter((v) => v.ore < SIZES[v.size].ore).map((v) => [v.id, v.ore]), ...[...minedMemory].filter(([id]) => !String(id).startsWith('m')).map(([id, ore]) => [id, ore])],
+	mushrooms: [...mushrooms.filter((s) => !mushroomUp(s)).map((s) => [s.id, s.backAt]), ...[...minedMemory].filter(([id]) => String(id).startsWith('m')).map(([id, at]) => [String(id).slice(1), at])] });
+// (the host's: the veins and mushrooms a joiner away has kept, for the save, net.js; and a joiner's, of the tiles it is away on)
+export function minesHeard(r) {
+	for (const [id, ore] of r?.veins ?? []) { const v = veinById.get(id); if (v) v.ore = Math.max(0, Number(ore) || 0); else minedMemory.set(id, Math.max(0, Number(ore) || 0)); }
+	for (const [id, backAt] of r?.mushrooms ?? []) { const s = mushroomById.get(id); if (s) s.backAt = Number(backAt) || 0; else minedMemory.set('m' + id, Number(backAt) || 0); }
+}
+export const minesOfTiles = (keys) => ({ veins: veins.filter((v) => keys.includes(v.tile) && v.ore < SIZES[v.size].ore).map((v) => [v.id, v.ore]), mushrooms: mushrooms.filter((s) => keys.includes(s.tile) && !mushroomUp(s)).map((s) => [s.id, s.backAt]) });
+export const miningReady = () => veins.length > 0 || mushrooms.length > 0;
+export function miningAdopt(r) {
 	for (const v of veins) v.ore = SIZES[v.size].ore;
-	for (const [id, ore] of msg.veins ?? []) if (veins[id]) veins[id].ore = Number(ore);
+	for (const [id, ore] of r?.veins ?? []) { const v = veinById.get(id); if (v) v.ore = Math.max(0, Number(ore) || 0); else minedMemory.set(id, Math.max(0, Number(ore) || 0)); }
 	for (const s of mushrooms) s.backAt = -1;
-	for (const id of msg.gone ?? []) if (mushrooms[id]) mushrooms[id].backAt = 1;
+	for (const [id, backAt] of r?.mushrooms ?? []) { const s = mushroomById.get(id); if (s) s.backAt = Number(backAt) || 0; else minedMemory.set('m' + id, Number(backAt) || 0); }
+	told();
+}
+survivalNet.on('landTaken', (msg) => {
+	if (survivalNet.authority() || survivalNet.away() || !here()) return;
+	for (const v of veins) v.ore = SIZES[v.size].ore;
+	for (const [id, ore] of msg.veins ?? []) { const v = veinById.get(id); if (v) v.ore = Number(ore); }
+	for (const s of mushrooms) s.backAt = -1;
+	for (const id of msg.gone ?? []) { const s = mushroomById.get(id); if (s) s.backAt = 1; }
 });
 survivalNet.onJoin((id) => { if (here()) survivalNet.sendTo(id, 'landTaken', shareOf()); });
 

@@ -278,12 +278,14 @@ export function createTerrainSampler(params) {
 			ground that comes from the noise alone
 	*/
 	const SEAM = 1200, OPEN_HOLD = [1000, 2800];
-	const OPEN_COAST = { from: 0.45, wobble: 1100, wobbleLength: 1600, calm: 700 };	// (see openSea)
+	const OPEN_COAST = { from: 0.6, wobble: 1100, wobbleLength: 1600, calm: 700 };	// (see openSea)
 	const world = params.world ? { S: params.world.size, land: new Set(params.world.land) } : null;
 	const isLand = (tx, tz) => world.land.has(tx + ',' + tz);
 	const edgeOfWorld = (lx, lz) => 1.4 * smoothstep(0.62, 1.0, Math.max(Math.abs(lx), Math.abs(lz), Math.hypot(lx, lz) * 0.8) / half);
 	const lonely = new Map();
 	function alone(tx, tz) {
+		// (the home tile always: its coast is the one the world's edge always made, whatever meets it at a corner, world.js)
+		if (tx == 0 && tz == 0) return true;
 		const k = tx + ',' + tz;
 		if (!lonely.has(k)) { let none = true; for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) if ((dx || dz) && isLand(tx + dx, tz + dz)) none = false; lonely.set(k, none); }
 		return lonely.get(k);
@@ -317,6 +319,7 @@ export function createTerrainSampler(params) {
 	function seamFade(x, z) {
 		if (!world) return 1;
 		const tx = Math.round(x / world.S), tz = Math.round(z / world.S), lx = x - tx * world.S, lz = z - tz * world.S;
+		if (tx == 0 && tz == 0) return 1;		// (the home tile: as it always was)
 		let d = Infinity;
 		for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
 			if ((!dx && !dz) || !isLand(tx + dx, tz + dz)) continue;

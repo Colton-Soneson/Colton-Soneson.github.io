@@ -5,7 +5,9 @@
 		HOME		the tile at (0, 0): today's island, made just as it ever was (it has no land round it, so its coast is the one the
 					world's edge always made: terrainGenerator.js, openSea)
 		LAND		LAND tiles in all (home among them), in CONTINENTS: tiles side by side make one land mass across them (a coast only
-					where a land tile meets one that is not land), each continent kept a tile apart from the others. Each land tile has
+					where a land tile meets one that is not land), each continent kept from sharing a side with another (they may meet at
+					a corner, a strait between them), the home island with sea on all four sides (a continent may meet it at a corner), and all of them as near home as that lets them be: each starts on the free tile nearest home (a little
+					at random among the nearest, NEAR), and grows the way home is. Each land tile has
 					its own towns: 0 to 2 (TOWNS: how likely each), the home tile its settings.terrainTownCount
 		SEA			SEA tiles: open sea with a sea bed under it (the shelf and the drop-off of the land beside it, and the deep bed past
 					that), round the continents and in the straits between them, the nearest first
@@ -19,7 +21,8 @@ export const GRID = 12;							// tiles along a side of the world: tx and tz from
 export const LAND = 40, SEA = 30;
 export const CONTINENTS = [4, 8];				// how many continents (the home island one of them)
 const TOWNS = [0.2, 0.4, 0.4];					// of a land tile (not home): no town, one, two
-const SPREAD = 4;								// tiles: the continents' first tiles are kept at least this far apart
+const NEAR = 1.5;								// tiles: how much at random a continent's first tile is, among those nearest home
+const INWARD = 0.8;								// how much a continent grows towards home, against the rest (see layoutWorld)
 
 export const keyOf = (tx, tz) => tx + ',' + tz;
 export const HOME = keyOf(0, 0);
@@ -32,17 +35,18 @@ export function layoutWorld(seed, homeTowns = 2) {
 	const tiles = new Map();
 	const owner = new Map();		// key -> continent
 	const around = (tx, tz, f) => { for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) if (dx || dz) f(tx + dx, tz + dz); };
-	// (a tile can join continent c if it touches none of the others, not even at a corner: so they stay apart)
+	// (a tile can join continent c if it shares no side with another's: they may meet at a corner, where the sea comes in between them as a
+	//		strait (terrainGenerator.js: openSea). The tiles round home are kept clear, but may be touched)
 	const free = (tx, tz, c) => {
 		if (!inside(tx, tz) || owner.has(keyOf(tx, tz))) return false;
-		let ok = true;
-		around(tx, tz, (x, z) => { const o = owner.get(keyOf(x, z)); if (o !== undefined && o !== c) ok = false; });
-		return ok;
+		for (const [x, z] of [[tx + 1, tz], [tx - 1, tz], [tx, tz + 1], [tx, tz - 1]]) { const o = owner.get(keyOf(x, z)); if (o !== undefined && o !== c && o !== -1) return false; }
+		return true;
 	};
+	const fromHome = (tx, tz) => Math.max(Math.abs(tx), Math.abs(tz)) + 0.3 * Math.hypot(tx, tz);
 	// THE HOME island: alone, with nothing round it
 	owner.set(HOME, 0);
 	const continents = [{ id: 0, tiles: [HOME] }];
-	around(0, 0, (x, z) => owner.set(keyOf(x, z), -1));		// (kept clear: no land round it)
+	for (const [x, z] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) owner.set(keyOf(x, z), -1);		// (kept clear: no land sharing a side with it; a continent may meet it at a corner)
 	// the others: how many, how big (at least 3 tiles each), where each starts
 	const count = CONTINENTS[0] - 1 + Math.floor(random() * (CONTINENTS[1] - CONTINENTS[0] + 1));
 	const left = LAND - 1;
@@ -52,13 +56,13 @@ export function layoutWorld(seed, homeTowns = 2) {
 	while (sizes.reduce((a, b) => a + b, 0) > left) sizes[sizes.indexOf(Math.max(...sizes))]--;
 	while (sizes.reduce((a, b) => a + b, 0) < left) sizes[sizes.indexOf(Math.min(...sizes))]++;
 	for (let c = 1; c <= count; c++) {
-		let start = null;
-		for (let tries = 0; tries < 400 && !start; tries++) {
-			const tx = lo + Math.floor(random() * GRID), tz = lo + Math.floor(random() * GRID);
-			const far = continents.every((o) => o.tiles.every((k) => { const [x, z] = k.split(',').map(Number); return Math.max(Math.abs(x - tx), Math.abs(z - tz)) >= SPREAD; }));
-			if (far && free(tx, tz, c)) start = [tx, tz];
+		// (the free tile nearest home, a little at random among the nearest)
+		let start = null, best = Infinity;
+		for (let tz = lo; tz <= hi; tz++) for (let tx = lo; tx <= hi; tx++) {
+			if (!free(tx, tz, c)) continue;
+			const score = fromHome(tx, tz) + random() * NEAR;
+			if (score < best) { best = score; start = [tx, tz]; }
 		}
-		if (!start) for (let tz = lo; tz <= hi && !start; tz++) for (let tx = lo; tx <= hi && !start; tx++) if (free(tx, tz, c)) start = [tx, tz];
 		if (!start) break;
 		const mine = [keyOf(...start)];
 		owner.set(mine[0], c);
@@ -72,7 +76,7 @@ export function layoutWorld(seed, homeTowns = 2) {
 					if (!free(nx, nz, c)) continue;
 					let near = 0;
 					around(nx, nz, (ax, az) => { if (owner.get(keyOf(ax, az)) === c) near++; });
-					options.push({ k: keyOf(nx, nz), w: 1 + near * near + random() * 2 });
+					options.push({ k: keyOf(nx, nz), w: 1 + near * near + random() * 2 - INWARD * fromHome(nx, nz) });
 				}
 			}
 			if (!options.length) break;

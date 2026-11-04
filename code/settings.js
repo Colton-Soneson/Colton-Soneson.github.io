@@ -10,7 +10,7 @@ export const settings = {
     camPosX: 0.0,
     camPosY: 35.0,
     camPosZ: 150.0,
-    camFarPlane: 12000.0,	//far enough to see the other land masses
+    camFarPlane: 20000.0,	//far enough to see the other land masses (the world's continents across the straits: world.js)
     camNearPlane: 1.0,
     gameMode: 'Observe',			//Observe: fly round (cameraControls.js). Hunting (the menu calls it Survival, survival.js): on foot, first person (hunting.js), with boats to sail (boat.js) and the rest from the spawn menu, T (radialMenu.js). Horde: the same, against waves of feral deer (horde.js)
     hordeFirstWave: 10,				//deer in the first round of the Horde game mode
@@ -236,7 +236,7 @@ export const settings = {
 	waterOceanWindSpeed: 11.0,			//the wind over the open sea, metres per second: it blows harder there, with nothing in its way. The wind sea grows with it (JONSWAP): 5 is a gentle breeze, 11 white horses everywhere, 20 a gale. The weather adds to it as it does over the land
 	waterFetch: 300.0,					//kilometres of open water the wind has blown over. Past a few hundred the waves are as big as the wind can make them
 	waterGridSize: 1024.0,
-	waterHorizonFogDistance: 4000.0,	//distance where the water is about two thirds faded into the horizon colour
+	waterHorizonFogDistance: 6000.0,	//distance where the water is about two thirds faded into the horizon colour
 	waterClarityDepth: 2.0,				//depth of water where the sea bed has faded to about a third, fully hidden by 2x this. 0 = opaque water
 	waterFullDepth: 20.0,				//water deeper than this gets the full open ocean waves
 	waterShallowRippleScale: 0.02,		//height of the spikey ripples that replace the waves in shallow water

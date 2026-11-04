@@ -63,6 +63,10 @@ export { TERRAIN_ZONES, ZONE_OCEAN, ZONE_BEACH, ZONE_GRASSLAND, ZONE_FOREST, ZON
 	treasury.js's) is the same whatever tiles are here. A tile's towns fill their places as it comes (each the town its land made: the
 	place takes on all of it) and are emptied again as it goes: an empty one has no buildings, and says its tile and about where it is
 	(approx); one its land found no room for is none. onWindow(fn) is told whenever the window moves (town.js: the grass's mask).
+	THE LAND FAR OFF (farTiles): past where a tile is streamed in (tileLoad), out to FAR_LAND, every land tile is drawn all the same, as its
+	ground alone: made coarse (FAR_CELLS a side, no towns, no paths, no forest), one chunk at the top of its tree (FAR_ROOT), in the window's
+	textures as it is. Nothing else knows of it (it is not one of tiles: the look ups take the sea there). As it comes within tileLoad the
+	whole tile is made as ever, and once its own top of the tree is in, the far one is let go: so there is never a hole where it was.
 	THE WINDOW: the land textures are the same size as ever, but in a world of tiles they hold the tiles' grid points round the camera
 	(landWindow: its middle, moved on once the camera is WINDOW_MOVE from it), each grid point at its place in the world's grid of them
 	modulo the texture's size (so a shader reads it from where a point is in the world, with no middle to know: vfc_grass.js,
@@ -134,6 +138,9 @@ device.queue.writeBuffer(chunkIndexBuffer, 0, chunkIndexData);
 //		how many are kept at the most (more the further it reaches)
 const tileLoad = () => Math.max(settings.worldViewDistance ?? 2500, 500) * settings.forestUnitsPerMetre;
 const TILE_DROP = 4000;
+const FAR_LAND = 22000, FAR_CELLS = 256;		// THE LAND FAR OFF: world units from a tile's edge it is drawn within; its data grid's cells a side
+const farTiles = new Map();					// key -> { key, chunkKey ('far:' and its key), land, params, rooted }
+export const farTilesLoaded = () => [...farTiles.keys()];
 const tilesKept = () => Math.max(6, Math.ceil((2 * tileLoad() / settings.terrainWorldSize + 1) ** 2) + 2);
 const WINDOW_MOVE = 2048;					// world units
 const VOID_DEPTH = 600;						// world units under the sea: the bed of the endless sea, where there is no tile
@@ -277,7 +284,7 @@ try {
 		const made = event.data;
 		const name = chunkName(made.x0, made.z0, made.size);
 		inFlight.delete(name);
-		if (made.generation == landGeneration && made.vertices && !chunks.has(name) && (!world || tiles.has(made.tile))) {
+		if (made.generation == landGeneration && made.vertices && (!chunks.has(name) || chunks.get(name).tile !== made.tile) && (!world || landOfChunkTile(made.tile))) {
 			addChunk(made.x0, made.z0, made.size, made, made.tile);
 		}
 	};
@@ -292,10 +299,15 @@ try {
 }
 
 // the tile a chunk is of (its key; 'land' for the one land of old)
-const chunkTile = (x0, z0, size) => world ? tileAt(x0 + size / 2, z0 + size / 2, settings.terrainWorldSize) : 'land';
+const chunkTile = (x0, z0, size) => {
+	if (!world) return 'land';
+	const key = tileAt(x0 + size / 2, z0 + size / 2, settings.terrainWorldSize);
+	return tiles.has(key) || !farTiles.has(key) ? key : 'far:' + key;
+};
+const landOfChunkTile = (tile) => tile.startsWith('far:') ? farTiles.get(tile.slice(4))?.land : tiles.get(tile)?.land;
 // Makes the chunk covering a square of the land here, and puts its mesh on the GPU
 function buildChunk(x0, z0, size) {
-	const tile = chunkTile(x0, z0, size), of = world ? tiles.get(tile)?.land : land;
+	const tile = chunkTile(x0, z0, size), of = world ? landOfChunkTile(tile) : land;
 	return of ? addChunk(x0, z0, size, of.buildChunk(x0, z0, size, CHUNK_CELLS), tile) : null;
 }
 
@@ -309,9 +321,13 @@ function addChunk(x0, z0, size, mesh, tile = 'land') {
 	device.queue.writeBuffer(vertexBuffer, 0, mesh.vertices);
 
 	const chunk = { x0: x0, z0: z0, size: size, minY: mesh.minY, maxY: mesh.maxY, vertexBuffer: vertexBuffer, lastUsed: chunkFrame, tile };
+	// (one of the same place of another tile's, a far one's: gone for this)
+	const was = chunks.get(chunkName(x0, z0, size));
+	if (was) { was.vertexBuffer.destroy(); destroyBake(was); rootChunks = rootChunks.filter((c) => c !== was); }
 	chunks.set(chunkName(x0, z0, size), chunk);
-	// (a tile's top of the tree, come from the worker: in the tree)
-	if (world && size == settings.terrainWorldSize / ROOT_CHUNKS && !rootChunks.includes(chunk)) rootChunks.push(chunk);
+	// (a tile's top of the tree, come from the worker: in the tree; a far one's is the whole tile)
+	const top = tile.startsWith('far:') ? settings.terrainWorldSize : settings.terrainWorldSize / ROOT_CHUNKS;
+	if (world && size == top && !rootChunks.includes(chunk)) rootChunks.push(chunk);
 	builtSince++;
 	return chunk;
 }
@@ -528,10 +544,22 @@ function startTileWorker() {
 			const r0 = performance.now();
 			const { tile, params, data, error, survey } = event.data;
 			if (survey) { if (tileAsked == tile) tileAsked = null; surveyed(tile, survey); return; }
+			// (THE LAND FAR OFF: its ground alone)
+			if (String(tile).startsWith('far:')) {
+				const key = tile.slice(4);
+				if (tileAsked == key) tileAsked = null;
+				if (error || !world || params.seed !== world.seed || farTiles.has(key) || tiles.has(key)) return;
+				const f = { key, chunkKey: tile, land: wrapLand(params, data), params, rooted: false };
+				farTiles.set(key, f);
+				askFarRoot(f);
+				tileInWindow(world.tiles.get(key));
+				terrainStats.farMs = Math.round(performance.now() - r0);
+				return;
+			}
 			terrainStats.tileReadMs = Math.round(performance.now() - r0);
 			if (tileAsked == tile) tileAsked = null;
 			if (error) { console.warn('A tile of the world could not be made:', tile, error); return; }
-			if (!world || params.seed !== world.seed || tiles.has(tile) || JSON.stringify({ ...params, center: 0, tile: 0, townCount: 0, landingStrip: 0, footpaths: 0, world: 0 }) != tileBase) return;
+			if (!world || params.seed !== world.seed || tiles.has(tile) || JSON.stringify({ ...params, center: 0, tile: 0, townCount: 0, landingStrip: 0, footpaths: 0, world: 0, dataResolution: 0 }) != tileBase) return;
 			const t0 = performance.now(), made = wrapLand(params, data), t1 = performance.now();
 			addTile(tile, made, params);
 			const t2 = performance.now();
@@ -562,13 +590,35 @@ function askRoots(t) {
 	let missing = 0;
 	for (let k = 0; k < ROOT_CHUNKS * ROOT_CHUNKS; k++) {
 		const x0 = cx - half + (k % ROOT_CHUNKS) * size, z0 = cz - half + Math.floor(k / ROOT_CHUNKS) * size, name = chunkName(x0, z0, size);
-		if (chunks.has(name)) continue;
+		if (chunks.get(name)?.tile === t.key) continue;
 		missing++;
 		if (inFlight.has(name)) continue;
 		if (chunkWorker) { inFlight.add(name); chunkWorker.postMessage({ generation: landGeneration, tile: t.key, x0, z0, size, cells: CHUNK_CELLS }); }
 		else buildChunk(x0, z0, size);
 	}
 	t.rooted = missing == 0;
+}
+// THE LAND FAR OFF (see the top): its one chunk at the top of its tree asked for, and the far one let go
+function askFarRoot(f) {
+	const S = settings.terrainWorldSize, [cx, cz] = f.land.center, x0 = cx - S / 2, z0 = cz - S / 2, name = chunkName(x0, z0, S);
+	if (chunks.get(name)?.tile === f.chunkKey) { f.rooted = true; return; }
+	if (inFlight.has(name)) return;
+	if (chunkWorker) { inFlight.add(name); chunkWorker.postMessage({ generation: landGeneration, tile: f.chunkKey, x0, z0, size: S, cells: CHUNK_CELLS }); }
+	else buildChunk(x0, z0, S);
+}
+function dropFar(key) {
+	const f = farTiles.get(key);
+	if (!f) return;
+	farTiles.delete(key);
+	for (const [name, chunk] of [...chunks]) {
+		if (chunk.tile !== f.chunkKey) continue;
+		chunk.vertexBuffer.destroy();
+		destroyBake(chunk);
+		chunks.delete(name);
+	}
+	rootChunks = rootChunks.filter((chunk) => chunk.tile !== f.chunkKey);
+	if (chunkWorker) chunkWorker.postMessage({ drop: f.chunkKey });
+	if (!tiles.has(key)) tileInWindow(world.tiles.get(key));
 }
 function dropTile(key) {
 	tiles.delete(key);
@@ -587,7 +637,7 @@ function dropTile(key) {
 // each frame: the nearest tile wanted and not here asked for, those far off let go, and the window moved on with the camera
 function streamTiles() {
 	const params = getTerrainParams();
-	tileBase = JSON.stringify({ ...params, center: 0, tile: 0, townCount: 0, landingStrip: 0, footpaths: 0, world: 0 });
+	tileBase = JSON.stringify({ ...params, center: 0, tile: 0, townCount: 0, landingStrip: 0, footpaths: 0, world: 0, dataResolution: 0 });
 	let nearest = null, nearestD = Infinity;
 	for (const t of world.tiles.values()) {
 		const d = tileDistance(t), here = tiles.get(t.key);
@@ -595,7 +645,24 @@ function streamTiles() {
 		if (d < tileLoad() && d < nearestD) { nearest = t; nearestD = d; }
 	}
 	for (const t of tiles.values()) if (!t.rooted) askRoots(t);
-	// (nothing wanted near: the next land tile not yet surveyed, see THE SURVEY)
+	// (THE LAND FAR OFF: nothing wanted near, the nearest land tile within FAR_LAND not here either way; those whose own are in, or too far, gone)
+	if (!nearest && tileAsked === null && startTileWorker()) {
+		let far = null, farD = Infinity;
+		for (const key of world.landKeys) {
+			if (tiles.has(key) || farTiles.has(key)) continue;
+			const d = tileDistance(world.tiles.get(key));
+			if (d < FAR_LAND && d < farD) { far = key; farD = d; }
+		}
+		if (far) {
+			tileAsked = far;
+			tileWorker.postMessage({ tile: 'far:' + far, params: { ...tileParams(params, world, far), dataResolution: FAR_CELLS, townCount: 0, footpaths: false, landingStrip: false }, generation: landGeneration });
+		}
+	}
+	for (const f of [...farTiles.values()]) {
+		if (!f.rooted) askFarRoot(f);
+		if ((tiles.get(f.key)?.rooted) || tileDistance(world.tiles.get(f.key)) > FAR_LAND + TILE_DROP) dropFar(f.key);
+	}
+	// (nothing wanted near nor far: the next land tile not yet surveyed, see THE SURVEY)
 	if (!nearest && tileAsked === null && startTileWorker()) {
 		const next = world.landKeys.find((key) => key != HOME && !surveys.has(key) && !tiles.has(key));
 		if (next) { tileAsked = next; tileWorker.postMessage({ tile: next, params: tileParams(params, world, next), survey: true }); }
@@ -688,10 +755,21 @@ function fillJobs(rows) {
 				const tileX = world ? Math.round(x / S) : 0;
 				if (tileX !== lastTile) {
 					lastTile = tileX;
-					T = world ? tiles.get(tileX + ',' + tileZ)?.land ?? null : land;
+					T = world ? tiles.get(tileX + ',' + tileZ)?.land ?? farTiles.get(tileX + ',' + tileZ)?.land ?? null : land;
 					row = T ? Math.round((z - (T.center?.[1] ?? 0) + half) / cell) : -1;
 				}
 				if (!T || row < 0 || row > N - 1) { fields[o] = deep; waterFields[o] = deep; waterFields[o + 1] = 100000; continue; }
+				if (T.points != N) {
+					// (THE LAND FAR OFF: coarser, its nearest grid point's)
+					const n = T.normalAt(x, z), Tc = T.cellSize, Th = (T.points - 1) * Tc / 2, kk = Math.min(Math.max(Math.round((z - T.center[1] + Th) / Tc), 0), T.points - 1) * T.points + Math.min(Math.max(Math.round((x - T.center[0] + Th) / Tc), 0), T.points - 1);
+					fields[o] = waterFields[o] = T.heightAt(x, z);
+					fields[o + 1] = T.covers[kk];
+					fields[o + 2] = n[0];
+					fields[o + 3] = n[2];
+					waterFields[o + 1] = T.shoreDistances[kk];
+					waterFields[o + 2] = T.lakes[kk];
+					continue;
+				}
 				const col = Math.min(Math.max(Math.round((x - (T.center?.[0] ?? 0) + half) / cell), 0), N - 1), k = row * N + col;
 				fields[o] = T.heights[k];
 				// (a town is grassland, round its streets and houses: the grass is kept off those by townMask.js)
@@ -721,6 +799,7 @@ function regenerateTerrain() {
 	const params = getTerrainParams();
 	// (in a world of tiles: the home tile made here, the rest as the camera comes near them)
 	tiles.clear();
+	farTiles.clear();
 	surveys.clear();
 	tileAsked = null;
 	windowAt = null;

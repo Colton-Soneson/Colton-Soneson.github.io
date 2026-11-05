@@ -9,6 +9,7 @@ import { settings } from './settings.js';
 
 import { vf_birds } from '../shaders/js/vf_birds.js'
 import { buildFlightGrid, findFlightPath } from './birdPaths.js'
+import { addJob, SOON } from './jobs.js'
 
 import * as transformations from './transformations.js'
 import * as terrain from './terrain.js'
@@ -371,8 +372,8 @@ function makeFlock() {
 	const over = flockLandHere() ?? { key: 'land', land: terrain.land };
 	flockTile = over.key;
 	flockMiddle = over.land.center ?? [0, 0];
-	flightGrid = buildFlightGrid(over.land, settings.waterWorldPosY);
-	openGround = over.land.findSpawnPoints(terrain.ZONE_GRASSLAND, 40, { seed: 23, minSpacing: 260, near: [flockMiddle[0], flockMiddle[1] - 600], radius: ROAM });
+	flightGrid = flightGridOf(over.land);
+	openGround = openGroundOf(over.land, flockMiddle);
 
 	groups = groups.filter((group) => group.summoned || group.gone);		// (the ones called up stay)
 	const wanted = clamp(Math.round(settings.birdGroups), 0, MAX_GROUPS);
@@ -388,6 +389,31 @@ function makeFlock() {
 		groups.push(group);
 	}
 }
+
+// What the flock needs of a land, worked out once for it: its flight grid (the open ground is findSpawnPoints', which keeps its own).
+//		A tile of land's, as it comes in (jobs.js), so the flock is made at once when the camera gets there
+const flightGrids = new WeakMap();
+function flightGridOf(land) {
+	let kept = flightGrids.get(land);
+	if (!kept || kept.sea !== settings.waterWorldPosY) flightGrids.set(land, kept = { sea: settings.waterWorldPosY, grid: buildFlightGrid(land, settings.waterWorldPosY) });
+	return kept.grid;
+}
+const openGroundOf = (land, middle) => land.findSpawnPoints(terrain.ZONE_GRASSLAND, 40, { seed: 23, minSpacing: 260, near: [middle[0], middle[1] - 600], radius: ROAM });
+const warming = new WeakSet();		// the lands whose places are still being worked out: the flock waits for them (see birdUpdate)
+terrain.onTiles((added) => {
+	for (const key of added) {
+		const here = terrain.world?.tiles.get(key)?.kind == 'land' && terrain.landsHere().find((one) => one.key == key);
+		if (!here) continue;
+		warming.add(here.land);
+		addJob('the birds over ' + key, function* () {
+			try {
+				flightGridOf(here.land);
+				yield;
+				openGroundOf(here.land, here.land.center ?? [0, 0]);
+			} finally { warming.delete(here.land); }
+		}, { key: 'tile ' + key, priority: SOON });
+	}
+});
 
 // Somewhere new for a group to go, and the way there (see THE GROUPS and THE WAY THERE at the top of the file)
 function chooseDestination(group) {
@@ -521,7 +547,9 @@ function advanceBirds(elapsed) {
 	}
 	// (a pair let go goes once it is out of sight, or long after)
 	groups = groups.filter((group) => !group.gone || seconds < group.leaveAt || (seconds < group.leaveAt + 300 && group.birds.some((bird) => Math.hypot(bird.x - settings.camPosX, bird.z - settings.camPosZ) < 400)));
-	const flockHere = terrain.world ? flockLandHere()?.key ?? flockTile : flockTile;
+	// (over a tile whose places are still being worked out, the flock stays where it was a frame or two, until they are: see warming)
+	const overNow = terrain.world ? flockLandHere() : null;
+	const flockHere = terrain.world ? (overNow && !warming.has(overNow.land) ? overNow.key : flockTile) : flockTile;
 	if (terrain.land !== flockLand || flockHere !== flockTile || groups.filter((group) => !group.summoned && !group.gone).length != clamp(Math.round(settings.birdGroups), 0, MAX_GROUPS)) {
 		makeFlock();
 	}

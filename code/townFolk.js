@@ -19,6 +19,7 @@ import { BUILDING_TYPES } from './townLayout.js'
 import { seededRandom } from './terrainGenerator.js'
 import { lightNow } from './lighting.js'
 import * as outfits from './outfits.js'
+import { addJob, SEEN } from './jobs.js'
 
 //the townsfolk fade into the horizon color, read from the sky view LUT (same as everything else)
 import {skyViewLUTtexture} from './atmosphere.js'
@@ -323,10 +324,26 @@ let folk = [];					// { town, ways, building, profession, seed, period, offset, 
 //		its building's place in the town, the same whatever else is here; with the one land of old, its place in the list)
 const FOLK_SLOT = 1000;
 const wayCache = new WeakMap();
+const PLANS_A_FRAME = 12;		// errands planned a frame at the most (see townFolkUpdate)
 const folkNumbered = new Map();
 const personOf = (index) => folkNumbered.get(Number(index));
 let folkRebuild = false;
-terrain.onTiles((added, removed) => { if (terrain.tilesHaveTowns([...added, ...removed])) folkRebuild = true; });
+// (a tile with towns come: the ways about them worked out first, a town a step (jobs.js), and then the people made again, the ways there:
+//		see build. One gone: made again at once)
+terrain.onTiles((added, removed) => {
+	if (!terrain.tilesHaveTowns([...added, ...removed])) return;
+	if (removed.length) folkRebuild = true;
+	if (!added.length) return;
+	addJob('the townsfolk of ' + added.join(' '), function* () {
+		try {
+			for (const town of terrain.land?.towns ?? []) {
+				if (!town.buildings?.length || !added.includes(town.tile) || wayCache.get(town)?.buildings === town.buildings) continue;
+				wayCache.set(town, { buildings: town.buildings, ways: makeWays(town) });
+				yield;
+			}
+		} finally { folkRebuild = true; }
+	}, { key: 'tile ' + added[0], priority: SEEN });
+});
 let builtFor = null;
 const metre = () => settings.forestUnitsPerMetre;
 
@@ -661,15 +678,17 @@ export function townFolkUpdate() {
 	if (terrain.land && (terrain.land !== builtFor || folkRebuild)) { const was = new Map(folk.map((p) => [p.index, { dead: p.dead, turned: p.turned, gone: p.gone }])); const t0 = performance.now(); build(); townFolkStats.buildMs = Math.round(performance.now() - t0); for (const p of folk) Object.assign(p, was.get(p.index) ?? {}); }
 	if (!settings.enableTownFolk) return;
 	const m = metre(), about = playersAbout(), ease = Math.min(elapsed * 6, 1);
-	let out = 0;
+	let out = 0, planned = 0;
 	for (const person of folk) {
 		const time = folkSeconds + person.offset, k = Math.floor(time / person.period);
-		if (k != person.k) { person.k = k; person.errand = planErrand(person, k); }
+		// (a new errand planned when its time comes, but no more than PLANS_A_FRAME a frame: the people of a town that has just come all
+		//		want their first at once. One still to be planned waits indoors a frame or two)
+		if (k != person.k && planned < PLANS_A_FRAME) { person.k = k; person.errand = planErrand(person, k); planned++; }
 		if (person.flee && person.flee.k != k) person.flee = null;		// (out again with the next errand)
 		const f = person.fight;
 		const gone = person.turned || person.gone || person.dead;
 		const place = (gone ? null : person.led ? { ...person.led } : f ? { x: f.x, y: f.y, z: f.z, heading: f.heading, stride: 0, walking: 0 }
-			: person.flee ? fleeingAt(person.flee, folkSeconds - person.flee.t0) : placeAt(person, time - k * person.period)) ?? (gone ? null : indoorSpot?.(person) ?? null);
+			: person.flee ? fleeingAt(person.flee, folkSeconds - person.flee.t0) : person.k == k ? placeAt(person, time - k * person.period) : null) ?? (gone ? null : indoorSpot?.(person) ?? null);
 		person.hit = Math.max(person.hit - elapsed * 2, 0);
 		if (!place) { person.place = null; person.push = [0, 0]; person.look = 0; continue; }
 		out++;

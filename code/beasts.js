@@ -1,4 +1,5 @@
 import { settings } from './settings.js';
+import { stepFor } from './rates.js'
 
 import * as terrain from './terrain.js'
 import * as ballistics from './ballistics.js'
@@ -86,8 +87,10 @@ function makePack(k, land = terrain.land, tile = 'land') {
 terrain.onTiles((added, removed) => {
 	if (builtFor !== terrain.land) return;
 	if (removed.length) { beasts = beasts.filter((b) => !removed.includes(b.tile)); packs = packs.filter((P) => !removed.includes(P.tile)); respawns = respawns.filter((R) => !removed.includes(R.tile)); }
-	for (const { key, land } of terrain.landsHere()) if (added.includes(key)) beastsOf(land, key);
-});
+	const fresh = terrain.landsHere().filter(({ key }) => added.includes(key) && !beasts.some((b) => b.tile == key) && !packs.some((P) => P.tile == key));
+	const made = builtFor;
+	if (fresh.length) return (function* () { for (const { key, land } of fresh) for (const step of beastSteps(land, key)) { step(); yield; if (builtFor !== made) return; } })();
+}, { later: true });
 const landOf = (tile) => terrain.landsHere().find((one) => one.key == tile)?.land ?? terrain.land;
 function build() {
 	builtFor = terrain.land;
@@ -95,10 +98,14 @@ function build() {
 	for (const { key, land } of terrain.landsHere()) beastsOf(land, key);
 }
 function beastsOf(land, tile) {
-	for (let k = 0; k < MOOSE_COUNT; k++) { const b = spawnMoose(k, land); if (b) { b.number = k; b.tile = tile; beasts.push(b); } }
-	for (let k = 0; k < BEAR_COUNT; k++) { const b = spawnBear(k, land); if (b) { b.number = k; b.tile = tile; beasts.push(b); } }
-	for (let k = 0; k < PACKS; k++) makePack(k, land, tile);
+	for (const step of beastSteps(land, tile)) step();
 }
+// (a kind at a time: a tile's own beasts can come a kind a step, see the listener above)
+const beastSteps = (land, tile) => [
+	() => { for (let k = 0; k < MOOSE_COUNT; k++) { const b = spawnMoose(k, land); if (b) { b.number = k; b.tile = tile; beasts.push(b); } } },
+	() => { for (let k = 0; k < BEAR_COUNT; k++) { const b = spawnBear(k, land); if (b) { b.number = k; b.tile = tile; beasts.push(b); } } },
+	() => { for (let k = 0; k < PACKS; k++) makePack(k, land, tile); },
+];
 
 // a step towards a place, round water and cliffs: how far off it still is
 function moveTo(b, to, pace, dt) {
@@ -261,14 +268,23 @@ function advance(dt) {
 	if (!terrain.land || hidden()) return;
 	if (terrain.land !== builtFor) build();
 	now += dt;
+	// (one far from everyone, out past where it is drawn, less often, and its ground and slope with it: rates.js. A pack goes as one)
+	const seen = DRAW * metre();
+	for (const b of beasts) b.step = stilled ? dt : 0;
 	if (!stilled) {
-		for (const b of beasts) if (b.kind != 'wolf') stepLone(b, dt);
-		for (const P of packs) stepPack(P, dt);
+		for (const b of beasts) if (b.kind != 'wolf') { const s = stepFor(b, b.x, b.z, dt, seen); if (s) { stepLone(b, s); b.step = s; } }
+		for (const P of packs) {
+			const lead = beasts.find((b) => b.pack === P), s = stepFor(P, lead?.x ?? P.home[0], lead?.z ?? P.home[1], dt, seen);
+			if (!s) continue;
+			stepPack(P, s);
+			for (const b of beasts) if (b.pack === P) b.step = s;
+		}
 	}
 	for (const b of beasts) {
+		if (!b.step) continue;
 		b.y = deer.groundUnder(b);
 		const fx = Math.sin(b.heading) * 0.9 * metre(), fz = Math.cos(b.heading) * 0.9 * metre();
-		b.slope += (Math.atan2(terrain.land.heightAt(b.x + fx, b.z + fz) - terrain.land.heightAt(b.x - fx, b.z - fz), 1.8 * metre()) - b.slope) * Math.min(dt * 4, 1);
+		b.slope += (Math.atan2(terrain.land.heightAt(b.x + fx, b.z + fz) - terrain.land.heightAt(b.x - fx, b.z - fz), 1.8 * metre()) - b.slope) * Math.min(b.step * 4, 1);
 	}
 	for (const c of corpses) c.t += dt;
 	const lie = settings.gameMode == 'Hunting' ? LIE_SURVIVAL : LIE;

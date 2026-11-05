@@ -35,6 +35,8 @@ import * as atmosphere from './atmosphere.js'
 import * as terrain from './terrain.js'
 import * as forest from './forest.js'
 import * as boulders from './boulders.js'
+import * as jobs from './jobs.js'
+import * as rates from './rates.js'
 import * as wind from './wind.js'
 import * as clouds from './clouds.js'
 import * as particles from './particles.js'
@@ -482,6 +484,8 @@ export function updateRotatingCubePass() {
 	//procedural land: regenerates if its settings changed (which can move the buildings), so before the model uniforms
 	profiler.cpuMark('Terrain Update');
 	terrain.terrainUpdate();
+	profiler.cpuMark('Jobs');
+	jobs.runJobs();				//(and a little of the work that can wait: what a tile of the world brings with it, see jobs.js)
 	profiler.cpuMark('Forest Update');
 	forest.forestUpdate();		//after the land: the forest is planted again whenever the land under it changes
 	profiler.cpuMark('Boulders, Particles, Birds Update');
@@ -491,6 +495,7 @@ export function updateRotatingCubePass() {
 	smoke.smokeUpdate();		//(the smoke, the fire and the dust drift on)
 	townFolk.townFolkUpdate();	//and their people about their day
 	profiler.cpuMark('Particles, Birds, Deer, Horde');
+	rates.rateFrame();				//(where everyone is: what is far from all of them is moved on less often, see rates.js)
 	particles.particleUpdate();		//what the leaves, the spray and the rain all need to know this frame
 	birds.birdUpdate();				//the hawks fly on
 	geese.geeseUpdate();			//and the geese

@@ -13,6 +13,7 @@ import { vf_town, TOWN_MATERIALS as MAT } from '../shaders/js/vf_town.js'
 
 import * as transformations from './transformations.js'
 import * as terrain from './terrain.js'
+import { addJob, SEEN } from './jobs.js'
 import { BUILDING_TYPES, VARIANTS, variantSize, FLOOR_HEIGHT, GROUND_FLOOR } from './townLayout.js'
 import { buildingMeshes, townMeshBuilder } from './townBuildings.js'
 import { planOf } from './interiorMeshes.js'
@@ -273,9 +274,13 @@ export function wallOnLine(a, b) {
 	return false;
 }
 
-function makeBoxes(towns, towers = [], groundAt = null) {
-	const list = [];
-	const add = (x, z, half, bottom, top) => list.push(x, z, half, bottom, top);
+// What stands in the way of these houses and towns, made into `into` as { boxes, boxHouse, buckets }: in steps (a generator), the buckets
+//		BOX_STEP boxes a step. Nothing it makes is looked at until it is all done and put in the old ones' place (see buildSteps). The
+//		boxes of each house and town are kept as they are made, and copied in (houseBoxes, townBoxes)
+const BOX_STEP = 20000;
+function* makeBoxSteps(houseList, towns, towers = [], groundAt = null, into = {}) {
+	const legs = [];
+	const add = (x, z, half, bottom, top) => legs.push(x, z, half, bottom, top);
 	// (the fire tower's legs)
 	for (const [x, z] of towers) {
 		const M = settings.forestUnitsPerMetre, y0 = groundAt(x, z);
@@ -284,85 +289,112 @@ function makeBoxes(towns, towers = [], groundAt = null) {
 			add(lx, lz, 0.25 * M, groundAt(lx, lz) - M, y0 + TOWER.floor * M);
 		}
 	}
-	for (const h of houses) {
-		const b = h.building, c = Math.cos(b.yaw), s = Math.sin(b.yaw);
-		// round its walls: small squares along them, a gap at each door
-		const plan = planOf(b.type, b.variant ?? 0);
-		const hw = b.width / 2 - WALL.inset, hd = b.depth / 2 - WALL.inset, step = WALL.step, half = WALL.half;
-		const first = list.length / 5;
-		const at = (u, w, bottom, top) => add(b.x + u * c + w * s, b.z - u * s + w * c, half, bottom, top);
-		for (let u = -hw; u <= hw + 0.01; u += step) {
-			at(u, -hd, b.footing, b.y + h.height);
-			if (!plan.doors.some((D) => Math.abs(u - D.x) < D.w / 2 + half)) at(u, hd, b.footing, b.y + h.height);
-		}
-		for (let w = -hd + step; w <= hd - step + 0.01; w += step) { at(-hw, w, b.footing, b.y + h.height); at(hw, w, b.footing, b.y + h.height); }
-		// the walls between its rooms, with their doorways
-		for (const [x0, z0, x1, z1] of plan.walls) {
-			const n = Math.max(Math.ceil(Math.hypot(x1 - x0, z1 - z0) / step), 1);
-			for (let k = 0; k <= n; k++) {
-				const u = x0 + (x1 - x0) * k / n, w = z0 + (z1 - z0) * k / n;
-				if (plan.gaps.some((g) => g.along == 'x' ? Math.abs(w - g.at) < 0.4 && Math.abs(u - g.c) < g.w / 2 + half : Math.abs(u - g.at) < 0.4 && Math.abs(w - g.c) < g.w / 2 + half)) continue;
-				at(u, w, b.y, b.y + plan.ceil);
-			}
-		}
-		// what else it has outside to stand on or walk round (the library's steps, a chapel's tower)
-		for (const S of plan.solids) for (let u = S.x0 + 0.4; u <= S.x1; u += 0.7) for (let w = S.z0 + 0.4; w <= S.z1; w += 0.7) add(b.x + u * c + w * s, b.z - u * s + w * c, 0.5, b.footing, b.y + S.top);
-		h.boxes = [first, list.length / 5];
+	const parts = [new Float32Array(legs)];
+	let count = legs.length / 5;
+	for (const h of houseList) {
+		const own = h.building.boxList ??= new Float32Array(houseBoxes(h));
+		h.boxes = [count, count + own.length / 5];
+		count += own.length / 5;
+		parts.push(own);
 	}
 	for (const town of towns) {
-		for (const wall of town.walls) {
-			for (let j = 0; j < wall.points.length - 1; j++) {
-				const [ax, az, at, ab] = wall.points[j], [bx, bz, bt, bb] = wall.points[j + 1];
-				const n = Math.max(Math.ceil(Math.hypot(bx - ax, bz - az) / 1.2), 1);
-				for (let k = 0; k < n; k++) add(ax + (bx - ax) * k / n, az + (bz - az) * k / n, 0.65, Math.min(ab, bb), at + (bt - at) * k / n);
-			}
-		}
-		for (const pier of [town.pier, town.dock]) {
-			if (!pier) continue;
-			const { a, b, width } = pier, len = Math.hypot(b[0] - a[0], b[2] - a[2]);
-			for (let s = 0; s <= len; s += 2.5) {
-				for (const side of [-1, 0, 1]) {
-					const ox = -(b[2] - a[2]) / len * side * width / 3, oz = (b[0] - a[0]) / len * side * width / 3;
-					add(a[0] + (b[0] - a[0]) * s / len + ox, a[2] + (b[2] - a[2]) * s / len + oz, 1.4, a[1] - 0.6, a[1]);
-				}
-			}
-		}
-		for (const b of town.bridges ?? []) {
-			// the deck, in squares down its middle (stood on), and its parapets
-			const P = b.points;
-			for (let j = 0; j < P.length - 1; j++) {
-				const [ax, ay, az] = P[j], [bx, by, bz] = P[j + 1], len = Math.hypot(bx - ax, bz - az) || 1;
-				const ox = -(bz - az) / len, oz = (bx - ax) / len, n = Math.max(Math.ceil(len / 2.5), 1);
-				for (let k = 0; k < n; k++) {
-					const f = (k + 0.5) / n, x = ax + (bx - ax) * f, y = ay + (by - ay) * f, z = az + (bz - az) * f;
-					add(x, z, b.width * 0.36, y - 1.0, y);
-					for (const side of [1, -1]) add(x + ox * side * (b.width / 2 + 0.3), z + oz * side * (b.width / 2 + 0.3), 0.4, y - 1.0, y + 1.1);
-				}
-			}
-		}
-		for (const [x, y, z] of town.lamps) add(x, z, 0.35, y, y + 8);
+		if (town.boxList?.buildings !== town.buildings) town.boxList = { buildings: town.buildings, list: new Float32Array(townBoxes(town)) };
+		parts.push(town.boxList.list);
+		count += town.boxList.list.length / 5;
 	}
-	boxes = new Float32Array(list);
-	boxHouse = new Int32Array(boxes.length / 5).fill(-1);
-	houses.forEach((h, i) => { for (let k = h.boxes[0]; k < h.boxes[1]; k++) boxHouse[k] = i; });
-	boxBuckets = new Map();
-	for (let k = 0; k < boxes.length / 5; k++) {
+	const boxes = new Float32Array(count * 5);
+	let at = 0;
+	for (const part of parts) { boxes.set(part, at); at += part.length; }
+	const boxHouse = new Int32Array(count).fill(-1);
+	houseList.forEach((h, i) => { for (let k = h.boxes[0]; k < h.boxes[1]; k++) boxHouse[k] = i; });
+	const buckets = new Map();
+	for (let k = 0; k < count; k++) {
 		const key = Math.floor(boxes[k * 5] / BOX_BUCKET) * 100000 + Math.floor(boxes[k * 5 + 1] / BOX_BUCKET);
-		if (!boxBuckets.has(key)) boxBuckets.set(key, []);
-		boxBuckets.get(key).push(k);
+		if (!buckets.has(key)) buckets.set(key, []);
+		buckets.get(key).push(k);
+		if (k % BOX_STEP == BOX_STEP - 1) yield;
 	}
-	townStats.boxes = boxes.length / 5;
+	Object.assign(into, { boxes, boxHouse, buckets });
 }
+// a house's boxes, and a town's own (its walls, its pier and dock, its bridges, its lamps), for makeBoxSteps: x, z, half, bottom, top, one
+//		after another. Worked out once for a building and for a town's buildings (the boxes are the same whenever it is made again)
+function houseBoxes(h) {
+	const list = [];
+	const add = (x, z, half, bottom, top) => list.push(x, z, half, bottom, top);
+	const b = h.building, c = Math.cos(b.yaw), s = Math.sin(b.yaw);
+	// round its walls: small squares along them, a gap at each door
+	const plan = planOf(b.type, b.variant ?? 0);
+	const hw = b.width / 2 - WALL.inset, hd = b.depth / 2 - WALL.inset, step = WALL.step, half = WALL.half;
+	const at = (u, w, bottom, top) => add(b.x + u * c + w * s, b.z - u * s + w * c, half, bottom, top);
+	for (let u = -hw; u <= hw + 0.01; u += step) {
+		at(u, -hd, b.footing, b.y + h.height);
+		if (!plan.doors.some((D) => Math.abs(u - D.x) < D.w / 2 + half)) at(u, hd, b.footing, b.y + h.height);
+	}
+	for (let w = -hd + step; w <= hd - step + 0.01; w += step) { at(-hw, w, b.footing, b.y + h.height); at(hw, w, b.footing, b.y + h.height); }
+	// the walls between its rooms, with their doorways
+	for (const [x0, z0, x1, z1] of plan.walls) {
+		const n = Math.max(Math.ceil(Math.hypot(x1 - x0, z1 - z0) / step), 1);
+		for (let k = 0; k <= n; k++) {
+			const u = x0 + (x1 - x0) * k / n, w = z0 + (z1 - z0) * k / n;
+			if (plan.gaps.some((g) => g.along == 'x' ? Math.abs(w - g.at) < 0.4 && Math.abs(u - g.c) < g.w / 2 + half : Math.abs(u - g.at) < 0.4 && Math.abs(w - g.c) < g.w / 2 + half)) continue;
+			at(u, w, b.y, b.y + plan.ceil);
+		}
+	}
+	// what else it has outside to stand on or walk round (the library's steps, a chapel's tower)
+	for (const S of plan.solids) for (let u = S.x0 + 0.4; u <= S.x1; u += 0.7) for (let w = S.z0 + 0.4; w <= S.z1; w += 0.7) add(b.x + u * c + w * s, b.z - u * s + w * c, 0.5, b.footing, b.y + S.top);
+	return list;
+}
+function townBoxes(town) {
+	const list = [];
+	const add = (x, z, half, bottom, top) => list.push(x, z, half, bottom, top);
+	for (const wall of town.walls) {
+		for (let j = 0; j < wall.points.length - 1; j++) {
+			const [ax, az, at, ab] = wall.points[j], [bx, bz, bt, bb] = wall.points[j + 1];
+			const n = Math.max(Math.ceil(Math.hypot(bx - ax, bz - az) / 1.2), 1);
+			for (let k = 0; k < n; k++) add(ax + (bx - ax) * k / n, az + (bz - az) * k / n, 0.65, Math.min(ab, bb), at + (bt - at) * k / n);
+		}
+	}
+	for (const pier of [town.pier, town.dock]) {
+		if (!pier) continue;
+		const { a, b, width } = pier, len = Math.hypot(b[0] - a[0], b[2] - a[2]);
+		for (let s = 0; s <= len; s += 2.5) {
+			for (const side of [-1, 0, 1]) {
+				const ox = -(b[2] - a[2]) / len * side * width / 3, oz = (b[0] - a[0]) / len * side * width / 3;
+				add(a[0] + (b[0] - a[0]) * s / len + ox, a[2] + (b[2] - a[2]) * s / len + oz, 1.4, a[1] - 0.6, a[1]);
+			}
+		}
+	}
+	for (const b of town.bridges ?? []) {
+		// the deck, in squares down its middle (stood on), and its parapets
+		const P = b.points;
+		for (let j = 0; j < P.length - 1; j++) {
+			const [ax, ay, az] = P[j], [bx, by, bz] = P[j + 1], len = Math.hypot(bx - ax, bz - az) || 1;
+			const ox = -(bz - az) / len, oz = (bx - ax) / len, n = Math.max(Math.ceil(len / 2.5), 1);
+			for (let k = 0; k < n; k++) {
+				const f = (k + 0.5) / n, x = ax + (bx - ax) * f, y = ay + (by - ay) * f, z = az + (bz - az) * f;
+				add(x, z, b.width * 0.36, y - 1.0, y);
+				for (const side of [1, -1]) add(x + ox * side * (b.width / 2 + 0.3), z + oz * side * (b.width / 2 + 0.3), 0.4, y - 1.0, y + 1.1);
+			}
+		}
+	}
+	for (const [x, y, z] of town.lamps) add(x, z, 0.35, y, y + 8);
+	return list;
+}
+
 
 //-------------------------------EACH NEW LAND-------------------------------
 function build() {
+	for (const step of buildSteps()) ;		// (all of it now: a new land)
+}
+// The towns made again, in steps, each of which leaves them as they should be: for a tile come or gone, a step a frame or so (a job:
+//		jobs.js, see townUpdate). The ground work of each new tile; the houses and what stands in the way (each house's worked out once,
+//		see placeOf and houseBoxes); the grass's mask; the lamps
+function* buildSteps() {
 	const land = terrain.land;
 	if (builtFor !== land) remembered.clear();		// (a new land: none of it hurt)
 	builtFor = land;
 	rebuildSoon = false;
 	const towns = (land.towns ?? []).filter((t) => t.buildings.length);
-	// (made again for a tile that came or went: the damage as it was, the houses here and those that were)
-	const kept = new Map(remembered);
 	// (the home land's made here once a land; each other tile's made with it, off the main thread: tileWorker.js)
 	if (!ground || groundFor !== land) {
 		const home = terrain.world ? towns.filter((t) => t.tile == '0,0') : towns;
@@ -372,22 +404,54 @@ function build() {
 		groundFor = land;
 	}
 	for (const [key, g] of [...tileGrounds]) if (!terrain.tilesLoaded().some((t) => t.key == key)) { g.buffer.destroy(); tileGrounds.delete(key); }
-	for (const t of terrain.tilesLoaded()) if (t.key != '0,0' && t.land.townGround && !tileGrounds.has(t.key)) tileGrounds.set(t.key, meshBuffer('town ground work, ' + t.key, t.land.townGround));
+	for (const t of terrain.tilesLoaded()) {
+		if (t.key == '0,0' || !t.land.townGround || tileGrounds.has(t.key)) continue;
+		tileGrounds.set(t.key, meshBuffer('town ground work, ' + t.key, t.land.townGround));
+		yield;
+		if (terrain.land !== land) return;
+	}
 	townStats.groundTriangles = [ground, ...tileGrounds.values()].reduce((n, g) => n + g.vertices / 3, 0);
-	houses = [];
-	byNumber.clear();
+	// (a new town's houses worked out first, a town a step: their matrices and their boxes, so the step that makes them all is a quick one)
+	for (const town of towns) {
+		let fresh = false;
+		for (const b of town.buildings) {
+			if (b.placed && b.boxList) continue;
+			const mesh = houseBuffers[b.type][b.variant ?? 0];
+			placeOf(b, mesh);
+			b.boxList ??= new Float32Array(houseBoxes({ building: b, height: mesh.height }));
+			fresh = true;
+		}
+		if (town.boxList?.buildings !== town.buildings) { town.boxList = { buildings: town.buildings, list: new Float32Array(townBoxes(town)) }; fresh = true; }
+		if (fresh) {
+			yield;
+			if (terrain.land !== land) return;
+		}
+	}
+	// the houses, and what stands in the way of them, made new beside the old ones (in steps: see makeBoxSteps)
+	const made = [], numbered = new Map(), madeBoxes = {};
 	for (const town of towns) {
 		for (const [k, b] of town.buildings.entries()) {
 			const mesh = houseBuffers[b.type][b.variant ?? 0];
-			const matrix = mat4.rotateY(mat4.translation([b.x, b.y, b.z]), b.yaw);
-			const footingHeight = Math.max(b.y - b.footing, 0.5);
-			const footing = mat4.scale(mat4.rotateY(mat4.translation([b.x, b.footing, b.z]), b.yaw), [b.width - 0.1, footingHeight + 0.4, b.depth - 0.1]);
-			const rubble = mat4.scale(mat4.rotateY(mat4.translation([b.x, b.y, b.z]), b.yaw), [b.width, Math.min(Math.max(mesh.height / 14, 0.8), 2), b.depth]);
-			const index = terrain.world ? (town.slot ?? 0) * HOUSE_SLOT + k : houses.length;
-			houses.push({ building: b, town, matrix, footing: b.onPier ? null : footing, height: mesh.height, mesh, index, damage: 0, rubble, smokeDue: 0, downAt: -1, boxes: [0, 0] });		// (the shack stands on its own posts)
-			byNumber.set(index, houses[houses.length - 1]);
+			const { matrix, footing, rubble } = placeOf(b, mesh);
+			const index = terrain.world ? (town.slot ?? 0) * HOUSE_SLOT + k : made.length;
+			made.push({ building: b, town, matrix, footing: b.onPier ? null : footing, height: mesh.height, mesh, index, damage: 0, rubble, smokeDue: 0, downAt: -1, boxes: [0, 0] });		// (the shack stands on its own posts)
+			numbered.set(index, made[made.length - 1]);
 		}
 	}
+	for (const step of makeBoxSteps(made, towns, land.fireTowers, land.groundAt, madeBoxes)) {
+		yield;
+		if (terrain.land !== land) return;
+	}
+	// and then in the old ones' place, all of it at once. (Made again for a tile that came or went: the damage as it was, the houses here
+	//		and those that were)
+	const kept = new Map(remembered);
+	houses = made;
+	byNumber.clear();
+	for (const [index, h] of numbered) byNumber.set(index, h);
+	boxes = madeBoxes.boxes;
+	boxHouse = madeBoxes.boxHouse;
+	boxBuckets = madeBoxes.buckets;
+	townStats.boxes = boxes.length / 5;
 	dirty.clear();
 	const needed = (houses.length * 2 + 4) * INSTANCE_FLOATS;
 	if (instanceData.length < needed) {
@@ -395,16 +459,32 @@ function build() {
 		instanceBuffer.destroy();
 		instanceBuffer = device.createBuffer({ label: "town instances", size: instanceData.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
 	}
-	makeBoxes(towns, land.fireTowers, land.groundAt);
-	setTownMask(...windowed(maskOf(towns, land.strip, land.paths)));
 	// (what the host said of them before they were here, and what they had before they were made again)
 	for (const [i, d] of [...kept, ...heard]) if (houseNumbered(i)) setDamage(houseNumbered(i), d, true);
 	heard.clear();
+	yield;
+	if (terrain.land !== land) return;
+	setTownMask(...windowed(maskOf(towns, land.strip, land.paths)));
+	yield;
+	if (terrain.land !== land) return;
 	// the lamps light what is round them by night (pointLights.js): from the lantern, warm, about 12 metres out
 	setStillLights('town', towns.flatMap((t) => t.lamps.map(([x, y, z]) => ({ at: [x, y + 6.9, z], radius: 22, colour: [1.0, 0.7, 0.4], strength: 4.0 }))));
 	townStats.towns = towns.length;
 	townStats.houses = houses.length;
 	townStats.lamps = towns.reduce((n, t) => n + t.lamps.length, 0);
+}
+
+// a house's matrices: where it stands, its footing (the plinth down to the ground) and its heap of rubble. Worked out once for a building
+function placeOf(b, mesh) {
+	if (!b.placed) {
+		const footingHeight = Math.max(b.y - b.footing, 0.5);
+		b.placed = {
+			matrix: mat4.rotateY(mat4.translation([b.x, b.y, b.z]), b.yaw),
+			footing: mat4.scale(mat4.rotateY(mat4.translation([b.x, b.footing, b.z]), b.yaw), [b.width - 0.1, footingHeight + 0.4, b.depth - 0.1]),
+			rubble: mat4.scale(mat4.rotateY(mat4.translation([b.x, b.y, b.z]), b.yaw), [b.width, Math.min(Math.max(mesh.height / 14, 0.8), 2), b.depth]),
+		};
+	}
+	return b.placed;
 }
 
 // where the grass does not grow (townMask.js): the roads and walls a little wider than they are drawn, under the houses and lamps
@@ -430,10 +510,12 @@ function maskOf(towns, strip, paths) {
 }
 
 let lastTime = performance.now();
+let building = null;		// the job making the towns again for a tile come or gone, while it is going (see buildSteps)
 export function townUpdate() {
 	const now = performance.now(), dt = Math.min((now - lastTime) / 1000, 0.1);
 	lastTime = now;
-	if (terrain.land && (terrain.land !== builtFor || rebuildSoon)) { const t0 = performance.now(); build(); townStats.buildMs = Math.round(performance.now() - t0); }
+	if (terrain.land && terrain.land !== builtFor) { const t0 = performance.now(); build(); townStats.buildMs = Math.round(performance.now() - t0); }
+	else if (terrain.land && rebuildSoon && !building) building = addJob('the towns, made again', function* () { try { yield* buildSteps(); } finally { building = null; } }, { priority: SEEN });
 	if (settings.enableTerrain) burning(dt);
 }
 

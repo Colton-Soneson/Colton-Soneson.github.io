@@ -110,10 +110,12 @@ function updateLeafLists() {
 
 	const sources = [], obstacles = [];
 	const metre = settings.forestUnitsPerMetre;
+	// (only the trees and the boulders in the squares of ground round the camera are looked at: forest.js and boulders.js keep them
+	//		sorted into those. It was every one there is, each time the camera had gone 25 units: flying fast, every frame)
 	if (settings.enableForest) {
-		for (const tree of forest.trees) {
+		forest.treesAround(camera[0], camera[1], Math.max(SOURCE_DISTANCE, OBSTACLE_DISTANCE), (tree) => {
 			if (!tree || tree.dead || !tree.height) {
-				continue;
+				return;
 			}
 			const away = Math.hypot(tree.x - camera[0], tree.z - camera[1]);
 			// leaves come off any tree with a crown to speak of. The broadleaves (oak 2, birch 3) shed far more than the conifers
@@ -124,16 +126,16 @@ function updateLeafLists() {
 			if (away < OBSTACLE_DISTANCE) {
 				obstacles.push([tree.x, tree.z, Math.max(0.018 * tree.height, 0.15 * metre), tree.y + 0.45 * tree.height, away]);
 			}
-		}
+		});
 	}
 	if (settings.enableBoulders) {
 		const places = boulders.boulderPlaces();
-		for (let i = 0; i < places.length; i += BOULDER_FLOATS) {
+		boulders.boulderCellsAround(camera[0], camera[1], OBSTACLE_DISTANCE, (i) => {
 			const away = Math.hypot(places[i] - camera[0], places[i + 2] - camera[1]);
 			if (away < OBSTACLE_DISTANCE) {
 				obstacles.push([places[i], places[i + 2], 0.5 * places[i + 3], places[i + 1] + 0.7 * places[i + 3], away]);
 			}
-		}
+		});
 	}
 	// the buildings, each about as wide and as tall as this
 	const buildings = { Lighthouse: [7, 46], IslandHouse: [10, 14], Bench: [2.5, 3] };

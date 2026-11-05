@@ -1,4 +1,5 @@
 import { settings } from './settings.js';
+import { stepFor } from './rates.js'
 
 import * as terrain from './terrain.js'
 import * as ballistics from './ballistics.js'
@@ -66,8 +67,8 @@ function newRabbit(home, x = home[0], z = home[1]) {
 terrain.onTiles((added, removed) => {
 	if (builtFor !== terrain.land) return;
 	if (removed.length) { rabbits = rabbits.filter((r) => !removed.includes(r.tile)); respawns = respawns.filter((r) => !removed.includes(r.tile)); }
-	for (const { key, land } of terrain.landsHere()) if (added.includes(key)) rabbitsOf(land, key);
-});
+	for (const { key, land } of terrain.landsHere()) if (added.includes(key) && !rabbits.some((r) => r.tile == key)) rabbitsOf(land, key);
+}, { later: true });
 function build() {
 	builtFor = terrain.land;
 	rabbits = []; corpses = []; respawns = [];
@@ -92,13 +93,16 @@ function hopTowards(r, to, pace, dt) {
 	r.hop += step / (HOP_LENGTH * m) * Math.PI;
 	return far - step;
 }
-function advance(dt) {
+function advance(frameDt) {
 	if (followed) { rabbitStats.rabbits = followed.filter((o) => o.alive).length; return; }
 	if (!terrain.land || hidden()) return;
 	if (terrain.land !== builtFor) build();
-	clock += dt;
+	clock += frameDt;
 	const m = metre(), traps = loot.trapList().filter((c) => !loot.trapSprung(c));
 	for (const r of [...rabbits]) {
+		// (one far from everyone, out past where it is drawn, less often: rates.js)
+		const dt = stepFor(r, r.x, r.z, frameDt, DRAW * m);
+		if (!dt) continue;
 		// a snare (see the top)
 		r.look -= dt;
 		if (r.look <= 0) {
@@ -141,7 +145,7 @@ function advance(dt) {
 		}
 		r.y = deer.groundUnder(r);
 	}
-	for (const c of corpses) c.t += dt;
+	for (const c of corpses) c.t += frameDt;
 	corpses = corpses.filter((c) => c.t < (settings.gameMode == 'Hunting' ? LIE_SURVIVAL : LIE));
 	while (respawns.length && respawns[0].at <= clock) {
 		const { home, tile } = respawns.shift();

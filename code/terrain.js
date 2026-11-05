@@ -9,6 +9,7 @@ import { generateTerrain, chunkIndices, wrapLand } from './terrainGenerator.js'
 import { layoutWorld, tileParams, tileAt, HOME, GRID } from './world.js'
 import { TERRAIN_ZONES, ZONE_OCEAN, ZONE_BEACH, ZONE_GRASSLAND, ZONE_FOREST, ZONE_MOUNTAIN, ZONE_SNOW, ZONE_LAKE, ZONE_MARSH, ZONE_TOWN } from './terrainGenerator.js'
 import { FOREST_THRESHOLD, MOUNTAIN_THRESHOLD } from './terrainGenerator.js'
+import { addJob, cancelJobs, LIVES } from './jobs.js'
 
 import { v_terrainDepth } from '../shaders/js/vf_terrain.js'
 import { vf_terrain } from '../shaders/js/vf_terrain.js'
@@ -148,8 +149,13 @@ export let world = null;					// the world's layout (world.js); null with the one
 const tiles = new Map();					// key -> { key, kind, land, params, usedAt }
 export const tilesLoaded = () => [...tiles.values()];
 export const tileLand = (x, z) => world ? tiles.get(tileAt(x, z, settings.terrainWorldSize))?.land ?? null : land;
-const tileListeners = [];
-export function onTiles(fn) { tileListeners.push(fn); }
+const tileListeners = [];		// { fn, later }
+// told of the tiles that come and go: fn(added, removed), their keys. later: told of the new ones a little after, from the jobs (jobs.js),
+//		one listener a step, so that a tile coming in is not all of its work in one frame (a tile that goes is told of at once, and what
+//		was still to be done for it dropped). A listener that asks for later is told of each new tile once, but has to take being told of
+//		one it already has (it was made again, all of it, in between). It may hand back a generator, gone on with a step at a time: each
+//		step has to see that nothing was made again in between
+export function onTiles(fn, { later = false } = {}) { tileListeners.push({ fn, later }); }
 // what more is made with a tile, off the main thread (tileWorker.js): forest.js's trees ({ forest: () => its planting })
 export const tileExtras = {};
 export const landWindow = { x: 0, z: 0 };
@@ -528,7 +534,23 @@ function surveyed(key, list) {
 	for (const fn of surveyListeners) fn(key, list);
 }
 export const tilesHaveTowns = (keys) => keys.some((key) => townSlots.some((t) => t.tile === key && !t.none));
-function tellTiles(added, removed) { for (const fn of tileListeners) fn(added, removed); }
+// (and the work still waiting for a tile that has gone dropped: jobs.js, the jobs handed in with its key, 'tile ' and it)
+function tellTiles(added, removed) {
+	for (const key of removed) cancelJobs('tile ' + key);
+	for (const { fn, later } of tileListeners) {
+		if (!later) fn(added, removed);
+		else if (removed.length) fn([], removed);
+	}
+	const laters = tileListeners.filter((one) => one.later);
+	// (one that hands back a generator is gone on with a step at a time: see onTiles)
+	if (added.length && laters.length) addJob('what comes with ' + added.join(' '), function* () {
+		for (const { fn } of laters) {
+			const more = fn(added, []);
+			if (more && typeof more.next == 'function') yield* more;
+			yield;
+		}
+	}, { key: 'tile ' + added[0], priority: LIVES });
+}
 // how far a tile's square is from the camera (world units, 0 inside it)
 function tileDistance(t) {
 	const S = settings.terrainWorldSize, h = S / 2;
@@ -801,6 +823,7 @@ function regenerateTerrain() {
 	tiles.clear();
 	farTiles.clear();
 	surveys.clear();
+	cancelJobs((key) => typeof key == 'string' && key.startsWith('tile '));	// (what was waiting for the tiles of the land before)
 	tileAsked = null;
 	windowAt = null;
 	windowJobs = [];

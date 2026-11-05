@@ -198,8 +198,11 @@ export function sproutChance(speciesIndex, where, shade) {
 		params				the planting params (spacing, unitsPerMetre, maxTrees...)
 		wind				[x, z]
 		makeTree, treeRoom	from forestGenerator.js
+		tileOf(x, z)		in a world of tiles, the tile a place is in (the home tile's: undefined). A seedling is its tile's, and each
+							tile's trees stop seeding at params.maxTrees (see tileCounts)
 		random				seeded random number generator
 		added(index), changed(index), removed(index, tree)		told whenever the list changes, so forest.js can keep the GPU's copy in step
+		moved(from, to)											and when a tree is moved down the list (see compact)
 	}
 
 	What a living tree carries (on top of what planting gave it):
@@ -210,6 +213,7 @@ export function sproutChance(speciesIndex, where, shade) {
 		dead, dryStart, dryYears, fallStart, fallDirection, fallAngle		see planFall. The times are on the forest's clock
 */
 const VISIT_EVERY = 10;		// years of the forest's clock between a tree's visits (20 seconds at the default clock: settings.js). Each visit makes up for all the years since the last, so a longer wait costs nothing but how soon a tree answers its light
+const UNSEEN_VISITS = 4;		// and a tree no one could see (see advance) waits this many times as long
 const LEAST_DENSITY = 0.06;		// ground that carries less forest than this carries none (the same as in plantForest)
 
 export class ForestLife {
@@ -218,6 +222,7 @@ export class ForestLife {
 		this.grid = new TreeGrid(24);
 		this.holes = [];
 		this.count = 0;				// trees in the list, dead ones still on show included
+		this.tileCounts = new Map();	// and of each tile of the world (see tileOf, countTile)
 		this.turn = 0;				// whose visit is next
 		this.owed = 0;				// visits not yet made
 		this.fallYears = 0.01;		// how long falling over takes and how long a fallen tree lies before it is gone. forest.js sets these
@@ -233,6 +238,7 @@ export class ForestLife {
 			this.measure(tree);
 			this.grid.add(index, tree.x, tree.z);
 			this.count++;
+			this.countTile(tree, 1);
 		});
 		// a forest always has some dead wood standing in it: a few of the grown trees start out already dead, at every point from just browning to about to fall
 		this.trees.forEach((tree) => {
@@ -264,6 +270,42 @@ export class ForestLife {
 		this.fallYears = fallYears;
 		this.goneYears = goneYears;
 		this.stats = { sprouted: 0, died: 0, fell: 0 };
+	}
+
+	// a place in the list for a new tree: one of its holes (not one past its end: see compact), or the end
+	takeHole() {
+		while (this.holes.length > 0) {
+			const index = this.holes.pop();
+			if (index < this.trees.length && this.trees[index] === undefined) return index;
+		}
+		return this.trees.length;
+	}
+	// The list packed down: up to `most` of the trees at its end moved into its holes, and the end let go, so that it is no longer than
+	//		the trees in it need (a tile's let go leaves it full of holes, and the visits go round all of it: see advance). moved(from, to) is
+	//		told of each tree moved, after. Returns whether there is more to do
+	compact(most) {
+		for (let k = 0; k < most; k++) {
+			while (this.trees.length > 0 && this.trees[this.trees.length - 1] === undefined) this.trees.length--;
+			const hole = this.takeHole();
+			if (hole >= this.trees.length - 1) {
+				if (hole < this.trees.length) this.holes.push(hole);
+				if (this.turn >= this.trees.length) this.turn = 0;
+				return false;
+			}
+			const from = this.trees.length - 1, tree = this.trees[from];
+			this.trees[hole] = tree;
+			this.trees.length--;
+			this.grid.remove(from, tree.x, tree.z);
+			this.grid.add(hole, tree.x, tree.z);
+			this.moved(from, hole);
+		}
+		if (this.turn >= this.trees.length) this.turn = 0;
+		return true;
+	}
+
+	// one tree come to (or gone from) its tile's count: tree.tile, undefined for the home tile's and the one land's
+	countTile(tree, by) {
+		this.tileCounts.set(tree.tile, (this.tileCounts.get(tree.tile) ?? 0) + by);
 	}
 
 	// a tree's age when the clock says so
@@ -302,10 +344,11 @@ export class ForestLife {
 		tree.visited = clock - this.random() * VISIT_EVERY;
 		tree.density = Math.max(this.site(tree.x, tree.z).density, LEAST_DENSITY);
 		this.measure(tree);
-		const index = this.holes.length > 0 ? this.holes.pop() : this.trees.length;
+		const index = this.takeHole();
 		this.trees[index] = tree;
 		this.grid.add(index, tree.x, tree.z);
 		this.count++;
+		this.countTile(tree, 1);
 		this.added(index);
 		return index;
 	}
@@ -317,12 +360,14 @@ export class ForestLife {
 		this.trees[index] = undefined;
 		this.holes.push(index);
 		this.count--;
+		this.countTile(tree, -1);
 		this.removed(index, tree);
 	}
 
 	// A seed has landed at x, z. A tree comes up if the ground carries forest, the seed gets enough light, and there is room
 	sprout(speciesIndex, x, z, clock) {
-		if (this.count >= this.params.maxTrees) return;
+		const tile = this.tileOf ? this.tileOf(x, z) : undefined;
+		if ((this.tileCounts.get(tile) ?? 0) >= this.params.maxTrees) return;
 		const where = this.site(x, z);
 		if (where.density < LEAST_DENSITY) return;
 		if (this.random() > sproutChance(speciesIndex, where, shadeAt(this.grid, this.trees, x, z, 0, -1))) return;
@@ -339,6 +384,7 @@ export class ForestLife {
 		if (crowded) return;
 
 		const tree = this.makeTree(x, z, speciesIndex, 0.5, where, this.land, this.params, this.random, this.variants);
+		if (tile !== undefined) tree.tile = tile;
 		tree.archetype = tree.species * this.variants + tree.variant;
 		tree.ageTime = clock;
 		tree.rate = 1;
@@ -346,10 +392,11 @@ export class ForestLife {
 		tree.density = where.density;
 		this.measure(tree);
 
-		const index = this.holes.length > 0 ? this.holes.pop() : this.trees.length;
+		const index = this.takeHole();
 		this.trees[index] = tree;
 		this.grid.add(index, x, z);
 		this.count++;
+		this.countTile(tree, 1);
 		this.stats.sprouted++;
 		this.added(index);
 	}
@@ -368,6 +415,7 @@ export class ForestLife {
 				this.trees[index] = undefined;
 				this.holes.push(index);
 				this.count--;
+				this.countTile(tree, -1);
 				this.stats.fell++;
 				this.removed(index, tree);
 			}
@@ -396,13 +444,18 @@ export class ForestLife {
 	}
 
 	// Call every frame. clock: the forest's clock now, years: how far it moved since the last call.
-	//		Makes as many visits as that much time calls for, carrying on round the list from where it left off
-	advance(clock, years) {
+	//		Makes as many visits as that much time calls for, carrying on round the list from where it left off.
+	//		seen(tree), if given: whether anyone could see it (forest.js: near enough to the camera to be drawn). One that no one could is
+	//		only visited every UNSEEN_VISITS times round: its visit makes up for all those years, and the GPU grows it in between, so all
+	//		the wait changes is how soon it answers its light, where no one is looking
+	advance(clock, years, seen = null) {
 		this.owed += this.trees.length * years / VISIT_EVERY;
 		const visits = Math.min(Math.floor(this.owed), this.trees.length);
 		this.owed -= visits;
 		for (let i = 0; i < visits; i++) {
 			this.turn = (this.turn + 1) % this.trees.length;
+			const tree = this.trees[this.turn];
+			if (seen && tree && clock - tree.visited < VISIT_EVERY * UNSEEN_VISITS && !seen(tree)) continue;
 			this.visit(this.turn, clock);
 		}
 	}

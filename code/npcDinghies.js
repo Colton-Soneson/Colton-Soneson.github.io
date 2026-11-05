@@ -102,8 +102,8 @@ terrain.onTiles((added, removed) => {
 	if (builtFor !== terrain.land) return;
 	for (const d of dinghies.filter((one) => removed.includes(one.tile))) { npcs.removePerson(d.person); if (d.boat?.exists && d.boat.crew.size <= 1) { boat.removeBoat(d.boat); npcs.announce('boat', null, d.boat); } }
 	dinghies.splice(0, dinghies.length, ...dinghies.filter((one) => !removed.includes(one.tile)));
-	for (const { key, land } of terrain.landsHere()) if (added.includes(key)) dinghiesOf(land, key);
-});
+	for (const { key, land } of terrain.landsHere()) if (added.includes(key) && !dinghies.some((one) => one.tile == key)) dinghiesOf(land, key);
+}, { later: true });
 function makeDinghies(land) {
 	clearDinghies();
 	for (const here of terrain.landsHere()) dinghiesOf(here.land, here.key);

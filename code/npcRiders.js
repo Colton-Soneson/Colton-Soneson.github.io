@@ -159,8 +159,8 @@ terrain.onTiles((added, removed) => {
 	roads = buildRoads(land);
 	const inns = (land.towns ?? []).filter((t) => t.buildings?.length).map(innOf).filter(Boolean);
 	places = inns.length > 1 ? inns : farEnds(land);
-	addRiders(inns.filter((inn) => added.includes(inn.town?.tile)));
-});
+	addRiders(inns.filter((inn) => added.includes(inn.town?.tile) && !riders.some((r) => r.inn.town === inn.town)));
+}, { later: true });
 // (in a world of tiles: the continent a place is on, world.js; a rider rides to the places of its own)
 const continentAt = (x, z) => terrain.world?.tiles.get(tileAt(x, z, settings.terrainWorldSize))?.continent ?? 0;
 function makeRiders(land) {

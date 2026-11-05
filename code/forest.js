@@ -17,6 +17,9 @@ import { vf_forestFoliage } from '../shaders/js/vf_forest.js'
 import { vf_forestBillboard } from '../shaders/js/vf_forest.js'
 import { vf_forestAtlas } from '../shaders/js/vf_forest.js'
 import { FOLIAGE_VERTICES } from '../shaders/js/vf_forest.js'
+import { c_forestChanges, CHANGE_WORKGROUP } from '../shaders/js/vf_forest.js'
+import { c_forestCull, CULL_WORKGROUP, LIST_WORKGROUP } from '../shaders/js/vf_forest.js'
+import { addJob, UNSEEN } from './jobs.js'
 import { BILLBOARD_VERTICES } from '../shaders/js/vf_forest.js'
 
 import { mat4 } from 'https://wgpu-matrix.org/dist/3.x/wgpu-matrix.module.js';
@@ -50,8 +53,8 @@ import {uniformBufferLights} from './rotatingCube.js'
 		cells			the trees sorted into squares of ground, so whole squares can be skipped when they are behind the camera or too far off
 
 	Every frame (forestPass)
-		1. go through the cells in view, and sort each of their trees into a list by archetype, by how grown it is, and by
-		   level of detail (how far off it is)
+		1. go through the blocks and the cells in view (see THE CELLS), and sort each of their trees into a list by archetype, by how
+		   grown it is, and by level of detail (how far off it is)
 		2. each list is drawn with a few draw calls: its thick wood, its thin wood, its foliage. A draw call is "these trees x these parts"
 
 	Levels of detail. The same tree, less of it and more coarsely made the further off it is:
@@ -107,6 +110,7 @@ const FOLIAGE_DETAIL = [[1.0, 1.0], [0.5, 1.4], [0.2, 2.1], [0.08, 3.2], [0.035,
 const FADE_BAND = 0.25;				// the last part of a level's distance, over which it turns into the next (see towardsNextLevel in vf_forest.js)
 const REFERENCE_HEIGHT = 22;		// metres. The level of detail distances are for a tree this tall, smaller trees drop detail sooner
 const CELL_SIZE = 128;				// world units, the squares the trees are sorted into
+const BLOCK_CELLS = 8;				// cells along a side of a block of them (see THE CELLS)
 
 // Billboards. How grown the tree is in each of an archetype's pictures (its height as a fraction of full grown).
 //		A tree uses the first picture at least as grown as it is, see vf_forestBillboard
@@ -129,6 +133,7 @@ const SETTLE_YEARS = 12;			// the forest lives this long before it is first show
 const REBASE_YEARS = 2000;			// see rebaseClock
 
 const TREE_FLOATS = 16;				// see the Tree struct in vf_forest.js
+const TREE_BUFFER_USAGE = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;	// (copied from as it grows: makeRoom)
 const MAX_DRAWS = 1024;		// (5 levels of detail x 4 stages x every archetype, up to 3 draw calls each: rarely more than a few hundred are in view)
 const DRAW_STRIDE = 256;			// bytes between one draw call's uniforms and the next (uniform buffer offsets have to be multiples of 256)
 
@@ -160,6 +165,7 @@ function getPlantingParams() {
 }
 
 export let archetypes = [];			// see buildArchetypes
+let tallestArchetype = 0;			// world units: the tallest of them, full grown
 export let trees = [];				// see plantForest in forestGenerator.js. forest.js adds: archetype, stage, detailScale. Has holes (undefined) where trees have gone
 export let life;					// the ForestLife that runs them, see forestLife.js
 export let clock = 0;				// the forest's clock, in years since it was planted
@@ -178,8 +184,10 @@ function noteMoved(tree) {
 	if (away < settings.forestBillboardDistance * 1.5) treesMoved = true;
 }
 export const forestStats = { trees: 0, drawn: new Array(LEVELS + 1).fill(0), drawCalls: 0, triangles: 0, hiddenCells: 0 };	// what the last frame drew (trees per level of detail, billboards last), for anyone who wants to show it
-let cells = [];						// the squares of ground with trees in them, for skipping whole squares that are out of view
-let cellsByKey = new Map();
+// the squares of ground with trees in them (cells), for skipping whole squares that are out of view, and the cells gathered into blocks,
+//		for skipping a whole block of them without looking at any (see THE CELLS)
+let blocks = [];
+let cellsByKey = new Map(), blocksByKey = new Map();
 
 let sectionBuffer, foliageBuffer, archetypeBuffer, treeBuffer, visibleBuffer, cellBuffer;
 let atlasColorTexture, atlasShapeTexture;	// the billboard pictures, see bakeBillboards
@@ -194,14 +202,14 @@ let pendingParams = "";				// the ones waiting to be made, see forestUpdate
 let pendingSince = 0;
 
 // A storage buffer holding data, replacing the old one if there was one
-function createStorageBuffer(label, data, old) {
+function createStorageBuffer(label, data, old, usage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST) {
 	if (old) {
 		old.destroy();
 	}
 	const buffer = device.createBuffer({
 		label: label,
 		size: Math.max(data.byteLength, 64),	// never empty, a buffer of size 0 cant be bound
-		usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+		usage: usage,
 	});
 	device.queue.writeBuffer(buffer, 0, data);
 	return buffer;
@@ -325,6 +333,8 @@ function buildArchetypes() {
 		}
 	}
 
+	tallestArchetype = Math.max(...archetypes.map((archetype) => archetype.height));
+
 	// what the shaders need to know about each archetype: the Archetype struct in vf_forest.js
 	const table = new Float32Array(archetypes.length * 24);
 	archetypes.forEach((archetype, i) => {
@@ -390,27 +400,49 @@ function packTree(tree, into, index) {
 	], index * TREE_FLOATS);
 }
 
-// The cells. Each one is a ball that holds all the trees there could be in its square of ground, crowns and all, which is
-//		what gets tested against the camera. Trees come and go, so a cell is made when its first tree arrives and only ever grows
+/*
+	THE CELLS. Each one is a ball that holds all the trees there could be in its square of ground, crowns and all, which is what gets
+	tested against the camera. Trees come and go, so a cell is made when its first tree arrives, only ever grows, and goes when its
+	last tree does.
+	The cells are gathered into blocks, BLOCK_CELLS of them along each side: a bounding volume hierarchy two levels deep. A block is a
+	box round the balls of all its cells, so a block wholly out of view, or too far off, is passed over without looking at any of them
+	(not one of them would be drawn), and the cells of one that is not are tested as ever. What is drawn is the same; what a frame costs
+	is the blocks and the cells near enough to see, however many tiles of the world have come and gone (a block goes with its last cell)
+*/
 function addToCell(index) {
 	const tree = trees[index];
-	const key = Math.floor(tree.x / CELL_SIZE) + "," + Math.floor(tree.z / CELL_SIZE);
+	const cx = Math.floor(tree.x / CELL_SIZE), cz = Math.floor(tree.z / CELL_SIZE), key = cx + "," + cz;
 	let cell = cellsByKey.get(key);
 	if (!cell) {
-		cell = { x: (Math.floor(tree.x / CELL_SIZE) + 0.5) * CELL_SIZE, z: (Math.floor(tree.z / CELL_SIZE) + 0.5) * CELL_SIZE, bottom: tree.y, top: tree.y, trees: [] };
+		const bx = Math.floor(cx / BLOCK_CELLS), bz = Math.floor(cz / BLOCK_CELLS), blockKey = bx + "," + bz;
+		let block = blocksByKey.get(blockKey);
+		if (!block) {
+			block = { key: blockKey, cells: [], x0: Infinity, x1: -Infinity, y0: Infinity, y1: -Infinity, z0: Infinity, z1: -Infinity };
+			blocksByKey.set(blockKey, block);
+			blocks.push(block);
+		}
+		cell = { key: key, x: (cx + 0.5) * CELL_SIZE, z: (cz + 0.5) * CELL_SIZE, bottom: tree.y, top: tree.y, trees: [], block: block };
 		cellsByKey.set(key, cell);
-		cells.push(cell);
+		block.cells.push(cell);
 	}
 	cell.trees.push(index);
 	tree.cell = cell;
 	cell.mostDetailScale = Math.max(cell.mostDetailScale ?? 0, tree.detailScale ?? 4);
 
 	// tall and wide enough for the biggest tree there is, standing or lying
-	const tallest = Math.max(...archetypes.map((archetype) => archetype.height)) * 1.3;
+	const tallest = tallestArchetype * 1.3;
 	cell.bottom = Math.min(cell.bottom, tree.y - tallest * 0.2);
 	cell.top = Math.max(cell.top, tree.y + tallest);
 	cell.y = (cell.bottom + cell.top) * 0.5;
 	cell.radius = Math.hypot(CELL_SIZE * 0.5 + tallest, cell.top - cell.y, CELL_SIZE * 0.5 + tallest);
+	// and its block's box round its ball
+	const block = cell.block;
+	block.x0 = Math.min(block.x0, cell.x - cell.radius);
+	block.x1 = Math.max(block.x1, cell.x + cell.radius);
+	block.y0 = Math.min(block.y0, cell.y - cell.radius);
+	block.y1 = Math.max(block.y1, cell.y + cell.radius);
+	block.z0 = Math.min(block.z0, cell.z - cell.radius);
+	block.z1 = Math.max(block.z1, cell.z + cell.radius);
 }
 
 /*
@@ -478,6 +510,16 @@ export function crownsNear(x, z, reach, each) {
 		}
 	}
 }
+// every tree in the cells round a place, living or dead: each(tree) (particles.js: the trees the leaves come off, and the trunks in their way)
+export function treesAround(x, z, reach, each) {
+	for (let cx = Math.floor((x - reach) / CELL_SIZE); cx <= Math.floor((x + reach) / CELL_SIZE); cx++) {
+		for (let cz = Math.floor((z - reach) / CELL_SIZE); cz <= Math.floor((z + reach) / CELL_SIZE); cz++) {
+			const cell = cellsByKey.get(cx + "," + cz);
+			if (!cell) continue;
+			for (const i of cell.trees) each(trees[i]);
+		}
+	}
+}
 // THE TREES BROUGHT DOWN (the save file's: saveGame.js): where each was, the host's, the last FELLED_KEPT of them. The forest is planted
 //		from its seed again with the world, so these are what the players did to it: put back, each takes the tree that stands nearest there
 const FELLED_KEPT = 4000;
@@ -511,11 +553,21 @@ export function fellTree(index, direction) {
 }
 
 function removeFromCell(index, tree) {
-	const members = tree.cell.trees;
+	const cell = tree.cell, members = cell.trees;
 	const at = members.indexOf(index);
 	if (at >= 0) {
 		members[at] = members[members.length - 1];
 		members.pop();
+	}
+	// (the last of its trees gone: the cell goes, and its block with its last cell. See THE CELLS)
+	if (members.length == 0 && cellsByKey.get(cell.key) === cell) {
+		cellsByKey.delete(cell.key);
+		const block = cell.block;
+		block.cells.splice(block.cells.indexOf(cell), 1);
+		if (block.cells.length == 0 && blocksByKey.get(block.key) === block) {
+			blocksByKey.delete(block.key);
+			blocks.splice(blocks.indexOf(block), 1);
+		}
 	}
 }
 
@@ -528,8 +580,9 @@ function plantTrees() {
 	clock = 0;
 	clockBase = 0;
 	countedSunCycles = sunCycles;
-	cells = [];
+	blocks = [];
 	cellsByKey = new Map();
+	blocksByKey = new Map();
 	changedTrees = [];
 	treesMoved = true;
 
@@ -546,10 +599,26 @@ function plantTrees() {
 		land: terrain.land, site: siteOf(createSite(terrain.land, params)), params: params,
 		wind: [settings.windDirection[0], settings.windDirection[1]],
 		makeTree: makeTree, treeRoom: treeRoom,
+		// (the tile a place is in, in a world of tiles: a seedling there is that tile's, and goes with it. The home tile's have none)
+		tileOf: (x, z) => {
+			if (!terrain.world) return undefined;
+			const S = settings.terrainWorldSize, key = Math.round(x / S) + ',' + Math.round(z / S);
+			return key == '0,0' ? undefined : key;
+		},
 		random: seededRandom(params.seed * 7919 + 577),
-		added: (index) => { if (listening) { ageTree(trees[index]); addToCell(index); changedTrees.push(index); noteMoved(trees[index]); noteShared(index); } },
+		added: (index) => { if (listening) { ageTree(trees[index]); addToCell(index); noteTile(index); changedTrees.push(index); noteMoved(trees[index]); noteShared(index); } },
 		changed: (index) => { if (listening) { const stage = trees[index].stage; ageTree(trees[index], life.ageAt(trees[index], clock)); changedTrees.push(index); if (trees[index].stage !== stage) noteMoved(trees[index]); if (trees[index].dead) noteShared(index); } },	//(only a new stage puts it in another list. Its size is caught up with by DRAWS_REFRESH)
-		removed: (index, tree) => { if (listening) { removeFromCell(index, tree); noteMoved(tree); noteShared(index); } },
+		removed: (index, tree) => { if (listening) { removeFromCell(index, tree); forgetTile(index, tree); changedTrees.push(index); noteMoved(tree); noteShared(index); } },
+		// (a tree moved down the list, packing it: its cell's and its tile's lists, its record in its new place, the others told of both)
+		moved: (from, to) => {
+			if (!listening) return;
+			const tree = trees[to], members = tree.cell.trees, at = members.indexOf(from);
+			if (at >= 0) members[at] = to;
+			if (tree.tile !== undefined) { const own = tileTrees.get(tree.tile); if (own?.delete(from)) own.add(to); }
+			changedTrees.push(to);
+			noteMoved(tree);
+			if (sharing) { sharing.add(from); sharing.add(to); }
+		},
 	});
 	if (settings.forestLifeCycle) {
 		life.settle(SETTLE_YEARS);
@@ -564,10 +633,10 @@ function plantTrees() {
 	});
 	listening = true;
 
-	treeBuffer = createStorageBuffer("forest trees", treeData, treeBuffer);
+	treeBuffer = createStorageBuffer("forest trees", treeData, treeBuffer, TREE_BUFFER_USAGE);
 	// (twice over: a tree is in a mesh list and the billboard list at once while one dissolves into the other)
 	visibleData = new Uint32Array(capacity * 2);
-	visibleBuffer = createStorageBuffer("forest visible trees", visibleData, visibleBuffer);
+	visibleBuffer = createStorageBuffer("forest visible trees", visibleData, visibleBuffer, TREE_BUFFER_USAGE);
 	forestBindGroup = undefined;
 
 	plantedParams = JSON.stringify(params);
@@ -576,21 +645,35 @@ function plantTrees() {
 	felled = [];
 	// (and the trees of the world's other tiles there are now, brought in again)
 	incoming = [];
+	tileTrees.clear();
 	sites.clear();
 	for (const t of terrain.tilesLoaded()) if (t.key != '0,0') bringTile(t.key);
 	if (sharing) sharing.clear();
 	forestStats.trees = life.count;
-	console.log("Forest planted: ", life.count, " trees in ", cells.length, " cells");
+	console.log("Forest planted: ", life.count, " trees in ", cellsByKey.size, " cells");
 }
 
 //-------------------------------THE WORLD'S OTHER TILES-------------------------------
 /*
 	In a world of tiles (terrain.js, world.js) the home tile's trees are planted here, as the one land's are. Every other tile's are planted
-	with its land off the main thread (tileWorker.js: terrain.tileExtras.forest, these planting settings), and brought in as it comes, a
-	few at a time (TILE_TREES a frame: bringInTrees), each knowing its tile; let go with it. Each lives as the rest do (ForestLife: adopt),
+	with its land off the main thread (tileWorker.js: terrain.tileExtras.forest, these planting settings), and brought in as it comes, as
+	many a frame as BRING_MS allows (bringInTrees), each knowing its tile; let go with it. Each lives as the rest do (ForestLife: adopt),
 	its seeds coming up by the ground of the tile they land on (siteOf). A joiner's trees are the host's (see MULTIPLAYER).
 */
-const TILE_TREES = 800, TILE_RECORD = 12;
+const TILE_RECORD = 12;
+const LET_GO_STEP = 2000;			// trees of a tile let go a step (see letGoTile)
+const PACK_HOLES = 4000, PACK_STEP = 1000;	// holes in the list it takes for it to be packed down (and a fifth of it), and trees moved a step
+let packing = false;
+const tileTrees = new Map();		// the trees of each tile but the home one, by its key: their numbers in the list (a tile let go lets go of those)
+function noteTile(index) {
+	const tile = trees[index].tile;
+	if (tile === undefined) return;
+	if (!tileTrees.has(tile)) tileTrees.set(tile, new Set());
+	tileTrees.get(tile).add(index);
+}
+const forgetTile = (index, tree) => { if (tree.tile !== undefined) tileTrees.get(tree.tile)?.delete(index); };
+export const tileTreesForTest = () => tileTrees;
+const BRING_MS = 1.5, BRING_LEAST = 200;		// milliseconds of a frame for bringing a tile's trees in, and the fewest a frame however long that takes
 let incoming = [];				// { key, records, at }
 terrain.tileExtras.forest = () => ({ params: getPlantingParams(), variants: VARIANTS });
 terrain.onTiles((added, removed) => {
@@ -606,22 +689,34 @@ function letGoTile(key) {
 	incoming = incoming.filter((q) => q.key != key);
 	sites.delete(key);
 	if (!life || following) return;
-	trees.forEach((tree, index) => { if (tree && tree.tile === key) life.letGo(index); });
-	forestStats.trees = life.count;
+	// (a piece at a time, as the frames have room for it: jobs.js. It is far out of sight by now, past where trees are drawn. Each still
+	//		the one it was: not gone of itself in the meantime, its place in the list taken by another, nor the forest planted again)
+	const going = [...(tileTrees.get(key) ?? [])].map((index) => [index, trees[index]]), planting = plantings;
+	tileTrees.delete(key);
+	addJob('the trees of ' + key + ', let go', function* () {
+		for (let k = 0; k < going.length; k++) {
+			if (plantings !== planting || following) return;
+			const [index, tree] = going[k];
+			if (trees[index] === tree) life.letGo(index);
+			if (k % LET_GO_STEP == LET_GO_STEP - 1) { forestStats.trees = life.count; yield; }
+		}
+		forestStats.trees = life.count;
+	}, { priority: UNSEEN });
 }
 function bringInTrees() {
 	if (!life || following || !incoming.length) return;
 	const t0 = performance.now();
-	const q = incoming[0], end = Math.min(q.at + TILE_TREES * TILE_RECORD, q.records.length);
-	makeRoom((end - q.at) / TILE_RECORD);
-	let lo = Infinity, hi = -1;
-	for (const r = q.records; q.at < end; q.at += TILE_RECORD) {
+	const q = incoming[0];
+	makeRoom((q.records.length - q.at) / TILE_RECORD);		// (room for all the rest of the tile's at once)
+	let brought = 0;
+	for (const r = q.records; q.at < r.length; q.at += TILE_RECORD) {
+		if (brought >= BRING_LEAST && brought % 64 == 0 && performance.now() - t0 > BRING_MS) break;
 		const tree = { x: r[q.at], y: r[q.at + 1], z: r[q.at + 2], species: r[q.at + 3], variant: r[q.at + 4], age: r[q.at + 5], scale: r[q.at + 6], yaw: r[q.at + 7],
 			leanX: r[q.at + 8], leanZ: r[q.at + 9], seed: r[q.at + 10], tile: q.key };
 		if (r[q.at + 11]) tree.planted = true;
 		tree.archetype = tree.species * VARIANTS + tree.variant;
-		const index = life.adopt(tree, clock);
-		lo = Math.min(lo, index); hi = Math.max(hi, index);
+		life.adopt(tree, clock);
+		brought++;
 	}
 	if (q.at >= q.records.length) {
 		incoming.shift();
@@ -632,14 +727,9 @@ function bringInTrees() {
 		felledAdopt(mine);
 	}
 	forestStats.trees = life.count;
-	// (their records to the GPU now, only the stretch of the list they went into: the clock may be standing still, and the records only
-	//		go with it otherwise, and then the whole list at once)
-	if (hi >= lo) {
-		const fresh = new Set();
-		for (let index = lo; index <= hi; index++) if (trees[index]) { packTree(trees[index], treeData, index); fresh.add(index); }
-		device.queue.writeBuffer(treeBuffer, lo * TREE_FLOATS * 4, treeData, lo * TREE_FLOATS, (hi - lo + 1) * TREE_FLOATS);
-		changedTrees = changedTrees.filter((index) => !fresh.has(index));
-	}
+	// (their records to the GPU now, with any others that changed: the clock may be standing still, and the records only go with it
+	//		otherwise. They went into the holes the list had first, all along it: see THE CHANGES)
+	sendChangedTrees();
 	forestStats.bringLast = performance.now() - t0;
 	forestStats.bringMs = Math.max(forestStats.bringMs ?? 0, Math.round(forestStats.bringLast));
 }
@@ -671,6 +761,13 @@ function rebaseClock() {
 	changedTrees = [];
 }
 
+// whether a tree could be seen from the camera: drawn at all, near enough for the draw distance (a box round that, the quicker sum.
+//		A tree's detail distance is its own stretched by its detailScale, at least 0.8 of it: see sortTreesIntoDraws). See ForestLife.advance
+function seenTree(tree) {
+	const reach = Math.max(settings.forestDrawDistance, settings.forestBillboardDistance) * 1.3;
+	return Math.abs(tree.x - settings.camPosX) < reach && Math.abs(tree.z - settings.camPosZ) < reach;
+}
+
 // Moves the forest's clock on by a number of years, and lets the forest live them
 export function advanceForest(years) {
 	const now = performance.now();
@@ -689,7 +786,7 @@ export function advanceForest(years) {
 	life.goneYears = Math.min(Math.max(yearsPerSecond * GONE_SECONDS, 0.0001), GONE_YEARS_MOST);
 	life.wind = [settings.windDirection[0], settings.windDirection[1]];
 
-	if (!following) life.advance(clock, years);	// (a joiner's trees are the host's: see MULTIPLAYER)
+	if (!following) life.advance(clock, years, seenTree);	// (a joiner's trees are the host's: see MULTIPLAYER)
 	else followGrowth(years);
 
 	// send on the records of the trees that changed
@@ -810,11 +907,13 @@ export function forestFollow(on) {
 		life.grid = new TreeGrid(24);
 		life.holes = [];
 		life.count = 0;
+		life.tileCounts = new Map();
 		trees.forEach((tree, index) => {
 			if (!tree) { life.holes.push(index); return; }
 			life.grid.add(index, tree.x, tree.z);
 			tree.visited = clock - Math.random() * 2.5;
 			life.count++;
+			life.countTile(tree, 1);
 		});
 		life.turn = 0;
 		life.owed = 0;
@@ -834,6 +933,7 @@ function applyRecord(data, at) {
 			removeFromCell(index, old);
 			trees[index] = undefined;
 			life.count--;
+			changedTrees.push(index);
 			noteMoved(old);
 		}
 		return;
@@ -853,32 +953,70 @@ function applyRecord(data, at) {
 	changedTrees.push(index);
 	noteMoved(tree);
 }
-// room on the GPU for as many places in the list as there are now (or as many more as are on the way)
+// room on the GPU for as many places in the list as there are now (or as many more as are on the way): twice that, so it is seldom
+//		needed, and the records there are already copied over on the GPU rather than sent again
 function makeRoom(more = 0) {
 	if ((trees.length + more) * TREE_FLOATS <= treeData.length) return;
-	const capacity = Math.ceil((trees.length + more) * 1.25);
+	const capacity = Math.ceil((trees.length + more) * 2);
 	const data = new Float32Array(capacity * TREE_FLOATS);
 	data.set(treeData);
+	const old = treeBuffer;
+	treeBuffer = device.createBuffer({ label: "forest trees", size: data.byteLength, usage: TREE_BUFFER_USAGE });
+	const encoder = device.createCommandEncoder({ label: "forest trees, moved" });
+	encoder.copyBufferToBuffer(old, 0, treeBuffer, 0, treeData.byteLength);
+	device.queue.submit([encoder.finish()]);
+	old.destroy();		// (once the copy is done with it)
 	treeData = data;
-	treeBuffer = createStorageBuffer("forest trees", treeData, treeBuffer);
 	visibleData = new Uint32Array(capacity * 2);
-	visibleBuffer = createStorageBuffer("forest visible trees", visibleData, visibleBuffer);
+	visibleBuffer = createStorageBuffer("forest visible trees", visibleData, visibleBuffer, TREE_BUFFER_USAGE);
 	forestBindGroup = undefined;
 }
-// the records of the trees that changed, to the GPU: one by one if there are a few, the whole lot in one go if there are many
+/*
+	THE CHANGES: the records of the trees that changed, to the GPU. All that a frame has go up together, each with its place in the list,
+	in one write to a staging buffer, and a small compute pass (c_forestChanges in vf_forest.js) puts each one where it goes in the trees'
+	buffer. So however many there are, and however far apart in the list, it is one write and one dispatch. (It was a write each, and with
+	more than 200 the whole list again: megabytes, every frame of a busy forest, and the slower the frames the more of them there are)
+*/
+const CHANGE_WORDS = 1 + TREE_FLOATS;		// its place in the list, then its record
+let changeData = new Uint32Array(0), changeBuffer = null, changeBindGroup = null, changeBindGroupFor = null;
+let treeWords = new Uint32Array(0);			// treeData's words, to copy a record as it is
 function sendChangedTrees() {
 	if (changedTrees.length == 0) return;
+	if (treeWords.buffer !== treeData.buffer) treeWords = new Uint32Array(treeData.buffer);
+	if (changeData.length < 1 + changedTrees.length * CHANGE_WORDS) {
+		changeData = new Uint32Array(1 + Math.max(changedTrees.length * 2, 1024) * CHANGE_WORDS);
+		if (changeBuffer) changeBuffer.destroy();
+		changeBuffer = device.createBuffer({ label: "forest changed trees", size: changeData.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+		changeBindGroupFor = null;
+	}
+	let count = 0;
 	for (const index of changedTrees) {
 		if (trees[index]) packTree(trees[index], treeData, index);
-	}
-	if (changedTrees.length > 200) {
-		device.queue.writeBuffer(treeBuffer, 0, treeData, 0, trees.length * TREE_FLOATS);
-	} else {
-		for (const index of changedTrees) {
-			device.queue.writeBuffer(treeBuffer, index * TREE_FLOATS * 4, treeData, index * TREE_FLOATS, TREE_FLOATS);
-		}
+		else if (index < treeData.length / TREE_FLOATS) treeData.fill(0, index * TREE_FLOATS, (index + 1) * TREE_FLOATS);		// (gone: an empty record, passed over by THE GPU'S LISTS)
+		else continue;
+		changeData[1 + count * CHANGE_WORDS] = index;
+		changeData.set(treeWords.subarray(index * TREE_FLOATS, (index + 1) * TREE_FLOATS), 2 + count * CHANGE_WORDS);
+		count++;
 	}
 	changedTrees = [];
+	if (count == 0) return;
+	changeData[0] = count;
+	device.queue.writeBuffer(changeBuffer, 0, changeData, 0, 1 + count * CHANGE_WORDS);
+	if (changeBindGroupFor !== treeBuffer) {
+		changeBindGroup = device.createBindGroup({
+			label: "forest changed trees bind group",
+			layout: changePipeline.getBindGroupLayout(0),
+			entries: [{ binding: 0, resource: { buffer: changeBuffer } }, { binding: 1, resource: { buffer: treeBuffer } }],
+		});
+		changeBindGroupFor = treeBuffer;
+	}
+	const encoder = device.createCommandEncoder({ label: "forest changed trees" });
+	const pass = encoder.beginComputePass();
+	pass.setPipeline(changePipeline);
+	pass.setBindGroup(0, changeBindGroup);
+	pass.dispatchWorkgroups(Math.ceil(count / CHANGE_WORKGROUP));
+	pass.end();
+	device.queue.submit([encoder.finish()]);
 }
 // joiner: the host's whole forest, in place of its own
 export function forestAdopt(data) {
@@ -889,17 +1027,18 @@ export function forestAdopt(data) {
 	trees = new Array(count).fill(undefined);	// (no holes in the array: an empty place is undefined, as the life leaves them)
 	life.trees = trees;
 	life.count = 0;
-	cells = [];
+	blocks = [];
 	cellsByKey = new Map();
+	blocksByKey = new Map();
 	changedTrees = [];
 	for (let index = 0; index < count; index++) applyRecord(data, 1 + index * SHARE_RECORD);
 	changedTrees = [];
 	const capacity = Math.max(getPlantingParams().maxTrees, trees.length, 1);
 	treeData = new Float32Array(capacity * TREE_FLOATS);
 	trees.forEach((tree, index) => { if (tree) packTree(tree, treeData, index); });
-	treeBuffer = createStorageBuffer("forest trees", treeData, treeBuffer);
+	treeBuffer = createStorageBuffer("forest trees", treeData, treeBuffer, TREE_BUFFER_USAGE);
 	visibleData = new Uint32Array(capacity * 2);
-	visibleBuffer = createStorageBuffer("forest visible trees", visibleData, visibleBuffer);
+	visibleBuffer = createStorageBuffer("forest visible trees", visibleData, visibleBuffer, TREE_BUFFER_USAGE);
 	forestBindGroup = undefined;
 	treesMoved = true;
 	forestStats.trees = life.count;
@@ -946,6 +1085,13 @@ const atlasShaderModule = device.createShaderModule({
   code: vf_forestAtlas
 });
 
+// putting changed records in their places (see THE CHANGES)
+const changePipeline = device.createComputePipeline({
+	label: "forest changed trees pipeline",
+	layout: 'auto',
+	compute: { module: device.createShaderModule({ label: "c_forestChanges", code: c_forestChanges }), entryPoint: "computeMain" },
+});
+
 // uniform buffers
 //-------------------------------------------------
 const forestUniformBuffer = device.createBuffer({
@@ -958,7 +1104,7 @@ const forestUniformBuffer = device.createBuffer({
 const drawUniformBuffer = device.createBuffer({
   label: "forest draw calls Uniform",
   size: MAX_DRAWS * DRAW_STRIDE,
-  usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST | GPUBufferUsage.STORAGE,		// (STORAGE: the GPU's lists write each one's start: THE GPU'S LISTS)
 });
 const drawData = new ArrayBuffer(MAX_DRAWS * DRAW_STRIDE);
 
@@ -1477,6 +1623,15 @@ export function forestUpdate() {
 	const cycles = Math.min(sunCycles - countedSunCycles, MOST_CYCLES);
 	countedSunCycles = sunCycles;
 	bringInTrees();
+	// (the list packed down when a tile's trees let go have left it holes enough: a piece at a time, ForestLife.compact)
+	if (life && !following && !packing && life.holes.length > PACK_HOLES && life.holes.length > trees.length * 0.2) {
+		packing = true;
+		const planting = plantings;
+		addJob('the forest packed down', function* () {
+			try { while (plantings === planting && !following && life.compact(PACK_STEP)) yield; }
+			finally { packing = false; forestStats.listLength = trees.length; }
+		}, { priority: UNSEEN });
+	}
 	advanceForest(settings.forestLifeCycle ? Math.max(cycles, 0) * settings.forestYearsPerSunCycle : 0);
 	settings.forestYear = Math.round(clock * 10) / 10;		// for the controls to show
 	settings.forestTreeCount = forestStats.trees;
@@ -1528,38 +1683,44 @@ function sortTreesIntoDraws() {
 	forestStats.drawn = new Array(LEVELS + 1).fill(0);
 	forestStats.hiddenCells = 0;
 	const occluding = horizon.readyHorizon();
-	for (const cell of cells) {
-		// the whole cell behind the camera, off to one side, or too far away to draw anything of (a small tree's detail distance is up to 4x its real one)
-		if (planes.some((plane) => plane[0] * cell.x + plane[1] * cell.y + plane[2] * cell.z + plane[3] < -cell.radius)) continue;
-		const cellAway = Math.hypot(cell.x - camX, cell.y - camY, cell.z - camZ);
-		if (cellAway - cell.radius > billboardEnd) continue;
-		// or behind a hill (see horizon.js)
-		if (occluding && cell.trees.length > 0 && horizon.hidden(cell.x, cell.z, cell.top, cell.radius)) {
-			forestStats.hiddenCells++;
-			continue;
-		}
-
-		// a cell so far off that every tree in it is a billboard, and none of them past the draw distance: all of them, with no
-		//		sums for each tree. (A tree's detail distance is its own distance stretched by its detailScale, which is 0.8 at the least)
-		if ((cellAway - cell.radius) * 0.8 >= meshEnd && (cellAway + cell.radius) * (cell.mostDetailScale ?? 4) < billboardEnd) {
-			for (const i of cell.trees) billboards.push(i);
-			forestStats.drawn[LEVELS] += cell.trees.length;
-			continue;
-		}
-
-		for (const i of cell.trees) {
-			const tree = trees[i];
-			const detail = Math.hypot(tree.x - camX, tree.y - camY, tree.z - camZ) * tree.detailScale;
-			let level = 0;
-			while (level < LEVELS && detail >= ends[level]) level++;
-			if (level == LEVELS) level = -1;
-			if (level >= 0) {
-				lists[(tree.archetype * STAGES + tree.stage) * LEVELS + level].push(i);
-				forestStats.drawn[level]++;
+	for (const block of blocks) {
+		// a whole block behind the camera, off to one side, or too far away: none of its cells is looked at (its box holds all their
+		//		balls, so not one of them would be drawn: see THE CELLS)
+		if (planes.some((plane) => plane[0] * (plane[0] > 0 ? block.x1 : block.x0) + plane[1] * (plane[1] > 0 ? block.y1 : block.y0) + plane[2] * (plane[2] > 0 ? block.z1 : block.z0) + plane[3] < 0)) continue;
+		if (Math.hypot(Math.max(block.x0 - camX, 0, camX - block.x1), Math.max(block.y0 - camY, 0, camY - block.y1), Math.max(block.z0 - camZ, 0, camZ - block.z1)) > billboardEnd) continue;
+		for (const cell of block.cells) {
+			// the whole cell behind the camera, off to one side, or too far away to draw anything of (a small tree's detail distance is up to 4x its real one)
+			if (planes.some((plane) => plane[0] * cell.x + plane[1] * cell.y + plane[2] * cell.z + plane[3] < -cell.radius)) continue;
+			const cellAway = Math.hypot(cell.x - camX, cell.y - camY, cell.z - camZ);
+			if (cellAway - cell.radius > billboardEnd) continue;
+			// or behind a hill (see horizon.js)
+			if (occluding && cell.trees.length > 0 && horizon.hidden(cell.x, cell.z, cell.top, cell.radius)) {
+				forestStats.hiddenCells++;
+				continue;
 			}
-			if (detail >= billboardStart && detail < billboardEnd) {
-				billboards.push(i);
-				forestStats.drawn[LEVELS]++;
+
+			// a cell so far off that every tree in it is a billboard, and none of them past the draw distance: all of them, with no
+			//		sums for each tree. (A tree's detail distance is its own distance stretched by its detailScale, which is 0.8 at the least)
+			if ((cellAway - cell.radius) * 0.8 >= meshEnd && (cellAway + cell.radius) * (cell.mostDetailScale ?? 4) < billboardEnd) {
+				for (const i of cell.trees) billboards.push(i);
+				forestStats.drawn[LEVELS] += cell.trees.length;
+				continue;
+			}
+
+			for (const i of cell.trees) {
+				const tree = trees[i];
+				const detail = Math.hypot(tree.x - camX, tree.y - camY, tree.z - camZ) * tree.detailScale;
+				let level = 0;
+				while (level < LEVELS && detail >= ends[level]) level++;
+				if (level == LEVELS) level = -1;
+				if (level >= 0) {
+					lists[(tree.archetype * STAGES + tree.stage) * LEVELS + level].push(i);
+					forestStats.drawn[level]++;
+				}
+				if (detail >= billboardStart && detail < billboardEnd) {
+					billboards.push(i);
+					forestStats.drawn[LEVELS]++;
+				}
 			}
 		}
 	}
@@ -1615,7 +1776,207 @@ function sortTreesIntoDraws() {
 		device.queue.writeBuffer(drawUniformBuffer, 0, drawData, 0, slot * DRAW_STRIDE);
 	}
 	keptDraws = draws;
+	gpuSlots = null;		// (the draw calls' uniforms are the CPU's now: THE GPU'S LISTS writes its own again)
 	return draws;
+}
+
+//-------------------------------THE GPU'S LISTS-------------------------------
+/*
+	With forestGpuCulling on (as it is), 1. of forestPass is done on the GPU, for every tree, every frame: c_forestCull in vf_forest.js.
+	Each tree is tested against the view and the horizon (horizon.js: the table the CPU's cells are tested with, sent as it is made again),
+	and sorted by how far off it is into its list (archetype, stage of life, level of detail) and the billboards'; then the lists are laid
+	end to end in the visible list, and each draw call's start and instance count written where it reads them: an indirect draw. The CPU
+	never knows how many trees each list has.
+	THE DRAW SLOTS: a draw call for every list there could be (its thick wood, its thin wood, its foliage) and one for the billboards, the
+	same every frame and most of them drawing nothing: their uniforms are written when the levels of detail or the archetypes change, all
+	but where each starts. Encoding a few hundred draw calls that draw nothing costs less than sorting the trees did.
+	The CPU's way (sortTreesIntoDraws) is kept for forestGpuCulling off. It tests whole cells, the GPU each tree: so the GPU draws fewer
+	trees, never more (the ones a cell of them is not, out of view or behind the hills).
+	A tree gone leaves an empty record (sendChangedTrees), which the GPU passes over.
+*/
+const cullUniformBuffer = device.createBuffer({ label: "forest cull Uniform", size: 256, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+const countsBuffer = device.createBuffer({ label: "forest list counts", size: LIST_WORKGROUP * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
+const startsBuffer = device.createBuffer({ label: "forest list starts", size: LIST_WORKGROUP * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+const slotsBuffer = device.createBuffer({ label: "forest draw slots", size: MAX_DRAWS * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+const indirectBuffer = device.createBuffer({ label: "forest indirect draws", size: MAX_DRAWS * 16, usage: GPUBufferUsage.INDIRECT | GPUBufferUsage.STORAGE });
+const horizonBuffer = device.createBuffer({ label: "forest horizon", size: horizon.HORIZON.BINS * horizon.HORIZON.STEPS * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+const cullModule = device.createShaderModule({ label: "c_forestCull", code: c_forestCull(horizon.HORIZON, { LEVELS, STAGES, STAGE_ENDS }) });
+const cullPipelines = Object.fromEntries(['cullTrees', 'layLists', 'placeTrees'].map((entry) =>
+	[entry, device.createComputePipeline({ label: "forest " + entry + " pipeline", layout: 'auto', compute: { module: cullModule, entryPoint: entry } })]));
+const cullValues = new Float32Array(44), cullSizes = new Uint32Array(cullValues.buffer, 40 * 4, 4);
+let placedBuffer = null;			// each tree's lists and places in them (see cullTrees), made as big as the trees' list can be
+let cullBindGroups = null, cullBindFor = [];
+let horizonSent = -1;
+let gpuSlots = null;				// THE DRAW SLOTS: { key, wood, foliage, billboards (their slots), count, lists, ends, billboardStart, billboardEnd }
+let gpuListsFor = '', gpuFramesSince = 0;	// what the GPU's lists were last made for, and the frames since
+
+// the distances the levels of detail end at, and the billboards', as the settings have them (see sortTreesIntoDraws)
+function detailEnds() {
+	const rings = Math.min(Math.max(Math.round(settings.forestThinnedRings), 0), THINNED_LEVELS);
+	const lastLevel = LEVELS - 1 - THINNED_LEVELS + rings;
+	const detailEnd = settings.forestDetailDistance;
+	const midEnd = Math.max(settings.forestMidDistance, detailEnd);
+	const meshEnd = Math.max(settings.forestBillboardDistance, midEnd);
+	const ends = [detailEnd, midEnd];
+	for (let level = 2; level < LEVELS; level++) {
+		ends.push(level <= lastLevel ? midEnd * Math.pow(meshEnd / midEnd, (level - 1) / (lastLevel - 1)) : meshEnd);
+	}
+	return { lastLevel, ends, meshEnd, billboardStart: meshEnd * (1 - FADE_BAND), billboardEnd: Math.max(settings.forestDrawDistance, meshEnd) };
+}
+
+// THE DRAW SLOTS (see the top), made again when the levels of detail or the archetypes are not what they were made for
+function drawSlots() {
+	const key = [settings.forestDetailDistance, settings.forestMidDistance, settings.forestBillboardDistance, settings.forestDrawDistance, settings.forestThinnedRings, archetypes.length, builtArchetypeParams].join();
+	if (gpuSlots && gpuSlots.key === key) return gpuSlots;
+	const { lastLevel, ends, meshEnd, billboardStart, billboardEnd } = detailEnds();
+	const slots = { key, wood: [], foliage: [], billboards: [], count: 0, lists: archetypes.length * STAGES * LEVELS, ends, billboardStart, billboardEnd, levelOf: new Uint8Array(MAX_DRAWS), levelFrom: 0 };
+	const table = new Uint32Array(MAX_DRAWS * 4);
+	const add = (into, list, partStart, partCount, kept, sides, rings, level, vertices) => {
+		if (partCount <= 0 || slots.count >= MAX_DRAWS - 1) return;
+		const last = level == lastLevel;
+		const fade = [ends[level] * (1 - FADE_BAND), ends[level], last ? billboardStart : 1e8, last ? ends[level] : 2e8];
+		writeDraw(drawData, slots.count, 0, partStart, partCount, sides, rings, last ? partCount : Math.min(Math.max(kept, 0), partCount),
+					FOLIAGE_DETAIL[level][1], FOLIAGE_DETAIL[Math.min(level + 1, lastLevel)][1], fade);
+		table.set([list, partCount, vertices, 0], slots.count * 4);
+		slots.levelOf[slots.count] = level;
+		into.push(slots.count++);
+	};
+	for (let list = 0; list < slots.lists; list++) {
+		const level = list % LEVELS;
+		if (level > lastLevel) continue;		// (a level not used: nothing falls in it)
+		const stage = archetypes[Math.floor(list / (STAGES * LEVELS))].stages[Math.floor(list / LEVELS) % STAGES];
+		const tessellation = TESSELLATION[level], next = Math.min(level + 1, lastLevel);
+		add(slots.wood, list, stage.sectionStart, stage.thickAt[level], stage.thickAt[next], tessellation.thick[0], tessellation.thick[1], level, tessellation.thick[0] * tessellation.thick[1] * 6);
+		if (tessellation.thin) {
+			add(slots.wood, list, stage.sectionStart + stage.thick, stage.sections[level] - stage.thick, stage.sections[next] - stage.thick, tessellation.thin[0], tessellation.thin[1], level, tessellation.thin[0] * tessellation.thin[1] * 6);
+		}
+		add(slots.foliage, list, stage.foliageStart, stage.foliage[level], stage.foliage[next], 0, 0, level, FOLIAGE_VERTICES);
+	}
+	// the billboards: one draw call for the lot, whatever archetype they are. An instance is a whole tree
+	writeDraw(drawData, slots.count, 0, 0, 1, 0, 0, 1, 1, 1, [billboardStart, meshEnd, billboardEnd * 0.9, billboardEnd]);
+	table.set([slots.lists, 1, BILLBOARD_VERTICES, 0], slots.count * 4);
+	slots.levelOf[slots.count] = LEVELS;		// (after every level of detail: always drawn)
+	slots.billboards.push(slots.count++);
+	device.queue.writeBuffer(drawUniformBuffer, 0, drawData, 0, slots.count * DRAW_STRIDE);
+	device.queue.writeBuffer(slotsBuffer, 0, table, 0, slots.count * 4);
+	keptDraws = null;		// (the CPU's draw calls' uniforms are gone: it works them out again, if it is asked)
+	gpuListsFor = '';		// (and the lists made again into them)
+	gpuSlots = slots;
+	return slots;
+}
+
+// the three passes, into the frame's encoder before the forest is drawn. Returns THE DRAW SLOTS, or null if the lists cannot be made on
+//		the GPU (more archetypes than a workgroup can lay out: the CPU's way, then)
+function listsOnGPU(encoder) {
+	const slots = drawSlots();
+	if (slots.lists + 1 > LIST_WORKGROUP) return null;
+	const places = treeData.length / TREE_FLOATS;
+	if (!placedBuffer || placedBuffer.size < places * 16) {
+		if (placedBuffer) placedBuffer.destroy();
+		placedBuffer = device.createBuffer({ label: "forest trees placed", size: Math.max(places, 1) * 16, usage: GPUBufferUsage.STORAGE });
+	}
+	if (!cullBindGroups || cullBindFor[0] !== treeBuffer || cullBindFor[1] !== visibleBuffer || cullBindFor[2] !== placedBuffer || cullBindFor[3] !== archetypeBuffer) {
+		const of = (entry, bindings) => device.createBindGroup({ label: "forest " + entry + " bind group", layout: cullPipelines[entry].getBindGroupLayout(0), entries: bindings.map(([binding, buffer]) => ({ binding, resource: { buffer } })) });
+		cullBindGroups = {
+			cullTrees: of('cullTrees', [[0, cullUniformBuffer], [1, treeBuffer], [2, archetypeBuffer], [3, horizonBuffer], [4, countsBuffer], [5, placedBuffer]]),
+			layLists: of('layLists', [[0, cullUniformBuffer], [4, countsBuffer], [6, startsBuffer], [7, slotsBuffer], [8, drawUniformBuffer], [9, indirectBuffer]]),
+			placeTrees: of('placeTrees', [[0, cullUniformBuffer], [5, placedBuffer], [6, startsBuffer], [10, visibleBuffer]]),
+		};
+		cullBindFor = [treeBuffer, visibleBuffer, placedBuffer, archetypeBuffer];
+	}
+	// the horizon, when it is a new one (horizon.js makes it again as the camera moves on)
+	const occluding = horizon.readyHorizon(), table = horizon.horizonTable();
+	if (occluding && table.builds !== horizonSent) {
+		device.queue.writeBuffer(horizonBuffer, 0, table.steepest);
+		horizonSent = table.builds;
+	}
+	const planes = transformations.getFrustumPlanes();
+	// (the lists the GPU made last still right, as sortTreesIntoDraws keeps its own: the camera, the levels of detail, the trees near it and
+	//		how many there are as they were. A tree further off is caught up with every DRAWS_REFRESH frames)
+	const listsFor = planes.flat().join() + '|' + slots.key + '|' + settings.landOcclusion + '|' + trees.length;
+	if (listsFor === gpuListsFor && !treesMoved && ++gpuFramesSince < DRAWS_REFRESH) return slots;
+	gpuListsFor = listsFor;
+	treesMoved = false;
+	gpuFramesSince = 0;
+	// (the nearest any tree can be: the nearest block of them (see THE CELLS: its box holds their feet), and nearer than that times 0.8 a
+	//		tree's detail distance never is (its detailScale is 0.8 at the least). A level of detail that ends nearer has no trees in it this
+	//		time, and its draw calls are not made: drawing nothing costs the GPU too. Every block, in view or not: a tree's own ball, which
+	//		the GPU tests, can reach out of its block's box)
+	let nearest = Infinity;
+	for (const block of blocks) {
+		nearest = Math.min(nearest, Math.hypot(Math.max(block.x0 - settings.camPosX, 0, settings.camPosX - block.x1), Math.max(block.y0 - settings.camPosY, 0, settings.camPosY - block.y1), Math.max(block.z0 - settings.camPosZ, 0, settings.camPosZ - block.z1)));
+	}
+	slots.levelFrom = 0;
+	while (slots.levelFrom < LEVELS && slots.ends[slots.levelFrom] <= nearest * 0.8) slots.levelFrom++;
+	cullValues.set([settings.camPosX, settings.camPosY, settings.camPosZ, 0], 0);
+	planes.forEach((plane, k) => cullValues.set(plane, 4 + k * 4));
+	cullValues.set(slots.ends.slice(0, 4), 28);
+	cullValues.set([slots.ends[4], slots.billboardStart, slots.billboardEnd, clock - clockBase], 32);
+	cullValues.set(occluding && table.madeAt ? [...table.madeAt, 1] : [0, 0, 0, 0], 36);
+	cullSizes.set([trees.length, slots.lists, slots.lists, slots.count]);
+	device.queue.writeBuffer(cullUniformBuffer, 0, cullValues);
+	encoder.clearBuffer(countsBuffer);
+	const pass = encoder.beginComputePass({ label: "forest lists", timestampWrites: profiler.timestamps('Lists', 'c_forestCull') });
+	const groups = Math.ceil(trees.length / CULL_WORKGROUP);
+	if (groups > 0) {
+		pass.setPipeline(cullPipelines.cullTrees);
+		pass.setBindGroup(0, cullBindGroups.cullTrees);
+		pass.dispatchWorkgroups(groups);
+	}
+	pass.setPipeline(cullPipelines.layLists);
+	pass.setBindGroup(0, cullBindGroups.layLists);
+	pass.dispatchWorkgroups(1);
+	if (groups > 0) {
+		pass.setPipeline(cullPipelines.placeTrees);
+		pass.setBindGroup(0, cullBindGroups.placeTrees);
+		pass.dispatchWorkgroups(groups);
+	}
+	pass.end();
+	forestStats.drawCalls = slots.count;
+	readListStats(slots);
+	return slots;
+}
+// forestStats.drawn from the GPU's counts now and then (a frame or two late: it is only for showing)
+let statsReading = false, statsFrame = 0;
+function readListStats(slots) {
+	if (statsReading || ++statsFrame % 30 != 0) return;
+	statsReading = true;
+	const read = device.createBuffer({ label: "forest list counts, read", size: LIST_WORKGROUP * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+	const encoder = device.createCommandEncoder();
+	encoder.copyBufferToBuffer(countsBuffer, 0, read, 0, LIST_WORKGROUP * 4);
+	device.queue.submit([encoder.finish()]);
+	read.mapAsync(GPUMapMode.READ).then(() => {
+		const counts = new Uint32Array(read.getMappedRange().slice(0));
+		read.destroy();
+		const drawn = new Array(LEVELS + 1).fill(0);
+		for (let list = 0; list < slots.lists; list++) drawn[list % LEVELS] += counts[list];
+		drawn[LEVELS] = counts[slots.lists];
+		forestStats.drawn = drawn;
+		statsReading = false;
+	}, () => { statsReading = false; });
+}
+// for testing: the CPU's lists as it last made them (forestGpuCulling off), the same as forestGpuListsForTest gives
+export const forestCpuListsForTest = () => ({ lists: new Map(lists.map((members, k) => [k, [...members]]).filter(([, members]) => members.length)), billboards: [...billboards] });
+// for testing: the nearest level of detail whose draw calls are made (see listsOnGPU)
+export const forestLevelFromForTest = () => gpuSlots?.levelFrom ?? 0;
+// for testing: the GPU's lists as the last frame made them, { lists: Map list -> [tree numbers], billboards: [...] }
+export async function forestGpuListsForTest() {
+	const slots = gpuSlots;
+	if (!slots) return null;
+	const bytes = Math.min(visibleBuffer.size, (trees.length * 2 + 1) * 4);
+	const reads = [[countsBuffer, LIST_WORKGROUP * 4], [startsBuffer, LIST_WORKGROUP * 4], [visibleBuffer, bytes]].map(([buffer, size]) => {
+		const read = device.createBuffer({ size, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+		const encoder = device.createCommandEncoder();
+		encoder.copyBufferToBuffer(buffer, 0, read, 0, size);
+		device.queue.submit([encoder.finish()]);
+		return read;
+	});
+	await Promise.all(reads.map((read) => read.mapAsync(GPUMapMode.READ)));
+	const [counts, starts, list] = reads.map((read) => new Uint32Array(read.getMappedRange().slice(0)));
+	reads.forEach((read) => read.destroy());
+	const lists = new Map();
+	for (let k = 0; k < slots.lists; k++) if (counts[k]) lists.set(k, [...list.subarray(starts[k], starts[k] + counts[k])]);
+	return { lists, billboards: [...list.subarray(starts[slots.lists], starts[slots.lists] + counts[slots.lists])] };
 }
 
 export function forestPass(aEncoder, mainpassDepthTexture) {
@@ -1626,8 +1987,10 @@ export function forestPass(aEncoder, mainpassDepthTexture) {
 	}
 
 	forestUniformBufferUpdates();
-	const draws = sortTreesIntoDraws();
-	if (draws.wood.length == 0 && draws.foliage.length == 0 && draws.billboards.length == 0) {
+	// (the lists made on the GPU, THE GPU'S LISTS, every draw call there could be drawn from them; or the CPU's)
+	const slots = settings.forestGpuCulling ? listsOnGPU(aEncoder) : null;
+	const draws = slots ? null : sortTreesIntoDraws();
+	if (draws && draws.wood.length == 0 && draws.foliage.length == 0 && draws.billboards.length == 0) {
 		return;
 	}
 	if (!forestBindGroup || forestBindGroupFiltering !== filteringLevel()) {
@@ -1650,10 +2013,19 @@ export function forestPass(aEncoder, mainpassDepthTexture) {
 		},
 	});
 
+	// (one draw call each, as the GPU's lists have them: indirect)
+	const drawEach = (pass, list) => {
+		for (const slot of list) {
+			if (slots.levelOf[slot] < slots.levelFrom) continue;		// (a level with no trees this time: see listsOnGPU)
+			pass.setBindGroup(1, drawBindGroup, [slot * DRAW_STRIDE]);
+			pass.drawIndirect(indirectBuffer, slot * 16);
+		}
+	};
 	let pass = parts.next('Wood', 'vf_forestWood');
 	pass.setBindGroup(0, forestBindGroup);
 	pass.setPipeline(woodPipeline);
-	for (const draw of draws.wood) {
+	if (slots) drawEach(pass, slots.wood);
+	else for (const draw of draws.wood) {
 		pass.setBindGroup(1, drawBindGroup, [draw.slot * DRAW_STRIDE]);
 		pass.draw(draw.vertices, draw.instances, 0, 0);		// draw(vertexCount, instanceCount, firstVertex, firstInstance)
 	}
@@ -1661,7 +2033,8 @@ export function forestPass(aEncoder, mainpassDepthTexture) {
 	pass = parts.next('Foliage', 'vf_forestFoliage');
 	pass.setBindGroup(0, forestBindGroup);
 	pass.setPipeline(foliagePipeline);
-	for (const draw of draws.foliage) {
+	if (slots) drawEach(pass, slots.foliage);
+	else for (const draw of draws.foliage) {
 		pass.setBindGroup(1, drawBindGroup, [draw.slot * DRAW_STRIDE]);
 		pass.draw(draw.vertices, draw.instances, 0, 0);
 	}
@@ -1669,7 +2042,8 @@ export function forestPass(aEncoder, mainpassDepthTexture) {
 	pass = parts.next('Billboards', 'vf_forestBillboard');
 	pass.setBindGroup(0, forestBindGroup);
 	pass.setPipeline(billboardPipeline);
-	for (const draw of draws.billboards) {
+	if (slots) drawEach(pass, slots.billboards);
+	else for (const draw of draws.billboards) {
 		pass.setBindGroup(1, drawBindGroup, [draw.slot * DRAW_STRIDE]);
 		pass.draw(draw.vertices, draw.instances, 0, 0);
 	}

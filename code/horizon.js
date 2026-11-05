@@ -41,6 +41,10 @@ for (let bin = 0; bin < BINS; bin++) {
 }
 
 let madeAt = null, madeFor = null;
+// for the forest's lists on the GPU (forest.js: THE GPU'S LISTS): how the table is laid out, and the table as it is now (builds: how many
+//		times it has been made, so it is only sent when it is a new one), with where it was made from
+export const HORIZON = { BINS, STEPS, FIRST, STEP_GROWTH, MOVE };
+export const horizonTable = () => ({ steepest, madeAt, builds: horizonStats.builds });
 export const horizonStats = { builds: 0, milliseconds: 0 };
 
 // height of the data grid at a world position, bilinear (land.heightAt, without its array)

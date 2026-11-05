@@ -12,6 +12,7 @@ import { vf_geese } from '../shaders/js/vf_geese.js'
 import * as transformations from './transformations.js'
 import * as terrain from './terrain.js'
 import { tileAt } from './world.js'
+import { addJob, SOON } from './jobs.js'
 import * as ballistics from './ballistics.js'
 import { birdSpheres, fallen, moveFallen } from './fallenBirds.js'
 
@@ -282,14 +283,9 @@ function makeSkein() {
 	skeinCount = settings.geeseCount;
 	fallenGeese = [];
 	respawns = [];
-	let highest = -Infinity;
-	for (const height of over.land.heights) highest = Math.max(highest, height);
-	cruiseY = Math.max(highest * 0.92, settings.waterWorldPosY + 400);
-	const near = skeinMiddle;
-	landingSpots = [
-		...over.land.findSpawnPoints(terrain.ZONE_LAKE, 16, { seed: 41, minSpacing: 200, near: near, radius: ROAM }),
-		...over.land.findSpawnPoints(terrain.ZONE_MARSH, 16, { seed: 43, minSpacing: 200, near: near, radius: ROAM, maxSlope: 0.15 }),
-	];
+	const places = placesOf(over.land);
+	cruiseY = Math.max(places.highest * 0.92, settings.waterWorldPosY + 400);
+	landingSpots = places.spots.map((spot) => ({ ...spot }));
 
 	geese = [];
 	const count = clamp(Math.round(settings.geeseCount), 0, MAX_GEESE);
@@ -300,6 +296,44 @@ function makeSkein() {
 	}
 	skein = { state: 'cruise', timer: between(CRUISE_SECONDS), target: farPoint(), spot: null, leadTimer: LEAD_SECONDS };
 }
+
+// What the skein needs of a land, worked out once for it: its highest ground, and the lakes and marshes to come down on round its middle.
+//		A tile of land's, as it comes in (jobs.js, a piece of the heights at a time), so the skein is made at once when the camera gets there
+const skeinPlaces = new WeakMap();
+const landingSpotsOf = (land) => {
+	const near = land.center ?? [0, 0];
+	return [
+		...land.findSpawnPoints(terrain.ZONE_LAKE, 16, { seed: 41, minSpacing: 200, near: near, radius: ROAM }),
+		...land.findSpawnPoints(terrain.ZONE_MARSH, 16, { seed: 43, minSpacing: 200, near: near, radius: ROAM, maxSlope: 0.15 }),
+	];
+};
+function placesOf(land) {
+	let kept = skeinPlaces.get(land);
+	if (!kept) {
+		let highest = -Infinity;
+		for (const height of land.heights) highest = Math.max(highest, height);
+		skeinPlaces.set(land, kept = { highest, spots: landingSpotsOf(land) });
+	}
+	return kept;
+}
+const warming = new WeakSet();		// the lands whose places are still being worked out: the skein waits for them (see advanceGeese)
+terrain.onTiles((added) => {
+	for (const key of added) {
+		const here = terrain.world?.tiles.get(key)?.kind == 'land' && terrain.landsHere().find((one) => one.key == key);
+		if (!here || skeinPlaces.has(here.land)) continue;
+		warming.add(here.land);
+		addJob('the geese over ' + key, function* () { try {
+			const heights = here.land.heights;
+			let highest = -Infinity;
+			for (let i = 0; i < heights.length; i++) {
+				highest = Math.max(highest, heights[i]);
+				if (i % 131072 == 131071) yield;
+			}
+			yield;
+			if (!skeinPlaces.has(here.land)) skeinPlaces.set(here.land, { highest, spots: landingSpotsOf(here.land) });
+		} finally { warming.delete(here.land); } }, { key: 'tile ' + key, priority: SOON });
+	}
+});
 
 // where a goose's place in the V is: index 1 and up, behind the leader and out to the side
 function slotFor(index, leader) {
@@ -392,7 +426,9 @@ function advanceGeese(elapsed) {
 		return;
 	}
 	// (made again for a new land, or when the number of geese is changed: not when one is shot)
-	const skeinHere = terrain.world ? flockLandHere()?.key ?? skeinTile : skeinTile;
+	// (over a tile whose places are still being worked out, the skein stays where it was a frame or two, until they are: see warming)
+	const overNow = terrain.world ? flockLandHere() : null;
+	const skeinHere = terrain.world ? (overNow && !warming.has(overNow.land) ? overNow.key : skeinTile) : skeinTile;
 	if (terrain.land !== skeinLand || skeinHere !== skeinTile || settings.geeseCount !== skeinCount) {
 		makeSkein();
 	}

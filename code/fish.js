@@ -1,4 +1,5 @@
 import { settings } from './settings.js';
+import { stepFor } from './rates.js'
 
 import * as terrain from './terrain.js'
 import * as props from './props.js'
@@ -46,15 +47,22 @@ const inWater = (K, x, z) => {
 terrain.onTiles((added, removed) => {
 	if (builtFor !== terrain.land) return;
 	if (removed.length) schools = schools.filter((o) => !removed.includes(o.tile));
-	for (const { key, land } of terrain.landsHere()) if (added.includes(key)) schoolsOf(land, key);
-});
+	const fresh = terrain.landsHere().filter(({ key }) => added.includes(key) && !schools.some((o) => o.tile == key));
+	const made = builtFor;
+	if (fresh.length) return (function* () { for (const { key, land } of fresh) for (let k = 0; k < KINDS.length; k++) { schoolsOfKind(land, key, k); yield; if (builtFor !== made) return; } })();
+}, { later: true });
 function build() {
 	builtFor = terrain.land;
 	schools = [];
 	for (const { key, land } of terrain.landsHere()) schoolsOf(land, key);
 }
 function schoolsOf(land, tile) {
-	KINDS.forEach((K, k) => {
+	KINDS.forEach((K, k) => schoolsOfKind(land, tile, k));
+}
+// (a kind at a time: a tile's own can come a kind a step, see the listener above)
+function schoolsOfKind(land, tile, k) {
+	const K = KINDS[k];
+	{
 		const zone = K.water == 'pond' ? terrain.ZONE_LAKE : terrain.ZONE_OCEAN;
 		const spots = land.findSpawnPoints(zone, K.schools * 12, { seed: 300 + k * 13, minSpacing: K.water == 'pond' ? 30 : 120 }) ?? [];
 		let made = 0;
@@ -64,11 +72,14 @@ function schoolsOf(land, tile) {
 			schools.push({ id: nextId++, kind: k, x: s.x, z: s.z, y: surface() - metre(), heading: Math.random() * 6.28, target: null, tile });
 			made++;
 		}
-	});
+	}
 }
-function moveLeaders(dt) {
+function moveLeaders(frameDt) {
 	const m = metre();
 	for (const S of schools) {
+		// (one far from everyone, out past where its fish are drawn, less often: rates.js)
+		const dt = stepFor(S, S.x, S.z, frameDt, DRAW_MOST * m);
+		if (!dt) continue;
 		const K = KINDS[S.kind];
 		if (!S.target || Math.hypot(S.target[0] - S.x, S.target[1] - S.z) < 3 * m) {
 			S.target = null;

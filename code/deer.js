@@ -1,4 +1,5 @@
 import { DEPTH_FORMAT, depthTest, DEPTH_CLEAR } from './depthMode.js'
+import { stepFor, rateFrame } from './rates.js'
 import {device} from './deviceSelection.js'
 import { frameTexture } from './deviceSelection.js'
 import {context} from './deviceSelection.js'
@@ -204,6 +205,7 @@ const deerPipeline = device.createRenderPipeline({
 //-------------------------------------------------
 let groups = [];
 let herdLand = null, herdGroups = -1;	// the land and the number of groups the herd was made for
+let herdMade = 0;		// how many times the whole herd has been made (a tile's own coming in steps stops if it is made again: see the listener)
 let groupsAsked = -1, askedSeconds = 0;	// a new number of groups, and how long it has been asked for (see REHERD_SECONDS)
 let shoreSpots = [];		// where they drink: { x, z, facing } on the marsh, facing the water
 let dayClock = 0;			// the world's day (see THE DEER'S DAY), in days
@@ -366,10 +368,13 @@ function scheduleTrips(group, day) {
 terrain.onTiles((added, removed) => {
 	if (herdLand !== terrain.land) return;
 	if (removed.length) { groups = groups.filter((g) => !removed.includes(g.tile)); shoreSpots = shoreSpots.filter((s) => !removed.includes(s.tile)); }
-	for (const key of added) { const here = terrain.landsHere().find((one) => one.key == key); if (here) herdOf(here.land, key); }
-});
+	const fresh = added.map((key) => terrain.landsHere().find((one) => one.key == key)).filter((here) => here && !groups.some((g) => g.tile == here.key) && !shoreSpots.some((s) => s.tile == here.key));
+	const made = herdMade;
+	if (fresh.length) return (function* () { for (const here of fresh) for (const step of herdSteps(here.land, here.key)) { yield; if (herdMade !== made) return; } })();
+}, { later: true });
 function makeHerd() {
 	herdLand = terrain.land;
+	herdMade++;
 	corpses = [];
 	shoreSpots = [];
 	groups = [];
@@ -377,6 +382,10 @@ function makeHerd() {
 }
 // one land's herd (a tile's): its places to drink, and its groups, each knowing its tile
 function herdOf(land, tile) {
+	for (const step of herdSteps(land, tile)) ;
+}
+// (in two steps: its places to drink, then its groups. A tile's own can come a step at a time: see the listener above)
+function* herdSteps(land, tile) {
 	const water = settings.waterWorldPosY;
 	const ownShore = [];
 	// where to drink: from points on the marsh, out to the nearest edge of the water. The spot is the last dry ground before it,
@@ -396,6 +405,7 @@ function herdOf(land, tile) {
 		if (best && walkable(best.x, best.z) && ownShore.every((s) => Math.hypot(s.x - best.x, s.z - best.z) > 25)) ownShore.push({ x: best.x, z: best.z, facing: best.facing, tile });
 	}
 	shoreSpots.push(...ownShore);
+	yield;
 	// homes: stretches of forest, the ones nearest to somewhere to drink first, well apart from each other. More than fit at the
 	//		widest spacing: more places to choose from, closer together (see THE GROUPS at the top)
 	const wanted = clamp(Math.round(settings.deerGroups), 0, MAX_GROUPS);
@@ -504,11 +514,14 @@ export function deerUpdate() {
 export function simulateDeer(total) {
 	for (let done = 0; done < total; done += 0.05) {
 		testDays += 0.05 / daySeconds();
+		rateFrame();
 		advanceDeer(0.05);
 	}
 }
 
-function advanceDeer(elapsed) {
+const SEEN = 2500;			// metres: further than this from everyone a group is moved on less often (rates.js). A deer is a few pixels there, through a scope
+function advanceDeer(frameElapsed) {
+	const elapsed = frameElapsed;
 	dayClock = sunCycles + testDays;
 	if (followed) {		// (a joiner's deer are the host's)
 		deerStats.deer = followed.filter((one) => one.alive).length;
@@ -553,6 +566,8 @@ function advanceDeer(elapsed) {
 
 	for (const group of groups) {
 		if (group.deer.length == 0) continue;		// (all of it shot: until the new ones come)
+		const elapsed = stepFor(group, group.deer[0].x, group.deer[0].z, frameElapsed, SEEN * m);
+		if (!elapsed) continue;
 		if (group.scheduledDay < day) scheduleTrips(group, day);
 		// a trip is due at its time. And whatever the time, once the day is running out on the ones still to go: there have to be
 		//		TRIPS_A_DAY in it (a group with a long way to the water may be late for one, still walking back from the last)

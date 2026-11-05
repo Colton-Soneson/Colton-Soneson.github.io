@@ -74,6 +74,14 @@ export function bouldersNear(x, z, reach, each) {
 	}
 }
 
+// every boulder in the squares round a place: each(at), its first float in boulderPlaces() (particles.js: the leaves' way round them)
+export function boulderCellsAround(x, z, reach, each) {
+	for (const cell of cells) {
+		if (Math.abs(cell.x - x) > CELL_SIZE * 0.5 + reach || Math.abs(cell.z - z) > CELL_SIZE * 0.5 + reach) continue;
+		for (const at of cell.at) each(at);
+	}
+}
+
 let instanceBuffer;
 let instanceData = new Float32Array(0);
 let laidParams = "";					// the params the boulders were laid out from

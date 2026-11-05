@@ -1430,24 +1430,48 @@ export function wrapLand(params, data, made = null) {
 			maxSlope		0 (only dead flat ground) to 1 (anything). Default 1
 			near, radius	only look within radius of the world position [x, z]. Default is the whole world
 	*/
+	// (the same zone, count and options always give the same points, so each is worked out once for the land and remembered, and a
+	//		copy of it handed out: SPAWN_KEPT of them, the oldest let go first. Not one of a point or two, those are quick and come from
+	//		anywhere. And a point is kept apart from the ones found so far by testing only those in the squares round it, spacing
+	//		across: the same as testing them all, as anything nearer than spacing is in one of those)
+	const spawnKept = new Map();
 	function findSpawnPoints(zone, count, options = {}) {
-		const random = seededRandom((options.seed ?? 1) * 7919 + zone);
-		const spacing = options.minSpacing ?? 0;
-		const flatness = 1 - (options.maxSlope ?? 1);
-		const centerX = options.near ? options.near[0] : ox, centerZ = options.near ? options.near[1] : oz;
-		const radius = options.radius ?? half;
+		const keyOf = count > 2 ? zone + '|' + count + '|' + JSON.stringify(options) : null;
+		let found = keyOf && spawnKept.get(keyOf);
+		if (!found) {
+			const random = seededRandom((options.seed ?? 1) * 7919 + zone);
+			const spacing = options.minSpacing ?? 0;
+			const flatness = 1 - (options.maxSlope ?? 1);
+			const centerX = options.near ? options.near[0] : ox, centerZ = options.near ? options.near[1] : oz;
+			const radius = options.radius ?? half;
+			const squares = new Map(), square = (x, z) => Math.floor(x / spacing) + ',' + Math.floor(z / spacing);
+			const crowded = (x, z) => {
+				const sx = Math.floor(x / spacing), sz = Math.floor(z / spacing);
+				for (let i = sx - 1; i <= sx + 1; i++) for (let j = sz - 1; j <= sz + 1; j++) {
+					const near = squares.get(i + ',' + j);
+					if (near && near.some((p) => Math.hypot(p.x - x, p.z - z) < spacing)) return true;
+				}
+				return false;
+			};
 
-		const found = [];
-		for (let attempt = 0; attempt < count * 400 && found.length < count; attempt++) {
-			const x = centerX + (random() * 2 - 1) * radius, z = centerZ + (random() * 2 - 1) * radius;
-			if (Math.abs(x - ox) >= half || Math.abs(z - oz) >= half) continue;
-			if (zoneAt(x, z) !== zone) continue;
-			const normal = normalAt(x, z);
-			if (normal[1] < flatness) continue;
-			if (spacing > 0 && found.some((p) => Math.hypot(p.x - x, p.z - z) < spacing)) continue;
-			found.push({ x: x, y: heightAt(x, z), z: z, normal: normal });
+			found = [];
+			for (let attempt = 0; attempt < count * 400 && found.length < count; attempt++) {
+				const x = centerX + (random() * 2 - 1) * radius, z = centerZ + (random() * 2 - 1) * radius;
+				if (Math.abs(x - ox) >= half || Math.abs(z - oz) >= half) continue;
+				if (zoneAt(x, z) !== zone) continue;
+				const normal = normalAt(x, z);
+				if (normal[1] < flatness) continue;
+				if (spacing > 0 && crowded(x, z)) continue;
+				const point = { x: x, y: heightAt(x, z), z: z, normal: normal };
+				found.push(point);
+				if (spacing > 0) { const k = square(x, z); if (squares.has(k)) squares.get(k).push(point); else squares.set(k, [point]); }
+			}
+			if (keyOf) {
+				spawnKept.set(keyOf, found);
+				if (spawnKept.size > SPAWN_KEPT) spawnKept.delete(spawnKept.keys().next().value);
+			}
 		}
-		return found;
+		return found.map((p) => ({ x: p.x, y: p.y, z: p.z, normal: [...p.normal] }));
 	}
 
 	const groundAt = (x, z) => params.seaLevel + landAt(x, z);
@@ -1460,6 +1484,8 @@ export function wrapLand(params, data, made = null) {
 
 // The triangles of a chunk (see buildChunk), as a list of vertex numbers. The same for every chunk with that many cells:
 //		the grid, 2 triangles to a cell, and then the skirt, 2 triangles under each piece of each edge
+const SPAWN_KEPT = 64;		// lists of points findSpawnPoints remembers, for each land
+
 export function chunkIndices(cells) {
 	const perSide = cells + 1;
 	const indices = new Uint16Array((cells * cells + 4 * cells) * 6);

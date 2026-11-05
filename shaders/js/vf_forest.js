@@ -1043,3 +1043,168 @@ export const vf_forestAtlas =
 		return output;
 	}
 `;
+
+// THE CHANGES (sendChangedTrees in forest.js): each changed tree's record put in its place in the list. changes: how many there are, then
+//		for each its place in the list and its record (16 words, as they are: this does not need to know what they say)
+export const CHANGE_WORKGROUP = 64;
+export const c_forestChanges = `
+	@group(0) @binding(0) var<storage, read> changes: array<u32>;
+	@group(0) @binding(1) var<storage, read_write> trees: array<u32>;
+
+	@compute @workgroup_size(${CHANGE_WORKGROUP})
+	fn computeMain(@builtin(global_invocation_id) id: vec3u)
+	{
+		if (id.x >= changes[0]) {
+			return;
+		}
+		let first = 1u + id.x * 17u;
+		let place = changes[first];
+		if ((place + 1u) * 16u > arrayLength(&trees)) {
+			return;
+		}
+		for (var k = 0u; k < 16u; k++) {
+			trees[place * 16u + k] = changes[first + 1u + k];
+		}
+	}
+`;
+
+// THE GPU'S LISTS (forest.js): which trees are drawn this frame, and how. Three passes:
+//		cullTrees		each tree: in the view? behind the hills (horizon.js's hidden, the same sums)? Its level of detail and stage of life,
+//						and so its list, and whether it is a billboard too: counted into them, and its place in each kept
+//		layLists		the lists end to end in the visible list (one workgroup: a prefix sum of the counts), and each draw call's start
+//						(listStart, the first word of its uniforms) and instance count (its indirect draw: its count times its parts)
+//		placeTrees		each tree written into its place in its lists
+//	H: horizon.js's HORIZON. F: { LEVELS, STAGES, STAGE_ENDS }, forest.js's
+export const CULL_WORKGROUP = 64;
+export const LIST_WORKGROUP = 256;		// the most lists there can be, the billboards' included
+export const c_forestCull = (H, F) => `
+	struct TreeRecord { position : vec4f, life : vec4f, shape : vec4f, more : vec4f }		// the Tree struct above
+	struct ArchetypeInfo { a : vec4f, b : vec4f, c : vec4f, d : vec4f, e : vec4f, f : vec4f }	// the Archetype struct: a.x its full grown age, a.y its height
+	struct Cull
+	{
+		camera : vec4f,				// xyz: the camera
+		planes : array<vec4f, 6>,	// the view's
+		ends : vec4f,				// where the first four levels of detail end
+		more : vec4f,				// x: where the last ends, y and z: the billboards from and to, w: the forest's clock (years since clockBase)
+		horizon : vec4f,			// xyz: where the horizon was made from, w: 1 when it hides anything
+		sizes : vec4u,				// x: places in the trees' list, y: draw lists (and so the billboards' list), w: draw calls
+	}
+	@group(0) @binding(0) var<uniform> C : Cull;
+	@group(0) @binding(1) var<storage, read> trees : array<TreeRecord>;
+	@group(0) @binding(2) var<storage, read> archetypes : array<ArchetypeInfo>;
+	@group(0) @binding(3) var<storage, read> steepest : array<f32>;
+	@group(0) @binding(4) var<storage, read_write> counts : array<atomic<u32>>;
+	@group(0) @binding(5) var<storage, read_write> placed : array<vec4u>;		// each tree: x its list, y its place in it, z its place in the billboards'
+	@group(0) @binding(6) var<storage, read_write> starts : array<u32>;
+	@group(0) @binding(7) var<storage, read> slots : array<vec4u>;				// each draw call: x its list, y its parts, z its vertices
+	@group(0) @binding(8) var<storage, read_write> drawWords : array<u32>;		// the draw calls' uniforms, ${64} words each
+	@group(0) @binding(9) var<storage, read_write> indirect : array<u32>;
+	@group(0) @binding(10) var<storage, read_write> visible : array<u32>;
+
+	const NONE = 0xffffffffu;
+	const BINS = ${H.BINS}u;
+	const STEPS = ${H.STEPS}u;
+	const FIRST = ${H.FIRST.toFixed(4)};
+	const LOG_GROWTH = ${Math.log(H.STEP_GROWTH).toFixed(9)};
+	const MOVE = ${H.MOVE.toFixed(4)};
+	const BIN_ANGLE = ${(2 * Math.PI / H.BINS).toFixed(9)};
+	const LEVELS = ${F.LEVELS}u;
+	const STAGES = ${F.STAGES}u;
+
+	// whether something standing round x, z, reaching out reach and up to top, is behind the land from where the horizon was made
+	fn hidden(x : f32, z : f32, top : f32, reach : f32) -> bool {
+		let dx = x - C.horizon.x;
+		let dz = z - C.horizon.z;
+		let across = sqrt(dx * dx + dz * dz);
+		let nearSide = across - reach - MOVE * 1.5;
+		if (nearSide < FIRST) { return false; }
+		let slope = (top + MOVE - C.horizon.y) / nearSide;
+		let at = min(u32(floor(log(nearSide / FIRST) / LOG_GROWTH)), STEPS - 1u);
+		let angle = atan2(dz, dx);
+		let spread = asin(min((reach + MOVE * 1.5) / across, 1.0));
+		let first = i32(floor((angle - spread) / BIN_ANGLE)) - 1;
+		let last = i32(floor((angle + spread) / BIN_ANGLE)) + 1;
+		for (var b = first; b <= last; b++) {
+			let bin = u32(((b % i32(BINS)) + i32(BINS)) % i32(BINS));
+			if (slope >= steepest[bin * STEPS + at]) { return false; }
+		}
+		return true;
+	}
+	fn endOf(level : u32) -> f32 {
+		if (level < 4u) { return C.ends[level]; }
+		return C.more.x;
+	}
+
+	@compute @workgroup_size(${CULL_WORKGROUP})
+	fn cullTrees(@builtin(global_invocation_id) id : vec3u)
+	{
+		let i = id.x;
+		if (i >= C.sizes.x) { return; }
+		placed[i] = vec4u(NONE, 0u, NONE, 0u);
+		let t = trees[i];
+		if (t.shape.x <= 0.0) { return; }			// (a place in the list with no tree in it)
+		let arch = u32(t.shape.y);
+		let A = archetypes[arch];
+		let reach = A.a.y * t.shape.x * 1.3;		// (all of it, full grown, standing or lying, round its foot)
+		let base = t.position.xyz;
+		for (var p = 0u; p < 6u; p++) {
+			if (dot(C.planes[p].xyz, base) + C.planes[p].w < -reach) { return; }
+		}
+		if (C.horizon.w > 0.5 && hidden(base.x, base.z, base.y + reach, reach)) { return; }
+		let detail = distance(base, C.camera.xyz) * t.more.w;
+		var level = 0u;
+		loop {
+			if (level >= LEVELS || detail < endOf(level)) { break; }
+			level++;
+		}
+		if (level < LEVELS) {
+			let grown = (t.life.x + t.life.y * C.more.w) / A.a.x;
+			var stage = 3u;
+			if (grown < ${F.STAGE_ENDS[0]}) { stage = 0u; } else if (grown < ${F.STAGE_ENDS[1]}) { stage = 1u; } else if (grown < ${F.STAGE_ENDS[2]}) { stage = 2u; }
+			let list = (arch * STAGES + stage) * LEVELS + level;
+			placed[i].x = list;
+			placed[i].y = atomicAdd(&counts[list], 1u);
+		}
+		if (detail >= C.more.y && detail < C.more.z) {
+			placed[i].z = atomicAdd(&counts[C.sizes.y], 1u);
+		}
+	}
+
+	var<workgroup> sums : array<u32, ${LIST_WORKGROUP}>;
+	@compute @workgroup_size(${LIST_WORKGROUP})
+	fn layLists(@builtin(local_invocation_index) k : u32)
+	{
+		let lists = C.sizes.y + 1u;
+		var n = 0u;
+		if (k < lists) { n = atomicLoad(&counts[k]); }
+		sums[k] = n;
+		workgroupBarrier();
+		for (var off = 1u; off < ${LIST_WORKGROUP}u; off = off * 2u) {
+			var below = 0u;
+			if (k >= off) { below = sums[k - off]; }
+			workgroupBarrier();
+			sums[k] = sums[k] + below;
+			workgroupBarrier();
+		}
+		if (k < lists) { starts[k] = sums[k] - n; }
+		for (var s = k; s < C.sizes.w; s = s + ${LIST_WORKGROUP}u) {
+			let slot = slots[s];
+			let count = atomicLoad(&counts[slot.x]);
+			drawWords[s * 64u] = sums[slot.x] - count;
+			indirect[s * 4u] = slot.z;
+			indirect[s * 4u + 1u] = count * slot.y;
+			indirect[s * 4u + 2u] = 0u;
+			indirect[s * 4u + 3u] = 0u;
+		}
+	}
+
+	@compute @workgroup_size(${CULL_WORKGROUP})
+	fn placeTrees(@builtin(global_invocation_id) id : vec3u)
+	{
+		let i = id.x;
+		if (i >= C.sizes.x) { return; }
+		let p = placed[i];
+		if (p.x != NONE) { visible[starts[p.x] + p.y] = i; }
+		if (p.z != NONE) { visible[starts[C.sizes.y] + p.z] = i; }
+	}
+`;

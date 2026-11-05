@@ -1,4 +1,5 @@
 import { settings } from './settings.js';
+import { stepFor } from './rates.js'
 
 import * as terrain from './terrain.js'
 import * as ballistics from './ballistics.js'
@@ -205,8 +206,10 @@ function advance(dt) {
 	if (!terrain.land || hidden()) return;
 	if (terrain.land !== builtFor) build();
 	clock += dt;
-	for (const c of cats) stepCat(c, dt);
-	for (const P of packs) stepPack(P, dt);
+	// (one far from everyone, out past where it is drawn, less often: rates.js. A pack of rats goes as one)
+	const seen = DRAW * metre();
+	for (const c of cats) { const s = stepFor(c, c.x, c.z, dt, seen); if (s) stepCat(c, s); }
+	for (const P of packs) { const s = stepFor(P, P.x, P.z, dt, seen); if (s) stepPack(P, s); }
 	for (const c of corpses) c.t += dt;
 	corpses = corpses.filter((c) => c.t < (settings.gameMode == 'Hunting' ? LIE_SURVIVAL : LIE));
 	for (let k = respawns.length - 1; k >= 0; k--) if (respawns[k].at <= clock) { const P = respawns.splice(k, 1)[0].pack; rats.push(newRat(P)); }

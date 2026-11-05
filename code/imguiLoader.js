@@ -689,7 +689,7 @@ export function updateGraphicsPresets() {
 	}
 
 	// what the check is doing, twice a second
-	if (action || now - statusShown > 500) {
+	if (guiShown.on && (action || now - statusShown > 500)) {
 		statusShown = now;
 		const fps = presetCheck.fps > 0 ? ', ' + Math.round(presetCheck.fps) + ' fps' : '';
 		presetState.status = presetCheck.state == 'done' ? 'done: ' + presetCheck.why
@@ -726,6 +726,7 @@ const dropdownManagedKeys = new Set([
 ]);
 
 export function refreshControlsUI() {
+    if (!guiShown.on) return;	// (see HIDDEN)
     Object.keys(imguiParams).forEach(key => {
         if (!dropdownManagedKeys.has(key)) {
             settings[key] = imguiParams[key];
@@ -736,6 +737,7 @@ export function refreshControlsUI() {
 // only the controls whose value changed are redrawn: redrawing all of them every frame was a good part of the CPU time of a frame
 let allControllers = null;
 export function syncSettingsToParams() {
+    if (!guiShown.on) return;
     const changed = new Set();
     Object.keys(imguiParams).forEach(key => {
         if (key in settings && !dropdownManagedKeys.has(key) && imguiParams[key] !== settings[key]) {
@@ -796,6 +798,7 @@ scaleFolder.add(entityParams, 'scaleZ', 0, 10).name('Z').onChange(v => scene.ent
 entityGUI.foldersRecursive().forEach((folder) => folder.close());
 
 export function refreshEntityFolder() {
+    if (!guiShown.on) return;
     const e = scene.entityModels[selectedEntity];
     entityParams.posX = e.worldTranslation[0];
     entityParams.posY = e.worldTranslation[1];
@@ -1062,7 +1065,7 @@ function drawCpuRows() {
 
 // once a frame, after it is sent off
 export function refreshPerformanceWindow() {
-	if (perfGUI._closed || !profiler.timing.enabled) {
+	if (!guiShown.on || perfGUI._closed || !profiler.timing.enabled) {
 		return;
 	}
 	const data = profiler.latest;
@@ -1107,6 +1110,26 @@ export function refreshPerformanceWindow() {
 		row.ms.textContent = node.ms.toFixed(2) + ' ms';
 	}
 }
+
+//----------------------HIDDEN (H)-------------------------------
+// H hides every window in the dock, and while they are hidden none of them is kept up to date: no controls copied into the settings
+//		(refreshControlsUI: nobody can change them), none redrawn (syncSettingsToParams, refreshEntityFolder, the Performance window, the
+//		preset's status rows; the preset check itself goes on). Shown again, they catch up with the settings first, so that what the game
+//		changed meanwhile is not put back by the controls' old values. Not while typing (a name, the chat)
+export const guiShown = { on: true };
+function showGui(on) {
+	guiShown.on = on;
+	guiDock.style.display = on ? '' : 'none';
+	if (!on) return;
+	syncSettingsToParams();
+	refreshEntityFolder();
+}
+window.addEventListener('keydown', (event) => {
+	if (event.code != 'KeyH' || event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
+	const typing = event.target?.closest?.('input, textarea, select, [contenteditable="true"]');
+	if (typing) return;
+	showGui(!guiShown.on);
+});
 
 //----------------------WINDOWS EVENT LISTENERS-------------------------------
 export let guiActive = false;

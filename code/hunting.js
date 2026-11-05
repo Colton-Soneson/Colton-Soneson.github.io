@@ -316,7 +316,8 @@ function gather(now) {
 	boxCount = 0;
 	if (settings.enableForest) forest.trunksNear(hunter.x, hunter.z, reach, add);
 	if (settings.enableBoulders) boulders.bouldersNear(hunter.x, hunter.z, reach, add);
-	town.boxesNear(hunter.x, hunter.z, reach, add);		// (the houses, the walls, the pier, the lamps of the towns)
+	// (the houses, the walls, the pier, the lamps of the towns: square, its sixth, the box's number, not a halfZ)
+	town.boxesNear(hunter.x, hunter.z, reach, (x, z, half, bottom, top) => add(x, z, half, bottom, top));
 	for (const near of stills) near(hunter.x, hunter.z, reach, add);	// (what stands in the rooms inside them: interiors.js)
 	gatheredAt = [hunter.x, hunter.z];
 	gatheredWhen = now;

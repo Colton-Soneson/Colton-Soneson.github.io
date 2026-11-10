@@ -154,6 +154,7 @@ export const settings = {
 	forestThinnedRings: 2,				//0 to 2: rings between the mid distance and the billboards where the trees are drawn thinned, fewer and bigger pieces of foliage on coarser wood (see the levels of detail at the top of forest.js)
 	forestBillboardDistance: 420.0,		//further off than this a tree is a billboard: 2 flat cards with its picture on
 	forestDrawDistance: 5000.0,			//how far off trees are drawn at all
+	forestRoots: true,					//the trees' roots, running out over the ground from the foot of the trunk (treeGenerator.js: THE ROOTS), near the camera
 	forestGpuCulling: true,				//which trees are drawn, and how, worked out on the GPU for every tree, every frame (forest.js: THE GPU'S LISTS). Off: on the CPU, a square of ground at a time
 	forestWindStrength: 1.0,			//how far the wind bends the trees
 	//-------------------SEASONS-------------------

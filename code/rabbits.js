@@ -1,4 +1,5 @@
 import { settings } from './settings.js';
+import { ANATOMY, woundFrom, otherWound, cleanWound, recordOf } from './anatomy.js'
 import { stepFor } from './rates.js'
 
 import * as terrain from './terrain.js'
@@ -36,7 +37,7 @@ const RESPAWN = 90;
 const BONES = 0.05;
 const DRAW = 180;					// metres
 const SNARE_AHEAD = 1.4;			// metres in front of the walker it is set
-const SPHERES = [[0, 0.13, -0.03, 0.1], [0, 0.18, 0.13, 0.06]];
+const SPHERES = ANATOMY.rabbit.body;
 const SINEW = 0.12;					// the chance of a little sinew off one, as a small one has
 const SPOOK = 12;					// metres a player is heard from (hearing.js): off it goes
 
@@ -171,17 +172,21 @@ ballistics.addTarget((ax, ay, az, bx, by, bz) => {
 	if (hidden()) return null;
 	const list = followed ? followed.filter((o) => o.alive) : rabbits;
 	const found = ballistics.crossAnimals(ax, ay, az, bx, by, bz, list, spheresOf, aroundOf);
-	return found && { t: found.t, what: 'rabbit', hit: () => { if (followed) rabbitShot.report?.(found.animal.id, [0, 0, 0]); else kill(found.animal); } };
+	return found && { t: found.t, what: 'rabbit', hit: (velocity, bullet) => {
+		const r = found.animal, wound = bullet ? woundFrom('rabbit', bullet, [r.x, r.y, r.z], r.heading, metre()) : null;
+		if (followed) rabbitShot.report?.(r.id, [0, 0, 0], wound, bullet?.round); else kill(r, wound);
+	} };
 }, () => {
 	const out = [];
 	if (!hidden()) for (const r of followed ? followed.filter((o) => o.alive) : rabbits) out.push(...aroundOf(r));
 	return out;
 });
-function kill(r) {
+// (any hit kills one: its wound kept, for its pelt and the inspection, inspect.js. None: a wolf's)
+function kill(r, wound = null) {
 	const at = rabbits.indexOf(r);
 	if (at < 0) return;
 	rabbits.splice(at, 1);
-	corpses.push({ rabbit: r, t: 0 });
+	corpses.push({ rabbit: r, t: 0, record: recordOf('rabbit', [wound ?? otherWound('maul')], 0) });
 	respawns.push({ at: clock + RESPAWN, home: r.home });
 	respawns.sort((a, b) => a.at - b.at);
 	rabbitStats.shot++;
@@ -189,7 +194,10 @@ function kill(r) {
 // host: for the wolves (beasts.js): the nearest alive within reach (world units), and one by its id
 export function nearestRabbit(x, z, reach) { let best = null, bestD = reach; for (const r of rabbits) { const d = Math.hypot(r.x - x, r.z - z); if (d < bestD) { bestD = d; best = r; } } return best; }
 export const rabbitById = (id) => rabbits.find((r) => r.id === id) ?? null;
-export function killRabbitById(id) { const r = rabbits.find((o) => o.id === id); if (r) kill(r); }
+export function killRabbitById(id, velocity, part = null) { const r = rabbits.find((o) => o.id === id); if (r) kill(r, part ? cleanWound(part, 'rabbit') : null); }
+// the record of a dead one while it lies there (see deer.js: deerRecord), and its pelt's stars
+export function rabbitRecord(id) { return corpses.find((c) => c.rabbit.id === id)?.record ?? null; }
+export const peltStars = (id) => rabbitRecord(id)?.quality.stars ?? 3;
 
 // A DEAD ONE: the one the eye is on (its id, or null), and what comes of cutting it up (the host's to say): the meat, a very small chance of small bones
 export function corpseInReach(eye, look, reach) {

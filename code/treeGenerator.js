@@ -54,6 +54,9 @@ export const FOLIAGE_TUFT = 2;		// a ball of long needles at the end of a twig (
 		crownBase				how far up the trunk of a full grown tree the lowest living branches are (0 to 1)
 		deadBranchLinger		how long a shed branch stays on the trunk as a bare stick, as a fraction of the tree's growth
 		pipeExponent			how branch thickness adds up where branches join, see setRadii
+		roots					its root system (see THE ROOTS): count structural roots, out of the foot as high as flare (a share of the
+								trunk's radius), running out as far as reach (metres) and down by dip (metres for every metre out), rising and
+								falling by wave (a share of their thickness), with side roots every branchEvery metres, lateral metres long
 */
 export const TREE_SPECIES = [
 	{
@@ -61,6 +64,7 @@ export const TREE_SPECIES = [
 		height: 32, crownRadius: 4.0, trunkDiameter: 0.52, fullGrownAge: 90, growth: [3.0, 1.8],
 		lifespan: 220, shadeTolerance: 0.8, seedAge: 30, seedsPerYear: 0.10, seedDistance: 30, snagYears: 6,
 		crownBase: 0.40, deadBranchLinger: 0.22, pipeExponent: 2.3,
+		roots: { count: 9, flare: 0.35, reach: 2.6, dip: 0.03, wave: 1.2, branchEvery: 1.1, lateral: 1.0 },		// a plate of roots: shallow, and wide
 		barkColor: [0.26, 0.19, 0.15], barkColorHigh: [0.30, 0.22, 0.17], leafColor: [0.075, 0.200, 0.110], dryColor: [0.36, 0.17, 0.07],
 	},
 	{
@@ -68,6 +72,7 @@ export const TREE_SPECIES = [
 		height: 27, crownRadius: 4.4, trunkDiameter: 0.46, fullGrownAge: 80, growth: [3.0, 1.6],
 		lifespan: 250, shadeTolerance: 0.2, seedAge: 20, seedsPerYear: 0.20, seedDistance: 40, snagYears: 8,
 		crownBase: 0.62, deadBranchLinger: 0.10, pipeExponent: 2.2,
+		roots: { count: 6, flare: 0.35, reach: 1.7, dip: 0.05, wave: 1.0, branchEvery: 1.2, lateral: 0.8 },		// a tap root down, and a few laterals
 		barkColor: [0.27, 0.20, 0.16], barkColorHigh: [0.50, 0.29, 0.16], leafColor: [0.110, 0.235, 0.110], dryColor: [0.42, 0.22, 0.08],
 	},
 	{
@@ -75,6 +80,7 @@ export const TREE_SPECIES = [
 		height: 24, crownRadius: 7.5, trunkDiameter: 0.80, fullGrownAge: 100, growth: [2.6, 1.6],
 		lifespan: 320, shadeTolerance: 0.5, seedAge: 40, seedsPerYear: 0.10, seedDistance: 12, snagYears: 5,
 		crownBase: 0.36, deadBranchLinger: 0.05, pipeExponent: 2.3,
+		roots: { count: 7, flare: 0.55, reach: 2.3, dip: 0.05, wave: 1.1, branchEvery: 1.0, lateral: 1.0 },		// heart roots, buttressed
 		barkColor: [0.22, 0.18, 0.15], barkColorHigh: [0.25, 0.21, 0.17], leafColor: [0.135, 0.300, 0.085], dryColor: [0.40, 0.25, 0.09],
 	},
 	{
@@ -82,6 +88,7 @@ export const TREE_SPECIES = [
 		height: 21, crownRadius: 3.4, trunkDiameter: 0.30, fullGrownAge: 45, growth: [3.4, 1.5],
 		lifespan: 90, shadeTolerance: 0.15, seedAge: 12, seedsPerYear: 0.30, seedDistance: 60, snagYears: 2,
 		crownBase: 0.40, deadBranchLinger: 0.04, pipeExponent: 2.4,
+		roots: { count: 5, flare: 0.45, reach: 1.5, dip: 0.035, wave: 1.1, branchEvery: 0.9, lateral: 0.7 },
 		barkColor: [0.80, 0.79, 0.74], barkColorHigh: [0.86, 0.85, 0.81], leafColor: [0.235, 0.400, 0.110], dryColor: [0.50, 0.36, 0.10],
 	},
 ];
@@ -815,6 +822,137 @@ function buildFoliage(nodes, species, height, furthest, scale, random) {
 		crownBottom			world units: the height of the lowest foliage a full grown tree has
 		trunkRadius			world units, at the ground
 */
+//-------------------------------THE ROOTS-------------------------------
+/*
+	THE ROOTS. Under the ground a tree has about as much again as it has over it; what shows is where its big roots run out from the foot
+	along the top of the soil, before they go down into it. They are grown the way the root architecture models grow them (RootBox,
+	Leitner et al. 2010; the root models of trees it comes from, Pagès' RootTyp, and Danjon and Reubens on the structural roots of trees):
+		THE TIP		each root is a tip that moves on a step at a time (ROOT_STEP). The way it bends wanders as it goes (ROOT_WANDER), and at every
+					step a few turns about that are tried (ROOT_TRIES) and the best kept: the one that best does what the root's TROPISM wants. A structural root wants
+					outwards, away from the trunk (exotropism); a side root wants on the way it set out. So they wander, and still spread.
+					Now and then (ROOT_KINK) a tip meets a stone and turns hard round it: a kink.
+		DOWN		the structural roots of a tree keep near the top of the soil (plagiotropism): each sinks only slowly (dip), and the further
+					out it is the deeper. On the way it rises and falls (wave: over stones, and the roots of others, a rise every ROOT_ARCH
+					or so), so it goes under the soil for a stretch, comes back up in an arch, and goes under again. Once it is under by its own thickness and sinking faster than it could come back up, the rest of it is
+					out of sight, and is not kept.
+		BRANCHING	along a structural root, every so far (branchEvery), a side root (the next order) at an insertion angle, with its own
+					shorter reach (lateral). Thickness by the pipe model (Shinozaki): where a root branches, the area of what goes on
+					is what came in (to pipeExponent, as the branches), so it is thinner on past every side root it puts out.
+		THE FOOT	the trunk's area is shared out among its structural roots, each leaving it high up in the swelling of the foot (flare: a
+					share of the trunk's radius, the buttresses) and coming down to the soil over the zone of rapid taper (Eis): the first
+					metre or so, over which the root thins to less than half. The trunk's foot swells out into as many lobes, where they leave
+					(the lobes and phase of the archetype: vf_forest.js)
+		GROWING		a root is grown out as far as it is at an age (birth, as the branches): out with the years, thicker with them, and the
+					young tree's roots lower to the ground as they are thinner
+	Each point of a root is [x, height above the ground, z] in the tree's own frame: the shader lays it over the ground where it is (see
+	THE ROOTS in vf_forest.js). Their sections have the level ROOT_LEVEL and up (+ their order), so the shader knows them.
+*/
+export const ROOT_LEVEL = 8;
+const ROOT_STEP = 0.16;		// metres
+const ROOT_TRIES = 6;
+const ROOT_TURN = 0.42;		// radians
+const ROOT_OUTWARD = 0.22;	// how much a structural root wants outwards, against how much it minds turning
+const ROOT_WANDER = 2.4;	// how fast the way a root bends wanders (radians a metre, about, over a metre)
+const ROOT_KINK = 0.07;		// the chance at each step of a kink, and how hard it turns (radians, from and to)
+const ROOT_KINK_TURN = [0.35, 0.8];
+const ROOT_ARCH = 0.7;		// metres between one rise of a root and the next, about
+const ROOT_SET = 0.45;		// how far into the soil a root lies, its middle under the top of the ground by this share of its thickness
+
+// a smooth noise along a line, 0 to 1, a knot every unit
+function lineNoise(random) {
+	const knots = Array.from({ length: 64 }, () => random());
+	return (x) => { const i = Math.floor(x), f = x - i, s = f * f * (3 - 2 * f); return mix(knots[((i % 64) + 64) % 64], knots[(((i + 1) % 64) + 64) % 64], s); };
+}
+// about normally distributed, mean 0 and spread 1
+const gaussian = (random) => (random() + random() + random() + random() - 2) * 1.732;
+const angleOff = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
+
+// a tree's roots: { lines: [{ points: [{ p, r, birth }], order }], count (structural roots), phase (of the lobes of the foot) }. Metres and years
+export function growRoots(species, trunkRadius, random) {
+	const R = species.roots, e = species.pipeExponent, full = species.fullGrownAge;
+	const phase = random() * Math.PI * 2, N = R.count, lines = [];
+	const birthAt = (along, order) => full * (0.03 + 0.55 * Math.pow(along / (R.reach + R.lateral), 1.1) + (order ? 0.05 : 0));
+
+	// one root from where it leaves: from [x, z], heading (radians, 0 along +z), its radius r0 and height above the ground lift there,
+	//		reach (metres it runs at most), along (metres out along the roots it is already: a side root's parent's, where it leaves)
+	function grow(from, heading, r0, order, reach, lift, along) {
+		const noise = lineNoise(random), seed = random() * 40;
+		const flareRun = order == 0 ? Math.max(trunkRadius * 3.2, 0.35) : 0.2;
+		const taper = order == 0 ? 0.5 + random() * 0.4 : 0.3;
+		const dip = R.dip * (order == 0 ? 1 : 2.5) * (0.7 + 0.6 * random());
+		const set = ROOT_SET * (0.6 + random());		// (some lie deeper than others)
+		const points = [], branches = [];
+		let x = from[0], z = from[1], phi = heading, s = 0, shrink = 1, bend = 0;
+		let nextBranch = order == 0 ? R.branchEvery * (0.5 + random()) : Infinity;
+		for (;;) {
+			const radius = r0 * (0.3 + 0.7 * Math.exp(-s / taper)) * shrink;
+			const wave = radius * R.wave * 2.2 * (noise(seed + s / ROOT_ARCH) - 0.5);
+			// (and at the end of its reach it goes down for good, steeply: a root does not end in the air)
+			const end = radius * 5 * Math.pow(Math.min(Math.max((s / reach - 0.85) / 0.15, 0), 1), 2);
+			const h = lift * Math.exp(-s / flareRun) - radius * set + wave - dip * s - end;
+			points.push({ p: [x, h, z], r: radius, birth: birthAt(along + s, order) });
+			// (under for good, or as far as it goes, or too thin to see)
+			if (h - wave + radius * (1.1 * R.wave) < -radius * 1.1 || s > reach || radius < 0.008) break;
+			if (s >= nextBranch) {
+				const side = random() < 0.5 ? -1 : 1, rl = radius * (0.42 + 0.18 * random());
+				branches.push([[x, z], phi + side * radians(55 + 30 * random()), rl, h - radius * 0.5, along + s]);
+				shrink *= Math.pow(1 - Math.pow(rl / radius, e), 1 / e);
+				nextBranch = s + R.branchEvery * (0.6 + 0.8 * random());
+			}
+			// the next step: the way it bends wanders (a correlated random walk: so it winds, rather than jitters), and of a few turns
+			//		about that the best for its tropism (THE TIP)
+			bend += gaussian(random) * ROOT_WANDER * Math.sqrt(ROOT_STEP) - bend * 0.2;
+			const wants = order == 0 ? Math.atan2(x, z) : heading;
+			let best = phi, bestCost = Infinity;
+			for (let k = 0; k < ROOT_TRIES; k++) {
+				const turn = bend * ROOT_STEP + gaussian(random) * ROOT_TURN * 0.35;
+				const cost = Math.abs(angleOff(phi + turn, wants)) * (order == 0 ? ROOT_OUTWARD : 0.35) + Math.abs(turn - bend * ROOT_STEP) * 0.3;
+				if (cost < bestCost) { bestCost = cost; best = phi + turn; }
+			}
+			phi = best;
+			if (random() < ROOT_KINK) phi += (random() < 0.5 ? -1 : 1) * mix(ROOT_KINK_TURN[0], ROOT_KINK_TURN[1], random());
+			x += Math.sin(phi) * ROOT_STEP; z += Math.cos(phi) * ROOT_STEP; s += ROOT_STEP;
+		}
+		if (points.length >= 2) lines.push({ points, order });
+		for (const [at, dir, rl, hl, al] of branches) grow(at, dir, rl, order + 1, R.lateral * (0.5 + 0.6 * random()), hl, al);
+	}
+
+	for (let i = 0; i < N; i++) {
+		// (where the lobes of the foot are: vf_forest.js)
+		const theta = (Math.PI / 2 - phase) / N + 2 * Math.PI * i / N + (random() - 0.5) * 0.9 * Math.PI / N;
+		const r0 = trunkRadius * Math.pow(1 / N, 1 / e) * (0.5 + 0.45 * random());
+		const lift = R.flare * trunkRadius * (0.7 + 0.6 * random());
+		// (not straight out from the trunk: a little to one side or the other, and as far as it goes)
+		grow([Math.sin(theta) * trunkRadius * 0.5, Math.cos(theta) * trunkRadius * 0.5], theta + (random() - 0.5) * 0.7, r0, 0, R.reach * (0.25 + random()), lift, 0);
+	}
+	return { lines, count: N, phase };
+}
+
+// the roots as arc sections, as buildSections makes the branches (the same layout: SECTION_FLOATS), thickest first
+function buildRootSections(lines, scale) {
+	const sections = [];
+	for (const { points, order } of lines) {
+		const heading = points.map((unused, i) => normalize(sub(points[Math.min(i + 1, points.length - 1)].p, points[Math.max(i - 1, 0)].p)));
+		let distance = 0;
+		for (let a = 0; a < points.length - 1; ) {
+			let b = a + 1;
+			while (b < points.length - 1 && b - a < 5 && dot(heading[a], heading[b + 1]) > 0.94) b++;
+			const p0 = points[a].p, p2 = points[b].p, reach = length(sub(p2, p0)) * 0.5;
+			const p1 = mul(add(add(p0, mul(heading[a], reach)), sub(p2, mul(heading[b], reach))), 0.5);
+			sections.push([
+				p0[0] * scale, p0[1] * scale, p0[2] * scale, points[a].r * scale,
+				p1[0] * scale, p1[1] * scale, p1[2] * scale, points[a].birth,
+				p2[0] * scale, p2[1] * scale, p2[2] * scale, points[b].r * scale,
+				points[b].birth, NEVER, distance * scale, ROOT_LEVEL + order,
+			]);
+			distance += reach * 2;
+			a = b;
+		}
+	}
+	sections.sort((s, t) => Math.max(t[3], t[11]) - Math.max(s[3], s[11]));
+	return sections;
+}
+
 export function generateTree(speciesIndex, seed, unitsPerMetre) {
 	const species = TREE_SPECIES[speciesIndex];
 	const random = seededRandom(seed * 2654435761 + speciesIndex * 97 + 13);
@@ -833,6 +971,9 @@ export function generateTree(speciesIndex, seed, unitsPerMetre) {
 	setRadii(nodes, species, height);
 
 	const sections = buildSections(nodes, unitsPerMetre);
+	// (the roots from their own random numbers: the tree over the ground is as it was without them)
+	const roots = growRoots(species, nodes[0].radius, seededRandom(seed * 7919 + speciesIndex * 31 + 5));
+	const rootSections = buildRootSections(roots.lines, unitsPerMetre);
 	const foliage = buildFoliage(nodes, species, height, furthest, unitsPerMetre, random);
 
 	let crownRadius = 0, crownBottom = height;
@@ -845,6 +986,8 @@ export function generateTree(speciesIndex, seed, unitsPerMetre) {
 	return {
 		species: speciesIndex,
 		sections: new Float32Array(sections.flat()),
+		roots: new Float32Array(rootSections.flat()),
+		rootLobes: [roots.count, roots.phase],		// (the lobes of the foot of the trunk, where the roots leave it)
 		foliage: new Float32Array(foliage.flat()),
 		height: height * unitsPerMetre,
 		crownRadius: (crownRadius + 0.6) * unitsPerMetre,

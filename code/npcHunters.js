@@ -211,7 +211,8 @@ function step(h, dt) {
 				h.fire = FIRE_EVERY;
 				// (it has gone behind something: after it again)
 				if (!npcs.clearLine([h.x, h.y + 1.5 * m, h.z], [prey.x, prey.y + m, prey.z])) { h.state = 'out'; p.fighting = false; routeTo(h, [prey.x, prey.z]); return; }
-				shotAt(h, { x: prey.x, y: prey.y + 0.98 * m, z: prey.z, v: [0, 0, 0], kind: 'deer' }, SPREAD);
+				const chest = 0.32 * m * settings.deerSize * (prey.size ?? 1);
+				shotAt(h, { x: prey.x + Math.sin(prey.heading) * chest, y: prey.y + 0.95 * m * settings.deerSize * (prey.size ?? 1), z: prey.z + Math.cos(prey.heading) * chest, v: [0, 0, 0], kind: 'deer' }, SPREAD);
 			}
 			return;
 		}

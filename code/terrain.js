@@ -22,6 +22,7 @@ import { setLoadingStage, showStage } from './loading.js'
 import * as transformations from './transformations.js'
 import * as scene from './scene.js'
 import * as shadowMapping from './shadowMapping.js'
+import { floorView, floorSampler, floorUniformBuffer } from './floor.js'
 import { weatherNow, seasonNow } from './weather.js'
 
 //the land fades into the horizon color, read from the sky view LUT (same as the water)
@@ -1035,6 +1036,21 @@ const bindGroupVFLayout = device.createBindGroupLayout({
 	}
   },
   {
+    binding: 9,							//the forest floor's map (floor.js): the roots' heave, the windthrows' pits and mounds
+    visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+    texture: {}
+  },
+  {
+    binding: 10,
+    visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+    sampler: {}
+  },
+  {
+    binding: 11,							//and the view it was made with
+    visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+    buffer: {}
+  },
+  {
     binding: 8,								//for reading the bakes of the far chunks: anisotropic, at the level the setting asks for
     visibility: GPUShaderStage.FRAGMENT,
     sampler: {}
@@ -1107,6 +1123,18 @@ function createVFBindGroupTerrain() {
 			{
 				binding: 7,
 				resource: scene.heightMapView
+			},
+			{
+				binding: 9,
+				resource: floorView
+			},
+			{
+				binding: 10,
+				resource: floorSampler
+			},
+			{
+				binding: 11,
+				resource: { buffer: floorUniformBuffer }
 			},
 			{
 				binding: 8,

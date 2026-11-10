@@ -8,6 +8,7 @@ import * as profiler from './profiler.js'
 import { settings } from './settings.js';
 
 import { vf_grass } from '../shaders/js/vfc_grass.js'
+import { floorView, floorSampler, floorUniformBuffer } from './floor.js'
 import { GRASS_MAX_RINGS } from '../shaders/js/vfc_grass.js'
 import { GRASS_RING_SEGMENTS } from '../shaders/js/vfc_grass.js'
 import { GRASS_RING_SHIFT } from '../shaders/js/vfc_grass.js'
@@ -225,6 +226,21 @@ const bindGroupVFLayout = device.createBindGroupLayout({
     visibility: GPUShaderStage.VERTEX,
     sampler: {}
   },
+  {
+    binding: 11,							//the forest floor's map (floor.js): the roots' heave, the windthrows' pits and mounds
+    visibility: GPUShaderStage.VERTEX,
+    texture: {}
+  },
+  {
+    binding: 12,
+    visibility: GPUShaderStage.VERTEX,
+    sampler: {}
+  },
+  {
+    binding: 13,							//and the view it was made with
+    visibility: GPUShaderStage.VERTEX,
+    buffer: {}
+  },
   ...[7, 8, 9].map((binding) => ({			//the towns' roads and houses, where no grass grows (townMask.js)
     binding,
     visibility: GPUShaderStage.VERTEX,
@@ -277,6 +293,18 @@ function createVFBindGroupGrass() {
 			{
 				binding: 8,
 				resource: { buffer: townMaskBuffers.list }
+			},
+			{
+				binding: 11,
+				resource: floorView
+			},
+			{
+				binding: 12,
+				resource: floorSampler
+			},
+			{
+				binding: 13,
+				resource: { buffer: floorUniformBuffer }
 			},
 			{
 				binding: 9,

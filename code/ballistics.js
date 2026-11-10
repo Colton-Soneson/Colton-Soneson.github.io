@@ -88,6 +88,7 @@ const TRAIL_FLOATS = 8;				// one piece: from (xyz, when it was left), to (xyz, 
 export const ballisticStats = { fired: 0, flying: 0, hits: {} , lastHit: null };	// for anyone who wants to show it
 
 const bullets = [];
+let shots = 0;				// (each shot's number: a shell's pellets share one)
 const targets = [];			// see addTarget
 const fireListeners = [];	// see onLocalFire
 
@@ -125,7 +126,7 @@ export function onAnyShot(fn) {
 // Fires a round: from (world units) along a direction (any length), at its muzzle velocity. remote: someone else's (net.js),
 //		flown for its trail only. shooter: who fired it, so it does not hit them. round: which (ROUNDS). npc: one of npcs.js's people fired it
 //		(shooter is its id): it says what it hits of the players
-export function fire(from, direction, { remote = false, shooter = null, round = '7.62x54R', quiet = false, volley = false, npc = false, delay = 0, extra = null } = {}) {
+export function fire(from, direction, { remote = false, shooter = null, round = '7.62x54R', quiet = false, volley = false, npc = false, delay = 0, extra = null, shot = null } = {}) {
 	const metre = settings.forestUnitsPerMetre;
 	const R = ROUNDS[round] ?? ROUNDS['7.62x54R'];
 	const length = Math.hypot(...direction);
@@ -133,7 +134,7 @@ export function fire(from, direction, { remote = false, shooter = null, round = 
 	bullets.push({
 		x: from[0], y: from[1], z: from[2],
 		vx: direction[0] / length * speed, vy: direction[1] / length * speed, vz: direction[2] / length * speed,
-		age: 0, trailFrom: [from[0], from[1], from[2]], trailAge: seconds, gone: false, remote, shooter, npc, round, drag: R.drag, gravity: R.gravity ?? 1, burst: !!R.burst, trail: !R.carried && !R.noTrail, extra, life: npc && !R.burst ? Math.min(R.life ?? MAX_SECONDS, NPC_LIFE) : R.life ?? MAX_SECONDS,
+		age: 0, from: [from[0], from[1], from[2]], shot: shot ?? ++shots, trailFrom: [from[0], from[1], from[2]], trailAge: seconds, gone: false, remote, shooter, npc, round, drag: R.drag, gravity: R.gravity ?? 1, burst: !!R.burst, trail: !R.carried && !R.noTrail, extra, life: npc && !R.burst ? Math.min(R.life ?? MAX_SECONDS, NPC_LIFE) : R.life ?? MAX_SECONDS,
 	});
 	ballisticStats.fired++;
 	if (!remote && !quiet) for (const fn of fireListeners) fn([...from], [[...direction]], round);
@@ -141,7 +142,8 @@ export function fire(from, direction, { remote = false, shooter = null, round = 
 }
 // someone else's shot (net.js): its rounds (one, or a shell's pellets) flown for their trails, and heard once, delay seconds from now
 export function fireRemote(from, directions, { shooter = null, round = '7.62x54R', delay = 0 } = {}) {
-	for (const direction of directions) fire(from, direction, { remote: true, shooter, round, volley: true });
+	const shot = ++shots;
+	for (const direction of directions) fire(from, direction, { remote: true, shooter, round, volley: true, shot });
 	for (const fn of shotListeners) fn(from, round, { remote: true, shooter, delay });
 }
 // the rounds of a kind in the air now: [{ at (world units), v (world units a second) }] (plane.js draws its bombs falling)
@@ -157,7 +159,8 @@ export function onPass(fn) { passListeners.push(fn); }
 export const aimSpread = () => Math.pow(3, 1 - 2 * Math.min(Math.max(settings.aiDifficulty ?? 0.5, 0), 1));
 // several at once from the same place (a shotgun's pellets): told as one shot
 export function fireVolley(from, directions, { round = '7.62x54R' } = {}) {
-	for (const direction of directions) fire(from, direction, { round, quiet: true, volley: true });
+	const shot = ++shots;
+	for (const direction of directions) fire(from, direction, { round, quiet: true, volley: true, shot });
 	for (const fn of fireListeners) fn([...from], directions.map((d) => [...d]), round);
 	for (const fn of shotListeners) fn(from, round, { remote: false, shooter: null });
 }

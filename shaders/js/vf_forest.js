@@ -1,4 +1,4 @@
-import { FOLIAGE_LEAVES, FOLIAGE_FROND, FOLIAGE_TUFT } from '../../code/treeGenerator.js';
+import { FOLIAGE_LEAVES, FOLIAGE_FROND, FOLIAGE_TUFT, ROOT_LEVEL } from '../../code/treeGenerator.js';
 import { skyLookupShapes } from './vfc_atmosphere.js';
 
 export const FOLIAGE_VERTICES = 18;		// every piece of foliage is 3 flat cards, 2 triangles each
@@ -36,6 +36,12 @@ export const BILLBOARD_VERTICES = 12;	// a billboard is 2 cards: the tree from t
 		A tree's age is not stored, it is worked out from the forest's clock (see treeAge), so every tree grows a little
 		every frame without anything being sent to the GPU.
 
+	THE ROOTS (treeGenerator.js: THE ROOTS) are arc sections as the branches are, but their curve runs over the ground: x and z in the
+		tree's frame, y how far above the ground there they are. So each point of a root is laid on the ground where it comes (rootPoint),
+		which the top down height map knows (scene.js: the ground round the camera seen from straight above, its depth how far down it is),
+		and the tube is built round the way the root goes over it. They rise and sink into it, so what is under it is hidden by the ground.
+		Where they meet it they are caked with dirt, and green with moss on top. A town's trees have none (theirs are under the streets)
+
 	DYING
 		A dead tree keeps the times it died and will fall, on the same clock. From those: its foliage browns and drops piece by
 		piece, its wood greys (treeDryness), it turns over about its foot (treeFallen), and it dissolves into the ground (treeGone).
@@ -54,9 +60,11 @@ const structs =
 		world : vec4f,				// x: world units in a metre, y: horizon fog distance, z: 1.0 if the atmosphere is on, w: how far the broadleaved trees have turned for the fall, 0 to 1
 		atlas : vec4f,				// the billboard pictures. x: how many to a row, y: how many rows, z: how many are side views (the views from above come after), w: ages per archetype
 		bake : vec4f,				// only while a billboard is being baked. x: the view (1.0 from the side, 2.0 from above), y: half the depth of the view, z: its height
-		life : vec4f,				// x: how long a dead tree takes to fall over, y: and then to go back into the ground. Years of the forest's clock. w: how far the broadleaved trees have lost their leaves for the winter
+		life : vec4f,				// x: how long a dead tree takes to fall over, y: and then to go back into the ground. Years of the forest's clock. z: 1.0 while the roots are drawn (THE WINDTHROWN). w: how far the broadleaved trees have lost their leaves for the winter
 		windScroll : vec4f,			// these two are what windAt takes, see vf_wind.js
 		windBlow : vec4f,
+		ground : mat4x4f,			// where the top down height map looks from (its view and projection: THE ROOTS)
+		floor : mat4x4f,			// and where the floor map does (forest.js: THE FLOOR)
 	}
 	@group(0) @binding(0) var<uniform> UBO: ForestUniforms;
 
@@ -137,6 +145,8 @@ const structs =
 	@group(0) @binding(13) var windTexture: texture_2d<f32>;		// where the gusts are, see wind.js
 	@group(0) @binding(14) var windSampler: sampler;
 
+	@group(0) @binding(15) var groundDepth: texture_depth_2d;		// the top down height map (scene.js): how far down the ground is, round the camera
+
 	// what one draw call draws
 	struct DrawUniforms
 	{
@@ -206,29 +216,51 @@ const common =
 		return smoothstep(0.35, 1.0, (UBO.clock.x - tree.life.w - UBO.life.x) / UBO.life.y);
 	}
 
-	// a direction in the tree's own space to the world: the lean (a shear, the tree is pushed over rather than turned) and then its turn
+	// a dead tree falling: v (world space, from its foot) turned away from upright and over towards the way it falls.
+	//		more.x holds both numbers of the fall: its whole part is the direction (in hundredths of a radian), its fraction is how far
+	//		over the tree ends up (in half turns: 0.5 is flat on level ground). Less than 0: it tears its root plate out (THE WINDTHROWN)
+	fn fallTurn(tree: Tree, v: vec3f) -> vec3f {
+		let fallen = treeFallen(tree);
+		if (fallen <= 0.0) {
+			return v;
+		}
+		let turned = v;
+		let fall = abs(tree.more.x);
+		let direction = floor(fall) / 100.0;
+		let angle = fallen * fract(fall) * PI;
+		let axis = vec3f(sin(direction), 0.0, -cos(direction));		// level, and square to the way it falls
+		return turned * cos(angle) + cross(axis, turned) * sin(angle) + axis * dot(axis, turned) * (1.0 - cos(angle));	// rodrigues' rotation formula
+	}
+	// a direction in the tree's own space to the world: the lean (a shear, the tree is pushed over rather than turned), its turn, and its fall
 	fn toWorldDirection(tree: Tree, v: vec3f) -> vec3f {
 		let leaned = vec3f(v.x + tree.shape.z * v.y, v.y, v.z + tree.shape.w * v.y);
 		let c = cos(tree.position.w);
 		let s = sin(tree.position.w);
-		let turned = vec3f(c * leaned.x + s * leaned.z, leaned.y, c * leaned.z - s * leaned.x);
-
-		// a dead tree falling: turned about its foot, away from upright and over towards the way it falls.
-		//		more.x holds both numbers of the fall: its whole part is the direction (in hundredths of a radian),
-		//		its fraction is how far over the tree ends up (in half turns: 0.5 is flat on level ground)
-		let fallen = treeFallen(tree);
-		if (fallen <= 0.0) {
-			return turned;
+		return fallTurn(tree, vec3f(c * leaned.x + s * leaned.z, leaned.y, c * leaned.z - s * leaned.x));
+	}
+	// THE WINDTHROWN (forest.js: THE FLOOR): a tree that tears its root plate out of the ground as it falls goes over about the far edge of
+	//		the plate (the hinge), not its foot. So the foot comes up with it, and the plate stands up on edge. Its radius: the trunk's, PLATE times
+	const PLATE: f32 = 3.2;
+	fn uprooted(tree: Tree) -> bool {
+		return tree.more.x < 0.0 && UBO.life.z > 0.5;		// (without the roots drawn, none: no plate to stand up)
+	}
+	fn plateRadius(tree: Tree) -> f32 {
+		let a = archetypes[u32(tree.shape.y)];
+		return a.growth.z * tree.shape.x * heightFraction(a, treeAge(tree)) * PLATE;
+	}
+	// how far the plate's turn about its hinge puts the tree from where its turn about its foot would
+	fn uprootLift(tree: Tree) -> vec3f {
+		if (!uprooted(tree) || treeFallen(tree) <= 0.0) {
+			return vec3f(0.0, 0.0, 0.0);
 		}
-		let direction = floor(tree.more.x) / 100.0;
-		let angle = fallen * fract(tree.more.x) * PI;
-		let axis = vec3f(sin(direction), 0.0, -cos(direction));		// level, and square to the way it falls
-		return turned * cos(angle) + cross(axis, turned) * sin(angle) + axis * dot(axis, turned) * (1.0 - cos(angle));	// rodrigues' rotation formula
+		let direction = floor(abs(tree.more.x)) / 100.0;
+		let hinge = vec3f(cos(direction), 0.0, sin(direction)) * plateRadius(tree);
+		return hinge - fallTurn(tree, hinge);
 	}
 
 	// and a point: sized, then the same, then moved to where the tree stands. A fallen tree sinks a little as it goes
 	fn toWorld(tree: Tree, local: vec3f) -> vec3f {
-		return tree.position.xyz + toWorldDirection(tree, local * tree.shape.x) - vec3f(0.0, treeGone(tree) * 2.0 * UBO.world.x, 0.0);
+		return tree.position.xyz + toWorldDirection(tree, local * tree.shape.x) + uprootLift(tree) - vec3f(0.0, treeGone(tree) * 2.0 * UBO.world.x, 0.0);
 	}
 
 	${windShapes}
@@ -288,6 +320,48 @@ const common =
 		let sun = exp(-through * 1.1);
 		let sky = mix(0.45, 1.0, saturate(length(q))) * mix(0.8, 1.0, saturate(q.y * 0.5 + 0.5));
 		return vec2f(sun, sky);
+	}
+
+	//------------------THE ROOTS-----------------
+	const ROOT_LEVEL: f32 = ${ROOT_LEVEL}.0;			// a section of this level and up is a root's (treeGenerator.js)
+	const ROOT_FADE: vec2f = vec2f(215.0, 260.0);		// world units from the camera: the roots shrink away over this, where the height map ends
+	const SOIL: vec3f = vec3f(0.15, 0.115, 0.08);
+	const MOSS: vec3f = vec3f(0.11, 0.16, 0.05);
+	const ROOT_BARK: vec3f = vec3f(0.31, 0.26, 0.21);
+
+	// the ground under a world position, from the top down height map: its depth there is how far down the ground is, the height back
+	//		out of it by its view (ground). Where it has none (off its edge, or the land higher or lower than it holds), or what it has
+	//		could not be the ground the tree stands on (further from the foot than any slope: a roof, a wall), the height of the foot
+	fn rootGround(tree: Tree, xz: vec2f) -> f32 {
+		let foot = tree.position.y;
+		let c = UBO.ground * vec4f(xz.x, 0.0, xz.y, 1.0);
+		let uv = vec2f(c.x * 0.5 + 0.5, 0.5 - c.y * 0.5);
+		if (any(uv < vec2f(0.001, 0.001)) || any(uv > vec2f(0.999, 0.999))) {
+			return foot;
+		}
+		let texel = uv * vec2f(textureDimensions(groundDepth)) - 0.5;
+		let base = vec2i(floor(texel));
+		let f = fract(texel);
+		let a = textureLoad(groundDepth, base, 0);
+		let b = textureLoad(groundDepth, base + vec2i(1, 0), 0);
+		let d = textureLoad(groundDepth, base + vec2i(0, 1), 0);
+		let e = textureLoad(groundDepth, base + vec2i(1, 1), 0);
+		if (max(max(a, b), max(d, e)) >= 0.99999) {
+			return foot;
+		}
+		let y = (mix(mix(a, b, f.x), mix(d, e, f.x), f.y) - c.z) / UBO.ground[1][2];
+		return select(foot, y, abs(y - foot) < 1.5 * UBO.world.x + distance(xz, tree.position.xz) * 1.1);
+	}
+	// a point of a root (its curve: x and z in the tree's frame, y above the ground) where it is in the world: turned and sized with the
+	//		tree, over the ground there by y (by lift of it: a young root lies lower). It goes down with a fallen tree going into the ground
+	fn rootPoint(tree: Tree, local: vec3f, lift: f32) -> vec3f {
+		let c = cos(tree.position.w);
+		let s = sin(tree.position.w);
+		let xz = tree.position.xz + vec2f(c * local.x + s * local.z, c * local.z - s * local.x) * tree.shape.x;
+		return vec3f(xz.x, rootGround(tree, xz) + local.y * tree.shape.x * lift - treeGone(tree) * 2.0 * UBO.world.x, xz.y);
+	}
+	fn curveAt(p0: vec3f, p1: vec3f, p2: vec3f, t: f32) -> vec3f {
+		return mix(mix(p0, p1, t), mix(p1, p2, t), t);
 	}
 
 	//------------------LEVEL OF DETAIL-----------------
@@ -418,6 +492,7 @@ export const vf_forestWood = structs + common +
 		@location(6) @interpolate(flat) dissolve: f32,		// see dissolveAmount
 		@location(7) @interpolate(flat) treeRandom: f32,
 		@location(8) @interpolate(flat) dry: f32,			// see treeDryness
+		@location(9) soil: vec2f,			// a root's (y: 1.0). x: how near the ground it is, 1.0 in it
 	};
 
 	@vertex
@@ -456,7 +531,9 @@ export const vf_forestWood = structs + common +
 		let cornerRing = u32(corner == 2u || corner == 3u || corner == 5u);
 		let around = f32(square % Draw.sides + cornerSide) / f32(Draw.sides);			// 0 to 1 round the tube
 		// 0 to 1 along the curve, and a touch over at both ends: neighbouring sections overlap by a hair, so no crack shows where they meet
-		let t = mix(-0.012, 1.012, f32(square / Draw.sides + cornerRing) / f32(Draw.rings)) * grownTo;
+		//		(a root's more: its rings are not square to it, see A ROOT)
+		let overlap = select(0.012, 0.05, section.life.w > ROOT_LEVEL - 0.5);
+		let t = mix(-overlap, 1.0 + overlap, f32(square / Draw.sides + cornerRing) / f32(Draw.rings)) * grownTo;
 
 		//------------------THE CURVE-----------------
 		let p0 = section.start.xyz;
@@ -482,10 +559,61 @@ export const vf_forestWood = structs + common +
 		let thickened = pow(saturate((age - born) / max(fullGrown - born, 0.001)), 0.9) * (1.0 + 0.3 * saturate((age - fullGrown) / fullGrown));
 		var radius = TWIG_RADIUS * metre + max(mix(section.start.w, section.end.w, t) - TWIG_RADIUS * metre, 0.0) * thickened;
 
-		// the foot of the trunk isnt round: it swells out into the roots. Only shows where there are sides enough to carry it
+		//------------------A ROOT (see THE ROOTS)-----------------
+		if (section.life.w > ROOT_LEVEL - 0.5) {
+			if (fract(tree.shape.y) > 0.25) {
+				return output;		// (a town's tree)
+			}
+			let lift = saturate(radius / max(mix(section.start.w, section.end.w, t), 0.0001));
+			let here = rootPoint(tree, middle, lift);
+			let groundHere = here.y - middle.y * tree.shape.x * lift;
+			// its rings stand upright, across the way it runs over the ground (the curve's own, turned with the tree): so two sections that
+			//		meet agree, however each slopes
+			let along = mix(p1 - p0, p2 - p1, t);
+			let turnC = cos(tree.position.w);
+			let turnS = sin(tree.position.w);
+			let runs = normalize(vec2f(turnC * along.x + turnS * along.z, turnC * along.z - turnS * along.x) + vec2f(0.00001, 0.0));
+			let side1 = vec3f(-runs.y, 0.0, runs.x);
+			let side2 = vec3f(0.0, 1.0, 0.0);
+			// (not round across: tall and thin at the foot, a buttress, and wide and low further out, where it lies along the ground)
+			let plate = saturate(middle.y / max(mix(section.start.w, section.end.w, t), 0.0001));
+			let wide = mix(1.6, 0.75, plate);
+			let tall = mix(0.55, 1.55, plate);
+			let ringOut = normalize(side1 * cos(around * 2.0 * PI) / wide + side2 * sin(around * 2.0 * PI) / tall);
+			let ringAt = side1 * cos(around * 2.0 * PI) * wide + side2 * sin(around * 2.0 * PI) * tall;
+			let far = distance(here, UBO.cameraPosition.xyz);
+			let thick = max(radius * tree.shape.x, far * 0.0006) * kept * (1.0 - smoothstep(ROOT_FADE.x, ROOT_FADE.y, far));
+			var rootPosition = here + ringAt * thick;
+			var rootNormal = ringOut;
+			var soil = 1.0 - smoothstep(0.0, thick * 0.8, rootPosition.y - groundHere);
+			if (uprooted(tree) && treeFallen(tree) > 0.0) {
+				// (THE WINDTHROWN: in the plate it goes up with it, caked in the soil torn out with it; what ran on past it is torn off)
+				let tipped = saturate(treeFallen(tree) * 3.0);
+				let inPlate = 1.0 - smoothstep(0.75, 1.0, distance(here.xz, tree.position.xz) / max(plateRadius(tree), 0.01));
+				let caked = thick * mix(1.0, 2.6 * inPlate, tipped);
+				rootPosition = tree.position.xyz + fallTurn(tree, here + ringAt * caked - tree.position.xyz) + uprootLift(tree);
+				rootNormal = normalize(fallTurn(tree, ringOut));
+				soil = max(soil, tipped * inPlate * 0.85);
+			}
+			output.pos = UBO.viewProjectionMatrix * vec4f(rootPosition, 1.0);
+			output.worldPos = rootPosition;
+			output.normal = rootNormal;
+			output.bark = vec3f(around, (section.life.z + t * distance(p0, p2)) / metre, thick / metre);
+			output.light = crownLight(crownShape(tree, archetype, age), rootPosition - tree.position.xyz);
+			output.up = 0.0;
+			output.archetype = archetypeIndex;
+			output.dissolve = dissolveAmount(tree, detail);
+			output.dry = treeDryness(tree);
+			output.treeRandom = tree.more.y;
+			output.soil = vec2f(soil, 1.0);
+			return output;
+		}
+
+		// the foot of the trunk isnt round: it swells out into the roots, as many lobes as it has (the archetype's, where they leave it:
+		//		THE ROOTS in treeGenerator.js). Only shows where there are sides enough to carry it
 		if (section.life.w < 0.5) {
 			let foot = exp(-middle.y / (0.022 * archetype.size.y));
-			radius *= 1.0 + 0.16 * foot * sin(around * 2.0 * PI * 5.0 + tree.more.y * 40.0);
+			radius *= 1.0 + 0.2 * foot * sin(around * 2.0 * PI * max(archetype.bark.w, 3.0) + archetype.barkHigh.w);
 		}
 
 		// a twig far away is thinner than a pixel and would flicker in and out. Never let it get thinner than about half a pixel
@@ -505,6 +633,7 @@ export const vf_forestWood = structs + common +
 		output.dissolve = dissolveAmount(tree, detail);
 		output.dry = treeDryness(tree);
 		output.treeRandom = tree.more.y;
+		output.soil = vec2f(0.0, 0.0);
 		return output;
 	}
 
@@ -520,6 +649,7 @@ export const vf_forestWood = structs + common +
 		@location(6) @interpolate(flat) dissolve: f32,		// see dissolveAmount
 		@location(7) @interpolate(flat) treeRandom: f32,
 		@location(8) @interpolate(flat) dry: f32,			// see treeDryness
+		@location(9) soil: vec2f,
 	};
 
 	fn barkColor(input: WoodInput) -> vec3f {
@@ -541,6 +671,13 @@ export const vf_forestWood = structs + common +
 			let dark = max(smoothstep(0.34, 0.44, bands), thick * (1.0 - smoothstep(0.02, 0.09, input.up)) * smoothstep(0.35, 0.6, grain));
 			albedo = mix(albedo, vec3f(0.1, 0.09, 0.08), dark * 0.9);
 		}
+		// a root: green with moss along its top, caked with the dirt where it goes into the ground
+		if (input.soil.y > 0.5) {
+			albedo = mix(albedo, ROOT_BARK * (0.85 + 0.3 * blotch), 0.55);		// (smoother, and weathered lighter than the trunk's)
+			let patchy = wrappedNoise(vec2f(input.bark.x * 3.0, input.bark.y * 2.2 + input.treeRandom * 30.0), 3.0);
+			albedo = mix(albedo, MOSS * (0.8 + 0.4 * blotch), smoothstep(0.45, 0.85, normalize(input.normal).y) * smoothstep(0.35, 0.7, patchy) * 0.75);
+			albedo = mix(albedo, SOIL * (0.85 + 0.3 * grain), saturate(input.soil.x * 1.2) * 0.85);
+		}
 		// dead wood weathers to grey as it dries
 		let grey = dot(albedo, vec3f(0.4, 0.4, 0.4)) * vec3f(1.05, 1.0, 0.94);
 		return mix(albedo, grey, 0.7 * input.dry);
@@ -560,6 +697,144 @@ export const vf_forestWood = structs + common +
 	@fragment
 	fn fragmentBake(input: WoodInput) -> BakeOutput {
 		return baked(barkColor(input), normalize(input.normal), input.worldPos, 0.5);
+	}
+`;
+
+
+/*
+	THE FLOOR's heave (forest.js: THE FLOOR, floor.js): each root of the roots' draw calls drawn again, from straight above into the floor map,
+	as a ribbon along it: the soil over it (r), heaved where it runs shallow under the ground and banked up round it where it is out, and how
+	much of the ground it covers (g). The same tessellation as the root (Draw.sides across the ribbon, Draw.rings along it), so the same
+	draw calls draw it. Blended by the larger: where two cross, the higher heave
+*/
+export const vf_forestFloor = structs + common +
+`
+	struct FloorOutput {
+		@builtin(position) pos: vec4f,
+		@location(0) across: f32,			// -1 to 1 across the ribbon
+		@location(1) amount: vec2f,			// x: how high the soil heaves at the middle of it (world units), y: how much of the ground it covers
+	};
+
+	@vertex
+	fn floorVertex(@builtin(vertex_index) vertexIndex: u32, @builtin(instance_index) instanceIndex: u32) -> FloorOutput {
+		var output: FloorOutput;
+		output.pos = OFF_SCREEN;
+		let tree = trees[visible[Draw.listStart + instanceIndex / Draw.partCount]];
+		let part = instanceIndex % Draw.partCount;
+		let section = sections[Draw.partStart + part];
+		let archetype = archetypes[u32(tree.shape.y)];
+		let age = treeAge(tree);
+		if (fract(tree.shape.y) > 0.25 || age <= section.control.w || age >= section.life.y) {
+			return output;
+		}
+		let detail = detailDistance(tree);
+		let kept = select(1.0 - towardsNextLevel(detail), 1.0, part < Draw.kept);
+		if (kept <= 0.0) {
+			return output;
+		}
+		let grownTo = saturate((age - section.control.w) / max(section.life.x - section.control.w, 0.0001));
+		let square = vertexIndex / 6u;
+		let corner = vertexIndex % 6u;
+		let cornerSide = u32(corner == 1u || corner == 4u || corner == 5u);
+		let cornerRing = u32(corner == 2u || corner == 3u || corner == 5u);
+		let across = f32(square % Draw.sides + cornerSide) / f32(Draw.sides) * 2.0 - 1.0;
+		let t = mix(-0.05, 1.05, f32(square / Draw.sides + cornerRing) / f32(Draw.rings)) * grownTo;
+
+		// the root there, as the wood draws it (vf_forestWood: A ROOT)
+		let p0 = section.start.xyz;
+		let p1 = section.control.xyz;
+		let p2 = section.end.xyz;
+		let middle = curveAt(p0, p1, p2, t);
+		let metre = UBO.world.x;
+		let full = max(mix(section.start.w, section.end.w, t), 0.0001);
+		let born = mix(section.control.w, section.life.x, t);
+		let thickened = pow(saturate((age - born) / max(archetype.size.x - born, 0.001)), 0.9) * (1.0 + 0.3 * saturate((age - archetype.size.x) / archetype.size.x));
+		let radius = TWIG_RADIUS * metre + max(full - TWIG_RADIUS * metre, 0.0) * thickened;
+		let lift = saturate(radius / full);
+		let here = rootPoint(tree, middle, lift);
+		let over = middle.y * tree.shape.x * lift;		// how far its middle is over the ground (under it, less than 0)
+		let plate = saturate(middle.y / full);
+		let wide = mix(1.6, 0.75, plate);
+		let tall = mix(0.55, 1.55, plate);
+		var thick = radius * tree.shape.x * kept * (1.0 - smoothstep(ROOT_FADE.x, ROOT_FADE.y, distance(here, UBO.cameraPosition.xyz)));
+		// (a windthrown tree's roots went up with its plate: none left in the ground. A tree going back into the ground, its with it)
+		if (uprooted(tree)) {
+			thick *= 1.0 - saturate(treeFallen(tree) * 3.0);
+		}
+		thick *= 1.0 - treeGone(tree);
+		if (thick <= 0.0) {
+			return output;
+		}
+
+		// the soil: over it where it is shallow under, round its foot where it is out
+		let top = over + tall * thick;
+		let heave = thick * 0.5 * saturate(1.0 + min(top, 0.0) / (2.5 * thick));
+		let cover = saturate(top / thick + 0.6);
+		let width = thick * wide * (1.5 + 0.9 * saturate(-top / thick));
+		let c = cos(tree.position.w);
+		let s = sin(tree.position.w);
+		let along = mix(p1 - p0, p2 - p1, t);
+		let runs = normalize(vec2f(c * along.x + s * along.z, c * along.z - s * along.x) + vec2f(0.00001, 0.0));
+		let xz = here.xz + vec2f(-runs.y, runs.x) * across * width;
+		output.pos = UBO.floor * vec4f(xz.x, 0.0, xz.y, 1.0);
+		output.across = across;
+		output.amount = vec2f(heave, cover);
+		return output;
+	}
+
+	@fragment
+	fn floorFragment(input: FloorOutput) -> @location(0) vec4f {
+		let x = input.across;
+		let profile = (1.0 - x * x) * (1.0 - x * x);
+		return vec4f(input.amount.x * profile, input.amount.y * smoothstep(0.0, 0.45, profile), 0.0, 0.0);
+	}
+`;
+
+/*
+	THE FLOOR's marks (forest.js: WINDTHROW): each a square from straight above, round where a root plate was torn out of the ground, with
+	its pit (b: where the plate was, a little out the way the tree fell) and its mound (a: where the plate stood on edge, and the soil it held
+	fell off it as it rotted), and its bare earth (g). In the plate's own frame (u the way the tree fell, w across, both in plate radii)
+*/
+export const vf_forestThrows =
+`
+	struct Mark
+	{
+		place : vec4f,		// xy: where the tree stood (x, z), z: the way it fell (radians, 0 along +x), w: the plate's radius
+		shape : vec4f,		// x: the pit's depth, y: the mound's height (world units), z: how bare its earth is
+	}
+	@group(0) @binding(0) var<uniform> floorCamera: mat4x4f;
+	@group(0) @binding(1) var<storage, read> marks: array<Mark>;
+
+	struct ThrowOutput {
+		@builtin(position) pos: vec4f,
+		@location(0) local: vec2f,
+		@location(1) @interpolate(flat) shape: vec4f,
+	};
+
+	@vertex
+	fn throwVertex(@builtin(vertex_index) vertexIndex: u32, @builtin(instance_index) instanceIndex: u32) -> ThrowOutput {
+		var corners = array<vec2f, 6>(vec2f(0.0, -1.0), vec2f(1.0, -1.0), vec2f(0.0, 1.0), vec2f(0.0, 1.0), vec2f(1.0, -1.0), vec2f(1.0, 1.0));
+		let mark = marks[instanceIndex];
+		let corner = corners[vertexIndex];
+		let u = mix(-1.1, 1.9, corner.x);
+		let w = corner.y * 1.1;
+		let way = vec2f(cos(mark.place.z), sin(mark.place.z));
+		let xz = mark.place.xy + (way * u + vec2f(-way.y, way.x) * w) * mark.place.w;
+		var output: ThrowOutput;
+		output.pos = floorCamera * vec4f(xz.x, 0.0, xz.y, 1.0);
+		output.local = vec2f(u, w);
+		output.shape = mark.shape;
+		return output;
+	}
+
+	@fragment
+	fn throwFragment(input: ThrowOutput) -> @location(0) vec4f {
+		let p = input.local;
+		let q = vec2f((p.x - 0.1) / 0.95, p.y / 0.85);
+		let r = vec2f((p.x - 1.25) / 0.5, p.y / 0.95);
+		let inPit = saturate(1.0 - dot(q, q));
+		let onMound = saturate(1.0 - dot(r, r));
+		return vec4f(0.0, input.shape.z * max(inPit, onMound), input.shape.x * inPit * inPit, input.shape.y * pow(onMound, 1.5));
 	}
 `;
 

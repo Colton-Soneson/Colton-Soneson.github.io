@@ -129,7 +129,7 @@ const LUNGE_REACH = 1.9, LUNGE_SECONDS = 0.5, LUNGE_HIT = 0.22, LUNGE_REST = [1.
 const LEAP = 2.0;					// metres
 const SHOVE = 3.0;					// metres a second
 const HEALTH = 100, ROUND_HEALTH = 35, ROUND_HEALTH_LATE = 1.1;
-const HIT = ['belly', 'belly', 'chest', 'chest', 'head', 'leg', 'leg'];	// which part each of deer.js's DEER_SPHERES is
+const HIT = ['belly', 'belly', 'chest', 'chest', 'head', 'leg', 'leg', 'belly', 'chest'];	// which part each of deer.js's DEER_SPHERES is
 const PART_DAMAGE = { head: 250, chest: 70, belly: 55, leg: 30 };
 const STAGGER_SECONDS = 0.45;
 const FALL_SECONDS = 0.6, LIE_SECONDS = 4, SINK_SECONDS = 2.5, SINK_DEPTH = 0.7;

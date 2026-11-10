@@ -4,6 +4,7 @@ import { skyLookupShapes } from './vfc_atmosphere.js';
 // a zone's color from terrainGenerator.js written out as a WGSL vec3f, so the colors only live in one place
 import { groundTextures } from './f_groundTextures.js';
 import { moonShapes } from './f_moon.js';
+import { floorShapes } from '../../code/floor.js';
 
 const zoneColor = (zone) => `vec3f(${TERRAIN_ZONES[zone].color.map((c) => c.toFixed(3)).join(', ')})`;
 
@@ -256,14 +257,17 @@ export const vf_terrain =
 	@vertex
 	fn vertexMain(input: VertexInput) -> VertexOutput {
 		var output: VertexOutput;
-		output.pos = UBO.viewProjectionMatrix * vec4f(input.pos, 1.0);
-		output.worldPos = input.pos;
+		// (down into a pit, up on a mound: THE FOREST FLOOR)
+		let rootFloor = floorAt(input.pos.xz);
+		let pos = input.pos + vec3f(0.0, rootFloor.a - rootFloor.b, 0.0);
+		output.pos = UBO.viewProjectionMatrix * vec4f(pos, 1.0);
+		output.worldPos = pos;
 		output.fragNormal = input.norm;
 		output.mountain = input.fields.x;
 		output.meshCell = input.fields.y;
 
 		// where this point lands in the shadow map: xy as a texture coordinate, z as the depth to compare against
-		let pointToLight = UBO.lightViewProjMat * vec4f(input.pos, 1.0);
+		let pointToLight = UBO.lightViewProjMat * vec4f(pos, 1.0);
 		output.shadowPos = vec3f(pointToLight.xy * vec2f(0.5, -0.5) + vec2f(0.5, 0.5), pointToLight.z);
 
 		return output;
@@ -275,6 +279,10 @@ export const vf_terrain =
 	@group(0) @binding(5) var skySampler: sampler;
 	@group(0) @binding(6) var terrainFields: texture_2d<f32>;	// the land data: per grid point its height, mountain value, normal.x, normal.z (see terrain.js)
 	@group(0) @binding(7) var topDownHeightMap: texture_depth_2d;	// the land and what stands on it, from straight above: what the sky can see
+	// THE FOREST FLOOR (floor.js): round the camera, the roots' heave and what they cover, and the windthrows' pits and mounds. The pits and
+	//		the mounds go into the mesh (vertexMain: they are as big as its cells), the heave into the relief (landMaterial)
+	${floorShapes(9, 10, 11)}
+	const FLOOR_MOSS: vec3f = vec3f(0.15, 0.19, 0.08);
 
 	const COLOR_SEABED: vec3f    = ${zoneColor(ZONE_OCEAN)};
 	const COLOR_BEACH: vec3f     = ${zoneColor(ZONE_BEACH)};
@@ -358,7 +366,7 @@ export const vf_terrain =
 	// the material worked out here and now, for a pixel on the screen
 	fn liveMaterial(input: FragInput) -> LandMaterial {
 		let away = length(input.worldPos - Lights.camPos.xyz);
-		return landMaterial(input.worldPos, input.fragNormal, input.mountain, input.meshCell, away * UBO.pixelSize, away);
+		return landMaterial(input.worldPos, input.fragNormal, input.mountain, input.meshCell, away * UBO.pixelSize, away, floorAt(input.worldPos.xz));
 	}
 
 	// Near the camera: the color, and the depth moved by the relief
@@ -442,7 +450,7 @@ export const vf_terrain =
 	fn fragmentBake(input: FragInput) -> BakeOutput {
 		// as it is seen from far off: the small shapes fade out at the size of a texel instead of a pixel, and what only shows
 		//		near the camera (the litter under the trees, the shade of the blades on the turf) is left out
-		let m = landMaterial(input.worldPos, input.fragNormal, input.mountain, input.meshCell, bake.area.w, 1.0e6);
+		let m = landMaterial(input.worldPos, input.fragNormal, input.mountain, input.meshCell, bake.area.w, 1.0e6, vec4f(0.0, 0.0, 0.0, 0.0));
 		var output: BakeOutput;
 		output.color = vec4f(m.albedo, m.skyShade);
 		output.shape = vec4f(m.normal.xz * 0.5 + vec2f(0.5, 0.5), m.snow, m.shine);
@@ -451,7 +459,7 @@ export const vf_terrain =
 
 	// What the ground is made of at a point: see LandMaterial. pixel: how much ground one pixel (or one texel of a bake) covers
 	//		there. away: how far it is from the camera
-	fn landMaterial(worldPos: vec3f, fragNormal: vec3f, cover: f32, meshCell: f32, pixel: f32, away: f32) -> LandMaterial {
+	fn landMaterial(worldPos: vec3f, fragNormal: vec3f, cover: f32, meshCell: f32, pixel: f32, away: f32, rootFloor: vec4f) -> LandMaterial {
 
 		let height = worldPos.y - UBO.seaLevel;	// above the sea, negative under it
 
@@ -575,7 +583,10 @@ export const vf_terrain =
 
 		//------------------WHAT IS HERE-----------------
 		var albedo = mix(COLOR_GRASSLAND, COLOR_HAY, 0.8 * UBO.hay) * turf.rgb;
-		albedo = mix(albedo, mix(COLOR_FOREST, litter.rgb, litterNear), forest);
+		// (the forest floor: bare soil and moss over the roots and on the pits and mounds, the litter off them)
+		let bareFloor = saturate(rootFloor.g + (rootFloor.b + rootFloor.a) * 1.6);
+		albedo = mix(albedo, mix(COLOR_FOREST, litter.rgb, litterNear * (1.0 - 0.8 * bareFloor)), forest);
+		albedo = mix(albedo, mix(COLOR_EARTH * 0.72, FLOOR_MOSS, 0.6 * smoothstep(0.45, 0.75, noise(worldPos.xz * 1.7))), bareFloor * 0.6);
 		albedo = mix(albedo, rock, rocky);
 		albedo = mix(albedo, COLOR_SNOW, snow);
 		albedo = mix(albedo, COLOR_BEACH * sand.rgb, beach);
@@ -588,7 +599,8 @@ export const vf_terrain =
 		// the relief of whichever of the three shows here. Snow buries it, and so do the loose stone and the turf on a mountain
 		//		Snow has a relief of its own: drifts, and a fine crust
 		let snowRelief = (noise(worldPos.xz / 4.5) - 0.5) * 0.05 + (noise(worldPos.xz / 0.8) - 0.5) * 0.03 * saturate(1.6 / (pixel * 4.0) - 1.0);
-		let relief = (marble.a * rocky * (1.0 - 0.7 * scree) * (1.0 - highTurf) + sand.a * beach + litter.a * forest * litterNear * (1.0 - rocky) + turf.a * meadow) * (1.0 - snow) + snowRelief * snow;
+		let relief = (marble.a * rocky * (1.0 - 0.7 * scree) * (1.0 - highTurf) + sand.a * beach + litter.a * forest * litterNear * (1.0 - rocky) + turf.a * meadow) * (1.0 - snow) + snowRelief * snow
+			+ rootFloor.r * (1.0 - 0.6 * snow);		// (the soil heaved over the roots)
 
 		// snow lies over the small shapes and rounds them off: it is lit by a smoother surface than the rock under it
 		let smoothNormal = normalize(mix(rockNormal, groundNormal, 0.65 * snow));
@@ -596,8 +608,9 @@ export const vf_terrain =
 		//		changes across the screen, against how much the position does (Mikkelsen, "Bump Mapping Unparametrized Surfaces on the GPU")
 		let acrossX = dpdx(worldPos);
 		let acrossY = dpdy(worldPos);
-		let reliefX = dpdx(relief);
-		let reliefY = dpdy(relief);
+		//		(and by the pits and the mounds, which are in the mesh but not in its normals)
+		let reliefX = dpdx(relief + rootFloor.a - rootFloor.b);
+		let reliefY = dpdy(relief + rootFloor.a - rootFloor.b);
 		let r1 = cross(acrossY, smoothNormal);
 		let r2 = cross(smoothNormal, acrossX);
 		let area = dot(acrossX, r1);

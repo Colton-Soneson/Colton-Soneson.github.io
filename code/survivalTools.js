@@ -17,7 +17,7 @@ import * as props from './props.js'
 import * as campfires from './campfires.js'
 import * as survivalNet from './survivalNet.js'
 import { MESHES } from './itemMeshes.js'
-import { ITEMS, HANDS, makeItem, handSlots } from './items.js'
+import { ITEMS, HANDS, makeItem, handSlots, nameOf } from './items.js'
 import * as inventory from './inventory.js'
 import * as survival from './survival.js'
 import * as loot from './loot.js'
@@ -33,6 +33,7 @@ import * as cabins from './cabins.js'
 import * as spit from './spit.js'
 import * as critters from './critters.js'
 import * as farms from './farms.js'
+import './inspect.js'
 
 /*
 	THE TOOLS of the Survival mode, in the hands (from T: survival.js; each one a weapons.js weapon, its item the one it was taken up from):
@@ -276,35 +277,38 @@ survivalNet.on('felled', (msg) => felled(Number(msg.wood) || 0));
 // A DEAD DEER (see the top): a cut of venison off it, the host's to say
 function butcher(id) {
 	weapons.actionSound('chop');
-	if (survivalNet.authority()) gotMeat(deer.butcher(id));
+	if (survivalNet.authority()) { const stars = deer.peltStars(id); gotMeat(deer.butcher(id), stars); }
 	else survivalNet.send('butcher', { id });
 }
-function gotMeat(kind) {
+// (a pelt: of the animal's quality, its stars: anatomy.js peltQuality)
+function gotMeat(kind, stars = null) {
 	if (!kind) { help.toast('Nothing more on it to cut'); return; }
 	if (kind == 'venison') toolStats.venison++;
 	const cut = makeItem(kind);
+	if (ITEMS[kind].pelt) cut.quality = Math.min(Math.max(Math.round(Number(stars) || 3), 1), 5);
+	help.toast(nameOf(cut));
 	if (!inventory.give(cut)) loot.dropHere([cut]);
-	help.toast(ITEMS[kind].name);
 }
-survivalNet.on('butcher', (msg, from) => { if (survivalNet.authority()) survivalNet.sendTo(from, 'butchered', { kind: deer.butcher(Number(msg.id)) }); });
-survivalNet.on('butchered', (msg) => gotMeat(ITEMS[msg.kind] ? msg.kind : null));
+survivalNet.on('butcher', (msg, from) => { if (survivalNet.authority()) { const id = Number(msg.id), quality = deer.peltStars(id); survivalNet.sendTo(from, 'butchered', { kind: deer.butcher(id), quality }); } });
+survivalNet.on('butchered', (msg) => gotMeat(ITEMS[msg.kind] ? msg.kind : null, msg.quality));
 // A DEAD BEAST (beasts.js): the next cut off it, the host's to say
 function cutBeast(id) {
 	weapons.actionSound('chop');
-	if (survivalNet.authority()) gotMeat(beasts.cut(id));
+	if (survivalNet.authority()) { const stars = beasts.peltStars(id); gotMeat(beasts.cut(id), stars); }
 	else survivalNet.send('beastCut', { id });
 }
-survivalNet.on('beastCut', (msg, from) => { if (survivalNet.authority()) survivalNet.sendTo(from, 'butchered', { kind: beasts.cut(Number(msg.id)) }); });
+survivalNet.on('beastCut', (msg, from) => { if (survivalNet.authority()) { const id = Number(msg.id), quality = beasts.peltStars(id); survivalNet.sendTo(from, 'butchered', { kind: beasts.cut(id), quality }); } });
 // A DEAD RABBIT (rabbits.js): the host's to say what comes of it
 function skinRabbit(id) {
 	weapons.actionSound('chop');
-	if (survivalNet.authority()) gotRabbit(rabbits.harvest(id));
+	if (survivalNet.authority()) { const stars = rabbits.peltStars(id); gotRabbit(rabbits.harvest(id), stars); }
 	else survivalNet.send('rabbitCut', { id });
 }
-function gotRabbit(kinds) {
+function gotRabbit(kinds, stars = null) {
 	if (!kinds?.length) { help.toast('Nothing on it to cut'); return; }
-	for (const kind of kinds) { const cut = makeItem(kind); if (!inventory.give(cut)) loot.dropHere([cut]); }
-	help.toast(kinds.map((k) => ITEMS[k].name).join(', '));
+	const cuts = kinds.map((kind) => { const cut = makeItem(kind); if (ITEMS[kind].pelt) cut.quality = Math.min(Math.max(Math.round(Number(stars) || 3), 1), 5); return cut; });
+	help.toast(cuts.map(nameOf).join(', '));
+	for (const cut of cuts) if (!inventory.give(cut)) loot.dropHere([cut]);
 }
 // A DEAD RAT (critters.js): small bones and the meat, the host's to say
 function cutRat(id) {
@@ -313,17 +317,17 @@ function cutRat(id) {
 	else survivalNet.send('ratCut', { id });
 }
 survivalNet.on('ratCut', (msg, from) => { if (survivalNet.authority()) survivalNet.sendTo(from, 'rabbitGot', { kinds: critters.harvest(Number(msg.id)) }); });
-survivalNet.on('rabbitCut', (msg, from) => { if (survivalNet.authority()) survivalNet.sendTo(from, 'rabbitGot', { kinds: rabbits.harvest(Number(msg.id)) }); });
-survivalNet.on('rabbitGot', (msg) => gotRabbit((msg.kinds ?? []).filter((k) => ITEMS[k])));
+survivalNet.on('rabbitCut', (msg, from) => { if (survivalNet.authority()) { const id = Number(msg.id), quality = rabbits.peltStars(id); survivalNet.sendTo(from, 'rabbitGot', { kinds: rabbits.harvest(id), quality }); } });
+survivalNet.on('rabbitGot', (msg) => gotRabbit((msg.kinds ?? []).filter((k) => ITEMS[k]), msg.quality));
 hunting.addPrompt(() => {
 	if (!inventory.survivalOn() || hunting.hunterPlace().on != 'land') return null;
 	const eye = [settings.camPosX, settings.camPosY, settings.camPosZ], look = transformations.getCameraForward(), reach = BUTCHER_REACH * settings.forestUnitsPerMetre;
-	const keys = name() == 'hatchet' || name() == 'knife' ? 'Left click: cut it up' : 'A hatchet or a knife: cut it up';
+	const cut = name() == 'hatchet' || name() == 'knife' ? 'Left click: cut it up' : 'A hatchet or a knife: cut it up', keys = 'F: look it over · ' + cut;
 	if (deer.corpseInReach(eye, look, reach) != null) return { name: 'Dead deer', keys };
 	const big = beasts.corpseInReach(eye, look, reach);
 	if (big) return { name: `Dead ${big.kind}`, keys };
 	if (rabbits.corpseInReach(eye, look, reach) != null) return { name: 'Dead rabbit', keys };
-	return critters.corpseInReach(eye, look, reach) != null ? { name: 'Dead rat', keys } : null;
+	return critters.corpseInReach(eye, look, reach) != null ? { name: 'Dead rat', keys: cut } : null;
 });
 
 // where a thrown thing came down: lying there, to be picked up; a blow on a tree: firewood in time

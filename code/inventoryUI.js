@@ -4,7 +4,7 @@ import { settings } from './settings.js';
 import * as hunting from './hunting.js'
 import * as weapons from './weapons.js'
 import * as help from './controlsHelp.js'
-import { ITEMS, SLOTS, SLOT_NAMES, HANDS, HAND_NAMES, ICONS, handSlots, sizeOf, nameOf, tintOf, weightOf, dollars, placeFor } from './items.js'
+import { ITEMS, SLOTS, SLOT_NAMES, HANDS, HAND_NAMES, ICONS, handSlots, sizeOf, nameOf, tintOf, weightOf, dollars, placeFor, QUALITY, qualityOf } from './items.js'
 import * as inventory from './inventory.js'
 import * as survival from './survival.js'
 import * as loot from './loot.js'
@@ -62,6 +62,7 @@ function thing(item, w, h, src) {
 	return `<div class="it" data-uid="${item.uid}" data-src="${src}" style="position:absolute; inset:2px; border-radius:3px 5px 2px 4px; background:rgba(43,37,32,0.07); border:1.3px solid rgba(43,37,32,0.7); cursor:grab; overflow:hidden;">
 		<div style="position:absolute; inset:0;">${icon(item, w - 12, h - 12)}</div>
 		<div style="position:absolute; left:3px; top:1px; font-size:9px; color:${journal.INK}; white-space:nowrap; overflow:hidden; max-width:${w - 8}px;">${html(it.name)}</div>
+		${it.pelt ? `<div style="position:absolute; left:3px; bottom:1px; font-size:9px; letter-spacing:-1px; color:${journal.INK};">${'★'.repeat(qualityOf(item))}</div>` : ''}
 		${it.money ? `<div style="position:absolute; right:3px; bottom:1px; font-size:10px; font-weight:bold; color:${journal.INK};">${dollars(item.count)}</div>`
 			: item.count > 1 ? `<div style="position:absolute; right:3px; bottom:1px; font-size:12px; font-weight:bold; color:${journal.INK};">${item.count}</div>` : ''}</div>`;
 }
@@ -487,7 +488,7 @@ function showTip(e) {
 	if (it.ammo) lines.push(`For the ${ITEMS[it.ammo]?.name ?? it.ammo}`);
 	if (it.detail) lines.push(it.detail);
 	const kg = weightOf(item);
-	if (kg > 0) lines.push(`${kg < 1 ? Math.round(kg * 1000) + ' g' : kg.toFixed(1) + ' kg'}${it.price ? ' · worth ' + dollars(it.price * 100) : ''}`);
+	if (kg > 0) lines.push(`${kg < 1 ? Math.round(kg * 1000) + ' g' : kg.toFixed(1) + ' kg'}${it.price ? ' · worth ' + dollars(Math.round(it.price * 100 * (QUALITY[qualityOf(item)]?.worth ?? 1))) : ''}`);
 	tip.innerHTML = `<b>${html(nameOf(item))}</b>${item.count > 1 && !it.money ? ` × ${item.count}` : ''}<div style="margin-top:4px; line-height:1.5;">${lines.map(html).join('<br>')}</div>`;
 	tip.style.display = '';
 	tip.style.left = (e.clientX + 14) + 'px';

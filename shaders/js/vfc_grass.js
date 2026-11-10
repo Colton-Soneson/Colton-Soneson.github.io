@@ -2,6 +2,7 @@ import { TERRAIN_ZONES, ZONE_GRASSLAND, ZONE_MARSH } from '../../code/terrainGen
 import { windShapes } from './vf_wind.js';
 import { moonShapes } from './f_moon.js';
 import { skyLookupShapes } from './vfc_atmosphere.js';
+import { floorShapes } from '../../code/floor.js';
 
 export const GRASS_MAX_RINGS = 8;								// the most level of detail rings there can be around the camera (how many there are is a setting)
 export const GRASS_RING_SEGMENTS = [4, 3, 2, 2, 1, 1, 1, 1];	// pieces a blade is cut into along its length, ring by ring outwards. 1 = a single triangle
@@ -95,6 +96,8 @@ export const vf_grass =
 	@group(0) @binding(7) var<storage, read> townCells: array<vec2u>;
 	@group(0) @binding(8) var<storage, read> townList: array<u32>;
 	@group(0) @binding(9) var<storage, read> townItems: array<vec4f>;
+	// the forest floor (floor.js): none on the roots or the bare earth of a pit, and down into the pits and up on the mounds with the ground
+	${floorShapes(11, 12, 13)}
 
 	struct VertexOutput {				//into frag
 		@builtin(position) pos: vec4f,
@@ -293,6 +296,10 @@ export const vf_grass =
 		if (onTownWork(root)) {
 			return output;	// not on a town's roads, nor under its houses
 		}
+		let rootFloor = floorAt(root);
+		if (random(seed + 12u) < rootFloor.g * 1.4 - 0.15) {
+			return output;	// nor on the roots, nor on the bare earth of a windthrow
+		}
 
 		//------------------THE BLADE-----------------
 		// the grass sinks into the ground over the last stretch before the draw distance, so the field has no edge where it stops
@@ -327,7 +334,7 @@ export const vf_grass =
 
 		// quadratic bezier: root, a control point straight above it, and the tip leaning over and pushed by the wind.
 		//		however hard it is pushed the tip stays a blade's length from the root, so a strong wind lays the grass over instead of stretching it
-		let p0 = vec3f(root.x, ground.x, root.y);
+		let p0 = vec3f(root.x, ground.x + rootFloor.a - rootFloor.b, root.y);
 		let p1 = p0 + vec3f(0.0, height * 0.75, 0.0);
 		let p2 = p0 + normalize(vec3f(0.0, cos(lean), 0.0) + facing * sin(lean) + windPush / max(height, 0.0001)) * height;
 

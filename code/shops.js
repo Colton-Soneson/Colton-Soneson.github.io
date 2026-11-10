@@ -7,7 +7,7 @@ import * as atmosphere from './atmosphere.js'
 import * as players from './players.js'
 import * as townFolk from './townFolk.js'
 import * as survivalNet from './survivalNet.js'
-import { ITEMS, ICONS, makeItem, nameOf, tintOf, dollars } from './items.js'
+import { ITEMS, ICONS, makeItem, nameOf, tintOf, dollars, QUALITY, qualityOf } from './items.js'
 import { CLOTHES, COLOURS } from './clothing.js'
 import * as inventory from './inventory.js'
 import * as loot from './loot.js'
@@ -45,7 +45,7 @@ const SAVED = 'survivalBank';
 const FOOD = Object.keys(ITEMS).filter((type) => ITEMS[type].food || ITEMS[type].drink);
 const GEAR = ['spit', 'mortar', 'mushroom', 'flareGun', 'flareRound', 'bandage', 'alcohol', 'antibiotics', 'splint', 'sewingKit', 'tent', 'tentStove', 'rainCollector', 'haversack', 'rucksack', 'framePack', 'ammoPouch', 'utilityPouch', 'bedrollStrap', 'bedroll', 'compass', 'watch', 'knife', 'hatchet', 'lighter'];
 const ROOM = 2;						// dollars: a night in a room at the inn
-const HIDES = ['sinew', 'antlers', 'smallBones', 'bigBones', 'rabbitPelt', 'mooseHide', 'bearHide', 'deerHide'];
+const HIDES = ['sinew', 'antlers', 'smallBones', 'bigBones', 'rabbitPelt', 'mooseHide', 'bearHide', 'deerHide', 'wolfPelt'];
 const IRON = ['nails', 'pickaxe', 'hoe', 'hatchet', 'knife', 'ironOre', 'ironBar', 'rock', 'smelter', 'anvil', 'cauldron'];
 const SPIRITS = ['boneAlcohol', 'grainAlcohol'];
 const MEDICINE = ['bandage', 'alcohol', 'antibiotics', 'splint', 'sewingKit'];
@@ -66,7 +66,7 @@ export const TRADES = {
 	librarian: { title: 'Town Hall', hall: true },
 };
 const cents = (type) => Math.round((ITEMS[type]?.price ?? 0) * 100);
-const offer = (type) => Math.floor(cents(type) * SELL);
+const offer = (item) => Math.floor(cents(item.type) * SELL * (QUALITY[qualityOf(item)]?.worth ?? 1));		// (what is paid for one: a pelt by its quality)
 const title = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
 // THE ONE LOOKED AT, within REACH, who trades
@@ -182,8 +182,8 @@ function render() {
 		if (trade.room) buy = row(`${picture('bedroll', '#7a5a3a')}<div><div>Sleep in a room</div><div style="font-size:11px; color:#b8a888;">Eight hours go by. You wake fed and watered, rested, and with half your stress gone</div></div>`,
 			`<span style="margin-right:4px;">${dollars(ROOM * 100)}</span>${button('room', 'Sleep')}`) + buy;
 		let sell = '';
-		const mine = inventory.everything().filter(({ item, where }) => where.kind == 'grid' && trade.buys.includes(item.type) && offer(item.type) > 0);
-		for (const { item } of mine) sell += row(`${picture(item.type, tintOf(item))}<div>${html(nameOf(item))}${item.count > 1 ? ` × ${item.count}` : ''}</div>`, `<span>${dollars(offer(item.type))}</span>${button('sell', 'Sell', `data-uid="${item.uid}"`)}`);
+		const mine = inventory.everything().filter(({ item, where }) => where.kind == 'grid' && trade.buys.includes(item.type) && offer(item) > 0);
+		for (const { item } of mine) sell += row(`${picture(item.type, tintOf(item))}<div>${html(nameOf(item))}${item.count > 1 ? ` × ${item.count}` : ''}</div>`, `<span>${dollars(offer(item))}</span>${button('sell', 'Sell', `data-uid="${item.uid}"`)}`);
 		body = `<div style="display:flex; gap:16px; align-items:flex-start;">
 			<div style="flex:1; min-width:300px;"><div style="font-size:11px; letter-spacing:0.18em; color:#b8a888; margin:6px 8px;">FOR SALE</div>${buy}</div>
 			<div style="flex:1; min-width:260px;"><div style="font-size:11px; letter-spacing:0.18em; color:#b8a888; margin:6px 8px;">YOURS TO SELL (from your bags)</div>${sell || '<div style="padding:8px; color:#9a8a70;">Nothing they would buy</div>'}</div></div>`;
@@ -242,7 +242,7 @@ export function buyHorse() {
 export function sell(uid) {
 	const found = inventory.everything().find(({ item }) => item.uid == uid)?.item;
 	if (!found || !shop.trade?.buys?.includes(found.type)) return false;
-	const price = offer(found.type);
+	const price = offer(found);
 	inventory.useOne(found);
 	inventory.receive(price);
 	help.toast('Sold for ' + dollars(price));

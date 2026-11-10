@@ -117,7 +117,7 @@ export function put(where, item, x = 0, y = 0, rot = item.rot) {
 // onto a stack of the same kind, as much as it holds: what is left over (0 all of it went)
 export function stackOnto(target, item) {
 	const most = ITEMS[target.type].stack ?? 1;
-	if (target.type != item.type || most <= 1) return item.count;
+	if (target.type != item.type || (target.quality ?? 3) != (item.quality ?? 3) || most <= 1) return item.count;
 	const room = Math.min(most - target.count, item.count);
 	target.count += room;
 	item.count -= room;

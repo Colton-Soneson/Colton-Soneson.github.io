@@ -80,8 +80,9 @@ export const ITEMS = {
 	cookedWolf: { name: 'Cooked wolf', slot: ['item'], w: 1, h: 1, stack: 4, price: 0.8, food: 26, weapon: 'eat', icon: 'meat', tint: '#6a4a30', detail: 'Hunger -26' },
 	bearMeat: { name: 'Raw bear', slot: ['item'], w: 1, h: 1, stack: 4, price: 1, food: 16, stress: 12, parasites: 0.7, weapon: 'eat', cooksTo: 'cookedBear', icon: 'meat', tint: '#7a2e2a', detail: 'Hunger -16. Raw, it will likely give you parasites: cook it. The butcher buys it' },
 	cookedBear: { name: 'Cooked bear', slot: ['item'], w: 1, h: 1, stack: 4, price: 1.8, food: 55, stress: -5, weapon: 'eat', icon: 'meat', tint: '#5a381c', detail: 'Hunger -55, and a little calmer' },
-	mooseHide: { name: 'Moose hide', w: 3, h: 2, kg: 9, price: 20, icon: 'pelt', tint: '#5a4630', detail: 'A big, valuable hide. The butcher pays well for it' },
-	bearHide: { name: 'Bear hide', w: 3, h: 2, kg: 8, price: 32, icon: 'pelt', tint: '#3a2a1c', detail: 'A rare and very valuable hide. The butcher pays well for it' },
+	mooseHide: { name: 'Moose hide', w: 3, h: 2, kg: 9, price: 20, icon: 'pelt', tint: '#5a4630', pelt: true, detail: 'A big, valuable hide. The butcher pays well for it, more the cleaner the kill' },
+	bearHide: { name: 'Bear hide', w: 3, h: 2, kg: 8, price: 32, icon: 'pelt', tint: '#3a2a1c', pelt: true, detail: 'A rare and very valuable hide. The butcher pays well for it, more the cleaner the kill' },
+	wolfPelt: { name: 'Wolf pelt', w: 2, h: 2, kg: 2.5, price: 9, icon: 'pelt', tint: '#6e6a62', pelt: true, detail: 'A thick grey coat. The butcher buys it, for more the cleaner the kill' },
 	bigBones: { name: 'Big bones', w: 2, h: 1, stack: 4, kg: 1, price: 1.6, icon: 'bones', tint: '#d8ceb0', detail: 'From a moose or a bear. The butcher buys them' },
 	// the cooking spit (spit.js): its one slot, the meat on it (item.meat)
 	spit: { name: 'Cooking spit', slot: ['secondary', 'item'], w: 5, h: 1, kg: 0.4, price: 1, weapon: 'spit', spit: true, icon: 'spit', tint: '#8a6a44', detail: 'Held: right click puts raw meat on it, left click holds it out over a campfire to cook. Take it off before it burns' },
@@ -98,7 +99,7 @@ export const ITEMS = {
 	mushroom: { name: 'Mushroom', slot: ['item'], w: 1, h: 1, stack: 8, kg: 0.05, price: 0.25, food: 3, weapon: 'eat', icon: 'mushroom', tint: '#8a5a30', detail: 'Hunger -3, raw. Boiled in a cauldron it is better, and three boiled make antibiotics' },
 	boiledMushroom: { name: 'Boiled mushroom', slot: ['item'], w: 1, h: 1, stack: 8, kg: 0.05, price: 0.5, food: 12, weapon: 'eat', icon: 'mushroom', tint: '#5a3a20', detail: 'Hunger -12. Three of them, at a mortar: antibiotics' },
 	wheat: { name: 'Wheat', w: 1, h: 1, stack: 10, kg: 0.1, price: 0.3, icon: 'wheat', tint: '#b89a48', detail: 'Off a farm bed. With a small bone, in a cauldron: grain alcohol. The baker buys it' },
-	deerHide: { name: 'Deer hide', w: 2, h: 2, kg: 3, price: 5, icon: 'pelt', tint: '#8a6a44', detail: 'Off a deer. Crafting: a bedroll. The butcher buys it' },
+	deerHide: { name: 'Deer hide', w: 2, h: 2, kg: 3, price: 5, icon: 'pelt', tint: '#8a6a44', pelt: true, detail: 'Off a deer. Crafting: a bedroll. The butcher buys it, for more the cleaner the kill' },
 	boneAlcohol: { name: 'Bone alcohol', w: 1, h: 1, stack: 4, kg: 0.5, price: 2.5, drink: 2, stress: -10, tired: 6, icon: 'bottle', tint: '#8a7a5a', detail: 'Rough stuff, boiled from big bones. At a mortar: tincture' },
 	grainAlcohol: { name: 'Grain alcohol', w: 1, h: 1, stack: 4, kg: 0.5, price: 9, drink: 3, stress: -14, tired: 6, icon: 'bottle', tint: '#c8b878', detail: 'Boiled from a small bone and wheat. It sells for a decent amount. At a mortar: tincture' },
 	smelter: { name: 'Smelter', w: 3, h: 3, kg: 30, price: 14, use: 'station', icon: 'smelter', tint: '#6a625a', detail: 'Right click: set it up. Ore in the top, firewood and the lighter at its door, bars out of its trough' },
@@ -118,7 +119,7 @@ export const ITEMS = {
 	sinew: { name: 'Sinew', w: 1, h: 1, stack: 4, kg: 0.05, price: 0.8, icon: 'sinew', tint: '#d8c8a0', detail: 'Cut from a dead deer. Crafted with firewood into a snare' },
 	antlers: { name: 'Antlers', w: 2, h: 2, kg: 1.2, price: 6, icon: 'antlers', tint: '#c8b48a', detail: 'Cut from a dead buck. The butcher pays well for a rack' },
 	smallBones: { name: 'Small bones', w: 1, h: 1, stack: 6, kg: 0.05, price: 0.6, icon: 'bones', tint: '#e0d8c0', detail: 'From a rabbit. The butcher buys them' },
-	rabbitPelt: { name: 'Rabbit pelt', w: 1, h: 1, stack: 4, kg: 0.1, price: 1.4, icon: 'pelt', tint: '#8a7050', detail: 'From a snared rabbit, the skin whole. The butcher buys it' },
+	rabbitPelt: { name: 'Rabbit pelt', w: 1, h: 1, stack: 4, kg: 0.1, price: 1.4, icon: 'pelt', tint: '#8a7050', pelt: true, detail: 'From a snared rabbit, the skin whole. The butcher buys it' },
 	trap: { name: 'Snare', w: 1, h: 1, stack: 4, kg: 0.5, price: 1.5, use: 'trap', icon: 'trap', tint: '#8a6a44', detail: 'Crafted from firewood and sinew. Set it (right click here): rabbits within 50 m come to it. E takes what it caught, F takes it up' },
 };
 // WEIGHT (kg, one of a stack) and PRICE (dollars) of those that do not say: the rest weigh by their size; without a price, a shop has no use for it
@@ -144,6 +145,10 @@ export const isWorn = (type) => typeof ITEMS[type]?.slot == 'string' && SLOTS.in
 export const sizeOf = (item) => { const it = ITEMS[item.type]; return item.rot ? [it.h, it.w] : [it.w, it.h]; };
 
 let uidNext = Math.floor(Math.random() * 1e6) * 1000;
+// A PELT'S QUALITY: how cleanly the animal was killed (anatomy.js: peltQuality), 1 to 5 stars, and what the butcher pays for it against
+//		its price (shops.js). One without (bought, or from before) is Fair
+export const QUALITY = [null, { name: 'Ruined', worth: 0.35 }, { name: 'Poor', worth: 0.65 }, { name: 'Fair', worth: 1 }, { name: 'Fine', worth: 1.45 }, { name: 'Perfect', worth: 2 }];
+export const qualityOf = (item) => ITEMS[item.type]?.pelt ? Math.min(Math.max(Math.round(item.quality ?? 3), 1), 5) : null;
 export function makeItem(type, count = 1, colour = null) {
 	const it = ITEMS[type];
 	const item = { uid: ++uidNext, type, count: Math.min(count, it.stack ?? 1), x: 0, y: 0, rot: 0 };
@@ -163,11 +168,12 @@ export function cleanItem(raw) {
 	if (it.attach) item.attached = Array.from({ length: it.attach }, (_, k) => cleanItem(raw.attached?.[k]) ?? null);
 	if (it.chamber) item.loaded = Math.max(0, Math.min(it.chamber, raw.loaded | 0));
 	if (it.spit) item.meat = raw.meat && ITEMS[raw.meat.type] ? { type: raw.meat.type, cook: Math.max(0, Math.min(Number(raw.meat.cook) || 0, 2)) } : null;
+	if (it.pelt && raw.quality != null) item.quality = Math.max(1, Math.min(5, Math.round(Number(raw.quality)) || 3));
 	return item;
 }
 
 // what it is called (a piece of clothing: and its colour), what colour it is drawn in, what it weighs (with all in it), and money as money
-export const nameOf = (item) => ITEMS[item.type].name + (ITEMS[item.type].clothing ? ` (${colourName(item.type, item.colour)})` : '');
+export const nameOf = (item) => ITEMS[item.type].name + (ITEMS[item.type].clothing ? ` (${colourName(item.type, item.colour)})` : '') + (ITEMS[item.type].pelt ? ` (${QUALITY[qualityOf(item)].name})` : '');
 export const tintOf = (item) => colourHex(item.type, item.colour) ?? ITEMS[item.type].tint ?? '#888';
 export function weightOf(item) {
 	let kg = (ITEMS[item.type].kg ?? 0) * item.count;

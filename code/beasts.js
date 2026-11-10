@@ -11,6 +11,7 @@ import * as rabbits from './rabbits.js'
 import * as hearing from './hearing.js'
 import * as medical from './medical.js'
 import * as survivalNet from './survivalNet.js'
+import { ANATOMY, woundFrom, otherWound, cleanWound, bleedOf, recordOf, vital } from './anatomy.js'
 
 /*
 	THE WILD ANIMALS THAT FIGHT BACK. Each model under 450 triangles (creatureMeshes.js), walking by the rig in vf_props.js.
@@ -18,6 +19,7 @@ import * as survivalNet from './survivalNet.js'
 		WOLVES	PACKS of three to six, keeping to the woods and the mountains (ZONES). A pack hunts: the nearest rabbit or deer within SCENT, all of them after it, and only that one. Then all round it to eat (EAT seconds), and a while before the next
 				(HUNT_AGAIN). A player within AGGRO it fights by PACK TACTICS: they spread out in a ring round the player (RING metres off, each to its own side), and one at a time (LUNGE seconds apart) goes in, bites and falls back. Half of them down, the rest run
 		BEARS	rare, BEAR_COUNT, each living where the woods meet the mountains (a forest place within EDGE of the mountain zone). Territorial as a moose, high health and high damage
+	SHOT: a round's wound (anatomy.js, as the deer's): its brain or its spine, it is dead; its heart, lungs, liver or guts, it goes on (and comes for them) until its blood is gone (RUN at the most); meat only, it bleeds out slowly; and every round takes health off it too (HURT). Dead, it keeps the record of it (inspect.js).
 	Any of them a player shoots at comes for them, wherever. What a player is heard at (hearing.js: sick): further off with a cough, and it follows further.
 	A DEAD ONE lies there (LIE seconds), and is cut up a cut at a time with a hatchet or a knife (survivalTools.js: CUTS). Another comes RESPAWN days later.
 	HURT: as all NPCs' harm (npcs.hurtPlayer), and what it did to the limbs is the victim's to work out (medical.js: mauled; told by the host: mauled).
@@ -25,9 +27,9 @@ import * as survivalNet from './survivalNet.js'
 	In metres and seconds (their places world units). Not in the Horde game mode, and only in the Survival mode do they go for the players (hearing.js: listeners).
 */
 export const KINDS = {
-	moose: { number: 1, model: 'moose', dead: 'moose', health: 420, walk: 1.2, run: 6.5, damage: 34, reach: 3.2, every: 2.2, aggro: 15, leash: 45, wander: 30, spheres: [[0, 1.45, -0.5, 0.42], [0, 1.5, 0.4, 0.45], [0, 1.95, 1.2, 0.26], [0, 0.6, 0, 0.4]], around: 2.2, cuts: ['mooseHide', 'sinew', 'bigBones', 'mooseMeat', 'sinew', 'mooseMeat', 'sinew', 'bigBones', 'mooseMeat', 'sinew', 'mooseMeat'], respawn: 1 },
-	wolf: { number: 2, model: 'wolf', dead: 'wolf', health: 85, walk: 1.8, run: 8.2, damage: 13, reach: 1.9, every: 1.3, aggro: 28, leash: 110, wander: 140, spheres: [[0, 0.55, -0.3, 0.18], [0, 0.6, 0.15, 0.2], [0, 0.72, 0.62, 0.14]], around: 1, cuts: ['wolfMeat', 'smallBones', 'wolfMeat'], respawn: 1 },
-	bear: { number: 3, model: 'bear', dead: 'bear', health: 400, walk: 1.1, run: 7, damage: 46, reach: 2.6, every: 2.0, aggro: 25, leash: 60, wander: 35, spheres: [[0, 0.75, -0.45, 0.42], [0, 0.85, 0.2, 0.46], [0, 0.95, 0.85, 0.26]], around: 1.6, cuts: ['bearHide', 'bigBones', 'bearMeat', 'bearMeat', 'bigBones', 'bearMeat'], respawn: 2 },
+	moose: { number: 1, model: 'moose', dead: 'moose', health: 420, walk: 1.2, run: 6.5, damage: 34, reach: 3.2, every: 2.2, aggro: 15, leash: 45, wander: 30, spheres: ANATOMY.moose.body, around: 2.2, cuts: ['mooseHide', 'sinew', 'bigBones', 'mooseMeat', 'sinew', 'mooseMeat', 'sinew', 'bigBones', 'mooseMeat', 'sinew', 'mooseMeat'], respawn: 1 },
+	wolf: { number: 2, model: 'wolf', dead: 'wolf', health: 85, walk: 1.8, run: 8.2, damage: 13, reach: 1.9, every: 1.3, aggro: 28, leash: 110, wander: 140, spheres: ANATOMY.wolf.body, around: 1, cuts: ['wolfPelt', 'wolfMeat', 'smallBones', 'wolfMeat'], respawn: 1 },
+	bear: { number: 3, model: 'bear', dead: 'bear', health: 400, walk: 1.1, run: 7, damage: 46, reach: 2.6, every: 2.0, aggro: 25, leash: 60, wander: 35, spheres: ANATOMY.bear.body, around: 1.6, cuts: ['bearHide', 'bigBones', 'bearMeat', 'bearMeat', 'bigBones', 'bearMeat'], respawn: 2 },
 };
 const NUMBER_KIND = Object.fromEntries(Object.entries(KINDS).map(([k, K]) => [K.number, k]));
 const MOOSE_COUNT = 6, BEAR_COUNT = 3, PACKS = 3, PACK_SIZE = [3, 6];
@@ -45,6 +47,7 @@ const LIE = 8, LIE_SURVIVAL = 400;
 const FALL = 0.8;					// seconds
 const DRAW = 420;					// metres
 const WOLF_SINEW = 0.4;
+const RUN = 15;					// seconds at the most one shot through its heart, lungs, liver or guts goes on
 
 const metre = () => settings.forestUnitsPerMetre;
 const hidden = () => settings.gameMode == 'Horde';
@@ -268,6 +271,8 @@ function advance(dt) {
 	if (!terrain.land || hidden()) return;
 	if (terrain.land !== builtFor) build();
 	now += dt;
+	// (the ones bleeding out: down when their time is up)
+	for (const b of beasts.filter((o) => o.dieAt <= now)) dieBeast(b, b.lastVelocity ?? [1, 0, 0]);
 	// (one far from everyone, out past where it is drawn, less often, and its ground and slope with it: rates.js. A pack goes as one)
 	const seen = DRAW * metre();
 	for (const b of beasts) b.step = stilled ? dt : 0;
@@ -312,24 +317,39 @@ ballistics.addTarget((ax, ay, az, bx, by, bz) => {
 	const found = ballistics.crossAnimals(ax, ay, az, bx, by, bz, living(), spheresOf, aroundOf);
 	return found && { t: found.t, what: found.animal.kind, hit: (velocity, bullet) => {
 		if (bullet?.npc) return;
-		if (followed) beastShot.report?.(found.animal.id, velocity, 'body', bullet?.round);
-		else hurtBeast(found.animal, velocity, bullet?.round, 'me');
+		const b = found.animal, wound = bullet ? woundFrom(b.kind, bullet, [b.x, b.y, b.z], b.heading, metre()) : null;
+		if (followed) beastShot.report?.(b.id, velocity, wound, bullet?.round);
+		else hurtBeast(b, velocity, bullet?.round, 'me', wound);
 	} };
 }, () => { const out = []; if (!hidden()) for (const b of living()) out.push(...aroundOf(b)); return out; });
-function hurtBeast(b, velocity, round, who) {
+function hurtBeast(b, velocity, round, who, wound = null) {
+	(b.wounds ??= []).push(wound ?? otherWound('maul'));
+	b.firstWound ??= now;
+	b.lastVelocity = velocity;
 	b.health -= HURT * (ballistics.ROUNDS[round]?.damage ?? 1);
+	const bleed = bleedOf(b.wounds);
+	if (bleed == 0) b.health = 0;
+	else if (bleed < Infinity) { b.bleed = bleed; b.dieAt = Math.min(b.dieAt ?? Infinity, now + (b.wounds.some(vital) ? Math.min(bleed, RUN) : bleed)); }
 	// (whoever did that it goes for: a whole pack)
 	if (b.pack) { b.pack.state = 'fight'; b.pack.enemy = who; }
 	else b.enemy = who;
 	if (b.health > 0) return;
+	dieBeast(b, velocity);
+}
+function dieBeast(b, velocity) {
+	if (!beasts.includes(b)) return;
 	beasts.splice(beasts.indexOf(b), 1);
 	const side = velocity[0] * Math.cos(b.heading) - velocity[2] * Math.sin(b.heading) > 0 ? 1 : -1;
 	// (a wolf has a little sinew on it, now and then)
-	corpses.push({ beast: b, t: 0, side, cuts: [...KINDS[b.kind].cuts, ...(b.kind == 'wolf' && Math.random() < WOLF_SINEW ? ['sinew'] : [])] });
+	const seconds = Math.max(now - (b.firstWound ?? now), Number.isFinite(b.bleed) ? b.bleed : 0);
+	corpses.push({ beast: b, t: 0, side, cuts: [...KINDS[b.kind].cuts, ...(b.kind == 'wolf' && Math.random() < WOLF_SINEW ? ['sinew'] : [])], record: recordOf(b.kind, b.wounds ?? [otherWound('maul')], seconds) });
 	respawns.push({ at: clock() + KINDS[b.kind].respawn, kind: b.kind, number: b.number, pack: b.pack, tile: b.tile });
 	beastStats.killed++;
 }
-export function killBeastById(id, velocity, part, round, who) { const b = beasts.find((o) => o.id === id); if (b) hurtBeast(b, velocity ?? [0, 0, 0], round, who ?? 'me'); }
+export function killBeastById(id, velocity, part, round, who) { const b = beasts.find((o) => o.id === id); if (b) hurtBeast(b, velocity ?? [0, 0, 0], round, who ?? 'me', part ? cleanWound(part, b.kind) : null); }
+// the record of a dead one while it lies there (see deer.js: deerRecord), and its pelt's stars
+export function beastRecord(id) { return corpses.find((c) => c.beast.id === id)?.record ?? null; }
+export const peltStars = (id) => beastRecord(id)?.quality.stars ?? 3;
 
 // A DEAD ONE (see the top): the one the eye is on, within reach; and the next cut off it (the host's to say)
 export function corpseInReach(eye, look, reach) {

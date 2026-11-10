@@ -21,12 +21,15 @@ import { c_forestChanges, CHANGE_WORKGROUP } from '../shaders/js/vf_forest.js'
 import { c_forestCull, CULL_WORKGROUP, LIST_WORKGROUP } from '../shaders/js/vf_forest.js'
 import { addJob, UNSEEN } from './jobs.js'
 import { BILLBOARD_VERTICES } from '../shaders/js/vf_forest.js'
+import { vf_forestFloor, vf_forestThrows } from '../shaders/js/vf_forest.js'
+import { FLOOR_TEXELS, FLOOR_SPAN, FLOOR_FORMAT, floorView, floorUniformBuffer } from './floor.js'
 
 import { mat4 } from 'https://wgpu-matrix.org/dist/3.x/wgpu-matrix.module.js';
 
 import * as transformations from './transformations.js'
 import * as terrain from './terrain.js'
 import * as horizon from './horizon.js'
+import * as scene from './scene.js'
 import * as wind from './wind.js'
 import { seasonNow } from './weather.js'
 import { filteredSampler, filteringLevel } from './textureFiltering.js'
@@ -64,6 +67,10 @@ import {uniformBufferLights} from './rotatingCube.js'
 		3	thinned: the same wood on fewer rings, a twelfth of the foliage in big pieces
 		4	thinned further: the trunk and main limbs only, a thirtieth of the foliage. The step before the billboard
 		5	a billboard: 2 flat cards with a picture of the tree on them
+	THE ROOTS (treeGenerator.js: THE ROOTS) are drawn by 0 (all of them, ROOT_TESSELLATION) and 1 (the thickest), and shrink away over
+	the end of 1: further off they would be less than a pixel. They are laid over the ground where they are (vf_forest.js), which the
+	top down height map has (scene.js: the ground round the camera, as from straight above), and are not drawn past ROOT_DISTANCE, where it ends.
+	A town's trees have none: theirs are under the streets. What they and the windthrown trees do to the ground: THE FLOOR
 	3 and 4 are the thinned rings (forestThinnedRings): with fewer of them, the last one used runs on to the billboard distance.
 	A level's parts are always the first so many of the level before it, so one turns into the next smoothly: over the last
 	stretch of its distance the parts about to be left out shrink away (see towardsNextLevel in vf_forest.js).
@@ -106,6 +113,8 @@ const TESSELLATION = [
 ];
 // and for the foliage: the share of the pieces that is drawn, and how much bigger each one is drawn to make up for the rest
 const FOLIAGE_DETAIL = [[1.0, 1.0], [0.5, 1.4], [0.2, 2.1], [0.08, 3.2], [0.035, 4.8]];
+// and the roots: [sides, rings] for each level of detail that draws them (THE ROOTS)
+const ROOT_TESSELLATION = [[7, 3], [4, 2]];
 
 const FADE_BAND = 0.25;				// the last part of a level's distance, over which it turns into the next (see towardsNextLevel in vf_forest.js)
 const REFERENCE_HEIGHT = 22;		// metres. The level of detail distances are for a tree this tall, smaller trees drop detail sooner
@@ -259,6 +268,7 @@ function sectionRadiusAt(sections, i, age, fullGrownAge, twig) {
 		thick							how many of its sections count as thick wood (they get the fine tessellation)
 		thickAt[level]					how many of the thick ones that level draws (all of them, but for the last level: the trunk and main limbs)
 		sections[level]					how many sections that level of detail draws (always the first so many: the thickest)
+		rootStart, roots[level]			where its roots start in the sections, and how many of them that level draws (THE ROOTS: 0 and 1)
 		foliage[level]					and how many pieces of foliage
 */
 function buildArchetypes() {
@@ -271,7 +281,7 @@ function buildArchetypes() {
 		const species = TREE_SPECIES[speciesIndex];
 		for (let variant = 0; variant < VARIANTS; variant++) {
 			const tree = generateTree(speciesIndex, params.seed * 16 + variant, params.unitsPerMetre);
-			const archetype = { species: speciesIndex, height: tree.height, crownRadius: tree.crownRadius, crownBottom: tree.crownBottom, trunkRadius: tree.trunkRadius, stages: [] };
+			const archetype = { species: speciesIndex, height: tree.height, crownRadius: tree.crownRadius, crownBottom: tree.crownBottom, trunkRadius: tree.trunkRadius, lobes: tree.rootLobes, roots: tree.roots, stages: [] };
 
 			for (let stage = 0; stage < STAGES; stage++) {
 				const from = stage == 0 ? 0 : STAGE_ENDS[stage - 1] * species.fullGrownAge;
@@ -301,6 +311,18 @@ function buildArchetypes() {
 				};
 				for (const [i] of picked) {
 					for (let k = 0; k < SECTION_FLOATS; k++) allSections.push(tree.sections[i + k]);
+				}
+				// the roots there are in the stage, after them: thickest first, all of them for the nearest level, the thickest half for the next
+				const roots = [];
+				for (let i = 0; i < tree.roots.length; i += SECTION_FLOATS) {
+					if (tree.roots[i + 7] < to + STAGE_OVERLAP) roots.push([i, sectionRadiusAt(tree.roots, i, sizedAt, species.fullGrownAge, twig)]);
+				}
+				roots.sort((a, b) => b[1] - a[1]);
+				const thickestRoot = roots.length > 0 ? roots[0][1] : 0;
+				info.rootStart = allSections.length / SECTION_FLOATS;
+				info.roots = [roots.length, roots.filter((root) => root[1] >= thickestRoot * 0.5).length, 0, 0, 0];
+				for (const [i] of roots) {
+					for (let k = 0; k < SECTION_FLOATS; k++) allSections.push(tree.roots[i + k]);
 				}
 
 				// and the foliage. It is already shuffled, so the first so many of it are a fair sample of the whole crown
@@ -342,8 +364,8 @@ function buildArchetypes() {
 		table.set([
 			species.fullGrownAge, archetype.height, archetype.crownRadius, archetype.crownBottom,
 			species.growth[0], species.growth[1], archetype.trunkRadius, archetype.species,
-			...species.barkColor, 0,
-			...species.barkColorHigh, 0,
+			...species.barkColor, archetype.lobes[0],		// (and the lobes of the foot of the trunk: how many, and where: THE ROOTS)
+			...species.barkColorHigh, archetype.lobes[1],
 			...species.leafColor, 0,
 			...species.dryColor, 0,
 		], i * 24);
@@ -394,9 +416,10 @@ function packTree(tree, into, index) {
 	into.set([
 		tree.x, tree.y, tree.z, tree.yaw,
 		tree.age - rate * ((tree.ageTime ?? 0) - clockBase), rate, tree.dead ? tree.dryStart - clockBase : NEVER, tree.dead ? tree.fallStart - clockBase : NEVER,
-		tree.scale, tree.archetype, tree.leanX, tree.leanZ,
+		tree.scale, tree.archetype + (tree.planted ? 0.5 : 0), tree.leanX, tree.leanZ,		// (a town's: no roots, see THE ROOTS)
 		// both numbers of the fall in one: the direction in hundredths of a radian as the whole part, how far over it ends up (in half turns) as the fraction
-		tree.dead ? Math.floor(tree.fallDirection * 100) + tree.fallAngle / Math.PI : 0, tree.seed, tree.dead ? tree.dryYears : 1, tree.detailScale,
+		//		(less than 0: it tears its root plate out as it goes, THE FLOOR)
+		tree.dead ? (uproots(tree) ? -1 : 1) * (Math.floor(tree.fallDirection * 100) + tree.fallAngle / Math.PI) : 0, tree.seed, tree.dead ? tree.dryYears : 1, tree.detailScale,
 	], index * TREE_FLOATS);
 }
 
@@ -608,7 +631,7 @@ function plantTrees() {
 		random: seededRandom(params.seed * 7919 + 577),
 		added: (index) => { if (listening) { ageTree(trees[index]); addToCell(index); noteTile(index); changedTrees.push(index); noteMoved(trees[index]); noteShared(index); } },
 		changed: (index) => { if (listening) { const stage = trees[index].stage; ageTree(trees[index], life.ageAt(trees[index], clock)); changedTrees.push(index); if (trees[index].stage !== stage) noteMoved(trees[index]); if (trees[index].dead) noteShared(index); } },	//(only a new stage puts it in another list. Its size is caught up with by DRAWS_REFRESH)
-		removed: (index, tree) => { if (listening) { removeFromCell(index, tree); forgetTile(index, tree); changedTrees.push(index); noteMoved(tree); noteShared(index); } },
+		removed: (index, tree) => { markGone(tree); if (listening) { removeFromCell(index, tree); forgetTile(index, tree); changedTrees.push(index); noteMoved(tree); noteShared(index); } },
 		// (a tree moved down the list, packing it: its cell's and its tile's lists, its record in its new place, the others told of both)
 		moved: (from, to) => {
 			if (!listening) return;
@@ -930,6 +953,7 @@ function applyRecord(data, at) {
 	const old = trees[index];
 	if (!present) {
 		if (old) {
+			markGone(old);
 			removeFromCell(index, old);
 			trees[index] = undefined;
 			life.count--;
@@ -1096,7 +1120,7 @@ const changePipeline = device.createComputePipeline({
 //-------------------------------------------------
 const forestUniformBuffer = device.createBuffer({
   label: "forest Uniform",
-  size: 256,
+  size: 384,
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 });
 
@@ -1162,11 +1186,15 @@ function forestUniformValues(bake) {
 	//life
 	bufferResult.push(life ? life.fallYears : 1);
 	bufferResult.push(life ? life.goneYears : 1);
-	bufferResult.push(0);
+	bufferResult.push(!bake && settings.forestRoots ? 1 : 0);		//(the windthrown stand their plates up only while the roots are drawn: THE FLOOR)
 	bufferResult.push(bake ? 0 : seasonNow.bare);		//how far the broadleaved trees have lost their leaves (weather.js). Never in a billboard's picture
 
 	//and the two rows windAt takes (vf_wind.js)
 	bufferResult.push(...wind.windUniformValues());
+
+	//and where the top down height map looks from (THE ROOTS), and where the floor map does (THE FLOOR)
+	bufferResult.push(...transformations.getTopDownViewProjectionMat());
+	bufferResult.push(...floorCamera().matrix);
 
 	return new Float32Array(bufferResult);
 }
@@ -1255,6 +1283,11 @@ const bindGroupLayout = device.createBindGroupLayout({
     binding: 14,
     visibility: GPUShaderStage.VERTEX,
     sampler: {}
+  },
+  {
+    binding: 15,							//the top down height map: the ground the roots lie on (scene.js)
+    visibility: GPUShaderStage.VERTEX,
+    texture: { sampleType: 'depth' }
   }
   ]
 });
@@ -1346,6 +1379,10 @@ function createBindGroupForest(uniforms = forestUniformBuffer, treeList = treeBu
 			{
 				binding: 14,
 				resource: wind.windSampler
+			},
+			{
+				binding: 15,
+				resource: scene.heightMapView
 			}
 			]
 		});
@@ -1489,7 +1526,7 @@ function bakeBillboards() {
 	});
 	const modelBuffer = createStorageBuffer("forest bake trees", models);
 	const everyModelBuffer = createStorageBuffer("forest bake visible trees", everyModel);
-	const bakeUniformBuffer = device.createBuffer({ label: "forest bake Uniform", size: 256, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+	const bakeUniformBuffer = device.createBuffer({ label: "forest bake Uniform", size: 384, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 	const bakeDrawBuffer = device.createBuffer({ label: "forest bake draw calls Uniform", size: bakeDraws.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 	device.queue.writeBuffer(bakeDrawBuffer, 0, bakeDraws);
 	const bakeBindGroup = createBindGroupForest(bakeUniformBuffer, modelBuffer, everyModelBuffer);
@@ -1726,7 +1763,7 @@ function sortTreesIntoDraws() {
 	}
 
 	// the lists go into the visible buffer end to end, and every list gets its draw calls
-	const draws = { wood: [], foliage: [], billboards: [] };
+	const draws = { wood: [], foliage: [], billboards: [], roots: [] };
 	let listStart = 0, slot = 0;
 	forestStats.triangles = 0;
 	// kept: how many of the parts the next level of detail still draws. The rest shrink away over the last part of this level's distance
@@ -1737,9 +1774,11 @@ function sortTreesIntoDraws() {
 		const fade = [ends[level] * (1 - FADE_BAND), ends[level], last ? billboardStart : 1e8, last ? ends[level] : 2e8];
 		writeDraw(drawData, slot, listStart, partStart, partCount, sides, rings, last ? partCount : Math.min(Math.max(kept, 0), partCount),
 					FOLIAGE_DETAIL[level][1], FOLIAGE_DETAIL[Math.min(level + 1, lastLevel)][1], fade);
-		into.push({ slot: slot, vertices: vertices, instances: treeCount * partCount });
+		const draw = { slot: slot, vertices: vertices, instances: treeCount * partCount };
+		into.push(draw);
 		forestStats.triangles += vertices / 3 * treeCount * partCount;
 		slot++;
+		return draw;
 	};
 
 	for (let list = 0; list < listCount; list++) {
@@ -1755,6 +1794,8 @@ function sortTreesIntoDraws() {
 			addDraw(draws.wood, stage.sectionStart + stage.thick, stage.sections[level] - stage.thick, stage.sections[next] - stage.thick, tessellation.thin[0], tessellation.thin[1], level, tessellation.thin[0] * tessellation.thin[1] * 6, members.length);
 		}
 		addDraw(draws.foliage, stage.foliageStart, stage.foliage[level], stage.foliage[next], 0, 0, level, FOLIAGE_VERTICES, members.length);
+		const rootCut = settings.forestRoots ? ROOT_TESSELLATION[level] : null;
+		if (rootCut) { const draw = addDraw(draws.wood, stage.rootStart, stage.roots[level], stage.roots[level + 1], rootCut[0], rootCut[1], level, rootCut[0] * rootCut[1] * 6, members.length); if (draw) draws.roots.push(draw); }
 
 		listStart += members.length;
 	}
@@ -1776,6 +1817,7 @@ function sortTreesIntoDraws() {
 		device.queue.writeBuffer(drawUniformBuffer, 0, drawData, 0, slot * DRAW_STRIDE);
 	}
 	keptDraws = draws;
+	floorDue = true;		// (the floor is drawn from them: THE FLOOR)
 	gpuSlots = null;		// (the draw calls' uniforms are the CPU's now: THE GPU'S LISTS writes its own again)
 	return draws;
 }
@@ -1826,20 +1868,21 @@ function detailEnds() {
 
 // THE DRAW SLOTS (see the top), made again when the levels of detail or the archetypes are not what they were made for
 function drawSlots() {
-	const key = [settings.forestDetailDistance, settings.forestMidDistance, settings.forestBillboardDistance, settings.forestDrawDistance, settings.forestThinnedRings, archetypes.length, builtArchetypeParams].join();
+	const key = [settings.forestDetailDistance, settings.forestMidDistance, settings.forestBillboardDistance, settings.forestDrawDistance, settings.forestThinnedRings, settings.forestRoots, archetypes.length, builtArchetypeParams].join();
 	if (gpuSlots && gpuSlots.key === key) return gpuSlots;
 	const { lastLevel, ends, meshEnd, billboardStart, billboardEnd } = detailEnds();
-	const slots = { key, wood: [], foliage: [], billboards: [], count: 0, lists: archetypes.length * STAGES * LEVELS, ends, billboardStart, billboardEnd, levelOf: new Uint8Array(MAX_DRAWS), levelFrom: 0 };
+	const slots = { key, wood: [], foliage: [], billboards: [], roots: [], count: 0, lists: archetypes.length * STAGES * LEVELS, ends, billboardStart, billboardEnd, levelOf: new Uint8Array(MAX_DRAWS), levelFrom: 0 };
 	const table = new Uint32Array(MAX_DRAWS * 4);
 	const add = (into, list, partStart, partCount, kept, sides, rings, level, vertices) => {
-		if (partCount <= 0 || slots.count >= MAX_DRAWS - 1) return;
+		if (partCount <= 0 || slots.count >= MAX_DRAWS - 1) return -1;
 		const last = level == lastLevel;
 		const fade = [ends[level] * (1 - FADE_BAND), ends[level], last ? billboardStart : 1e8, last ? ends[level] : 2e8];
 		writeDraw(drawData, slots.count, 0, partStart, partCount, sides, rings, last ? partCount : Math.min(Math.max(kept, 0), partCount),
 					FOLIAGE_DETAIL[level][1], FOLIAGE_DETAIL[Math.min(level + 1, lastLevel)][1], fade);
 		table.set([list, partCount, vertices, 0], slots.count * 4);
 		slots.levelOf[slots.count] = level;
-		into.push(slots.count++);
+		into.push(slots.count);
+		return slots.count++;
 	};
 	for (let list = 0; list < slots.lists; list++) {
 		const level = list % LEVELS;
@@ -1851,6 +1894,8 @@ function drawSlots() {
 			add(slots.wood, list, stage.sectionStart + stage.thick, stage.sections[level] - stage.thick, stage.sections[next] - stage.thick, tessellation.thin[0], tessellation.thin[1], level, tessellation.thin[0] * tessellation.thin[1] * 6);
 		}
 		add(slots.foliage, list, stage.foliageStart, stage.foliage[level], stage.foliage[next], 0, 0, level, FOLIAGE_VERTICES);
+		const rootCut = settings.forestRoots ? ROOT_TESSELLATION[level] : null;
+		if (rootCut) { const k = add(slots.wood, list, stage.rootStart, stage.roots[level], stage.roots[level + 1], rootCut[0], rootCut[1], level, rootCut[0] * rootCut[1] * 6); if (k >= 0) slots.roots.push(k); }
 	}
 	// the billboards: one draw call for the lot, whatever archetype they are. An instance is a whole tree
 	writeDraw(drawData, slots.count, 0, 0, 1, 0, 0, 1, 1, 1, [billboardStart, meshEnd, billboardEnd * 0.9, billboardEnd]);
@@ -1895,6 +1940,7 @@ function listsOnGPU(encoder) {
 	//		how many there are as they were. A tree further off is caught up with every DRAWS_REFRESH frames)
 	const listsFor = planes.flat().join() + '|' + slots.key + '|' + settings.landOcclusion + '|' + trees.length;
 	if (listsFor === gpuListsFor && !treesMoved && ++gpuFramesSince < DRAWS_REFRESH) return slots;
+	floorDue = true;		// (the floor is drawn from them: THE FLOOR)
 	gpuListsFor = listsFor;
 	treesMoved = false;
 	gpuFramesSince = 0;
@@ -1979,10 +2025,247 @@ export async function forestGpuListsForTest() {
 	return { lists, billboards: [...list.subarray(starts[slots.lists], starts[slots.lists] + counts[slots.lists])] };
 }
 
+//-------------------------------THE FLOOR-------------------------------
+/*
+	THE FLOOR (floor.js has the map, and what it holds): what the roots and the windthrown trees do to the ground round the camera, drawn
+	into the floor map, for the terrain (its mesh and its relief: vf_terrain.js), the grass (vfc_grass.js) and the walker (hunting.js) to stand on.
+		THE HEAVE		each root drawn again from straight above (vf_forestFloor): a ribbon along it of the soil over it, heaved where it runs
+						shallow under the ground and banked up round it where it comes out, and how much of the ground it covers. The
+						trees of the roots' own draw calls (the nearest levels of detail, the ones in view: the ground out of view needs none)
+		WINDTHROW		of the big trees that fall most tear their root plate out of the ground as they go (uproots: not a felled one, nor a
+						town's), and it stands up on edge as the trunk goes down (vf_forest.js: THE WINDTHROWN). Where it was is a pit; once
+						the trunk has rotted away the soil it held falls off it into a mound at the pit's edge. Both soften over the years
+						(MARK_YEARS), and the bare earth greens over sooner. The old ones are all over the forest, from before it was planted:
+						OLD_THROWS to a square of it MARK_CELL across, about, at places from the land's seed (oldThrows), the same however the
+						place is come to. Each is a mark (vf_forestThrows draws its pit and its mound from above): the old ones near, the
+						trees lying fallen near, and the ones that have rotted away since (goneMarks)
+		WHEN			made again when the camera has moved on a step (floorCamera), when what is drawn has changed (floorDue), and every
+						FLOOR_EVERY frames whatever (the marks change with the forest's clock)
+	floorRise and rootStep are the same shapes for the walker: how far the pits and mounds put the ground down or up at a place, and how far
+	over the ground the top of a root is there
+*/
+const FLOOR_EVERY = 20;
+const MARK_YEARS = 140;				// years for a pit to fill in and its mound to go down, about (they go as e^(-years / MARK_YEARS))
+const MARK_CELL = 128;				// world units: the squares the old marks are made in (the same as the cells')
+const OLD_THROWS = 3;
+const MAX_MARKS = 1024;
+const MARK_FLOATS = 8;				// see the Mark struct in vf_forestThrows
+const PLATE = 3.2;					// a root plate's radius, against the trunk's (vf_forest.js: the same)
+const UPROOT_SHARE = 0.6;			// of the dead trees UPROOT_HEIGHT metres tall or more, how many tear their plate out when they fall
+const UPROOT_HEIGHT = 10;
+const FLOOR_HIGH = 120;				// world units over the ground: a camera higher than this has no floor map made (it would not see it)
+
+// whether a dead tree tears its root plate out when it falls: from what it is, so the same on every machine. Not one felled (fellTree: it
+//		dries out at once, which nothing that dies does), nor a town's
+export function uproots(tree) {
+	return !tree.planted && !(tree.dryYears < 0.001) && tree.height > UPROOT_HEIGHT * settings.forestUnitsPerMetre && ((tree.seed ?? 0) * 7.31) % 1 < UPROOT_SHARE;
+}
+const plateOf = (tree) => { const archetype = archetypes[tree.archetype]; return archetype ? archetype.trunkRadius * tree.height / archetype.height * PLATE : 0; };
+const markOf = (tree) => ({ x: tree.x, z: tree.z, direction: tree.fallDirection, plate: plateOf(tree), since: tree.fallStart });
+
+// the old marks of a square, made the first time they are asked for
+const oldCells = new Map();
+let oldFor = null;
+function oldThrows(cx, cz) {
+	const land = terrain.land;
+	if (oldFor !== land) { oldCells.clear(); oldFor = land; }
+	const key = cx + ',' + cz;
+	let marks = oldCells.get(key);
+	if (marks) return marks;
+	marks = [];
+	const m = settings.forestUnitsPerMetre;
+	const random = seededRandom((((cx * 73856093) ^ (cz * 19349663) ^ ((settings.terrainSeed | 0) * 83492791)) >>> 0) + 17);
+	const count = Math.floor(random() * (2 * OLD_THROWS + 1));
+	for (let k = 0; k < count; k++) {
+		const x = (cx + random()) * MARK_CELL, z = (cz + random()) * MARK_CELL;
+		const plate = (1.0 + 0.9 * random()) * m, direction = random() * Math.PI * 2, age = 20 + 220 * random();
+		if (!land || land.zoneAt(x, z) !== terrain.ZONE_FOREST || land.heightAt(x, z) < settings.waterWorldPosY + 2 * m || land.onPath?.(x, z)) continue;
+		// (not where a tree stands now)
+		let crowded = false;
+		trunksNear(x, z, plate * 2, (tx, tz, r) => { if (Math.hypot(tx - x, tz - z) < plate * 1.3 + r) crowded = true; });
+		if (!crowded) marks.push({ x, z, direction, plate, since: -age });
+	}
+	if (oldCells.size > 4096) oldCells.delete(oldCells.keys().next().value);
+	oldCells.set(key, marks);
+	return marks;
+}
+// the ones the forest has made since it was planted, gone with their trees: by their square
+const goneMarks = new Map();
+let goneCount = 0;
+function markGone(tree) {
+	if (!tree.dead || clock < tree.fallStart || !uproots(tree)) return;
+	const mark = markOf(tree), key = Math.floor(mark.x / MARK_CELL) + ',' + Math.floor(mark.z / MARK_CELL);
+	let list = goneMarks.get(key);
+	if (!list) goneMarks.set(key, list = []);
+	// (long gone ones let go: there is nothing left of them)
+	for (let k = list.length - 1; k >= 0; k--) if (clock - list[k].since > MARK_YEARS * 3) { list.splice(k, 1); goneCount--; }
+	list.push(mark);
+	goneCount++;
+}
+// every mark within reach of (x, z): the old ones, the fallen trees lying there, the gone ones
+function marksNear(x, z, reach, each) {
+	for (let i = Math.floor((x - reach) / MARK_CELL); i <= Math.floor((x + reach) / MARK_CELL); i++) {
+		for (let j = Math.floor((z - reach) / MARK_CELL); j <= Math.floor((z + reach) / MARK_CELL); j++) {
+			for (const mark of oldThrows(i, j)) each(mark);
+			for (const mark of goneMarks.get(i + ',' + j) ?? []) each(mark);
+			const cell = cellsByKey.get(i + ',' + j);
+			if (cell) for (const k of cell.trees) { const tree = trees[k]; if (tree && tree.dead && clock >= tree.fallStart && uproots(tree)) each(markOf(tree)); }
+		}
+	}
+}
+// a mark as it is now: its pit's depth and its mound's height (world units), and how bare its earth is
+function markNow(mark) {
+	const age = clock - mark.since, fallYears = life ? life.fallYears : 1, goneYears = life ? life.goneYears : 1;
+	const fell = Math.pow(Math.min(Math.max(age / fallYears, 0), 1), 2);
+	const rotted = Math.min(Math.max((age - fallYears - goneYears) / 8, 0), 1);
+	const softened = Math.exp(-Math.max(age, 0) / MARK_YEARS);
+	return { pit: mark.plate * 0.26 * fell * softened, mound: mark.plate * 0.34 * rotted * softened, bare: Math.exp(-Math.max(age, 0) / 45) };
+}
+// its shapes at (x, z) (vf_forestThrows: the same): [pit, mound]
+function markAt(mark, now, x, z) {
+	const R = Math.max(mark.plate, 0.01), dx = Math.cos(mark.direction), dz = Math.sin(mark.direction);
+	const u = ((x - mark.x) * dx + (z - mark.z) * dz) / R, w = (-(x - mark.x) * dz + (z - mark.z) * dx) / R;
+	const q = ((u - 0.1) / 0.95) ** 2 + (w / 0.85) ** 2, r = ((u - 1.25) / 0.5) ** 2 + (w / 0.95) ** 2;
+	return [now.pit * Math.max(1 - q, 0) ** 2, now.mound * Math.max(1 - r, 0) ** 1.5];
+}
+
+// the floor map's view: from straight above, round the camera in steps of 32 of its texels
+function floorCamera() {
+	const snap = FLOOR_SPAN / FLOOR_TEXELS * 32;
+	const x = Math.round(settings.camPosX / snap) * snap, z = Math.round(settings.camPosZ / snap) * snap;
+	const view = mat4.lookAt([x, 1000, z], [x, 0, z], [0, 0, -1]);
+	const projection = mat4.ortho(-FLOOR_SPAN / 2, FLOOR_SPAN / 2, -FLOOR_SPAN / 2, FLOOR_SPAN / 2, 0, 2000);
+	return { x, z, matrix: mat4.multiply(projection, view) };
+}
+const floorOn = () => settings.forestRoots && settings.enableForest && settings.enableTerrain;
+let floorLast = null, floorWith = null, floorFrames = 0, floorDue = true, floorShown = false;
+const markData = new Float32Array(MAX_MARKS * MARK_FLOATS);
+const markBuffer = device.createBuffer({ label: "forest floor marks", size: markData.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+const throwUniformBuffer = device.createBuffer({ label: "forest floor marks Uniform", size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+const floorTarget = { format: FLOOR_FORMAT, blend: { color: { srcFactor: 'one', dstFactor: 'one', operation: 'max' }, alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'max' } } };
+const floorShaderModule = device.createShaderModule({ label: "vf_forestFloor", code: vf_forestFloor });
+const floorPipeline = device.createRenderPipeline({
+	label: "forest floor heave pipeline", layout: forestPipelineLayout,
+	vertex: { module: floorShaderModule, entryPoint: "floorVertex" },
+	fragment: { module: floorShaderModule, entryPoint: "floorFragment", targets: [floorTarget] },
+	primitive: { topology: 'triangle-list', cullMode: 'none' },
+});
+const throwShaderModule = device.createShaderModule({ label: "vf_forestThrows", code: vf_forestThrows });
+const throwPipeline = device.createRenderPipeline({
+	label: "forest floor marks pipeline", layout: 'auto',
+	vertex: { module: throwShaderModule, entryPoint: "throwVertex" },
+	fragment: { module: throwShaderModule, entryPoint: "throwFragment", targets: [floorTarget] },
+	primitive: { topology: 'triangle-list', cullMode: 'none' },
+});
+const throwBindGroup = device.createBindGroup({ label: "forest floor marks bind group", layout: throwPipeline.getBindGroupLayout(0), entries: [
+	{ binding: 0, resource: { buffer: throwUniformBuffer } }, { binding: 1, resource: { buffer: markBuffer } }] });
+// (none to read: the terrain and the grass leave the ground as it is)
+function floorOff() {
+	if (!floorShown) return;
+	device.queue.writeBuffer(floorUniformBuffer, 64, new Float32Array([0, 0, 0, 0]));
+	floorShown = false; floorWith = null; floorLast = null;
+}
+// The frame's, after the forest: first what reads it this frame is told the view the map was last made with (floor.js), then it is made
+//		again if it is due (WHEN). draw(pass) draws the roots' draw calls with the floor's pipeline
+function floorPass(encoder, draw) {
+	// (none, or the camera so high over the ground that none of it would show)
+	if (!floorOn() || settings.camPosY - (terrain.land?.heightAt(settings.camPosX, settings.camPosZ) ?? 0) > FLOOR_HIGH) { floorOff(); return; }
+	if (floorWith) {
+		device.queue.writeBuffer(floorUniformBuffer, 0, new Float32Array([...floorWith, 1, 0, 0, 0]));
+		floorShown = true;
+	}
+	const at = floorCamera();
+	const moved = !floorLast || at.x !== floorLast.x || at.z !== floorLast.z;
+	if (!moved && !floorDue && ++floorFrames < FLOOR_EVERY) return;
+	floorFrames = 0; floorDue = false; floorLast = at;
+
+	// the marks near
+	let count = 0;
+	marksNear(at.x, at.z, FLOOR_SPAN * 0.5 + 4 * settings.forestUnitsPerMetre, (mark) => {
+		if (count >= MAX_MARKS) return;
+		const now = markNow(mark);
+		if (now.pit + now.mound < 0.01) return;
+		markData.set([mark.x, mark.z, mark.direction, mark.plate, now.pit, now.mound, now.bare, 0], count++ * MARK_FLOATS);
+	});
+	if (count > 0) device.queue.writeBuffer(markBuffer, 0, markData, 0, count * MARK_FLOATS);
+	device.queue.writeBuffer(throwUniformBuffer, 0, at.matrix);
+	forestStats.floorMarks = count;
+
+	const pass = encoder.beginRenderPass({ label: "forest floor", colorAttachments: [{ view: floorView, clearValue: { r: 0, g: 0, b: 0, a: 0 }, loadOp: 'clear', storeOp: 'store' }] });
+	pass.setPipeline(floorPipeline);
+	pass.setBindGroup(0, forestBindGroup);
+	draw(pass);
+	if (count > 0) {
+		pass.setPipeline(throwPipeline);
+		pass.setBindGroup(0, throwBindGroup);
+		pass.draw(6, count);
+	}
+	pass.end();
+	floorWith = at.matrix;
+}
+
+// for the walker (hunting.js): how far the pits and mounds put the ground down or up at (x, z), and how far over the ground the top of a
+//		root is there (world units; 0 if none)
+export function floorRise(x, z) {
+	if (!floorOn() || !life) return 0;
+	let rise = 0;
+	marksNear(x, z, 3 * PLATE * settings.forestUnitsPerMetre, (mark) => {
+		if (Math.abs(mark.x - x) > mark.plate * 2.4 || Math.abs(mark.z - z) > mark.plate * 2.4) return;
+		const [pit, mound] = markAt(mark, markNow(mark), x, z);
+		rise += mound - pit;
+	});
+	return rise;
+}
+export function rootStep(x, z) {
+	if (!floorOn() || !life) return 0;
+	const m = settings.forestUnitsPerMetre, reach = 4.5 * m, twig = 0.012 * m;
+	let best = 0;
+	for (let i = Math.floor((x - reach) / CELL_SIZE); i <= Math.floor((x + reach) / CELL_SIZE); i++) {
+		for (let j = Math.floor((z - reach) / CELL_SIZE); j <= Math.floor((z + reach) / CELL_SIZE); j++) {
+			const cell = cellsByKey.get(i + ',' + j);
+			if (!cell) continue;
+			for (const k of cell.trees) {
+				const tree = trees[k];
+				if (!tree || tree.planted || Math.abs(tree.x - x) > reach * tree.scale || Math.abs(tree.z - z) > reach * tree.scale) continue;
+				if (tree.dead && clock >= tree.fallStart && uproots(tree)) continue;		// (its roots went up with its plate)
+				const R = archetypes[tree.archetype]?.roots;
+				if (!R) continue;
+				const age = life.ageAt(tree, clock), full = TREE_SPECIES[tree.species].fullGrownAge;
+				// (into the tree's own frame: vf_forest.js's rootPoint the other way)
+				const c = Math.cos(tree.yaw), s = Math.sin(tree.yaw), wx = (x - tree.x) / tree.scale, wz = (z - tree.z) / tree.scale;
+				const lx = c * wx - s * wz, lz = s * wx + c * wz;
+				for (let p = 0; p < R.length; p += SECTION_FLOATS) {
+					if (age <= R[p + 7]) continue;
+					const most = Math.max(R[p + 3], R[p + 11]) * 1.7;
+					if (lx < Math.min(R[p], R[p + 4], R[p + 8]) - most || lx > Math.max(R[p], R[p + 4], R[p + 8]) + most) continue;
+					if (lz < Math.min(R[p + 2], R[p + 6], R[p + 10]) - most || lz > Math.max(R[p + 2], R[p + 6], R[p + 10]) + most) continue;
+					for (let n = 0; n <= 8; n++) {
+						const t = n / 8, a = (1 - t) * (1 - t), b = 2 * t * (1 - t), d = t * t;
+						const px = a * R[p] + b * R[p + 4] + d * R[p + 8], py = a * R[p + 1] + b * R[p + 5] + d * R[p + 9], pz = a * R[p + 2] + b * R[p + 6] + d * R[p + 10];
+						const fullRadius = Math.max(R[p + 3] + (R[p + 11] - R[p + 3]) * t, 1e-4), born = R[p + 7] + (R[p + 12] - R[p + 7]) * t;
+						const radius = twig + Math.max(fullRadius - twig, 0) * Math.pow(Math.min(Math.max((age - born) / Math.max(full - born, 0.001), 0), 1), 0.9);
+						const plate = Math.min(Math.max(py / fullRadius, 0), 1), wide = 1.6 - 0.85 * plate, tall = 0.55 + plate;
+						const off = Math.hypot(lx - px, lz - pz), w = radius * wide;
+						if (off >= w) continue;
+						const top = (py * Math.min(radius / fullRadius, 1) + tall * radius * Math.sqrt(1 - (off / w) ** 2)) * tree.scale;
+						if (top > best) best = top;
+					}
+				}
+			}
+		}
+	}
+	return best;
+}
+
+// for testing: the marks within reach of (x, z) as they are now; and a tree thrown down by the wind, its plate torn out (as fellTree, not cut)
+export function floorMarksForTest(x, z, reach) { const out = []; marksNear(x, z, reach, (mark) => out.push({ ...mark, ...markNow(mark) })); return out; }
+export function windthrowForTest(index, direction) {	// (as fellTree, but drying out as one that died would: so it uproots)
+ const height = fellTree(index, direction); const tree = trees[index]; if (height > 0 && tree) { tree.dryYears = 0.5; life.changed(index); } return height ? { height, uproots: uproots(tree) } : null; }
 export function forestPass(aEncoder, mainpassDepthTexture) {
 
 	// nothing to stand on without the land
 	if (!settings.enableForest || !settings.enableTerrain || !life || life.count == 0) {
+		floorOff();
 		return;
 	}
 
@@ -1991,6 +2274,7 @@ export function forestPass(aEncoder, mainpassDepthTexture) {
 	const slots = settings.forestGpuCulling ? listsOnGPU(aEncoder) : null;
 	const draws = slots ? null : sortTreesIntoDraws();
 	if (draws && draws.wood.length == 0 && draws.foliage.length == 0 && draws.billboards.length == 0) {
+		floorOff();
 		return;
 	}
 	if (!forestBindGroup || forestBindGroupFiltering !== filteringLevel()) {
@@ -2049,4 +2333,18 @@ export function forestPass(aEncoder, mainpassDepthTexture) {
 	}
 
 	parts.end();
+
+	// and the roots again, from above, into the floor map (THE FLOOR)
+	floorPass(aEncoder, (floor) => {
+		if (slots) {
+			for (const slot of slots.roots) {
+				if (slots.levelOf[slot] < slots.levelFrom) continue;
+				floor.setBindGroup(1, drawBindGroup, [slot * DRAW_STRIDE]);
+				floor.drawIndirect(indirectBuffer, slot * 16);
+			}
+		} else for (const draw of draws.roots) {
+			floor.setBindGroup(1, drawBindGroup, [draw.slot * DRAW_STRIDE]);
+			floor.draw(draw.vertices, draw.instances, 0, 0);
+		}
+	});
 }

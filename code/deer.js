@@ -18,6 +18,7 @@ import * as hearing from './hearing.js'
 //the deer fade into the horizon color, read from the sky view LUT (same as everything else)
 import {skyViewLUTtexture} from './atmosphere.js'
 import {sunCycles} from './atmosphere.js'
+import { ANATOMY, woundFrom, otherWound, cleanWound, bleedOf, recordOf, vital } from './anatomy.js'
 
 //GET THE LIGHT CREATION OUT OF THE MAIN
 import {uniformBufferLights} from './rotatingCube.js'
@@ -51,8 +52,12 @@ import {uniformBufferLights} from './rotatingCube.js'
 		(A very fast Time Multiplier leaves them too little time to walk there and back three times: then they go as often
 		as they can)
 
-	SHOT (rifle.js, ballistics.js). Each deer's hitbox is DEER_SPHERES, 7 balls: rump, middle and chest, neck and head (which go
-		down with the head), and the front and the hind legs. A deer that is hit falls over on to its side, away from the shot
+	SHOT (rifle.js, ballistics.js). Each deer's hitbox is DEER_SPHERES (anatomy.js's: the body, the neck and the head, which go down
+		with the head, and the legs), and inside it its organs: each round is a wound (anatomy.js: woundOf), and what it went through says
+		what comes of it (bleedOf). Its brain or its spine, it drops. Its heart, lungs, liver or guts, its group runs off from the shot,
+		and it goes down when its blood is gone (RUN_SECONDS on at the most). Meat only, they run, and it bleeds out slowly (minutes, and
+		no RUN_SECONDS: it goes down wherever it is by then; another shot adds to it). Once dead it keeps the record of it (recordOf: its wounds, how long it took, its pelt's quality; inspect.js
+		shows it). A shell, or a wolf: dead at once (otherWound). A deer that is dead falls over on to its side, away from the shot
 		(FALL_SECONDS), lies there (LIE_SECONDS; in the Survival mode SURVIVAL_LIE_SECONDS, with CUTS on it for a hatchet or a knife, one at a time: a buck's antlers, then venison
 		and sinew: butcher, survivalTools.js, and it goes once they are all cut), sinks into the ground (SINK_SECONDS) and is gone. RESPAWN_SECONDS later another
 		joins its group, at its home in the forest (or somewhere else in the forest round it), never nearer the camera than
@@ -92,7 +97,8 @@ const RESPAWN_SECONDS = 120;
 const RESPAWN_AWAY = 60;			// metres
 const SPOOK = 22, FLEE = 9;			// metres, seconds
 // the hitbox, in the deer's own metres: x, y, z, radius, and whether it goes down with the head (see vf_deer.js)
-const DEER_SPHERES = [[0, 0.97, -0.42, 0.2], [0, 0.98, 0, 0.21], [0, 1.0, 0.38, 0.2], [0, 1.25, 0.56, 0.1, true], [0, 1.45, 0.8, 0.11, true], [0, 0.45, 0.4, 0.14], [0, 0.45, -0.45, 0.14]];
+const DEER_SPHERES = ANATOMY.deer.body;
+const RUN_SECONDS = 12;			// the most a deer shot through its heart, lungs, liver or guts runs before it goes down
 
 // The mesh
 //-------------------------------------------------
@@ -130,7 +136,7 @@ const ringAlong = (c, axis, w, h, n = 6) => {
 	const l = Math.hypot(...axis), d = axis.map((v) => v / l), up = [0, d[2], -d[1]];
 	return Array.from({ length: n }, (_, k) => { const a = (k + 0.5) / n * Math.PI * 2; return [c[0] + Math.cos(a) * w, c[1] + up[1] * Math.sin(a) * h, c[2] + up[2] * Math.sin(a) * h]; });
 };
-const DEER_MESH = (() => {
+export const DEER_MESH = (() => {
 	const triangles = [];
 	// the body, rump to chest: its middle a little deeper at the chest, its belly drawn up behind
 	rings(triangles, [acrossZ(-0.68, 0.05, 0.96, 1.06), acrossZ(-0.58, 0.12, 0.86, 1.13), acrossZ(-0.32, 0.15, 0.84, 1.15), acrossZ(-0.02, 0.15, 0.82, 1.13), acrossZ(0.26, 0.155, 0.8, 1.15), acrossZ(0.48, 0.14, 0.84, 1.2), acrossZ(0.6, 0.085, 0.94, 1.2)], 0, true, true);
@@ -243,11 +249,11 @@ ballistics.addTarget((ax, ay, az, bx, by, bz) => {
 	if (!settings.enableDeer || hidden()) return null;
 	if (followed) {
 		const found = ballistics.crossAnimals(ax, ay, az, bx, by, bz, followed.filter((one) => one.alive), deerSpheres, deerAround);
-		return found && { t: found.t, what: 'deer', hit: (velocity) => deerShot.report?.(found.animal.id, velocity) };
+		return found && { t: found.t, what: 'deer', hit: (velocity, bullet) => deerShot.report?.(found.animal.id, velocity, bullet ? woundOn(found.animal, bullet) : null, bullet?.round) };
 	}
 	const living = groups.flatMap((group) => group.deer.map((deer) => ({ deer, group })));
 	const found = ballistics.crossAnimals(ax, ay, az, bx, by, bz, living, (one) => deerSpheres(one.deer), (one) => deerAround(one.deer));
-	return found && { t: found.t, what: 'deer', hit: (velocity) => killDeer(found.animal.deer, found.animal.group, velocity) };
+	return found && { t: found.t, what: 'deer', hit: (velocity, bullet) => shootDeer(found.animal.deer, found.animal.group, velocity, bullet ? woundOn(found.animal.deer, bullet) : null) };
 }, () => {
 	const list = [];
 	if (!settings.enableDeer || hidden()) return list;
@@ -262,18 +268,36 @@ export function blast(at, radius) {
 	if (!settings.enableDeer || hidden()) return;
 	const near = (one) => Math.hypot(one.x - at[0], one.y - at[1], one.z - at[2]) < radius;
 	const away = (one) => [one.x - at[0], 0, one.z - at[2]];
-	if (followed) { for (const one of followed) if (one.alive && near(one)) deerShot.report?.(one.id, away(one)); return; }
-	for (const group of groups) for (const deer of [...group.deer]) if (near(deer)) killDeer(deer, group, away(deer));
+	if (followed) { for (const one of followed) if (one.alive && near(one)) deerShot.report?.(one.id, away(one), otherWound('blast')); return; }
+	for (const group of groups) for (const deer of [...group.deer]) if (near(deer)) shootDeer(deer, group, away(deer), otherWound('blast'));
 }
 
+// a round's wound in a deer (anatomy.js: woundFrom), the host's or one the joiner follows
+const woundOn = (deer, bullet) => woundFrom('deer', bullet, [deer.x, deer.y, deer.z], deer.heading, settings.forestUnitsPerMetre * settings.deerSize * (deer.size ?? 1), deer.headDown);
+// SHOT (see the top): a wound more in it, and what comes of it. velocity: the way the round went (world units)
+const wounded = new Set();		// the ones shot and bleeding, still on their feet
+function shootDeer(deer, group, velocity, wound) {
+	if (!group.deer.includes(deer)) return;
+	(deer.wounds ??= []).push(wound ?? otherWound('maul'));
+	deer.firstWound ??= herdSeconds;
+	deer.lastVelocity = velocity;
+	const bleed = bleedOf(deer.wounds);
+	if (bleed == 0) { killDeer(deer, group, velocity); return; }
+	if (bleed < Infinity) { deer.bleed = bleed; deer.dieAt = Math.min(deer.dieAt ?? Infinity, herdSeconds + (deer.wounds.some(vital) ? Math.min(bleed, RUN_SECONDS) : bleed)); wounded.add(deer); }
+	// (they all run, on along the way the shot went)
+	const L = Math.hypot(velocity[0], velocity[2]) || 1, run = 45 * metre(), lead = group.deer[0];
+	group.state = 'flee'; group.timer = FLEE; group.target = [lead.x + velocity[0] / L * run, lead.z + velocity[2] / L * run];
+}
 function killDeer(deer, group, velocity) {
 	const at = group.deer.indexOf(deer);
+	wounded.delete(deer);
 	if (at < 0) return;
 	group.deer.splice(at, 1);
 	// over on to the side the shot pushed it to (its right is (cos, -sin) of its heading)
 	const side = velocity[0] * Math.cos(deer.heading) - velocity[2] * Math.sin(deer.heading) > 0 ? 1 : -1;
 	const cuts = [...(deer.own >= 1 && deer.own < 2 ? ['antlers'] : []), ...CUTS];
-	corpses.push({ deer: deer, t: 0, side: side, cuts, meat: cuts.length });
+	const seconds = Math.max(herdSeconds - (deer.firstWound ?? herdSeconds), Number.isFinite(deer.bleed) ? deer.bleed : 0);
+	corpses.push({ deer: deer, t: 0, side: side, cuts, meat: cuts.length, record: recordOf('deer', deer.wounds ?? [otherWound('maul')], seconds, { size: deer.size ?? 1, buck: deer.own >= 1 && deer.own < 2 }) });
 	group.respawns.push(herdSeconds + RESPAWN_SECONDS);
 	deerStats.killed++;
 }
@@ -303,13 +327,19 @@ export function deerFollow(records) {
 			walking: records[at + 7], own: records[at + 8], slope: records[at + 9], roll: records[at + 10], alive: records[at + 11] > 0.5, size: sizeOfOwn(records[at + 8]) });
 	}
 }
-// host: a deer one of the others shot
-export function killDeerById(id, velocity) {
+// host: a deer one of the others shot (part: its wound, as the joiner worked it out: anatomy.js cleanWound works it out again), or a
+//		wolf caught (no part)
+export function killDeerById(id, velocity, part = null) {
 	for (const group of groups) {
 		const deer = group.deer.find((one) => one.id === id);
-		if (deer) { killDeer(deer, group, velocity); return; }
+		if (deer) { shootDeer(deer, group, velocity, part ? cleanWound(part, 'deer') ?? otherWound('maul') : otherWound('maul')); return; }
 	}
 }
+// the record of a dead one, while it lies there (anatomy.js: recordOf; null if there is none, or it is gone). The host's: a joiner asks it (inspect.js)
+export function deerRecord(id) { return corpses.find((corpse) => corpse.deer.id === id)?.record ?? null; }
+export const peltStars = (id) => deerRecord(id)?.quality.stars ?? 3;
+// for testing: a joiner's copies of the host's deer
+export const followedForTest = () => followed;
 
 // a new deer for a group, at its home or somewhere in the forest round it, well away from the camera. false if nowhere will do just now
 function respawnDeer(group) {
@@ -545,6 +575,8 @@ function advanceDeer(frameElapsed) {
 	const day = Math.floor(dayClock);
 	const m = metre();
 	herdSeconds += elapsed;
+	// the wounded: down where they are when their time is up (see SHOT)
+	for (const deer of wounded) if (deer.dieAt <= herdSeconds) { const group = groups.find((g) => g.deer.includes(deer)); if (group) killDeer(deer, group, deer.lastVelocity ?? [1, 0, 0]); else wounded.delete(deer); }
 
 	// the shot ones: over on to their sides, a while lying there, down into the ground, gone
 	for (const corpse of corpses) {
@@ -707,11 +739,11 @@ export function deerGroups() {
 	return groups.map((group) => ({ state: group.state, home: group.home, spot: group.spot, visits: { ...group.visits }, trips: [...group.trips], deer: group.deer.map((deer) => ({ x: deer.x, y: deer.y, z: deer.z, heading: deer.heading, headDown: deer.headDown, walking: deer.walking })) }));
 }
 // the dead one the eye (world units) is on, looking along look, within reach (world units): its id, or null. The host's own still with
-//		meat on them; a joiner's, any the host has lying (it says whether there is any left: butcher)
-export function corpseInReach(eye, look, reach) {
+//		meat on them (any: all that lie there); a joiner's, any the host has lying (it says whether there is any left: butcher)
+export function corpseInReach(eye, look, reach, any = false) {
 	if (!settings.enableDeer || hidden()) return null;
 	const s = settings.forestUnitsPerMetre * settings.deerSize;
-	const list = followed ? followed.filter((one) => !one.alive) : corpses.filter((corpse) => corpse.meat > 0).map((corpse) => corpse.deer);
+	const list = followed ? followed.filter((one) => !one.alive) : corpses.filter((corpse) => any || corpse.meat > 0).map((corpse) => corpse.deer);
 	let best = null, bestD = reach;
 	for (const one of list) {
 		const to = [one.x - eye[0], one.y + 0.4 * s - eye[1], one.z - eye[2]], d = Math.hypot(...to);

@@ -146,6 +146,7 @@ export const imguiParams = {
     forestBillboardDistance: settings.forestBillboardDistance,
     forestDrawDistance: settings.forestDrawDistance,
     forestThinnedRings: settings.forestThinnedRings,
+    forestRoots: settings.forestRoots,
     forestWindStrength: settings.forestWindStrength,
     // Water
     enableWater: settings.enableWater,
@@ -497,6 +498,7 @@ forestFolder.add(imguiParams, 'forestTreeCount').name('Trees').disable();
 forestFolder.add(imguiParams, 'forestDetailDistance', 10, 300, 5).name('Full Detail Distance');
 forestFolder.add(imguiParams, 'forestMidDistance', 20, 800, 5).name('Mid Detail Distance');
 forestFolder.add(imguiParams, 'forestThinnedRings', 0, 2, 1).name('Thinned Leaf Rings');	//levels of detail between the mid trees and the billboards, see forest.js
+forestFolder.add(imguiParams, 'forestRoots').name('Roots');
 forestFolder.add(imguiParams, 'forestBillboardDistance', 50, 3000, 10).name('Billboard Distance');
 forestFolder.add(imguiParams, 'forestDrawDistance', 100, 12000, 50).name('Draw Distance');
 forestFolder.add(imguiParams, 'forestWindStrength', 0, 3, 0.05).name('Wind Strength');

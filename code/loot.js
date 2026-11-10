@@ -272,7 +272,7 @@ export function fillTrap(id) {
 	if (!c || c.kind != 'trap' || trapSprung(c)) return false;
 	const caught = [...SNARED, ...(Math.random() < SNARED_SINEW ? ['sinew'] : [])];
 	c.grid = [Math.max(caught.length, 3), 1];
-	c.items = caught.map((type, k) => Object.assign(makeItem(type), { x: k, y: 0, rot: 0 }));
+	c.items = caught.map((type, k) => Object.assign(makeItem(type), { x: k, y: 0, rot: 0 }, ITEMS[type].pelt ? { quality: 5 } : {}));
 	changedHere(c);
 	return true;
 }

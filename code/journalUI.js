@@ -124,7 +124,7 @@ export function openMenu(menu, viaJournal = false) {
 	if (document.pointerLockElement) document.exitPointerLock();
 	show();
 }
-export function refreshMenu() { if (current && root.style.display != 'none') page.innerHTML = current.render(); }
+export function refreshMenu() { if (current && root.style.display != 'none') { page.innerHTML = current.render(); current.shown?.(page); } }
 export function closeMenu(quietly = false) {
 	if (!current) return;
 	const was = current;

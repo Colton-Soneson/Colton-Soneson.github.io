@@ -256,7 +256,11 @@ const cornerHeights = new Map();	// corner number -> world y
 let cornersFor = null, cornersCell = 0;	// the land and the size of square the corners were read for
 const MOST_CORNERS = 4096;
 
+// (and the forest floor's pits and mounds over that: forest.js, THE FLOOR)
 function groundUnder(x, z) {
+	return landUnder(x, z) + forest.floorRise(x, z);
+}
+function landUnder(x, z) {
 	const land = terrain.land;
 	const cell = settings.terrainWorldSize / settings.terrainResolution;
 	const half = settings.terrainWorldSize * 0.5;
@@ -355,7 +359,8 @@ function pushOut(axis, moved, half, step) {
 // the highest thing under the walker that it could be standing on: the ground, or the top of a box under it that is not above its feet by more than a step
 function supportUnder(step) {
 	const half = BODY_WIDTH * 0.5 * settings.forestUnitsPerMetre;
-	let highest = groundUnder(hunter.x, hunter.z);
+	// (a root's top is a step up, as a box's would be: forest.js, THE FLOOR)
+	let highest = groundUnder(hunter.x, hunter.z) + forest.rootStep(hunter.x, hunter.z);
 	for (const fn of floors) highest = Math.max(highest, fn(hunter.x, hunter.z, hunter.y + step));
 	for (let b = 0; b < boxCount; b++) {
 		const o = b * 6;

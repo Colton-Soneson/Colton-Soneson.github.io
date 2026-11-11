@@ -7,7 +7,7 @@ import { settings } from './settings.js';
 
 import { generateTerrain, chunkIndices, wrapLand } from './terrainGenerator.js'
 import { layoutWorld, tileParams, tileAt, HOME, GRID } from './world.js'
-import { TERRAIN_ZONES, ZONE_OCEAN, ZONE_BEACH, ZONE_GRASSLAND, ZONE_FOREST, ZONE_MOUNTAIN, ZONE_SNOW, ZONE_LAKE, ZONE_MARSH, ZONE_TOWN } from './terrainGenerator.js'
+import { TERRAIN_ZONES, ZONE_OCEAN, ZONE_BEACH, ZONE_GRASSLAND, ZONE_FOREST, ZONE_MOUNTAIN, ZONE_SNOW, ZONE_LAKE, ZONE_MARSH, ZONE_TOWN, ZONE_RIVER } from './terrainGenerator.js'
 import { FOREST_THRESHOLD, MOUNTAIN_THRESHOLD } from './terrainGenerator.js'
 import { addJob, cancelJobs, LIVES } from './jobs.js'
 
@@ -32,7 +32,7 @@ import {skyViewLUTtexture} from './atmosphere.js'
 import {uniformBufferLights} from './rotatingCube.js'
 
 // so anything that spawns by zone only needs this file
-export { TERRAIN_ZONES, ZONE_OCEAN, ZONE_BEACH, ZONE_GRASSLAND, ZONE_FOREST, ZONE_MOUNTAIN, ZONE_SNOW, ZONE_LAKE, ZONE_MARSH, ZONE_TOWN };
+export { TERRAIN_ZONES, ZONE_OCEAN, ZONE_BEACH, ZONE_GRASSLAND, ZONE_FOREST, ZONE_MOUNTAIN, ZONE_SNOW, ZONE_LAKE, ZONE_MARSH, ZONE_TOWN, ZONE_RIVER };
 
 /*
 	The procedural land. terrainGenerator.js works out the heights, zones and mesh on the CPU, this file owns the result:
@@ -481,6 +481,8 @@ function makeWorldLand(home) {
 		groundAt: (x, z) => at(x, z)?.groundAt(x, z) ?? deep(),
 		zoneAt: (x, z) => at(x, z)?.zoneAt(x, z) ?? ZONE_OCEAN,
 		normalAt: (x, z) => at(x, z)?.normalAt(x, z) ?? [0, 1, 0],
+		rangeAt: (x, z) => at(x, z)?.rangeAt(x, z) ?? 0,
+		riverAt: (x, z) => at(x, z)?.riverAt(x, z) ?? null,
 		townAt: (x, z) => at(x, z)?.townAt(x, z) ?? 0,
 		onPath: (x, z) => at(x, z)?.onPath(x, z) ?? false,
 		roadAt: (x, z) => at(x, z)?.roadAt(x, z) ?? null,

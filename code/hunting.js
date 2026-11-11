@@ -295,7 +295,13 @@ function landUnder(x, z) {
 // the water's surface at (x, z) world units: the waves under the camera (the walker is under it), moved along their slope to
 //		(x, z), or the still sea while nothing has come back from the probe. Not from a probe further off than PROBE_REACH (the
 //		camera somewhere else when it was read: the fly camera's, just after Hunting begins), which moved that far would be nonsense
+//		In a river (terrainGenerator.js THE RIVERS), its water
 function surfaceAt(x, z) {
+	const river = terrain.land?.riverAt?.(x, z);
+	if (river && river.distance < river.half && settings.enableRivers !== false) return Math.max(river.surface, seaSurfaceAt(x, z));
+	return seaSurfaceAt(x, z);
+}
+function seaSurfaceAt(x, z) {
 	const w = water.cameraWater;
 	if (w.height === null || !settings.enableWater || performance.now() - w.at > 500 || Math.hypot(x - w.x, z - w.z) > PROBE_REACH * settings.forestUnitsPerMetre) return settings.waterWorldPosY;
 	const ny = Math.max(w.normal[1], 0.2);

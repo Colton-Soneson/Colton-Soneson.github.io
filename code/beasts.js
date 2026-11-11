@@ -2,6 +2,7 @@ import { settings } from './settings.js';
 import { stepFor } from './rates.js'
 
 import * as terrain from './terrain.js'
+import { MOUNTAIN_THRESHOLD } from './terrainGenerator.js'
 import * as ballistics from './ballistics.js'
 import * as props from './props.js'
 import * as atmosphere from './atmosphere.js'
@@ -18,7 +19,7 @@ import { ANATOMY, woundFrom, otherWound, cleanWound, bleedOf, recordOf, vital } 
 		MOOSE	solo, MOOSE_COUNT of them, each with a stretch of marsh round a pond of its own. A player within its AGGRO it goes for, until they are off its ground (LEASH from its home). A lot of health, hits hard, and can break bones
 		WOLVES	PACKS of three to six, keeping to the woods and the mountains (ZONES). A pack hunts: the nearest rabbit or deer within SCENT, all of them after it, and only that one. Then all round it to eat (EAT seconds), and a while before the next
 				(HUNT_AGAIN). A player within AGGRO it fights by PACK TACTICS: they spread out in a ring round the player (RING metres off, each to its own side), and one at a time (LUNGE seconds apart) goes in, bites and falls back. Half of them down, the rest run
-		BEARS	rare, BEAR_COUNT, each living where the woods meet the mountains (a forest place within EDGE of the mountain zone). Territorial as a moose, high health and high damage
+		BEARS	rare, BEAR_COUNT, each living up in the woods of the mountains (a forest place in a range proper: terrain's rangeAt, or within EDGE of the bare mountain). Territorial as a moose, high health and high damage
 	SHOT: a round's wound (anatomy.js, as the deer's): its brain or its spine, it is dead; its heart, lungs, liver or guts, it goes on (and comes for them) until its blood is gone (RUN at the most); meat only, it bleeds out slowly; and every round takes health off it too (HURT). Dead, it keeps the record of it (inspect.js).
 	Any of them a player shoots at comes for them, wherever. What a player is heard at (hearing.js: sick): further off with a cough, and it follows further.
 	A DEAD ONE lies there (LIE seconds), and is cut up a cut at a time with a hatchet or a knife (survivalTools.js: CUTS). Another comes RESPAWN days later.
@@ -63,6 +64,7 @@ function make(kind, x, z, home, pack = null) {
 }
 const inZones = (x, z, zones) => zones.includes(terrain.land.zoneAt(x, z));
 function nearMountains(x, z) {
+	if (terrain.land.rangeAt(x, z) >= MOUNTAIN_THRESHOLD) return true;
 	const m = metre();
 	for (let a = 0; a < 8; a++) if (terrain.land.zoneAt(x + Math.cos(a * 0.785) * EDGE * m, z + Math.sin(a * 0.785) * EDGE * m) == terrain.ZONE_MOUNTAIN) return true;
 	return false;

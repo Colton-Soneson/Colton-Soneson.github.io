@@ -569,12 +569,18 @@ export function footprintClear(V, x, z, yaw) {
 	if (x < lo || x > hi || z < lo || z > hi) return 'Too near the edge of the world';
 	const ahead = [Math.sin(yaw), -Math.cos(yaw)], side = [-ahead[1], ahead[0]];
 	const need = V.spawn.keel + SPAWN_CLEARANCE;
+	// (and no boulder standing up as high as the keel: big ones lie out in the sea, and a boat put down in one is thrown out of it)
+	//		(laid out first if the land is new: boats are put in before the boulders' turn in the frame)
+	const rocks = [];
+	if (settings.enableBoulders) boulders.boulderUpdate();
+	if (settings.enableBoulders) boulders.bouldersNear(x, z, (V.reach + 1) * m, (bx, bz, half, bottom, top) => { if (top > sea - need * m) rocks.push([bx, bz, half + 0.6 * m]); });
 	for (const along of V.footprint) {
 		for (const out of [-1, -0.5, 0, 0.5, 1]) {
 			const across = out * (V.halfBreadth(along) + 0.6);
 			const px = x + (ahead[0] * along + side[0] * across) * m, pz = z + (ahead[1] * along + side[1] * across) * m;
 			const depth = (sea - land.heightAt(px, pz)) / m;
 			if (depth < need) return depth < 0 ? 'Too close to the shore' : 'Too shallow there';
+			if (rocks.some(([bx, bz, reach]) => Math.hypot(px - bx, pz - bz) < reach)) return 'A rock is in the way';
 		}
 	}
 	return null;
@@ -1035,6 +1041,13 @@ function fallMatrix(b, k) {
 // Per frame
 //-------------------------------------------------
 let lastTime = performance.now();
+// whether a boat's motion is still something a boat could do. A force far past anything the step was made for (a boat put down inside a
+//		rock) throws it faster than the step can follow, and the next steps faster again, to numbers that are no longer numbers: and then
+//		every test of how near it is to anything fails, and it is near everything
+const MOST_SPEED = 120;				// metres a second
+const MOST_SPIN = 60;				// radians a second
+const sane = (b) => [...b.p, ...b.q].every(Number.isFinite) && Math.hypot(...b.v) < MOST_SPEED && Math.hypot(...b.w) < MOST_SPIN;
+
 export function boatUpdate() {
 	const now = performance.now();
 	const elapsed = Math.min((now - lastTime) / 1000, 0.1);
@@ -1061,7 +1074,9 @@ export function boatUpdate() {
 				b.rocksAt = now;
 			}
 			haulRopes(b, elapsed);
+			const was = { p: [...b.p], q: [...b.q] };
 			for (let left = elapsed; left > 1e-6; left -= SUBSTEP) stepBoat(b, Math.min(left, SUBSTEP), now);
+			if (!sane(b)) Object.assign(b, { p: was.p, q: was.q, v: [0, 0, 0], w: [0, 0, 0] });
 		}
 		b.time += elapsed;
 		b.messageAge += elapsed;

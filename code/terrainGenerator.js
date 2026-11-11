@@ -6,13 +6,11 @@
 
 	The layers, each one a question about a point (x, z):
 		continent	is this land or sea, and how far inland?				low frequency fBm, so land comes out as separate islands
-		hills		the rolling ground of the grasslands					mid frequency fBm
 		mountains	is this a mountain range?								its own low frequency fBm, kept away from the coast
-		alps		the mountains themselves, two things put together:
-						ridges	a branching skeleton of ridge lines grown by diffusion limited aggregation, with the ground falling
-								away from each line at a steady slope so the line stays a sharp crest (see growRidges)
-						erosion	fBm that goes quiet on steep ground, which carves it the way running water would (see erodedFbm)
-					How big they are is set by how much room they have: see MOUNTAINS
+		relief		the shape of the land, hills, valleys and mountains: not noise, but what running water has worn the land to (THE SHAPE OF
+					THE LAND, erosion.js: the stream power law, over a whole continent at once). The layers above only say how hard the
+					land is pushed up where: gently on the grassland, more round the ranges, most in them. Then only small hummocks of noise
+					on top of it, and a little eroded noise on the high ground (outcrops on the faces)
 
 	The zone rules fall out of how the layers are stacked:
 		beach		every bit of land close to sea level, so it rings every land mass. A small bank steps up from it to the grass
@@ -29,8 +27,9 @@
 	under them is made as it would be, then laid flat for the strip, with banks no steeper than STRIP.bank where it is cut into the
 	land or built up over it, and level across each path.
 */
-import { findTownSites, planTownGround, layoutTowns, makeRoadFlattener, makePadCutter, buildingPads } from './townLayout.js'
+import { findTownSites, findRiverSites, planTownGround, layoutTowns, makeRoadFlattener, makePadCutter, buildingPads } from './townLayout.js'
 import { planFootpaths, makePathFlattener, PATHS } from './footpaths.js'
+import { steadyLand } from './erosion.js'
 
 // index = the tag stored for every grid point. name and color are what the rest of the engine reads
 export const TERRAIN_ZONES = [
@@ -43,6 +42,7 @@ export const TERRAIN_ZONES = [
 	{ name: "lake",      color: [0.17, 0.17, 0.11] },	// the bed of a lake: mud
 	{ name: "marsh",     color: [0.21, 0.27, 0.12] },
 	{ name: "seaside town", color: [0.56, 0.5, 0.4] },
+	{ name: "river",     color: [0.36, 0.33, 0.27] },	// the bed of a river: gravel and stones (THE RIVERS)
 ];
 export const ZONE_OCEAN = 0;
 export const ZONE_BEACH = 1;
@@ -53,6 +53,7 @@ export const ZONE_SNOW = 5;
 export const ZONE_LAKE = 6;
 export const ZONE_MARSH = 7;
 export const ZONE_TOWN = 8;
+export const ZONE_RIVER = 9;
 
 // The landing strip (world units, 2 to the metre): how long and how wide its packed earth is, how far out either side of the middle
 //		the ground is laid flat (flat: so its edges are on the flat), how far out from that its short turf fades into the land (edge),
@@ -83,6 +84,13 @@ const WOODLAND_COVER = 0.32;
 export function coverOf(mountain, woodland, marsh = 0) {
 	return Math.max(mountain, woodland * WOODLAND_COVER) * (1 - marsh) - marsh;
 }
+// a mountain range's own share of that (mountain, see sample): forest all over it, bare rock only where it stands high (BARE: from and to, of the
+//		snow line, above the sea: the tree line), and up in a range at all. height: above the sea, world units
+const BARE = [0.7, 0.82];
+export function mountainCover(mountain, height, params) {
+	const bare = smoothstep(BARE[0] * params.snowLine, BARE[1] * params.snowLine, height) * smoothstep(0.5 * FOREST_THRESHOLD, FOREST_THRESHOLD, mountain);
+	return Math.max(Math.min(mountain, MOUNTAIN_THRESHOLD - 0.06), bare * (MOUNTAIN_THRESHOLD + 0.15));
+}
 
 // The shape of the mountains. Distances are world units
 const MOUNTAINS = {
@@ -90,31 +98,6 @@ const MOUNTAINS = {
 	fromCoast: [0.04, 0.16],	// how far inland (see sample) a range starts to rise, and where it is at full strength
 	fromHome: [600, 1400],		// and how far from the origin: the starting shore is kept clear of them
 	homeRange: [2300, 1000],	// there is always a range to look at from the start: how far north of the origin its middle is, and how far it spreads
-	rangeSlope: 1.25,			// a crest is as high as this times its distance from the edge of its range (up to the mountain height setting). So a wide range is a high one and a narrow one is foothills
-	flankSlope: 1.35,			// how steeply the ground falls away either side of a ridge crest, as rise over run
-	minor: 0.72,				// how high the lesser ridges are next to the main ones. Each finer level of the tree is this much of the one before: lower = deeper valleys between the main ridges
-	wobble: 0.2,				// how much the crest of a ridge goes up and down along its length (minor peaks and the saddles between them), 0 to 1
-	wobbleLength: 180,			// and about how far apart those are. (Much shorter and the crest goes up and down faster than the faces fall away from it, and every high point on it comes out as a cone)
-	valley: 24,					// how wide a strip in the bottom of each valley is rounded off
-	erodeScale: 1400,			// the size of the largest shapes the erosion noise carves
-};
-
-/*
-	The foothills: the forested hills the base of a mountain rolls out into, so that a range does not stand straight up out of flat ground.
-
-	They are made from the mountains themselves. Once the ranges are built, two blurred copies of them are taken, wide enough to
-	spill well out past the foot of every mountain: one that says how high the mountains near a place stand, and one that says how
-	much mountain there is round it (a lot hard up against a range, less and less going away from it). The first times the second is
-	a skirt round every range that is highest against its mountain and runs out to nothing: the bigger the mountain, the higher and wider.
-	Noise then rolls the skirt into separate hills, and takes it away altogether along some stretches, where the mountain is left
-	standing as a cliff over the flat. The ground is whichever is higher of the mountain and its foothills, rounded where they meet.
-*/
-const FOOTHILLS = {
-	share: [1 / 7, 1 / 4],		// how high the hills stand next to the mountains behind them: from this to this, varying from place to place
-	reach: 560,					// about how far out from the foot of a mountain they run, world units
-	rollLength: 330,			// about how far it is from one hill to the next
-	gaps: 0.28,					// how much of the way round a range has none, 0 to 1
-	wooded: [8, 34],			// hills this high (from, to) and higher are forest, whatever the ground was before they were raised
 };
 
 //-------------------------------NOISE-------------------------------
@@ -216,14 +199,14 @@ function boxBlur(source, points, radius) {
 
 //-------------------------------THE LAND WITHOUT ITS MOUNTAINS-------------------------------
 // params: seed, worldSize, landScale, seaFloorDepth, seaBedGrade, shelfWidth, beachHeight, bankHeight, hillHeight, woodland, lakes (see the terrain settings in settings.js)
-// returns { sample, erodedFbm, foothillShape }
+// returns { sample, erodedFbm, seamFade }
 //		sample(x, z) -> { height: above sea level (negative under it) BEFORE any mountain is added,
 //						  mountain: 0 to 1, how far into a mountain range,
 //						  rise: 0 to 1, how much of the full mountain height this point gets,
 //						  woodland: 0 to 1, how wooded the ground is where it isnt mountain,
 //						  marsh: 0 to 1, how close to a lake,
-//						  room: 0 to 1, how much room there is here for foothills (none by the coast, in a lake's valley or round the start) }
-//		foothillShape(x, z) -> how much of their full height the foothills stand to here (see FOOTHILLS)
+//						  inland: how far from the sea, 0 at the shore }
+const coreGrids = new Map();		// the world's land tiles -> the distances CORE is read from (coreAt)
 const homeOffsets = new Map();		// seed -> the window on to the noise findHomeOffset found for it (every tile of a world wants the same)
 export function createTerrainSampler(params) {
 	const noise = createNoise(params.seed);
@@ -274,19 +257,33 @@ export function createTerrainSampler(params) {
 			land tile there is no push at all, and the coast comes in from the sides that face the sea. Both tiles either side of a seam
 			work it out the same, so the land runs on across it
 		seamFade: 0 on a side (or a corner) shared with another land tile, 1 from SEAM in from it. What is worked out over the grid of
-			one tile alone (the mountains' ridges and their foothills, the lakes) is faded away towards it, so the two tiles meet on
-			ground that comes from the noise alone
+			one tile alone (the lakes) is faded away towards it, so the two tiles meet on ground that comes from the noise alone. (Not the
+			mountains: their shape is worked out over the whole continent at once, THE SHAPE OF THE LAND)
+		THE HEART OF A CONTINENT (CORE): the further a place is from the open sea round its continent (the tiles that are not land), the
+			surer it is land (CORE.land, from landFrom to landTo in: the noise shapes only its coasts, its bays and its lakes, and a continent
+			of many tiles is one land mass, not islands), and the more of it is mountain range (coreAt, 0 to 1, CORE.mountain). A continent of many tiles is pushed up into one main range across its
+			middle, as land is where it is thickest, and the rivers wear that down into ranges high enough for snow. From how far in it
+			starts (CORE.from) to where it is all range (CORE.to), world units, the way in rolled by noise (wobble) so the range does not
+			follow the tiles' edges. And only along its belts (a slow noise, CORE.belt of it, about beltLength across): the earth pushes
+			a continent up in long ranges with wide valleys between, not all over (the Coast Range, the Willamette Valley, the Cascades). A lonely tile (the home island) has none. The distance, and the
+			range it makes, are read from a grid over the world's tiles (CORE.cell apart: the noise in them is much bigger than that),
+			made once for each world
 	*/
 	const SEAM = 1200, OPEN_HOLD = [1000, 2800];
+	const CORE = { land: 0.75, landFrom: 1200, landTo: 4500, from: 2400, to: 9000, mountain: 0.9, wobble: 1500, wobbleLength: 3600, cell: 512,
+		belt: [-0.12, 0.22], beltLength: 15000 };
 	const OPEN_COAST = { from: 0.6, wobble: 1100, wobbleLength: 1600, calm: 700 };	// (see openSea)
 	const world = params.world ? { S: params.world.size, land: new Set(params.world.land) } : null;
-	const isLand = (tx, tz) => world.land.has(tx + ',' + tz);
+	// (a tile as one number, not its key: these are asked for every point of the land, several times over)
+	const tileNumber = (tx, tz) => tx * 65536 + tz;
+	const landTiles = world ? new Set([...world.land].map((k) => tileNumber(...k.split(',').map(Number)))) : null;
+	const isLand = (tx, tz) => landTiles.has(tileNumber(tx, tz));
 	const edgeOfWorld = (lx, lz) => 1.4 * smoothstep(0.62, 1.0, Math.max(Math.abs(lx), Math.abs(lz), Math.hypot(lx, lz) * 0.8) / half);
 	const lonely = new Map();
 	function alone(tx, tz) {
 		// (the home tile always: its coast is the one the world's edge always made, whatever meets it at a corner, world.js)
 		if (tx == 0 && tz == 0) return true;
-		const k = tx + ',' + tz;
+		const k = tileNumber(tx, tz);
 		if (!lonely.has(k)) { let none = true; for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) if ((dx || dz) && isLand(tx + dx, tz + dz)) none = false; lonely.set(k, none); }
 		return lonely.get(k);
 	}
@@ -328,6 +325,57 @@ export function createTerrainSampler(params) {
 			else d = Math.min(d, Math.hypot(half - lx * dx, half - lz * dz));
 		}
 		return d == Infinity ? 1 : smoothstep(0, SEAM, d);
+	}
+	// (how far a place is from the open sea round its continent, world units: 0 in it, and in a lonely tile, or with no world)
+	function deepIn(x, z) {
+		if (!world) return 0;
+		const tx = Math.round(x / world.S), tz = Math.round(z / world.S);
+		if (!isLand(tx, tz) || alone(tx, tz)) return 0;
+		return gridRead(coreGrid(world), 'dist', x, z);
+	}
+	function coreAt(x, z) {
+		if (!world) return 0;
+		const tx = Math.round(x / world.S), tz = Math.round(z / world.S);
+		if (!isLand(tx, tz) || alone(tx, tz)) return 0;
+		return gridRead(coreGrid(world), 'core', x, z);
+	}
+	const gridRead = (g, field, x, z) => {
+		const gx = Math.min(Math.max((x - g.x0) / g.cell, 0), g.cols - 1.0001), gz = Math.min(Math.max((z - g.z0) / g.cell, 0), g.rows - 1.0001);
+		const col = Math.floor(gx), row = Math.floor(gz), fx = gx - col, fz = gz - row, k = row * g.cols + col, v = g[field];
+		const top = v[k] + (v[k + 1] - v[k]) * fx, bottom = v[k + g.cols] + (v[k + g.cols + 1] - v[k + g.cols]) * fx;
+		return top + (bottom - top) * fz;
+	};
+	// (the distances, world units, from every point of a grid over the world's land tiles and one tile round them to the nearest one not land)
+	function coreGrid(world) {
+		if (world.core) return world.core;
+		const key = (params.seed ?? 0) + ':' + world.S + ':' + [...world.land].sort().join(';');
+		if (coreGrids.has(key)) return world.core = coreGrids.get(key);
+		const at = [...world.land].map((k) => k.split(',').map(Number));
+		const lo = [Math.min(...at.map((t) => t[0])) - 1, Math.min(...at.map((t) => t[1])) - 1], hi = [Math.max(...at.map((t) => t[0])) + 1, Math.max(...at.map((t) => t[1])) + 1];
+		const cell = CORE.cell, x0 = (lo[0] - 0.5) * world.S, z0 = (lo[1] - 0.5) * world.S;
+		const cols = Math.round((hi[0] - lo[0] + 1) * world.S / cell) + 1, rows = Math.round((hi[1] - lo[1] + 1) * world.S / cell) + 1;
+		const dist = new Float32Array(cols * rows);
+		for (let row = 0; row < rows; row++) for (let col = 0; col < cols; col++) dist[row * cols + col] = isLand(Math.round((x0 + col * cell) / world.S), Math.round((z0 + row * cell) / world.S)) ? 1e9 : 0;
+		// (two sweeps, each point taking the shortest way through a neighbour: near enough the straight line at this spacing)
+		const steps = [[-1, 0, cell], [0, -1, cell], [-1, -1, cell * Math.SQRT2], [1, -1, cell * Math.SQRT2]];
+		for (const sign of [1, -1]) for (let k = 0; k < dist.length; k++) {
+			const i = sign > 0 ? k : dist.length - 1 - k, col = i % cols, row = (i - col) / cols;
+			for (const [dx, dz, run] of steps) {
+				const c = col + dx * sign, r = row + dz * sign;
+				if (c >= 0 && r >= 0 && c < cols && r < rows) dist[i] = Math.min(dist[i], dist[r * cols + c] + run);
+			}
+		}
+		// (and the range there: CORE)
+		const core = new Float32Array(cols * rows);
+		for (let row = 0; row < rows; row++) for (let col = 0; col < cols; col++) {
+			const i = row * cols + col, x = x0 + col * cell, z = z0 + row * cell;
+			if (dist[i] < CORE.from - CORE.wobble) continue;
+			const belt = smoothstep(CORE.belt[0], CORE.belt[1], fbm(x / CORE.beltLength - 41.3, z / CORE.beltLength + 8.6, 2));
+			if (belt > 0) core[i] = belt * smoothstep(CORE.from, CORE.to, dist[i] + CORE.wobble * fbm(x / CORE.wobbleLength + 13.7, z / CORE.wobbleLength - 71.9, 3));
+		}
+		const grid = { x0, z0, cell, cols, rows, dist, core };
+		coreGrids.set(key, grid);
+		return world.core = grid;
 	}	// how much of the continent noise is under water. Higher = less land
 	const shape = MOUNTAINS;
 
@@ -352,7 +400,9 @@ export function createTerrainSampler(params) {
 		return slowed + (out - slowed) * smoothstep(shelfEnd, deepStart, out);
 	};
 
-	function sample(x, z) {
+	// relief: the shape of the land there (THE SHAPE OF THE LAND), world units; or null for the land as the noise alone has it (what the shape's
+	//		first round is routed over, and what the window on to the noise is chosen by)
+	function sample(x, z, relief = null) {
 		const nx = x + offsetX, nz = z + offsetZ;
 
 		//---continent: land or sea, and how far inland
@@ -368,13 +418,16 @@ export function createTerrainSampler(params) {
 		//		comes on slowly, so the coast it makes still follows the noise instead of running in a straight line, and it is
 		//		measured part of the way round the corners, so they are cut off
 		continent -= openSea(x, z);
+		// (and the inside of a continent of many tiles land: CORE)
+		const deep = deepIn(x, z);
+		if (deep > CORE.landFrom) continent += CORE.land * smoothstep(CORE.landFrom, CORE.landTo, deep);
 		const inland = continent - seaThreshold;	// > 0 is land, and it grows with distance from the shore
 
 		if (inland <= 0) {
 			// under water: a shelf that eases away from the beach, then the drop-off. (From the drop-off on down the bed keeps
 			//		falling at a steady grade, which is added in generateTerrain: see THE SEA BED there)
 			const floor = -params.seaFloorDepth * smoothstep(0, 0.2, shelfRun(-inland));
-			return { height: floor - 0.2, mountain: 0, rise: 0, woodland: 0, marsh: 0, room: 0 };
+			return { height: floor - 0.2, mountain: 0, rise: 0, woodland: 0, marsh: 0, inland, core: 0 };
 		}
 
 		//---mountain ranges: their own noise, forced to nothing near the coast (and around the home shore)
@@ -382,21 +435,27 @@ export function createTerrainSampler(params) {
 		let mountain = clamp01(shape.spread + range * 1.7 + 0.7 * homeRange);
 		mountain *= smoothstep(shape.fromCoast[0], shape.fromCoast[1], inland);
 		mountain *= smoothstep(shape.fromHome[0], shape.fromHome[1], Math.hypot(x, z));
+		// (and the heart of a continent all range: CORE)
+		const core = deep > CORE.from - CORE.wobble ? coreAt(x, z) : 0;
+		mountain = Math.max(mountain, CORE.mountain * core * smoothstep(shape.fromCoast[0], shape.fromCoast[1], inland));
 		const seam = seamFade(x, z);
 		// (and in a land tile beside the open sea, held back from it: the push to the sea comes on over a short way, and a range right up
 		//		to it would end in a wall over the water. A lonely tile, the home island, is as it was)
-		mountain *= seam * smoothstep(OPEN_HOLD[0], OPEN_HOLD[1], openDistance(x, z));
+		mountain *= smoothstep(OPEN_HOLD[0], OPEN_HOLD[1], openDistance(x, z));
 		const rise = Math.pow(smoothstep(FOREST_THRESHOLD, 1.0, mountain), 1.35);	// 0 at the forest edge of a range, 1 at its heart
 
 		//---base land: a gentle run up from the waterline (the beach), levelling off to a low plateau inland
 		const base = 58 * Math.tanh(1.9 * inland);
 
 		//---rolling hills, fading in from the beach: a long slow swell, hills on that, and hummocks on those
-		let hills = fbm(nx / 1150 + 3.1, nz / 1150 - 7.4, 3) * 36 + fbm(nx / 330, nz / 330, 4) * 27 + fbm(nx / 95 + 5.2, nz / 95 + 1.3, 3) * 5;
+		//		With the shape of the land, only the hummocks: its hills and valleys are the relief's, coming up from the shore, and on its high
+		//		ground a little eroded noise (outcrops and gullies on the faces, finer than the relief's points: OUTCROPS)
+		let hills = relief === null ? fbm(nx / 1150 + 3.1, nz / 1150 - 7.4, 3) * 36 + fbm(nx / 330, nz / 330, 4) * 27 + fbm(nx / 95 + 5.2, nz / 95 + 1.3, 3) * 5 : fbm(nx / 95 + 5.2, nz / 95 + 1.3, 3) * 5;
 		hills *= (params.hillHeight ?? 1) * smoothstep(0.03, 0.22, inland);
+		if (relief !== null) hills += relief * smoothstep(COAST[0], COAST[1], inland) + (erodedFbm(nx / OUTCROPS.length, nz / OUTCROPS.length, 5) - 0.5) * OUTCROPS.height * smoothstep(OUTCROPS.from[0], OUTCROPS.from[1], relief);
 		hills *= 0.3 + 0.7 * smoothstep(180, 650, Math.hypot(x, z + 70));	// gentler round the start: there are buildings to stand on it
 		hills = Math.max(hills, -0.45 * base);	// a dip between hills never gets back down to beach level, so the beach stays at the shore
-		let height = base + hills * (1 - 0.6 * rise);
+		let height = base + hills * (relief === null ? 1 - 0.6 * rise : 1);
 
 		//---woodland: forest that isnt holding on to a mountain. Its own noise, so it comes in patches across the grassland,
 		//		big ones with ragged edges and small copses between them. Kept off the shore, and clear of the start
@@ -425,24 +484,7 @@ export function createTerrainSampler(params) {
 		//		(not round a lake: there is no surf there to cut one)
 		height += params.bankHeight * smoothstep(params.beachHeight - 0.15, params.beachHeight + 0.15, height) * (1 - marsh);
 
-		// foothills are kept back from the sea (a beach is not the foot of a mountain), out of the valley of every lake,
-		//		and clear of the start. And they give out towards the heart of a range: they are the outside of it
-		const room = smoothstep(0.06, 0.2, inland) * (1 - valley) * smoothstep(380, 820, Math.hypot(x, z + 70)) * (1 - 0.85 * smoothstep(0.45, 0.85, rise)) * seam;
-
-		return { height: height, mountain: mountain, rise: rise, woodland: woodland, marsh: marsh, room: room };
-	}
-
-	// How much of their full height the foothills stand to at a place (see FOOTHILLS): the share of the mountain's height they
-	//		are given here, rolled into hills, and nothing at all along the stretches that have none
-	function foothillShape(x, z) {
-		const nx = x + offsetX, nz = z + offsetZ;
-		const present = smoothstep(-0.36 + 0.9 * FOOTHILLS.gaps - 0.25, -0.36 + 0.9 * FOOTHILLS.gaps + 0.1, fbm(nx / 1300 + 71.3, nz / 1300 - 18.9, 2));
-		if (present <= 0) {
-			return 0;
-		}
-		const share = FOOTHILLS.share[0] + (FOOTHILLS.share[1] - FOOTHILLS.share[0]) * clamp01(0.5 + 1.1 * fbm(nx / 840 - 40.1, nz / 840 + 9.7, 2));
-		const roll = 0.84 + 0.62 * fbm(nx / FOOTHILLS.rollLength + 12.6, nz / FOOTHILLS.rollLength - 60.3, 3) + 0.1 * fbm(nx / 90 - 3.7, nz / 90 + 22.8, 2);
-		return present * share * Math.max(roll, 0.2);
+		return { height: height, mountain: mountain, rise: rise, woodland: woodland, marsh: marsh, inland, core };
 	}
 
 	// Looks through windows on to the noise until it finds one where the start of the world makes sense:
@@ -468,232 +510,331 @@ export function createTerrainSampler(params) {
 	}
 	findHomeOffset();
 
-	return { sample: sample, erodedFbm: (x, z, octaves) => erodedFbm(x + offsetX * 0.001, z + offsetZ * 0.001, octaves), foothillShape: foothillShape, seamFade };
+	return { sample: sample, erodedFbm: (x, z, octaves) => erodedFbm(x + offsetX * 0.001, z + offsetZ * 0.001, octaves), seamFade };
 }
 
-//-------------------------------MOUNTAIN RIDGES-------------------------------
+//-------------------------------THE SHAPE OF THE LAND-------------------------------
 /*
-	Diffusion limited aggregation (DLA). Real mountain ranges are branching things: a main ridge, spurs off it, smaller spurs off those.
-	DLA grows exactly that shape. Start with one stuck particle (a peak). Let a loose particle wander at random until it bumps into
-	the stuck ones, and stick it there. Repeat. Because a wanderer nearly always meets the outermost tips first, the clump grows
-	outwards as a tree of thin branches rather than filling in as a blob.
-
-	Here the particles are grid cells, and they can only wander inside the mountain ranges (rise > 0):
-		1. on a coarse grid, put a seed on each peak of the rise and grow trees from them. This lays out the main ridges
-		2. double the resolution. Every link of the tree gets a new cell in its middle, nudged sideways at random so the lines arent ruler straight,
-		   and more particles are grown on at the new scale, which adds the spurs. Repeat until its at the resolution of the terrain
-		3. give every cell of the tree the height of its crest: higher the further inside its range it is, lower for the lesser spurs
-		4. that is a drawing of ridge LINES. From each one the ground falls away at a steady slope to either side, which makes the
-		   faces of the mountain and leaves the line itself as a sharp crest
-
-	rise: Float32Array, points x points, 0 to 1 (0 outside the mountain ranges). points - 1 must be a power of 2. cellSize: world size of a grid cell.
-	mountainHeight: the height a crest of 1 stands for. shape: MOUNTAINS
-	Returns { ridges, crests }
-		ridges		a Float32Array the same size, 0 to 1: how high the ridges make each point, as a share of mountainHeight
-		crests		where the main ridges run, for anything that wants to stand on one: [cell x, cell y, ...] of the cells along them
+	The relief of the land is what water has made of it (erosion.js: the land in its steady state under the stream power law, its rivers in
+	dendritic networks and its hillslopes at the angle their soil holds). Not noise: the noise only says how hard the land is pushed up
+	where (and so how high it stands), and where the big valleys start out (the land the first round is routed over).
+	THE CONTINENT: a land's relief is one piece, made over the whole of it at once (all the land tiles side by side with this one: world.js),
+	SHAPE.cell apart, out to SHAPE.margin past it into the sea. So a river runs on from one tile into the next, and two tiles meet on the
+	same ground. Made the first time a tile of it is wanted, and kept (SHAPE.kept of them): the tile worker makes each continent's once.
+	A tile reads its own window of it (reliefWindow), the points round it as well, and the ground between them by cubic interpolation.
+	HOW HIGH (metres; KSN: the channel steepness of the stream power law): the grassland's gentle hills (hills), the forest round the foot
+	of a mountain range (foot), the ranges themselves (range, as high as the Mountain Height setting asks); each turned up and down by the
+	rock (rock: harder rock stands higher), and brought down to nothing at the shore (coast: there is always a beach to come ashore on).
+	SLOPE: the steepest a hillslope stands at the top of a stream, from the grassland's to a range's (Montgomery 2001: the Oregon Coast
+	Range's at about 40 degrees, rise over run 0.8: forest all the way up; the cores of the ranges steeper, crags of bare rock).
+	Both of a range's go with the Mountain Height setting (HIGH: what they are for). On lands this size the ranges come out under that
+	(450 m at 1400, the home island): as high as the land is wide lets them, at those slopes. Steeper would be higher, and bare rock
 */
-function growRidges(rise, points, seed, cellSize, mountainHeight, shape) {
-	const random = seededRandom(seed ^ 0x51ED270B);
-	const full = points - 1;								// cells along a side at full resolution
-	const coarsest = Math.min(64, full);					// and where the growing starts
-	const inRange = 0.02;									// rise above this counts as inside a mountain range
+const SHAPE = { cell: 64, margin: 1024, kept: 6, metre: 2 };	// world units: between the points, past the land into the sea; continents kept; world units to the metre
+const KSN = { hills: 12, foot: 80, range: 260, rock: [0.7, 1.35], rockLength: 2600 };
+const SLOPE = { hills: 0.25, foot: 0.8, range: 1.25 };
+const FOOT = [0.12, 0.42];		// how far into a range (its mountain value: sample) its forested foot starts, and where it is all there: the grassland out of it gentle
+const ROUGH = { height: 60, length: 1500 };	// the lie of the rock the streams gather in (erosion.js: roughness): metres, and the size of its biggest shapes (world units)
+const HIGH = 1400;				// the Mountain Height the KSN and the SLOPE of the ranges are for
+const COAST = [0.012, 0.09];		// how far inland (see sample) the relief starts to rise, and where it is all there
+const OUTCROPS = { length: 260, height: 16, from: [40, 500] };	// the eroded noise on the high ground: how big, how high (world units), and from how high a relief to how high it is all there
+const shapes = new Map();
 
-	// the tree: every node knows the cell it is in (at the current resolution) and the node it stuck to
-	const nodeX = [], nodeY = [], nodeParent = [];
-	const nodeLevel = [];	// and the resolution it was grown at: 0 the coarsest, where the main ridges are laid out
+// the continent the tile at (cx, cz) world units is in: its land tiles, as the world lays them out (one land without a world: all of it)
+function continentOf(params, cx, cz) {
+	if (!params.world) return { key: 'one', x0: -params.worldSize / 2 - SHAPE.margin, z0: -params.worldSize / 2 - SHAPE.margin, x1: params.worldSize / 2 + SHAPE.margin, z1: params.worldSize / 2 + SHAPE.margin };
+	const S = params.world.size, land = new Set(params.world.land), start = [Math.round(cx / S), Math.round(cz / S)];
+	const seen = new Set([start.join(',')]), queue = [start];
+	let lo = [...start], hi = [...start];
+	// (side by side: two that only meet at a corner have a strait between them, and are two lands)
+	while (queue.length) {
+		const [tx, tz] = queue.pop();
+		lo = [Math.min(lo[0], tx), Math.min(lo[1], tz)]; hi = [Math.max(hi[0], tx), Math.max(hi[1], tz)];
+		if (tx == 0 && tz == 0) continue;		// (the home island: alone, whatever is beside it)
+		for (const [x, z] of [[tx + 1, tz], [tx - 1, tz], [tx, tz + 1], [tx, tz - 1]]) {
+			const k = x + ',' + z;
+			if (!seen.has(k) && land.has(k) && !(x == 0 && z == 0)) { seen.add(k); queue.push([x, z]); }
+		}
+	}
+	return { key: [...seen].sort().join(' '), x0: (lo[0] - 0.5) * S - SHAPE.margin, z0: (lo[1] - 0.5) * S - SHAPE.margin, x1: (hi[0] + 0.5) * S + SHAPE.margin, z1: (hi[1] + 0.5) * S + SHAPE.margin };
+}
 
-	// how much of each range gets filled in at each resolution: lots while laying out the main ridges, less and less for the finer spurs
-	const fillPerLevel = [0.24, 0.15, 0.09, 0.05, 0.028, 0.016];
+// the relief of the continent a tile is in (see THE CONTINENT): { x0, z0, cell, cols, rows, height (world units over the land under it), area (square metres drained) }
+function continentShape(params, sample, noise) {
+	const [cx, cz] = params.center ?? [0, 0];
+	const c = continentOf(params, cx, cz);
+	const key = [params.seed, params.mountainHeight, params.hillHeight ?? 1, params.worldSize, c.key].join('|');		// (and the land's other settings, through sample: the cache is let go with the land)
+	const known = shapes.get(key);
+	if (known) return known;
+	const cell = SHAPE.cell, m = SHAPE.metre;
+	const cols = Math.round((c.x1 - c.x0) / cell) + 1, rows = Math.round((c.z1 - c.z0) / cell) + 1, n = cols * rows;
+	const start = new Float32Array(n), outlet = new Uint8Array(n), ksn = new Float32Array(n), slopeMax = new Float32Array(n);
+	const rangeHigh = (params.mountainHeight ?? HIGH) / HIGH, hillHigh = params.hillHeight ?? 1, slopeHigh = Math.min(Math.sqrt(rangeHigh), 1.4);
+	const rough = new Float32Array(n), roughNoise = createNoise((params.seed ?? 0) + 9311);
+	for (let row = 0; row < rows; row++) {
+		for (let col = 0; col < cols; col++) {
+			const i = row * cols + col, x = c.x0 + col * cell, z = c.z0 + row * cell;
+			const s = sample(x, z);
+			// (the water leaves into the sea, and into the lakes; and off the edge, which is all sea)
+			outlet[i] = s.height < 0 || col == 0 || row == 0 || col == cols - 1 || row == rows - 1 ? 1 : 0;
+			// where the big valleys start out: the land as the noise has it, the ranges up high
+			start[i] = (s.height + params.mountainHeight * 0.4 * s.rise) / m;
+			const foot = smoothstep(FOOT[0], FOOT[1], s.mountain), rock = KSN.rock[0] + (KSN.rock[1] - KSN.rock[0]) * (0.5 + 0.5 * noise(x / KSN.rockLength + 13.1, z / KSN.rockLength - 27.4)[0]);
+			ksn[i] = (KSN.hills * hillHigh + (KSN.foot * hillHigh - KSN.hills * hillHigh) * foot + (KSN.range * rangeHigh - KSN.foot * hillHigh) * Math.pow(s.rise, 1.2)) * rock * smoothstep(COAST[0], COAST[1] * 1.5, s.inland);
+			slopeMax[i] = SLOPE.hills + (SLOPE.foot * slopeHigh - SLOPE.hills) * foot + (SLOPE.range - SLOPE.foot) * slopeHigh * s.rise;
+			let r = 0, a = 1, f = 1 / ROUGH.length;
+			for (let k = 0; k < 4; k++) { r += roughNoise(x * f + k * 17.3, z * f - k * 9.1)[0] * a; a *= 0.55; f *= 2.1; }
+			rough[i] = r * ROUGH.height;
+		}
+	}
+	const land = steadyLand({ cols, rows, cell: cell / m, start, outlet, ksn, slopeMax, roughness: rough, random: seededRandom((params.seed * 7919 + c.key.length * 104729) >>> 0) });
+	const height = land.height.map((h, i) => outlet[i] ? 0 : h * m);
+	const shape = { x0: c.x0, z0: c.z0, cell, cols, rows, height, area: land.area };
+	// (and the rivers in it: THE RIVERS, over the ground as it will be made, the relief in it)
+	const reliefOf = makeReliefAt(shape);
+	shape.rivers = riverLines(shape, land.receiver, (x, z) => sample(x, z, reliefOf(x, z)).height);
+	shapes.set(key, shape);
+	if (shapes.size > SHAPE.kept) shapes.delete(shapes.keys().next().value);
+	return shape;
+}
 
-	for (let size = coarsest, level = 0; size <= full; size *= 2, level++) {
-		const scale = full / size;	// full resolution cells per cell at this level
-		const riseAt = (x, y) => (x < 0 || y < 0 || x >= size || y >= size) ? 0 : rise[Math.min(Math.round((y + 0.5) * scale), full) * points + Math.min(Math.round((x + 0.5) * scale), full)];
+// a tile's window of its continent's relief: the points over it and 2 more all round (for the cubic between them). Plain data: it goes to the
+//		other threads with the chunk grids
+function reliefWindow(params, shape) {
+	const [ox, oz] = params.center ?? [0, 0], half = params.worldSize / 2, cell = shape.cell;
+	const x0 = ox - half - 2 * cell, z0 = oz - half - 2 * cell, cols = Math.round(params.worldSize / cell) + 5, rows = cols;
+	const height = new Float32Array(cols * rows), area = new Float32Array(cols * rows);
+	const c0 = Math.round((x0 - shape.x0) / cell), r0 = Math.round((z0 - shape.z0) / cell);
+	for (let row = 0; row < rows; row++) for (let col = 0; col < cols; col++) {
+		const sc = Math.min(Math.max(c0 + col, 0), shape.cols - 1), sr = Math.min(Math.max(r0 + row, 0), shape.rows - 1);
+		height[row * cols + col] = shape.height[sr * shape.cols + sc];
+		area[row * cols + col] = shape.area[sr * shape.cols + sc];
+	}
+	return { x0, z0, cell, cols, rows, height, area };
+}
 
-		// which node is in each cell, -1 for none
-		const occupied = new Int32Array(size * size).fill(-1);
+// the relief at a world position: cubic (Catmull-Rom) between the points of the window, so the ground has no creases along them
+function makeReliefAt(window) {
+	if (!window) return () => 0;
+	const { x0, z0, cell, cols, rows, height } = window;
+	const at = (c, r) => height[Math.min(Math.max(r, 0), rows - 1) * cols + Math.min(Math.max(c, 0), cols - 1)];
+	const cubic = (p0, p1, p2, p3, t) => p1 + 0.5 * t * (p2 - p0 + t * (2 * p0 - 5 * p1 + 4 * p2 - p3 + t * (3 * (p1 - p2) + p3 - p0)));
+	return (x, z) => {
+		const gx = (x - x0) / cell, gz = (z - z0) / cell, c = Math.floor(gx), r = Math.floor(gz), fx = gx - c, fz = gz - r;
+		const row = (k) => cubic(at(c - 1, k), at(c, k), at(c + 1, k), at(c + 2, k), fx);
+		return Math.max(cubic(row(r - 1), row(r), row(r + 1), row(r + 2), fz), 0);
+	};
+}
 
-		if (level == 0) {
-			// seeds: one on every peak of the rise, the cells that are higher than all 8 around them.
-			//		(In the heart of a wide range the rise is at its full 1 over a whole stretch of cells, all exactly as high as each
-			//		other. Of two cells that tie, only the one that comes first counts, or every cell of the stretch would be a seed:
-			//		a block of peaks standing a cell apart with nothing joining them, each of which comes out as a perfect cone)
-			for (let y = 0; y < size; y++) {
-				for (let x = 0; x < size; x++) {
-					const here = riseAt(x, y);
-					if (here <= inRange) continue;
-					let peak = true;
-					for (let dy = -1; dy <= 1 && peak; dy++) {
-						for (let dx = -1; dx <= 1; dx++) {
-							if (dx == 0 && dy == 0) continue;
-							const other = riseAt(x + dx, y + dy);
-							if (other > here || (other == here && (dy < 0 || (dy == 0 && dx < 0)))) { peak = false; break; }
-						}
-					}
-					if (peak) {
-						occupied[y * size + x] = nodeX.length;
-						nodeX.push(x); nodeY.push(y); nodeParent.push(-1); nodeLevel.push(0);
-					}
+// where the ridges run (for what stands on them: boulderGenerator.js): [x, z, ...] world units of the points of the window over the tile that
+//		nothing drains into, high up in a range
+function crestsOf(params, window, rises) {
+	const [ox, oz] = params.center ?? [0, 0], half = params.worldSize / 2, out = [];
+	const least = window.cell * window.cell / (SHAPE.metre * SHAPE.metre) * 1.5;
+	for (let row = 2; row < window.rows - 2; row++) for (let col = 2; col < window.cols - 2; col++) {
+		const i = row * window.cols + col, x = window.x0 + col * window.cell, z = window.z0 + row * window.cell;
+		if (window.area[i] > least || window.height[i] < params.mountainHeight * 0.25) continue;
+		if (Math.abs(x - ox) > half || Math.abs(z - oz) > half || rises(x, z) < 0.15) continue;
+		out.push(x, z);
+	}
+	return new Float32Array(out);
+}
+
+//-------------------------------THE RIVERS-------------------------------
+/*
+	THE RIVERS: the water the land was worn by (THE SHAPE OF THE LAND), running in it. Every point of a continent's relief that drains
+	more than RIVERS.area is on a stream (erosion.js: area, and receiver, the point each drains to). From each stream's head down to
+	where it meets one already laid, or the sea, a line of them (riverLines); the corners of the 8 ways they go rounded off, every point
+	drawn towards the one it drains to and the biggest that drains to it (RIVERS.smooth times), then cut in a quarter and three quarters
+	along each stretch (Chaikin). Rounded off like that a line cuts the corners of its valley, up the sides of it: so each point is put
+	back on the bottom of the valley the ground makes there (the lowest of the places across the way it runs, RIVERS.snap: how many each
+	side and how far apart), and the line evened out again a little. At each point:
+		how wide	hydraulic geometry (Leopold and Maddock 1953): a river is as wide as about the square root of the water it carries, and
+					that goes with the land it drains: RIVERS.width[0] times (area in square kilometres) to the RIVERS.width[1], metres
+		how deep	the same way, to about the 0.4 power (RIVERS.depth)
+		its water	the land under its middle (the noise and the relief together, as the ground is made: natural) cut down a little into it
+					(RIVERS.incise), and never higher than it is upstream: water does not run up hill, and where the land comes up in its way
+					it stands level over it. Never under the sea
+	In the land (makeRiverCutter): under the water its bed, deepest in the middle; to either side its banks, the land cut down to no
+	steeper than RIVERS.bank over the water's edge, out to RIVERS.reach; and right by the water, never lower than it (RIVERS.levee): the
+	river is in its channel. Its bed is stony (RIVERS.cover) and its own zone (ZONE_RIVER): no grass, no trees.
+	A tile has the stretches near it (riverWindow): every one it is cut by, and the ones it draws (rivers.js), each drawn by the one tile
+	its middle is in. Units: world units, and the water's height over the sea
+*/
+const RIVERS = { area: 0.25e6, width: [3.5, 0.5], depth: [0.35, 0.4], incise: 0.7, smooth: 2, snap: [5, 5], bank: 0.9, reach: 30, fade: 0.55, levee: 5, cover: MOUNTAIN_THRESHOLD + 0.02, bucket: 64 };
+export const RIVER_FLOATS = 6;		// a point of a river: x, z, its water (over the sea), half its width, its depth, how far along its line from the head
+
+// the lines of a continent's rivers: { points: Float32Array, RIVER_FLOATS each, starts: Int32Array, where each line's points begin (and
+//		one more, the end) }. natural(x, z): the ground there, over the sea
+function riverLines(shape, receiver, natural) {
+	const { cols, x0, z0, cell, area } = shape, n = area.length, m = SHAPE.metre;
+	const nodes = [];
+	for (let i = 0; i < n; i++) if (area[i] >= RIVERS.area && receiver[i] >= 0) nodes.push(i);
+	// (more land drains through each point than through any that drains to it: by that, each comes after all of those)
+	nodes.sort((a, b) => area[a] - area[b] || a - b);
+	const biggest = new Map();		// a point -> the biggest stream that drains to it
+	for (const i of nodes) { const r = receiver[i], b = biggest.get(r); if (b === undefined || area[i] > area[b]) biggest.set(r, i); }
+	// the corners rounded: each drawn towards the point below it and the biggest above it
+	const px = new Map(), pz = new Map();
+	const placeOf = (i) => [px.get(i) ?? x0 + (i % cols) * cell, pz.get(i) ?? z0 + Math.floor(i / cols) * cell];
+	for (let pass = 0; pass < RIVERS.smooth; pass++) {
+		const nx = new Map(), nz = new Map();
+		for (const i of nodes) {
+			const [x, z] = placeOf(i), [rx, rz] = placeOf(receiver[i]), up = biggest.get(i), [ux, uz] = up === undefined ? [x, z] : placeOf(up);
+			nx.set(i, 0.5 * x + 0.25 * rx + 0.25 * ux); nz.set(i, 0.5 * z + 0.25 * rz + 0.25 * uz);
+		}
+		for (const [i, v] of nx) px.set(i, v);
+		for (const [i, v] of nz) pz.set(i, v);
+	}
+	// the water at each: the ground under it cut down a little, and no higher than upstream
+	const water = new Map(), upstream = new Map();
+	for (const i of nodes) {
+		const [x, z] = placeOf(i);
+		const w = Math.max(Math.min(natural(x, z) - RIVERS.incise * m, upstream.get(i) ?? Infinity), 0);
+		water.set(i, w);
+		const r = receiver[i];
+		upstream.set(r, Math.min(upstream.get(r) ?? Infinity, w));
+	}
+	const at = (i) => {
+		const [x, z] = placeOf(i), km2 = area[i] / 1e6;
+		return [x, z, water.get(i) ?? 0, 0.5 * RIVERS.width[0] * Math.pow(km2, RIVERS.width[1]) * m, RIVERS.depth[0] * Math.pow(km2, RIVERS.depth[1]) * m, 0];
+	};
+	// the lines: from each head down to one laid already (its last point is that one's) or the sea
+	const taken = new Set(), points = [], starts = [];
+	for (const head of nodes) {
+		if (biggest.has(head)) continue;		// (not a head: a stream drains to it)
+		const line = [];
+		for (let i = head; ; i = receiver[i]) {
+			line.push(at(i));
+			if (taken.has(i) || receiver[i] < 0 || area[i] < RIVERS.area) break;
+			taken.add(i);
+		}
+		if (line.length < 2) continue;
+		// (and the corners cut: Chaikin, the ends kept where they are)
+		const cut = [line[0]];
+		for (let k = 0; k < line.length - 1; k++) {
+			const a = line[k], b = line[k + 1];
+			cut.push(a.map((v, q) => 0.75 * v + 0.25 * b[q]), a.map((v, q) => 0.25 * v + 0.75 * b[q]));
+		}
+		cut.push(line[line.length - 1]);
+		// (on to the bottom of the valley: the lowest of the places across it. Not the last point: it is on the line it joins, or the shore)
+		for (let k = 0; k < cut.length - 1; k++) {
+			const p = cut[k], o = cut[Math.max(k - 1, 0)], q = cut[k + 1];
+			let tx = q[0] - o[0], tz = q[1] - o[1];
+			const tl = Math.hypot(tx, tz) || 1;
+			tx /= tl; tz /= tl;
+			let lowest = natural(p[0], p[1]), off = 0;
+			for (let j = -RIVERS.snap[0]; j <= RIVERS.snap[0]; j++) {
+				if (j == 0) continue;
+				const h = natural(p[0] - tz * j * RIVERS.snap[1], p[1] + tx * j * RIVERS.snap[1]);
+				if (h < lowest - 0.01) { lowest = h; off = j * RIVERS.snap[1]; }
+			}
+			p[0] -= tz * off; p[1] += tx * off;
+		}
+		for (let k = 1; k < cut.length - 1; k++) { cut[k][0] = 0.25 * cut[k - 1][0] + 0.5 * cut[k][0] + 0.25 * cut[k + 1][0]; cut[k][1] = 0.25 * cut[k - 1][1] + 0.5 * cut[k][1] + 0.25 * cut[k + 1][1]; }
+		// (and its water from the ground where it is now: no higher than that cut down, nor than upstream)
+		for (let k = 0; k < cut.length; k++) cut[k][2] = Math.max(Math.min(cut[k][2], natural(cut[k][0], cut[k][1]) - RIVERS.incise * m, k > 0 ? cut[k - 1][2] : Infinity), 0);
+		starts.push(points.length / RIVER_FLOATS);
+		let along = 0;
+		cut.forEach((p, k) => {
+			if (k > 0) along += Math.hypot(p[0] - cut[k - 1][0], p[1] - cut[k - 1][1]);
+			p[5] = along;
+			points.push(...p);
+		});
+	}
+	starts.push(points.length / RIVER_FLOATS);
+	return { points: new Float32Array(points), starts: new Int32Array(starts) };
+}
+
+// a tile's rivers: { cut: the stretches near enough to cut into its land (RIVER_FLOATS for each end), draw: the lines it draws, as
+//		riverLines has them }. Its own arrays: they go to the other threads, and the continent's are kept
+function riverWindow(params, shape) {
+	const [ox, oz] = params.center ?? [0, 0], half = params.worldSize / 2, { points, starts } = shape.rivers;
+	const near = 2 * shape.cell + RIVERS.reach + 64;
+	const cut = [], draw = [], drawStarts = [];
+	for (let line = 0; line < starts.length - 1; line++) {
+		let open = false;
+		for (let k = starts[line]; k < starts[line + 1] - 1; k++) {
+			const a = k * RIVER_FLOATS, b = a + RIVER_FLOATS;
+			const lo = [Math.min(points[a], points[b]) - points[b + 3] - near, Math.min(points[a + 1], points[b + 1]) - points[b + 3] - near];
+			const hi = [Math.max(points[a], points[b]) + points[b + 3] + near, Math.max(points[a + 1], points[b + 1]) + points[b + 3] + near];
+			if (hi[0] >= ox - half && lo[0] <= ox + half && hi[1] >= oz - half && lo[1] <= oz + half) for (let q = 0; q < 2 * RIVER_FLOATS; q++) cut.push(points[a + q]);
+			// (drawn by the tile the middle of the stretch is in)
+			const mx = 0.5 * (points[a] + points[b]) - ox, mz = 0.5 * (points[a + 1] + points[b + 1]) - oz;
+			const mine = mx >= -half && mx < half && mz >= -half && mz < half;
+			if (mine && !open) { drawStarts.push(draw.length / RIVER_FLOATS); for (let q = 0; q < RIVER_FLOATS; q++) draw.push(points[a + q]); }
+			if (mine) for (let q = 0; q < RIVER_FLOATS; q++) draw.push(points[b + q]);
+			open = mine;
+		}
+	}
+	drawStarts.push(draw.length / RIVER_FLOATS);
+	return { cut: new Float32Array(cut), draw: { points: new Float32Array(draw), starts: new Int32Array(drawStarts) } };
+}
+
+// The rivers in the land (see THE RIVERS): cut(x, z, natural) the ground there with them (over the sea, as natural is), and how wet that
+//		leaves it in .wet (1 under the water); at(x, z) the nearest stretch's water there: null, or { surface (over the sea), depth there
+//		(the water over the bed), distance (from the middle), half (its half width) }
+export function makeRiverCutter(cut) {
+	const B = RIVERS.bucket, buckets = new Map(), count = cut.length / (2 * RIVER_FLOATS);
+	for (let k = 0; k < count; k++) {
+		const a = k * 2 * RIVER_FLOATS, b = a + RIVER_FLOATS, r = Math.max(cut[a + 3], cut[b + 3]) + RIVERS.reach;
+		for (let bx = Math.floor((Math.min(cut[a], cut[b]) - r) / B); bx <= Math.floor((Math.max(cut[a], cut[b]) + r) / B); bx++) {
+			for (let bz = Math.floor((Math.min(cut[a + 1], cut[b + 1]) - r) / B); bz <= Math.floor((Math.max(cut[a + 1], cut[b + 1]) + r) / B); bz++) {
+				const key = bx * 100003 + bz;
+				if (!buckets.has(key)) buckets.set(key, []);
+				buckets.get(key).push(a);
+			}
+		}
+	}
+	const near = { surface: 0, depth: 0, distance: Infinity, half: 0, edge: Infinity };
+	// (the stretch at o: how far (x, z) is from its middle, and its water, half width and depth there)
+	const on = { d: 0, s: 0, w: 0, dd: 0 };
+	function onStretch(o, x, z) {
+		const b = o + RIVER_FLOATS, ex = cut[b] - cut[o], ez = cut[b + 1] - cut[o + 1], ll = ex * ex + ez * ez;
+		const t = ll > 0 ? Math.min(Math.max(((x - cut[o]) * ex + (z - cut[o + 1]) * ez) / ll, 0), 1) : 0;
+		on.d = Math.hypot(x - cut[o] - ex * t, z - cut[o + 1] - ez * t);
+		on.s = cut[o + 2] + (cut[b + 2] - cut[o + 2]) * t;
+		on.w = cut[o + 3] + (cut[b + 3] - cut[o + 3]) * t;
+		on.dd = cut[o + 4] + (cut[b + 4] - cut[o + 4]) * t;
+	}
+	const result = {
+		wet: 0,
+		cut(x, z, natural) {
+			result.wet = 0;
+			const bucket = buckets.get(Math.floor(x / B) * 100003 + Math.floor(z / B));
+			if (!bucket) return natural;
+			let lowest = Infinity, levee = -Infinity;
+			for (const o of bucket) {
+				onStretch(o, x, z);
+				if (on.d >= on.w + RIVERS.reach) continue;
+				if (on.d <= on.w) {
+					// (the bed: deepest in the middle)
+					const across = on.d / on.w;
+					lowest = Math.min(lowest, on.s - on.dd * (1 - across * across));
+					result.wet = 1;
+				} else {
+					// (the bank: given out over the last of the reach, so it never ends in a step up to the land)
+					const bank = Math.min(on.s + RIVERS.bank * (on.d - on.w), natural);
+					lowest = Math.min(lowest, natural + (bank - natural) * (1 - smoothstep(RIVERS.fade, 1, (on.d - on.w) / RIVERS.reach)));
+					if (on.d < on.w + RIVERS.levee) levee = Math.max(levee, on.s + 0.1 * SHAPE.metre);
 				}
 			}
-		} else {
-			// double the resolution: every node moves to twice its coordinates, and every link gets a new node in the middle of it
-			const count = nodeX.length;
-			for (let i = 0; i < count; i++) {
-				nodeX[i] *= 2; nodeY[i] *= 2;
-				occupied[nodeY[i] * size + nodeX[i]] = i;
+			let h = Math.min(natural, lowest);
+			if (!result.wet && natural >= 0 && levee > h) h = levee;
+			return h;
+		},
+		at(x, z) {
+			const bucket = buckets.get(Math.floor(x / B) * 100003 + Math.floor(z / B));
+			if (!bucket) return null;
+			near.edge = Infinity;
+			for (const o of bucket) {
+				onStretch(o, x, z);
+				if (on.d - on.w < near.edge) { near.edge = on.d - on.w; near.distance = on.d; near.half = on.w; near.surface = on.s; const across = Math.min(on.d / Math.max(on.w, 1e-6), 1); near.depth = on.dd * (1 - across * across); }
 			}
-			for (let i = 0; i < count; i++) {
-				const parent = nodeParent[i];
-				if (parent < 0) continue;
-				let midX = (nodeX[i] + nodeX[parent]) >> 1, midY = (nodeY[i] + nodeY[parent]) >> 1;
-				// nudge it sideways half the time, if there is room. Its still touching both ends, so the line isnt broken
-				if (random() < 0.5) {
-					const sideways = random() < 0.5 ? -1 : 1;
-					const tryX = midX + (nodeY[i] != nodeY[parent] ? sideways : 0), tryY = midY + (nodeX[i] != nodeX[parent] ? sideways : 0);
-					if (riseAt(tryX, tryY) > inRange && occupied[tryY * size + tryX] < 0) { midX = tryX; midY = tryY; }
-				}
-				if (midX < 0 || midY < 0 || midX >= size || midY >= size || occupied[midY * size + midX] >= 0) continue;
-				occupied[midY * size + midX] = nodeX.length;
-				nodeX.push(midX); nodeY.push(midY); nodeParent.push(parent); nodeLevel.push(nodeLevel[i]);	// (a piece of the link it is in the middle of)
-				nodeParent[i] = nodeX.length - 1;
-			}
-		}
-
-		// the cells a particle can start from: anywhere inside a range
-		const startCells = [];
-		for (let y = 0; y < size; y++) {
-			for (let x = 0; x < size; x++) {
-				if (riseAt(x, y) > inRange) startCells.push(y * size + x);
-			}
-		}
-		if (startCells.length == 0 || nodeX.length == 0) continue;
-
-		// grow: drop a particle somewhere in a range and let it wander until it is next to the tree, then it joins it
-		const target = Math.floor(startCells.length * fillPerLevel[Math.min(level, fillPerLevel.length - 1)]);
-		let added = 0;
-		for (let attempt = 0; attempt < target * 6 && added < target; attempt++) {
-			let cell = startCells[Math.floor(random() * startCells.length)];
-			if (occupied[cell] >= 0) continue;
-			let x = cell % size, y = Math.floor(cell / size);
-
-			for (let step = 0; step < 3000; step++) {
-				// next to the tree? (the 4 cells sharing an edge with this one)
-				let neighbour = -1;
-				if (x > 0 && occupied[cell - 1] >= 0) neighbour = occupied[cell - 1];
-				else if (x < size - 1 && occupied[cell + 1] >= 0) neighbour = occupied[cell + 1];
-				else if (y > 0 && occupied[cell - size] >= 0) neighbour = occupied[cell - size];
-				else if (y < size - 1 && occupied[cell + size] >= 0) neighbour = occupied[cell + size];
-				if (neighbour >= 0) {
-					occupied[cell] = nodeX.length;
-					nodeX.push(x); nodeY.push(y); nodeParent.push(neighbour); nodeLevel.push(level);
-					added++;
-					break;
-				}
-
-				// wander one cell. Walking out of the range ends this particle
-				const direction = Math.floor(random() * 4);
-				const nextX = x + (direction == 0 ? 1 : direction == 1 ? -1 : 0), nextY = y + (direction == 2 ? 1 : direction == 3 ? -1 : 0);
-				if (riseAt(nextX, nextY) <= inRange) break;
-				x = nextX; y = nextY; cell = y * size + x;
-			}
-		}
-	}
-
-	const count = nodeX.length;
-
-	/*
-		The height of the crest at every node, 0 to 1.
-
-		A mountain needs ground to stand on: a tall one on a narrow base is a wall. So a crest is as high as it is far inside
-		its range: rangeSlope times the distance to the range's edge. That puts the highest ground in the middle of the widest
-		ranges, and has every ridge drop away to nothing as it runs out to the edge.
-		First then, how far every cell is from the edge of its range (in cells): 0 outside, and inside it the shortest way out,
-		found by the same two sweeps as the cones further down, counting distance up instead of height down.
-	*/
-	const steps = [[-1, 0], [0, -1], [-1, -1], [1, -1], [-2, -1], [2, -1], [-1, -2], [1, -2]];	// the neighbours already done, when sweeping from the top left
-	const toEdge = new Float32Array(points * points);
-	for (let i = 0; i < points * points; i++) toEdge[i] = rise[i] > inRange ? 1e9 : 0;
-	for (let sweep = 0; sweep < 2; sweep++) {
-		const sign = sweep == 0 ? 1 : -1;
-		for (let k = 0; k < points * points; k++) {
-			const i = sweep == 0 ? k : points * points - 1 - k;
-			if (toEdge[i] == 0) continue;
-			const x = i % points, y = (i - x) / points;
-			let best = toEdge[i];
-			for (const [dx, dy] of steps) {
-				const nx = x + dx * sign, ny = y + dy * sign;
-				const carried = (nx < 0 || ny < 0 || nx >= points || ny >= points ? 0 : toEdge[ny * points + nx]) + Math.hypot(dx, dy);
-				if (carried < best) best = carried;
-			}
-			toEdge[i] = best;
-		}
-	}
-
-	// And the lesser ridges are lower. The main ridges were laid out first, on the coarsest grid, and each finer grid added
-	//		smaller spurs to them. A spur is that much lower than the ridge it stands off, so between two main ridges the
-	//		ground drops away into a real valley, with the lesser ridges as ribs down its sides
-	const crest = new Float32Array(count);
-	for (let i = 0; i < count; i++) {
-		crest[i] = Math.pow(shape.minor, nodeLevel[i]);
-	}
-	for (let i = 0; i < count; i++) {
-		crest[i] *= Math.min(toEdge[nodeY[i] * points + nodeX[i]] * cellSize * shape.rangeSlope / Math.max(mountainHeight, 1), 1);
-	}
-
-	// draw the tree: each cell on a ridge line gets the height of its crest, everything else 0.
-	//		A real crest is not an even slope, it goes over minor peaks and down into saddles: some noise along it does that
-	const wobble = createNoise(seed ^ 0x2545F491);
-	const lines = new Float32Array(points * points);
-	for (let i = 0; i < count; i++) {
-		const along = wobble(nodeX[i] * cellSize / shape.wobbleLength, nodeY[i] * cellSize / shape.wobbleLength)[0];
-		lines[nodeY[i] * points + nodeX[i]] = crest[i] * (1 - shape.wobble * (0.5 - 0.5 * along));
-	}
-
-	/*
-		Spread the lines into mountains, keeping the crest. From every cell of a ridge line the ground falls away at
-		one steady slope in every direction, a cone with its point on the crest, and the land is whatever is highest:
-			height here = the most, over every ridge cell, of (the crest's height there - slope x the distance to it)
-		Along a ridge line that leaves a sharp edge with a face either side, like the ridge of a roof, and where the
-		faces of two ridges meet it leaves a valley.
-
-		Looking at every ridge cell from every cell would take hours. But the best cone at a cell is always one that
-		came through a cell next to it, so the answer can be passed along from neighbour to neighbour: one sweep
-		across the grid from the top left carrying heights down and right, one back from the bottom right carrying them
-		up and left (a chamfer distance transform). With only the 8 cells around the cones come out eight sided,
-		so the 8 a knight's move away are used as well, which makes them near enough round.
-	*/
-	const drop = shape.flankSlope * cellSize / Math.max(mountainHeight, 1);		// height lost per cell of distance, in the 0 to 1 the crests are in
-	const ridges = Float32Array.from(lines);
-	for (let sweep = 0; sweep < 2; sweep++) {
-		const sign = sweep == 0 ? 1 : -1;
-		for (let k = 0; k < points * points; k++) {
-			const i = sweep == 0 ? k : points * points - 1 - k;
-			const x = i % points, y = (i - x) / points;
-			let best = ridges[i];
-			for (const [dx, dy] of steps) {
-				const nx = x + dx * sign, ny = y + dy * sign;
-				if (nx < 0 || ny < 0 || nx >= points || ny >= points) continue;
-				const carried = ridges[ny * points + nx] - drop * Math.hypot(dx, dy);
-				if (carried > best) best = carried;
-			}
-			ridges[i] = best;
-		}
-	}
-
-	// Two faces meeting leave a valley with a knife cut for a floor. A blurred copy is higher than the land in the hollows
-	//		(they are filled in) and lower on the crests (they are worn down): taking whichever is higher keeps the first and not the second
-	if (shape.valley > 0) {
-		const filled = boxBlur(ridges, points, Math.max(Math.round(shape.valley / cellSize), 1));
-		for (let i = 0; i < ridges.length; i++) ridges[i] = Math.max(ridges[i], filled[i]);
-	}
-
-	// the main ridges: the ones laid out on the coarsest grid, where they are a good way up
-	const crests = [];
-	for (let i = 0; i < count; i++) {
-		if (nodeLevel[i] == 0 && crest[i] > 0.3) crests.push(nodeX[i], nodeY[i]);
-	}
-
-	return { ridges, crests };
+			return near.edge < RIVERS.reach ? near : null;
+		},
+	};
+	return result;
 }
 
 // the zone tag for a point, from its height above sea level and what covers it (see coverOf). lake: the water here is cut off from the sea
@@ -704,22 +845,6 @@ export function classifyZone(height, cover, params, lake = false) {
 	if (cover >= MOUNTAIN_THRESHOLD) return (height >= params.snowLine) ? ZONE_SNOW : ZONE_MOUNTAIN;
 	if (cover >= FOREST_THRESHOLD) return ZONE_FOREST;
 	return ZONE_GRASSLAND;
-}
-
-// The mountain and its foothills at a place, as one height over the land they stand on: whichever is higher, rounded where
-//		they meet. mountain: how high the mountain alone is there, footing: the skirt there, room: see sample.
-//		Leaves how wooded the foothills make the place in wooded: the hills are forest
-function makeFoothills(foothillShape) {
-	const foothills = { wooded: 0, raise: (x, z, mountain, footing, room) => {
-	foothills.wooded = 0;
-	if (footing <= 0 || room <= 0) {
-		return mountain;
-	}
-	const hill = footing * room * foothillShape(x, z);
-	foothills.wooded = smoothstep(FOOTHILLS.wooded[0], FOOTHILLS.wooded[1], hill);
-	return smoothMax(mountain, hill, 0.5 * hill + 3);
-	} };
-	return foothills;
 }
 
 const BED_OUT = 400;		// world units: in a world of tiles, the most the sea bed is measured out past the drop-off (see THE SEA BED)
@@ -774,12 +899,13 @@ function stripClear(s, x, z) {
 	What makes the mesh of the land, apart from the rest of it: the grids it reads are passed in (chunkGrids, from generateTerrain),
 	so a worker can be handed a copy of them and make chunks off the main thread (see terrainWorker.js). The same params and grids
 	make the same chunks wherever it runs.
-		grids		{ ridges, marshes, footings, beyondDrop }, one entry per data grid point
+		grids		{ relief (reliefWindow), marshes, beyondDrop, and the towns' }, one entry per data grid point (relief: its own)
 		sampler		createTerrainSampler(params), when there is one already
 */
 export function makeChunkBuilder(params, grids, sampler = createTerrainSampler(params)) {
-	const { sample, erodedFbm, foothillShape } = sampler;
-	const { ridges, marshes, footings, beyondDrop } = grids;		// (and the towns' grids, read as they are when wanted: generateTerrain fills them in after making this)
+	const { sample, erodedFbm } = sampler;
+	const { relief, marshes, beyondDrop } = grids;		// (and the towns' grids, read as they are when wanted: generateTerrain fills them in after making this)
+	const riverCut = makeRiverCutter(grids.rivers ?? new Float32Array(0));
 	// the streets of the towns, cut into the land (made when they are first wanted: they are laid out after the builder is made)
 	let roads = null, roadsFrom = null, cutPads = null, padsFrom = null;
 	let paths = null, pathsFrom = null;		// (and the footpaths, the same way)
@@ -788,7 +914,7 @@ export function makeChunkBuilder(params, grids, sampler = createTerrainSampler(p
 	const cellSize = params.worldSize / cells;
 	const half = params.worldSize * 0.5;
 	const [ox, oz] = params.center ?? [0, 0];		// (a tile of the world's: world.js. Its grid round its own middle)
-	const foothills = makeFoothills(foothillShape);
+	const reliefAt = makeReliefAt(relief);
 
 	// one of the data grids at a world position, bilinear between the 4 grid points around it
 	function gridAt(grid, x, z) {
@@ -797,26 +923,20 @@ export function makeChunkBuilder(params, grids, sampler = createTerrainSampler(p
 		const top = grid[i] + (grid[i + 1] - grid[i]) * fx, bottom = grid[i + points] + (grid[i + points + 1] - grid[i + points]) * fx;
 		return top + (bottom - top) * fz;
 	}
-	// how high the ridge skeleton makes a world position
-	const ridgeAt = (x, z) => gridAt(ridges, x, z);
 
 	// The exact ground at any world position, the same sum the data grid was filled with. A mesh finer than the data grid gets its
 	//		extra detail from here: the noise layers go on down to a couple of units, only the ridge skeleton is limited to the grid.
 	//		Returns the height above sea level, and leaves what covers the point (see coverOf) in landAtCover
 	let landAtCover = 0;
 	function landAt(x, z) {
-		const result = sample(x, z);
+		const result = sample(x, z, reliefAt(x, z));
 		// (how marshy it is comes from the data grid, which knows about every lake. sample only knows the ones it hollowed out itself)
 		const marsh = gridAt(marshes, x, z);
-		let mountain = 0;
-		if (result.rise > 0) {
-			const eroded = erodedFbm(x / MOUNTAINS.erodeScale, z / MOUNTAINS.erodeScale, 9);
-			const shape = ridgeAt(x, z) * (0.62 + 0.76 * eroded) + 0.14 * eroded;
-			mountain = params.mountainHeight * smoothstep(0, 0.3, result.rise) * shape;
-		}
-		const raised = foothills.raise(x, z, mountain, gridAt(footings, x, z), result.room);
-		landAtCover = coverOf(result.mountain, Math.max(result.woodland, foothills.wooded * (1 - marsh)), marsh);
-		let height = result.height + raised - (result.height < 0 ? bedFall(params, gridAt(beyondDrop, x, z)) : 0);
+		landAtCover = coverOf(mountainCover(result.mountain, result.height, params), result.woodland, marsh);
+		let height = result.height - (result.height < 0 ? bedFall(params, gridAt(beyondDrop, x, z)) : 0);
+		// the rivers cut into it (THE RIVERS): stony under the water
+		height = riverCut.cut(x, z, height);
+		if (riverCut.wet) landAtCover = RIVERS.cover;
 		// a town: its own hill, and its streets cut into that (see townLayout.js). Its ground is short turf
 		if (grids.townStrength) {
 			const town = gridAt(grids.townStrength, x, z);
@@ -942,7 +1062,12 @@ export function makeChunkBuilder(params, grids, sampler = createTerrainSampler(p
 		chunkGrids								the grids buildChunk reads, so another thread can make a builder of its own (see makeChunkBuilder)
 */
 export function generateTerrain(params) {
-	const { sample, erodedFbm, foothillShape, seamFade } = createTerrainSampler(params);
+	const { sample, erodedFbm, seamFade } = createTerrainSampler(params);
+	// the shape of the land (THE SHAPE OF THE LAND): its continent's, and this tile's window of it
+	const shape = continentShape(params, sample, createNoise((params.seed ?? 0) + 4057));
+	const relief = reliefWindow(params, shape);
+	const rivers = riverWindow(params, shape), riverCut = makeRiverCutter(rivers.cut);
+	const reliefAt = makeReliefAt(relief);
 
 	// Two resolutions. The DATA grid (heights, zones, the ridge skeleton, what the water and the grass read) is always this fine.
 	//		The MESH is built separately, a chunk at a time (see buildChunk): finer than this near the camera, coarser far away
@@ -961,21 +1086,19 @@ export function generateTerrain(params) {
 	const marshes = new Float32Array(points * points);
 	const lakes = new Float32Array(points * points);
 	const rises = new Float32Array(points * points);
-	const rooms = new Float32Array(points * points);
 	const zones = new Uint8Array(points * points);
 	const normals = new Float32Array(points * points * 3);
 
 	// the land without its mountains, and where the mountain ranges are
 	for (let row = 0; row < points; row++) {
 		for (let col = 0; col < points; col++) {
-			const result = sample(xAt(col), zAt(row));
+			const result = sample(xAt(col), zAt(row), reliefAt(xAt(col), zAt(row)));
 			const i = row * points + col;
 			heights[i] = result.height;		// above sea level for now
 			mountains[i] = result.mountain;
 			woodlands[i] = result.woodland;
 			marshes[i] = result.marsh;
 			rises[i] = result.rise;
-			rooms[i] = result.room;
 		}
 	}
 
@@ -1000,7 +1123,7 @@ export function generateTerrain(params) {
 	}
 
 	// How far every cell is from the nearest cell that passes a test, in cells. Two sweeps across the grid, each cell taking
-	//		the shortest way through a neighbour (as in growRidges)
+	//		the shortest way through a neighbour
 	//		round: also through the 4 neighbours a knight's move away, which brings what would be eight sided rings of distance near enough to circles
 	const distanceTo = (test, round = false) => {
 		const distance = new Float32Array(points * points);
@@ -1061,66 +1184,38 @@ export function generateTerrain(params) {
 		if (params.world) beyondDrop = beyondDrop.map((distance) => Math.min(distance, BED_OUT));
 	}
 
-	// the mountains: the ridge skeleton, with the eroded noise roughing it up and carving the faces between the ridges
-	const { ridges, crests } = growRidges(rises, points, params.seed, cellSize, params.mountainHeight, MOUNTAINS);
-	const ridgeCrests = new Float32Array(crests.map((cell, k) => (k % 2 ? zAt(cell) : xAt(cell))));	// as world x, z
-	const massif = new Float32Array(points * points);		// how high the mountains alone stand at each point, over the land they are on
-	for (let row = 0; row < points; row++) {
-		for (let col = 0; col < points; col++) {
-			const i = row * points + col;
-			if (rises[i] > 0) {
-				const eroded = erodedFbm(xAt(col) / MOUNTAINS.erodeScale, zAt(row) / MOUNTAINS.erodeScale, 9);
-				const shape = ridges[i] * (0.62 + 0.76 * eroded) + 0.14 * eroded;
-				// the ridges set the profile of the mountain. The range only reins it in at its very edge, so it meets the forest without a step
-				massif[i] = params.mountainHeight * smoothstep(0, 0.3, rises[i]) * shape;
-			}
-		}
-	}
-
-	/*
-		The skirt the foothills are cut from (see FOOTHILLS): at every point, how high foothills as tall as the mountains
-		behind them would stand there.
-			peak	how high the mountains near the point stand. An average would be dragged down by all the flat ground round
-					them, so it is the average of their heights to the 4th power, and the 4th root of that: the high ground counts
-					for nearly all of it (the 1.9 brings it up to about the height of the tops themselves)
-			share	how much mountain there is round the point: the plain average, next to that peak. Near enough 0.2 and up
-					against a range, falling to 0 going away from it
-	*/
-	const footings = new Float32Array(points * points);
-	{
-		const radius = Math.max(Math.round(FOOTHILLS.reach / cellSize), 1);
-		const average = boxBlur(massif, points, radius);
-		const fourth = boxBlur(massif.map((height) => height * height * height * height), points, radius);
-		for (let i = 0; i < points * points; i++) {
-			const peak = Math.sqrt(Math.sqrt(Math.max(fourth[i], 0)));
-			footings[i] = peak > 1 ? 1.9 * peak * smoothstep(0, 0.2, average[i] / peak) : 0;
-		}
-	}
-
-	const foothills = makeFoothills(foothillShape);
+	// where the ridges run (boulderGenerator.js stands boulders along them), from the relief
+	const ridgeCrests = crestsOf(params, relief, (x, z) => sample(x, z).rise);
 
 	for (let row = 0; row < points; row++) {
 		for (let col = 0; col < points; col++) {
 			const i = row * points + col;
-			heights[i] += foothills.raise(xAt(col), zAt(row), massif[i], footings[i], rooms[i]) - bedFall(params, beyondDrop[i]);
-			woodlands[i] = Math.max(woodlands[i], foothills.wooded * (1 - marshes[i]));
-			covers[i] = coverOf(mountains[i], woodlands[i], marshes[i]);
-			zones[i] = classifyZone(heights[i], covers[i], params, !sea[i]);
+			heights[i] -= bedFall(params, beyondDrop[i]);
+			// (and the rivers cut into it: THE RIVERS)
+			heights[i] = riverCut.cut(xAt(col), zAt(row), heights[i]);
+			covers[i] = riverCut.wet ? RIVERS.cover : coverOf(mountainCover(mountains[i], heights[i], params), woodlands[i], marshes[i]);
+			zones[i] = riverCut.wet && heights[i] >= 0 ? ZONE_RIVER : classifyZone(heights[i], covers[i], params, !sea[i]);
 			heights[i] += params.seaLevel;
 		}
 	}
 
 	// the mesh (see makeChunkBuilder)
-	const chunkGrids = { ridges, marshes, footings, beyondDrop, townStrength: null, townHeight: null, townRoads: null, townPads: null };
-	const { landAt, buildChunk } = makeChunkBuilder(params, chunkGrids, { sample, erodedFbm, foothillShape });
+	const chunkGrids = { relief, rivers: rivers.cut, marshes, beyondDrop, townStrength: null, townHeight: null, townRoads: null, townPads: null };
+	const { landAt, buildChunk } = makeChunkBuilder(params, chunkGrids, { sample, erodedFbm });
 
 	/*
 		THE TOWNS (townLayout.js): where they go, the hill each stands on, and their streets, houses and the rest. The hill goes into
 		the land's grids, and the land is worked out again over each town with its streets cut into it
 	*/
 	const aboveSea = heights.map((h) => h - params.seaLevel);
-	const siteGrids = { points, cells, cellSize, half, ox, oz, heights: aboveSea, covers, sea, toSea, keep: (x, z) => seamFade(x, z) >= 1 };
-	let townSites = findTownSites(siteGrids, params, MOUNTAIN_THRESHOLD);
+	const siteGrids = { points, cells, cellSize, half, ox, oz, heights: aboveSea, covers, mountains, sea, toSea, keep: (x, z) => seamFade(x, z) >= 1 };
+	// (on its shores; and where it has too few, by its rivers: THE RIVER TOWNS in townLayout.js)
+	const findSites = (given) => {
+		const shore = findTownSites(siteGrids, params, MOUNTAIN_THRESHOLD, given);
+		const river = findRiverSites(siteGrids, params, MOUNTAIN_THRESHOLD, rivers.draw, Math.round(params.townCount ?? 0) - shore.length, [...shore, ...given]);
+		return [...shore, ...river].map((site, k) => ({ ...site, number: k }));
+	};
+	let townSites = findSites([]);
 	let townGround = null, town = null;
 	const gridValue = (grid, x, z) => {
 		const gx = Math.min(Math.max((x - ox + half) / cellSize, 0), cells - 0.0001), gz = Math.min(Math.max((z - oz + half) / cellSize, 0), cells - 0.0001);
@@ -1142,7 +1237,7 @@ export function generateTerrain(params) {
 		const kept = townSites.filter((site, k) => town.towns[k].buildings.length >= 30);
 		if (kept.length == townSites.length || attempt == 3) break;
 		givenUp.push(...townSites.filter((site) => !kept.includes(site)));
-		const more = findTownSites(siteGrids, params, MOUNTAIN_THRESHOLD, givenUp).filter((s) => !kept.some((k) => Math.hypot(k.x - s.x, k.z - s.z) < 1));
+		const more = findSites(givenUp).filter((s) => !kept.some((k) => Math.hypot(k.x - s.x, k.z - s.z) < 1));
 		townSites = [...kept, ...more].slice(0, townSites.length).map((site, k) => ({ ...site, number: k, clusters: null }));
 	}
 	chunkGrids.townRoads = town.segments;
@@ -1373,7 +1468,7 @@ export function generateTerrain(params) {
 	// (all of it as plain data, so a land made off the main thread can be sent back: wrapLand makes the look ups again from it)
 	return wrapLand(params, {
 		cells, points, cellSize, heights, mountains, woodlands, covers, marshes, lakes, zones, normals, shoreDistances, ridgeCrests, chunkGrids,
-		towns: town.towns, townStrength: townGround.strength, strip, paths: footpaths?.paths ?? [], pathPlaces: footpaths?.places ?? null, fireTowers: footpaths?.towers ?? [],
+		riverLines: rivers.draw, towns: town.towns, townStrength: townGround.strength, strip, paths: footpaths?.paths ?? [], pathPlaces: footpaths?.places ?? null, fireTowers: footpaths?.towers ?? [],
 	}, { landAt, buildChunk, roadAt, pathsLaid });
 }
 
@@ -1390,6 +1485,7 @@ export function wrapLand(params, data, made = null) {
 	const builder = made?.landAt ? made : makeChunkBuilder(params, chunkGrids);
 	const { landAt, buildChunk } = builder;
 	const roadAt = made?.roadAt ?? makeRoadFlattener(chunkGrids.townRoads ?? []).nearest;
+	const rivers = makeRiverCutter(chunkGrids.rivers ?? new Float32Array(0));
 	const pathsLaid = made ? made.pathsLaid : chunkGrids.paths ? makePathFlattener(chunkGrids.paths) : null, pathClear = pathsLaid?.clear;
 	const gridValue = (grid, x, z) => {
 		const gx = Math.min(Math.max((x - ox + half) / cellSize, 0), cells - 0.0001), gz = Math.min(Math.max((z - oz + half) / cellSize, 0), cells - 0.0001);
@@ -1477,6 +1573,11 @@ export function wrapLand(params, data, made = null) {
 	const groundAt = (x, z) => params.seaLevel + landAt(x, z);
 
 	return { ...data, center: [ox, oz], tile: params.tile ?? null, half, heightAt, groundAt, zoneAt, normalAt, findSpawnPoints, buildChunk, roadAt,
+		// (how far into a mountain range, forested or bare: sample's mountain, the zones' MOUNTAIN_THRESHOLD the range proper)
+		rangeAt: (x, z) => gridValue(data.mountains, x, z),
+		// (the river at a place, THE RIVERS: null, or { surface: the world y of its water, depth: of the water there, distance: from its
+		//		middle, half: its half width }. In it where distance < half)
+		riverAt: (x, z) => { const r = rivers.at(x, z); return r && { surface: r.surface + params.seaLevel, depth: r.depth, distance: r.distance, half: r.half }; },
 		onPath: pathsLaid ? (x, z) => pathsLaid.on(x, z) : () => false,
 		// (kept clear of trees and boulders: the towns, the landing strip and its approaches, and the footpaths and their clearings)
 		townAt: strip || pathClear ? (x, z) => Math.max(townAt(x, z), strip ? stripClear(strip, x, z) : 0, pathClear ? pathClear(x, z) : 0) : townAt };

@@ -19,7 +19,7 @@
 */
 
 import { seededRandom, createNoise } from './terrainGenerator.js'
-import { FOREST_THRESHOLD, MOUNTAIN_THRESHOLD } from './terrainGenerator.js'
+import { FOREST_THRESHOLD, MOUNTAIN_THRESHOLD, mountainCover } from './terrainGenerator.js'
 import { TREE_SPECIES, heightFraction } from './treeGenerator.js'
 
 export const SPRUCE = 0, PINE = 1, OAK = 2, BIRCH = 3;
@@ -76,8 +76,8 @@ export function createSite(land, params) {
 
 		// the forest zone, with soft edges: scattered trees run out on to the grass below it and up on to the rock above it.
 		//		Round the foot of every mountain range, and wherever the grassland is wooded
-		//		(and neither carries on up the bare rock: both give out where the mountain proper starts)
-		const belowRock = 1 - smoothstep(MOUNTAIN_THRESHOLD - 0.02, MOUNTAIN_THRESHOLD + 0.12, mountain);
+		//		(and neither carries on up the bare rock: both give out where a range stands high enough to be bare, as the zones do)
+		const belowRock = 1 - smoothstep(MOUNTAIN_THRESHOLD - 0.02, MOUNTAIN_THRESHOLD + 0.12, mountainCover(mountain, height, params));
 		const aroundMountains = smoothstep(FOREST_THRESHOLD - 0.05, FOREST_THRESHOLD + 0.04, mountain) * belowRock;
 		const zone = Math.max(aroundMountains, smoothstep(0.3, 0.7, sample(land.woodlands, x, z, 1, 0)) * belowRock);
 		// slope: none on ground steeper than maxSlope, fewer as it gets near that
@@ -92,7 +92,11 @@ export function createSite(land, params) {
 		// and the ground round a lake is too wet for them
 		const dryGround = 1 - smoothstep(0.1, 0.4, sample(land.marshes, x, z, 1, 0));
 
-		out.density = zone * slope * shore * treeLine * open * dryGround * (1 - smoothstep(0.1, 0.55, town));
+		// and none in a river, nor right on its banks (terrainGenerator.js THE RIVERS)
+		const river = land.riverAt ? land.riverAt(x, z) : null;
+		const offRiver = river ? smoothstep(river.half + 0.5 * params.unitsPerMetre, river.half + 2.5 * params.unitsPerMetre, river.distance) : 1;
+
+		out.density = zone * slope * shore * treeLine * open * dryGround * offRiver * (1 - smoothstep(0.1, 0.55, town));
 		out.quality = clamp01(0.35 + 0.65 * treeLine * (0.6 + 0.4 * slope));
 		out.standAge = clamp01(0.5 + 0.75 * noise(x / 310 - 71.2, z / 310 + 12.7)[0]);
 		out.gap = noise(x / 48 + 27.9, z / 48 - 63.4)[0];
@@ -155,7 +159,7 @@ export function plantTownTrees(land, params, variants) {
 	const random = seededRandom(params.seed * 7919 + 4243);
 	const out = [];
 	for (const town of land.towns ?? []) {
-		for (const [x, z, kind] of town.trees) {
+		for (const [x, z, kind] of town.trees ?? []) {		// (a town the world tracker only knows of from far off has none: worldTracker.js)
 			if (land.onPath?.(x, z)) continue;		// (not on a footpath through the town's ground: footpaths.js)
 			const species = kind == 'birch' ? BIRCH : OAK;
 			const tree = makeTree(x, z, species, TREE_SPECIES[species].fullGrownAge * (1.1 + 0.6 * random()), { quality: 0.1 * random() }, land, params, random, variants);

@@ -127,8 +127,8 @@ const BUCKET = 32;
 
 //-------------------------------THE SITES-------------------------------
 /*
-	g: the land's grids as generateTerrain has them so far: { points, cells, cellSize, half, heights (over the sea), covers, sea,
-	toSea (cells), seaLevel }, and params (townCount, townSize, seed). Returns [{ x, z (the middle, on the shore), tx, tz (along it),
+	g: the land's grids as generateTerrain has them so far: { points, cells, cellSize, half, heights (over the sea), covers, mountains (how
+	far into a range: terrainGenerator.js sample), sea, toSea (cells), seaLevel }, and params (townCount, townSize, seed). Returns [{ x, z (the middle, on the shore), tx, tz (along it),
 	nx, nz (inland), length, depth, top (how high over the sea the town's hill ends), across (over water), waterU (where along the
 	shore the water is) }]. given: sites given up
 	already (none is found near one of them)
@@ -137,6 +137,8 @@ export function findTownSites(g, params, mountainThreshold, given = []) {
 	const count = Math.round(params.townCount ?? 0);
 	if (count <= 0) return [];
 	const { points, cells, cellSize, half, heights, covers, sea, toSea } = g;
+	// (a town is by the mountains: their ranges, forested or bare)
+	const ranges = g.mountains ?? covers;
 	// (a tile of the world's: its grid round its own middle; and none too near a seam with another land tile: world.js, terrainGenerator.js)
 	const ox = g.ox ?? 0, oz = g.oz ?? 0, keep = g.keep ?? (() => true);
 	const size = clamp(params.townSize ?? 1, 0.4, 2);
@@ -144,9 +146,9 @@ export function findTownSites(g, params, mountainThreshold, given = []) {
 	// (the shore and the land behind are judged over where the houses will be, SITE_FIT of the core: the rest is open grass)
 	const fitLength = length * SITE_FIT[0], fitDepth = depth * SITE_FIT[1];
 	const index = (x, z) => Math.round(clamp((z - oz + half) / cellSize, 0, cells)) * points + Math.round(clamp((x - ox + half) / cellSize, 0, cells));
-	// how far every point is from bare mountain, in cells (as distanceTo in generateTerrain)
+	// how far every point is from the mountains, in cells (as distanceTo in generateTerrain)
 	const toMountain = new Float32Array(points * points);
-	for (let i = 0; i < toMountain.length; i++) toMountain[i] = covers[i] >= mountainThreshold ? 0 : 1e9;
+	for (let i = 0; i < toMountain.length; i++) toMountain[i] = ranges[i] >= mountainThreshold ? 0 : 1e9;
 	const steps = [[-1, 0], [0, -1], [-1, -1], [1, -1]];
 	for (let sweep = 0; sweep < 2; sweep++) {
 		const sign = sweep == 0 ? 1 : -1;
@@ -183,13 +185,13 @@ export function findTownSites(g, params, mountainThreshold, given = []) {
 			if (nl < 1e-3) continue;
 			nx /= nl; nz /= nl;
 			const tx = -nz, tz = nx;
-			// land all the way back, and none of it lake, sea or bare mountain
+			// land all the way back, and none of it lake, sea or mountain
 			let good = 0, tried = 0;
 			for (let s = 20; s <= fitDepth; s += 16) {
 				const j = index(x + nx * s, z + nz * s);
 				tried++;
 				// (and further from the sea the further in: not a strip of land with the sea behind it)
-				if (!sea[j] && heights[j] > 0 && covers[j] > -0.1 && covers[j] < mountainThreshold + 0.05 && toSea[j] * cellSize > s * 0.45) good++;
+				if (!sea[j] && heights[j] > 0 && covers[j] > -0.1 && ranges[j] < mountainThreshold + 0.05 && toSea[j] * cellSize > s * 0.45) good++;
 			}
 			if (good < 0.92 * tried) continue;
 			// and the coast running on more or less straight either way: a little way in from it, still near the sea. Or across water
@@ -218,6 +220,89 @@ export function findTownSites(g, params, mountainThreshold, given = []) {
 		sites.push({ x: c.x, z: c.z, tx: c.tx, tz: c.tz, nx: c.nx, nz: c.nz, length, depth, top: clamp(c.back + 35, 90, 160) * Math.sqrt(size), number: sites.length, across: c.across, waterU: c.waterU });
 	}
 	return sites;
+}
+
+
+//-------------------------------THE RIVER TOWNS-------------------------------
+/*
+	A RIVER TOWN (terrainGenerator.js THE RIVERS): a town where a tile has too few shores for its towns, on the bank of one of its bigger
+	rivers. Laid out as a seaside town is, with the river for its sea: its streets along the bank, its quay at the water, its hill up
+	from there. The river's water is that town's sea level (river.level, over the sea), and how far a place is from it is how far from
+	the river on the town's own side (riverSideDistance: across it, or in it, is the water). No pier and no dock: nothing sails up a river.
+	A stretch is a site where the river is wide enough (RIVER_TOWN.half, half its width), well over the sea (RIVER_TOWN.above: down by
+	the sea a seaside town has the shore), and one side of it is open ground back from the water as far as the town goes: land, not
+	lake, not the mountains proper, and not standing over the water by more than RIVER_TOWN.top. The flattest of those that are, and
+	the biggest rivers, first. Each town RIVER_TOWN.size of a seaside town's size, and up in the valleys of the ranges too (RIVER_TOWN.ranges)
+*/
+const RIVER_TOWN = { half: 5, above: 6, top: 150, size: 0.65, stride: 3, ranges: 0.3, open: 0.85 };	// (ranges: how far into the mountains past a seaside town's limit a valley's may be; open: how much of the ground back from it must be)
+export function findRiverSites(g, params, mountainThreshold, lines, count, avoid = []) {
+	if (count <= 0 || !lines || lines.points.length == 0) return [];
+	const { points, cells, cellSize, half, heights, covers, sea } = g;
+	const ox = g.ox ?? 0, oz = g.oz ?? 0, keep = g.keep ?? (() => true), ranges = g.mountains ?? covers;
+	const size = clamp(params.townSize ?? 1, 0.4, 2);
+	const length = TOWN_LENGTH * size * RIVER_TOWN.size, depth = TOWN_DEPTH * Math.sqrt(size) * RIVER_TOWN.size;
+	const index = (x, z) => Math.round(clamp((z - oz + half) / cellSize, 0, cells)) * points + Math.round(clamp((x - ox + half) / cellSize, 0, cells));
+	const P = lines.points, F = 6, starts = lines.starts;
+	const candidates = [];
+	for (let line = 0; line < starts.length - 1; line++) {
+		for (let k = starts[line] + 2; k < starts[line + 1] - 2; k += RIVER_TOWN.stride) {
+			const x = P[k * F], z = P[k * F + 1], level = P[k * F + 2], w = P[k * F + 3];
+			if (w < RIVER_TOWN.half || level < RIVER_TOWN.above) continue;
+			if (Math.hypot(x - ox, z - oz - 150) < HOME_CLEAR + length && ox == 0 && oz == 0) continue;
+			if (!keep(x - length, z) || !keep(x + length, z) || !keep(x, z - length) || !keep(x, z + length)) continue;
+			let tx = P[(k + 2) * F] - P[(k - 2) * F], tz = P[(k + 2) * F + 1] - P[(k - 2) * F + 1];
+			const tl = Math.hypot(tx, tz) || 1;
+			tx /= tl; tz /= tl;
+			for (const side of [1, -1]) {
+				// (inland: away from the water on this side; along it the way a seaside town's shore runs, the same hand)
+				const nx = -tz * side, nz = tx * side;
+				let good = 0, tried = 0, rise = 0;
+				for (let s = w + 20; s <= w + depth * 0.8; s += 16) {
+					for (const u of [-0.6 * length, 0, 0.6 * length]) {
+						const j = index(x + nx * s - nz * u, z + nz * s + nx * u);
+						tried++;
+						const over = heights[j] - level;
+						if (!sea[j] && heights[j] > 0 && covers[j] > -0.1 && ranges[j] < mountainThreshold + RIVER_TOWN.ranges && over > -1 && over < RIVER_TOWN.top) good++;
+					}
+				}
+				if (good < RIVER_TOWN.open * tried) continue;
+				const back = heights[index(x + nx * (w + depth * 0.8), z + nz * (w + depth * 0.8))] - level;
+				rise = Math.max(back, 0);
+				candidates.push({ score: w / 12 - rise / 120, x: x + nx * w, z: z + nz * w, tx: -nz, tz: nx, nx, nz, back: rise, level, line, k, side });
+			}
+		}
+	}
+	candidates.sort((a, b) => b.score - a.score);
+	const sites = [];
+	for (const c of candidates) {
+		if (sites.length >= count) break;
+		if ([...sites, ...avoid].some((s) => Math.hypot(s.x - c.x, s.z - c.z) < TOWN_APART)) continue;
+		// (its river: the stretch of the line round it, for how far a place is from the water: riverSideDistance)
+		const reach = length + depth + 120, near = [];
+		for (let k = starts[c.line]; k < starts[c.line + 1]; k++) if (Math.hypot(P[k * F] - c.x, P[k * F + 1] - c.z) < reach) for (let q = 0; q < F; q++) near.push(P[k * F + q]);
+		sites.push({ x: c.x, z: c.z, tx: c.tx, tz: c.tz, nx: c.nx, nz: c.nz, length, depth, top: clamp(c.back + 35, 60, 140) * Math.sqrt(size), number: sites.length,
+			across: false, waterU: 0, river: { level: c.level, side: c.side, points: new Float32Array(near) } });
+	}
+	return sites;
+}
+// how far (x, z) is from a river town's river (site.river), on the town's own side: 0 in the water, and over on the other side of it
+const riverDistances = new WeakMap();
+export function riverSideDistance(river) {
+	if (riverDistances.has(river)) return riverDistances.get(river);
+	const P = river.points, F = 6, n = P.length / F;
+	const fn = (x, z) => {
+		let best = Infinity, left = 0, w = 0;
+		for (let k = 0; k < n - 1; k++) {
+			const a = k * F, b = a + F, ex = P[b] - P[a], ez = P[b + 1] - P[a + 1], ll = ex * ex + ez * ez;
+			const t = ll > 0 ? clamp(((x - P[a]) * ex + (z - P[a + 1]) * ez) / ll, 0, 1) : 0;
+			const d = Math.hypot(x - P[a] - ex * t, z - P[a + 1] - ez * t);
+			if (d < best) { best = d; left = ex * (z - P[a + 1]) - ez * (x - P[a]); w = P[a + 3] + (P[b + 3] - P[a + 3]) * t; }
+		}
+		if (best == Infinity || Math.sign(left) != river.side) return 0;
+		return Math.max(best - w, 0);
+	};
+	riverDistances.set(river, fn);
+	return fn;
 }
 
 //-------------------------------THE HILL-------------------------------
@@ -293,10 +378,11 @@ export function planTownGround(g, sites, seed) {
 				const dx = x - site.x, dz = z - site.z;
 				const u = dx * site.tx + dz * site.tz, across = dx * site.nx + dz * site.nz;
 				if (across < -60) continue;
-				const v = toSea[i] * cellSize;
+				const v = site.river ? riverSideDistance(site.river)(x, z) : toSea[i] * cellSize;
+				if (site.river && v <= 0) continue;		// (a river town: not in its river, nor over on the other side of it)
 				const ragged = 35 * noise(x / 160, z / 160)[0];
 				// (terraced where the houses are, a plain grassy slope between the clusters)
-				const hill = hillAt(site, v, smoothstep(0.05, 0.4, clusterOf(site, u, v, x, z))) + 2.5 * noise(x / 70 + 9, z / 70 - 3)[0] * smoothstep(QUAY_DEPTH, QUAY_DEPTH + 30, v);
+				const hill = (site.river ? site.river.level : 0) + hillAt(site, v, smoothstep(0.05, 0.4, clusterOf(site, u, v, x, z))) + 2.5 * noise(x / 70 + 9, z / 70 - 3)[0] * smoothstep(QUAY_DEPTH, QUAY_DEPTH + 30, v);
 				// how far out of the core, and how wide the fade has to be there to come down to the land gently (or up to it, into a
 				//		mountain the core was cut into). Out of it as well past its depth inland of the site's own shore (across): further
 				//		along the coast another stretch of water (a bay) is near, but that is not this town's
@@ -419,8 +505,10 @@ export function makeRoadFlattener(segments) {
 */
 export function layoutTowns(sites, ground, strengthAt, distanceToSea, seaLevel, seed) {
 	const segments = [];
-	// (every town that can have a dock has one: DOCK)
-	const towns = sites.map((site) => layoutTown(site, ground, strengthAt, distanceToSea, seaLevel, seededRandom(seed * 977 + site.number * 131 + 7), segments, true));
+	// (every town that can have a dock has one: DOCK. A river town's water is its river: THE RIVER TOWNS)
+	const towns = sites.map((site) => site.river
+		? layoutTown(site, ground, strengthAt, riverSideDistance(site.river), seaLevel + site.river.level, seededRandom(seed * 977 + site.number * 131 + 7), segments, false)
+		: layoutTown(site, ground, strengthAt, distanceToSea, seaLevel, seededRandom(seed * 977 + site.number * 131 + 7), segments, true));
 	return { towns, segments: new Float32Array(segments) };
 }
 
@@ -587,7 +675,7 @@ function layoutTown(site, ground, strengthAt, distanceToSea, seaLevel, random, s
 		const f = clamp(((x - a[0]) * dx + (z - a[2]) * dz) / (dx * dx + dz * dz), 0, 1);
 		return Math.hypot(x - a[0] - dx * f, z - a[2] - dz * f) < br.width / 2 + room;
 	});
-	if (promenade) {
+	if (promenade && !site.river) {
 		const first = random() < 0.5 ? 0.25 : 0.72;
 		for (const f of [first, 1 - first, 0.15, 0.85, 0.06, 0.94, 0.5]) {
 			const p = promenade.points[Math.floor((promenade.points.length - 1) * f)];

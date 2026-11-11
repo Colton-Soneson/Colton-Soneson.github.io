@@ -141,16 +141,16 @@ export function placeBoulders(land, params) {
 	const pointAt = (x, z) => Math.round(Math.min(Math.max((z + half) / land.cellSize, 0), land.cells)) * land.points + Math.round(Math.min(Math.max((x + half) / land.cellSize, 0), land.cells));
 
 	//---at the foot of the mountains
-	// Spots are tried at random all over the land and kept where the ground is right: around where the forest gives way to
-	//		bare mountain, and not on a slope a boulder would have rolled on down. Most of the foot is left empty though:
+	// Spots are tried at random all over the land and kept where the ground is right: around where a range proper starts (how far
+	//		into one: land.mountains. Its forest goes on up it, as the zones do), and not on a slope a boulder would have rolled on down. Most of the foot is left empty though:
 	//		boulders come in fields, below the gullies and faces that feed them, so a spot also has to be in one of the patches a slow noise picks out
 	const fields = (x, z) => Math.sin(x / 190 + 1.3) * Math.sin(z / 230 - 0.7) + 0.6 * Math.sin((x + z) / 97 + 2.1) * Math.sin((x - z) / 121);
 	const wanted = Math.round(3360 * params.amount);
 	for (let attempt = 0, found = 0; attempt < wanted * 600 && found < wanted; attempt++) {
 		const x = (random() * 2 - 1) * half, z = (random() * 2 - 1) * half;
 		const i = pointAt(x, z);
-		const cover = land.covers[i];
-		if (cover < MOUNTAIN_THRESHOLD - 0.1 || cover > MOUNTAIN_THRESHOLD + 0.12) continue;
+		const range = (land.mountains ?? land.covers)[i];
+		if (range < MOUNTAIN_THRESHOLD - 0.1 || range > MOUNTAIN_THRESHOLD + 0.12) continue;
 		if (land.normals[i * 3 + 1] < 0.62 || land.heights[i] < params.seaLevel + 6) continue;
 		if (fields(x, z) < 0.15) continue;
 

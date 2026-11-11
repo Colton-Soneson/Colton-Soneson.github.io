@@ -112,13 +112,24 @@ ballistics.onPass((ax, ay, az, bx, by, bz, bullet) => {
 });
 let calmFor = 0;
 
-// E at a lake's edge: a drink
+// E at a lake's edge, or a river's (terrainGenerator.js THE RIVERS): a drink
+// (the river whose water is at (x, z), near enough to the height y to reach down to)
+function riverWater(land, x, z, y, m) {
+	const river = settings.enableRivers === false ? null : land.riverAt?.(x, z);
+	return river && river.distance < river.half && Math.abs(y - river.surface) < 1.5 * m ? river : null;
+}
 hunting.onUse((place) => {
 	if (!on() || place.on != 'land') return false;
 	const land = terrain.land, m = settings.forestUnitsPerMetre;
 	const look = [Math.sin(settings.camYaw), -Math.cos(settings.camYaw)];
 	for (const ahead of [0.6, 1.2, 2]) {
 		const x = place.x + look[0] * ahead * m, z = place.z + look[1] * ahead * m;
+		if (riverWater(land, x, z, place.y, m)) {
+			status.thirst = Math.max(status.thirst - DRINK, 0);
+			survivalStats.drinks++;
+			help.toast('A drink from the river');
+			return true;
+		}
 		if (land.heightAt(x, z) < settings.waterWorldPosY + 0.05 * m && Math.abs(place.y - settings.waterWorldPosY) < 1.5 * m) {
 			if (land.zoneAt(x, z) != terrain.ZONE_LAKE) { help.toast('Salt water: not to drink'); return true; }
 			if (ice.iceAt(x, z) !== null) { help.toast('Frozen over: melt snow in a rain collector'); return true; }
@@ -134,6 +145,8 @@ hunting.addPrompt(() => {
 	if (!on() || hunting.hunterPlace().on != 'land') return null;
 	const p = hunting.hunterPlace(), land = terrain.land, m = settings.forestUnitsPerMetre;
 	const x = p.x + Math.sin(settings.camYaw) * 1.2 * m, z = p.z - Math.cos(settings.camYaw) * 1.2 * m;
+	// (a river's bank stands over its water: a little further out too)
+	if (settings.camPitch < -0.25 && [1.2, 2].some((ahead) => riverWater(land, p.x + Math.sin(settings.camYaw) * ahead * m, p.z - Math.cos(settings.camYaw) * ahead * m, p.y, m))) return { name: 'River water', keys: 'E drink' };
 	return land.heightAt(x, z) < settings.waterWorldPosY && land.zoneAt(x, z) == terrain.ZONE_LAKE && settings.camPitch < -0.25 ? { name: 'Lake water', keys: 'E drink' } : null;
 });
 

@@ -35,6 +35,7 @@ import * as atmosphere from './atmosphere.js'
 import * as terrain from './terrain.js'
 import * as forest from './forest.js'
 import * as boulders from './boulders.js'
+import * as rivers from './rivers.js'
 import * as jobs from './jobs.js'
 import * as rates from './rates.js'
 import * as wind from './wind.js'
@@ -685,6 +686,8 @@ export function updateRotatingCubePass() {
 	{
 		profiler.section('Water', () => waterPass(depthTexture));
 	}
+	//the rivers' water, after the sea: it reads the frame as it was before the water too (rivers.js)
+	profiler.section('Rivers', () => rivers.riverPass(depthTexture));
 
 	//(once the water has read the height map: what stands on the land goes in, for what the sky can see)
 	profiler.section('Sky Cover', () => skyCover.coverPass());

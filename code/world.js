@@ -8,7 +8,7 @@
 					where a land tile meets one that is not land), each continent kept from sharing a side with another (they may meet at
 					a corner, a strait between them), the home island with sea on all four sides (a continent may meet it at a corner), and all of them as near home as that lets them be: each starts on the free tile nearest home (a little
 					at random among the nearest, NEAR), and grows the way home is. Each land tile has
-					its own towns: 0 to 2 (TOWNS: how likely each), the home tile its settings.terrainTownCount
+					its own towns: 0 to 2 (TOWNS: how likely each on the coast, TOWNS_INLAND inland, where they are by its rivers), the home tile its settings.terrainTownCount
 		SEA			SEA tiles: open sea with a sea bed under it (the shelf and the drop-off of the land beside it, and the deep bed past
 					that), round the continents and in the straits between them, the nearest first
 		BEYOND		everything else: the endless sea with no bed under it, as there has always been round the island
@@ -17,10 +17,11 @@
 */
 import { seededRandom } from './terrainGenerator.js'
 
-export const GRID = 12;							// tiles along a side of the world: tx and tz from -GRID / 2 to GRID / 2 - 1
-export const LAND = 40, SEA = 30;
-export const CONTINENTS = [4, 8];				// how many continents (the home island one of them)
-const TOWNS = [0.2, 0.4, 0.4];					// of a land tile (not home): no town, one, two
+export const GRID = 14;							// tiles along a side of the world: tx and tz from -GRID / 2 to GRID / 2 - 1
+export const LAND = 40, SEA = 60;
+export const CONTINENTS = [3, 3];				// how many continents (the home island one of them)
+const TOWNS = [0.1, 0.4, 0.5];					// of a land tile on the coast (not home): no town, one, two
+const TOWNS_INLAND = [0.15, 0.55, 0.3];			// and of one inland: its towns are by its rivers (townLayout.js: THE RIVER TOWNS), if it has a big enough one
 const NEAR = 1.5;								// tiles: how much at random a continent's first tile is, among those nearest home
 const INWARD = 0.8;								// how much a continent grows towards home, against the rest (see layoutWorld)
 
@@ -97,7 +98,9 @@ export function layoutWorld(seed, homeTowns = 2) {
 	}
 	for (const c of continents) for (const k of c.tiles) {
 		const [tx, tz] = k.split(',').map(Number);
-		const roll = random(), towns = k == HOME ? homeTowns : roll < TOWNS[0] ? 0 : roll < TOWNS[0] + TOWNS[1] ? 1 : 2;
+		// (on the coast: a side of it on a tile not of its continent)
+		const coast = [[tx + 1, tz], [tx - 1, tz], [tx, tz + 1], [tx, tz - 1]].some(([x, z]) => owner.get(keyOf(x, z)) !== c.id);
+		const roll = random(), odds = coast ? TOWNS : TOWNS_INLAND, towns = k == HOME ? homeTowns : roll < odds[0] ? 0 : roll < odds[0] + odds[1] ? 1 : 2;
 		tiles.set(k, { key: k, tx, tz, kind: 'land', continent: c.id, towns });
 	}
 	// THE SEA tiles: next to the land, those beside the most of it (and the straits between two continents) first, the home island's all round

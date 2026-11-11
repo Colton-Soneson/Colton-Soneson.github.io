@@ -99,10 +99,10 @@ export const settings = {
 	terrainHillHeight: 1.0,				//how much the grassland rolls. 0 = flat, 1 = hills a few dozen units high
 	terrainWoodland: 0.5,				//how much of the grassland is wooded, 0 to 1. The forest round the mountains is there whatever this is
 	terrainLakes: 0.5,					//how much of the low ground is hollowed out into lakes and ponds, 0 to 1
-	terrainMountainHeight: 1650.0,		//the most a peak can stand above the land it is on. A range is only as high as it is wide though (see MOUNTAINS in terrainGenerator.js), so most stop short of this
+	terrainMountainHeight: 1400.0,		//how high the mountain ranges are pushed up (world units, 2 to the metre), and how steep their slopes stand, against how fast their rivers wear them down (terrainGenerator.js: THE SHAPE OF THE LAND). A range is only as high as its land is wide lets it: at this, about 450 m on the home island (the Oregon Coast Range's ridges), 1500 to 2000 m in the heart of a big continent (THE HEART OF A CONTINENT)
 	terrainBeachHeight: 3.5,			//land lower than this above sea level is beach
 	terrainBankHeight: 1.5,				//the step up from the top of the sand to the grass behind it. 0 = no step
-	terrainSnowLine: 950.0,				//mountain higher than this above sea level is snow
+	terrainSnowLine: 2000.0,			//mountain higher than this above sea level is snow (and the bare rock, above the trees, starts a little under it: 0.7 of it). 1000 m: the big continents' ranges go up into it, the home island's do not
 	terrainRockVeins: 1.0,				//how strongly the pale marble veins show on bare rock. 0 = plain stone
 	terrainGroundDetail: 1.0,			//how strongly the sand of the beaches, the turf of the grassland and the litter under the trees show. 0 = flat color
 	terrainDepthBias: 1.0,				//how much of the relief of all three goes in to the frame's depth, where the screen space shadows and ambient occlusion find it. 0 = none
@@ -226,6 +226,7 @@ export const settings = {
 	windGustSpeed: 2.0,					//how fast the gusts cross the ground, in wind speeds. 1 = at the speed of the wind
 	//--------------------WATER--------------------
 	enableWater: true,
+	enableRivers: true,					//the rivers' water (rivers.js). Their channels are in the land either way (terrainGenerator.js THE RIVERS)
 	windDirection: vec2.create(1.0,1.0),
 	waterWaveSteepness: 0.1,	//0 - 1
 	waterWaveLength: 10.0,

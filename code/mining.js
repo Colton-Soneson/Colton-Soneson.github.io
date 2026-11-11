@@ -1,6 +1,7 @@
 import { settings } from './settings.js';
 
 import * as terrain from './terrain.js'
+import { MOUNTAIN_THRESHOLD } from './terrainGenerator.js'
 import * as hunting from './hunting.js'
 import * as help from './controlsHelp.js'
 import * as props from './props.js'
@@ -16,7 +17,7 @@ import * as loot from './loot.js'
 
 /*
 	WHAT IS TAKEN OUT OF THE LAND in the Survival mode, the same places on every machine (drawn from the land):
-		VEINS		of iron ore, on the sides of the mountains, low down in the alpine country (VEIN_BAND over where the mountain zone starts), on ground steep enough to be a mountainside. Three sizes (SIZES, workMeshes.js).
+		VEINS		of iron ore, on the sides of the mountains, low down in the ranges (VEIN_BAND over where the range proper starts: their forest, and their bare rock), on ground steep enough to be a mountainside. Three sizes (SIZES, workMeshes.js).
 					A pickaxe's blows (HITS) break out a lump of iron ore, until it has no more in it (each size its own): gone, it comes back VEIN_BACK days on
 		BOULDERS	(boulders.js) a pickaxe's blows (HITS) break out a stone (ROCK), and now and then some throwing stones. A boulder is not used up
 		MUSHROOMS	on the forest floor, in clumps: E picks one. It comes back MUSHROOM_BACK days on
@@ -57,8 +58,9 @@ terrain.onTiles((added, removed) => {
 });
 function buildOf(land, tile) {
 	const m = metre(), name = (k) => tile == 'land' || tile == '0,0' ? k : tile + ':' + k;
-	// (the lowest of the mountain zone: how high the mountains start, by what is found of them)
-	const spots = land.findSpawnPoints(terrain.ZONE_MOUNTAIN, VEINS * 14, { seed: 7741, minSpacing: 30, maxSlope: 1.5 });
+	// (the lowest of the ranges: how high the mountains start, by what is found of them. The bare mountain, and the forest up in a range)
+	const spots = land.findSpawnPoints(terrain.ZONE_MOUNTAIN, VEINS * 14, { seed: 7741, minSpacing: 30, maxSlope: 1.5 })
+		.concat(land.findSpawnPoints(terrain.ZONE_FOREST, VEINS * 14, { seed: 7742, minSpacing: 30, maxSlope: 1.5 }).filter((s) => land.rangeAt(s.x, s.z) >= MOUNTAIN_THRESHOLD));
 	const heights = spots.map((s) => land.heightAt(s.x, s.z)).sort((a, b) => a - b), foot = heights[Math.floor(heights.length * 0.08)] ?? 0;
 	const low = spots.filter((s) => {
 		const y = land.heightAt(s.x, s.z);

@@ -434,8 +434,8 @@ const terrainFolder = gui.addFolder('Terrain');	//changing any of these but Enab
 terrainFolder.add(imguiParams, 'enableTerrain').name('Enable');
 terrainFolder.add(imguiParams, 'terrainSeed', 0, 999, 1).name('Seed');
 terrainFolder.add(imguiParams, 'terrainLandScale', 1000, 8000, 50).name('Land Mass Size');
-terrainFolder.add(imguiParams, 'terrainMountainHeight', 0, 2500, 10).name('Mountain Height');
-terrainFolder.add(imguiParams, 'terrainSnowLine', 50, 2500, 10).name('Snow Line');
+terrainFolder.add(imguiParams, 'terrainMountainHeight', 0, 4000, 10).name('Mountain Height');
+terrainFolder.add(imguiParams, 'terrainSnowLine', 50, 4000, 10).name('Snow Line');
 terrainFolder.add(imguiParams, 'terrainBeachHeight', 1, 15, 0.5).name('Beach Height');
 terrainFolder.add(imguiParams, 'terrainBankHeight', 0, 5, 0.1).name('Beach Bank Height');
 terrainFolder.add(imguiParams, 'terrainSeaFloorDepth', 40, 500, 5).name('Drop-off Depth');

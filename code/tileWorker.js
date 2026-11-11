@@ -16,7 +16,7 @@ import { groundWork } from './townGround.js'
 		{ tile, error }			it could not be made
 */
 const TREE_RECORD = 12;
-const LOOK_UPS = new Set(['heightAt', 'groundAt', 'zoneAt', 'normalAt', 'findSpawnPoints', 'buildChunk', 'roadAt', 'onPath', 'townAt']);
+const LOOK_UPS = new Set(['heightAt', 'groundAt', 'zoneAt', 'normalAt', 'findSpawnPoints', 'buildChunk', 'roadAt', 'onPath', 'townAt', 'rangeAt', 'riverAt']);
 // (what a land is made of, without the odd function left in it from making it: a town's site keeps the noise its streets were laid out with)
 function plain(v, seen = new WeakMap()) {
 	if (typeof v == 'function') return undefined;

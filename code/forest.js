@@ -31,7 +31,7 @@ import * as terrain from './terrain.js'
 import * as horizon from './horizon.js'
 import * as scene from './scene.js'
 import * as wind from './wind.js'
-import { seasonNow } from './weather.js'
+import { seasonNow, weatherNow } from './weather.js'
 import { filteredSampler, filteringLevel } from './textureFiltering.js'
 
 //the trees fade into the horizon color, read from the sky view LUT (same as the water, the land and the grass)
@@ -1195,6 +1195,9 @@ function forestUniformValues(bake) {
 	//and where the top down height map looks from (THE ROOTS), and where the floor map does (THE FLOOR)
 	bufferResult.push(...transformations.getTopDownViewProjectionMat());
 	bufferResult.push(...floorCamera().matrix);
+
+	//snow on the foliage (vf_forest.js snowyLeaf): the snow line, the sea, and the snow that has fallen. Never in a billboard's picture
+	bufferResult.push(settings.terrainSnowLine, settings.waterWorldPosY, bake ? 0 : weatherNow.snowCover, bake ? 0 : 1);
 
 	return new Float32Array(bufferResult);
 }

@@ -65,6 +65,7 @@ const structs =
 		windBlow : vec4f,
 		ground : mat4x4f,			// where the top down height map looks from (its view and projection: THE ROOTS)
 		floor : mat4x4f,			// and where the floor map does (forest.js: THE FLOOR)
+		snow : vec4f,				// x: the snow line (over the sea), y: the sea's world y, z: how much snow has fallen and lies (weather.js), w: 1.0 drawn, 0.0 baked (snowyLeaf)
 	}
 	@group(0) @binding(0) var<uniform> UBO: ForestUniforms;
 
@@ -434,6 +435,21 @@ const common =
 		var color = mix(vec3f(0.88, 0.64, 0.1), vec3f(0.86, 0.38, 0.06), smoothstep(0.2, 0.6, hue));
 		color = mix(color, vec3f(0.62, 0.13, 0.07), smoothstep(0.7, 0.95, hue));
 		return mix(leaf, color * dot(leaf, vec3f(1.0, 1.0, 1.0)) * 1.25, turned);
+	}
+
+	// Snow lying on the foliage, as on the ground: on a tree standing from a little under the snow line up all the year round (the land's:
+	//		terrainGenerator.js), and wherever it has fallen (weather.js). The tree's, from where it stands (treeSnow, footY its foot's world y),
+	//		and on its foliage the more the more it faces up (snowyLeaf). Not in a billboard's picture: put on it as it is drawn
+	const SNOW_ON_LEAVES: vec3f = vec3f(0.9, 0.93, 0.97);
+	fn treeSnow(footY: f32) -> f32 {
+		if (UBO.snow.w < 0.5) {
+			return 0.0;
+		}
+		let over = (footY - UBO.snow.y) / max(UBO.snow.x, 1.0);
+		return max(smoothstep(0.78, 0.98, over), 0.85 * smoothstep(0.0, 0.6, UBO.snow.z));
+	}
+	fn snowyLeaf(albedo: vec3f, N: vec3f, snow: f32) -> vec3f {
+		return mix(albedo, SNOW_ON_LEAVES, snow * smoothstep(-0.35, 0.4, N.y));
 	}
 
 	// foliage lit. N: which way it faces
@@ -858,6 +874,7 @@ export const vf_forestFoliage = structs + common +
 		@location(7) @interpolate(flat) dissolve: f32,		// see dissolveAmount
 		@location(8) @interpolate(flat) treeRandom: f32,
 		@location(9) @interpolate(flat) dry: f32,			// see treeDryness
+		@location(10) @interpolate(flat) snow: f32,			// how much snow lies on the tree: treeSnow
 	};
 
 	@vertex
@@ -946,6 +963,7 @@ export const vf_forestFoliage = structs + common +
 		output.dissolve = dissolveAmount(tree, detail);
 		output.dry = treeDryness(tree);
 		output.treeRandom = tree.more.y;
+		output.snow = treeSnow(tree.position.y);
 		return output;
 	}
 
@@ -1018,6 +1036,7 @@ export const vf_forestFoliage = structs + common +
 		@location(7) @interpolate(flat) dissolve: f32,		// see dissolveAmount
 		@location(8) @interpolate(flat) treeRandom: f32,
 		@location(9) @interpolate(flat) dry: f32,			// see treeDryness
+		@location(10) @interpolate(flat) snow: f32,			// how much snow lies on the tree: treeSnow
 	};
 
 	// rgb: the color of the foliage at this pixel, before the tree's own tint. a: 0.0 in the gaps between the leaves
@@ -1059,7 +1078,11 @@ export const vf_forestFoliage = structs + common +
 		let brown = archetype.dry.rgb * (dot(leaf.rgb, vec3f(1.0, 1.0, 1.0)) / dot(archetype.leaf.rgb, vec3f(1.0, 1.0, 1.0)));
 		let living = autumnLeaf(leaf.rgb * treeTint(input.treeRandom), input.treeRandom, select(0.0, UBO.world.w, archetype.growth.w > 1.5));
 		let albedo = mix(living, brown, smoothstep(0.0, 0.5, input.dry * (0.6 + 0.8 * input.look.y)));
-		return vec4f(litLeaf(albedo, foliageNormal(input), input.light, input.worldPos), 1.0);
+		let N = foliageNormal(input);
+		// (snow lies along the tops of the branches, all the way down the tree: on a card the flatter it lies, either face of it, and
+		//		on the crown where it faces up)
+		let lying = max(abs(normalize(input.cardNormal).y), saturate(normalize(input.crownNormal).y));
+		return vec4f(litLeaf(snowyLeaf(albedo, vec3f(0.0, lying * 2.0 - 1.0, 0.0), input.snow), N, input.light, input.worldPos), 1.0);
 	}
 
 	// for a billboard picture: what it is, not how it is lit
@@ -1261,7 +1284,7 @@ export const vf_forestBillboard = structs + common +
 		let leafColor = mix(autumnLeaf(color.rgb * treeTint(input.look.y), input.look.y, max(input.dying.z, 0.0)), brown, smoothstep(0.0, 0.5, input.dying.x * (0.6 + 0.8 * clump)));
 
 		let wood = lit(mix(color.rgb, grey, 0.7 * input.dying.x), saturate(dot(N, L)), light, worldPos);
-		let leafy = litLeaf(leafColor, N, light, worldPos);
+		let leafy = litLeaf(snowyLeaf(leafColor, N, treeSnow(input.foot.y)), N, light, worldPos);
 		return vec4f(mix(wood, leafy, leaf), 1.0);
 	}
 `;

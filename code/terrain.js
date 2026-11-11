@@ -140,8 +140,11 @@ device.queue.writeBuffer(chunkIndexBuffer, 0, chunkIndexData);
 //		how many are kept at the most (more the further it reaches)
 const tileLoad = () => Math.max(settings.worldViewDistance ?? 2500, 500) * settings.forestUnitsPerMetre;
 const TILE_DROP = 4000;
-const FAR_LAND = 22000, FAR_CELLS = 256;		// THE LAND FAR OFF: world units from a tile's edge it is drawn within; its data grid's cells a side
+const FAR_LAND = 45000, FAR_CELLS = 256;		// THE LAND FAR OFF: world units from a tile's edge it is drawn within; its data grid's cells a side
 const farTiles = new Map();					// key -> { key, chunkKey ('far:' and its key), land, params, rooted }
+// (and the ones put by while their own tile is in: back the moment it goes, so the land there is never gone while its far ground is made
+//		again. The chunk worker keeps their grids: dropFar)
+const farKept = new Map();
 export const farTilesLoaded = () => [...farTiles.keys()];
 const tilesKept = () => Math.max(6, Math.ceil((2 * tileLoad() / settings.terrainWorldSize + 1) ** 2) + 2);
 const WINDOW_MOVE = 2048;					// world units
@@ -573,7 +576,7 @@ function startTileWorker() {
 			if (String(tile).startsWith('far:')) {
 				const key = tile.slice(4);
 				if (tileAsked == key) tileAsked = null;
-				if (error || !world || params.seed !== world.seed || farTiles.has(key) || tiles.has(key)) return;
+				if (error || !world || params.seed !== world.seed || farTiles.has(key) || farKept.has(key) || tiles.has(key)) return;
 				const f = { key, chunkKey: tile, land: wrapLand(params, data), params, rooted: false };
 				farTiles.set(key, f);
 				askFarRoot(f);
@@ -631,10 +634,11 @@ function askFarRoot(f) {
 	if (chunkWorker) { inFlight.add(name); chunkWorker.postMessage({ generation: landGeneration, tile: f.chunkKey, x0, z0, size: S, cells: CHUNK_CELLS }); }
 	else buildChunk(x0, z0, S);
 }
-function dropFar(key) {
+function dropFar(key, keep = false) {
 	const f = farTiles.get(key);
 	if (!f) return;
 	farTiles.delete(key);
+	if (keep) { f.rooted = false; farKept.set(key, f); }
 	for (const [name, chunk] of [...chunks]) {
 		if (chunk.tile !== f.chunkKey) continue;
 		chunk.vertexBuffer.destroy();
@@ -642,11 +646,14 @@ function dropFar(key) {
 		chunks.delete(name);
 	}
 	rootChunks = rootChunks.filter((chunk) => chunk.tile !== f.chunkKey);
-	if (chunkWorker) chunkWorker.postMessage({ drop: f.chunkKey });
+	if (chunkWorker && !keep) chunkWorker.postMessage({ drop: f.chunkKey });
 	if (!tiles.has(key)) tileInWindow(world.tiles.get(key));
 }
 function dropTile(key) {
 	tiles.delete(key);
+	// (its far ground back at once, if it was put by)
+	const kept = farKept.get(key);
+	if (kept) { farKept.delete(key); farTiles.set(key, kept); askFarRoot(kept); }
 	emptyTowns(key);
 	for (const [name, chunk] of [...chunks]) {
 		if (chunk.tile !== key) continue;
@@ -674,7 +681,7 @@ function streamTiles() {
 	if (!nearest && tileAsked === null && startTileWorker()) {
 		let far = null, farD = Infinity;
 		for (const key of world.landKeys) {
-			if (tiles.has(key) || farTiles.has(key)) continue;
+			if (tiles.has(key) || farTiles.has(key) || farKept.has(key)) continue;
 			const d = tileDistance(world.tiles.get(key));
 			if (d < FAR_LAND && d < farD) { far = key; farD = d; }
 		}
@@ -685,7 +692,13 @@ function streamTiles() {
 	}
 	for (const f of [...farTiles.values()]) {
 		if (!f.rooted) askFarRoot(f);
-		if ((tiles.get(f.key)?.rooted) || tileDistance(world.tiles.get(f.key)) > FAR_LAND + TILE_DROP) dropFar(f.key);
+		if (tiles.get(f.key)?.rooted) dropFar(f.key, true);
+		else if (tileDistance(world.tiles.get(f.key)) > FAR_LAND + TILE_DROP) dropFar(f.key);
+	}
+	for (const [key, f] of [...farKept]) {
+		if (tileDistance(world.tiles.get(key)) <= FAR_LAND + TILE_DROP) continue;
+		farKept.delete(key);
+		if (chunkWorker) chunkWorker.postMessage({ drop: f.chunkKey });
 	}
 	// (nothing wanted near nor far: the next land tile not yet surveyed, see THE SURVEY)
 	if (!nearest && tileAsked === null && startTileWorker()) {
@@ -825,6 +838,7 @@ function regenerateTerrain() {
 	// (in a world of tiles: the home tile made here, the rest as the camera comes near them)
 	tiles.clear();
 	farTiles.clear();
+	farKept.clear();
 	surveys.clear();
 	cancelJobs((key) => typeof key == 'string' && key.startsWith('tile '));	// (what was waiting for the tiles of the land before)
 	tileAsked = null;

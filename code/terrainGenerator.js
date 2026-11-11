@@ -86,7 +86,7 @@ export function coverOf(mountain, woodland, marsh = 0) {
 }
 // a mountain range's own share of that (mountain, see sample): forest all over it, bare rock only where it stands high (BARE: from and to, of the
 //		snow line, above the sea: the tree line), and up in a range at all. height: above the sea, world units
-const BARE = [0.7, 0.82];
+const BARE = [0.9, 1.05];
 export function mountainCover(mountain, height, params) {
 	const bare = smoothstep(BARE[0] * params.snowLine, BARE[1] * params.snowLine, height) * smoothstep(0.5 * FOREST_THRESHOLD, FOREST_THRESHOLD, mountain);
 	return Math.max(Math.min(mountain, MOUNTAIN_THRESHOLD - 0.06), bare * (MOUNTAIN_THRESHOLD + 0.15));
@@ -535,10 +535,24 @@ const KSN = { hills: 12, foot: 80, range: 260, rock: [0.7, 1.35], rockLength: 26
 const SLOPE = { hills: 0.25, foot: 0.8, range: 1.25 };
 const FOOT = [0.12, 0.42];		// how far into a range (its mountain value: sample) its forested foot starts, and where it is all there: the grassland out of it gentle
 const ROUGH = { height: 60, length: 1500 };	// the lie of the rock the streams gather in (erosion.js: roughness): metres, and the size of its biggest shapes (world units)
+/*
+	THE MASSIFS: on a big continent (MASSIF.tiles or more) one or two mountains far over all the rest, well up through the snow: a
+	Denali, an Aoraki. Each stands somewhere in the heart of the continent (CORE at least MASSIF.core), at random, MASSIF.apart of them
+	from each other, MASSIF.radius across (world units), its outline rolled by noise. Over it the rock is pushed up far faster than the
+	rivers can cut it down, so in the steady state the channels stand MASSIF.uplift times as steep and its faces at up to MASSIF.slope: all
+	of it over its heart (MASSIF.heart of its radius), less and less out to its edge. That wears it into ridges and valleys a few
+	kilometres high; under them the whole of it stands on a dome of the earth's crust pushed up (MASSIF.dome, world units at its middle,
+	falling away to its edge as (1 - how far out) to the MASSIF.domeShape), as the great volcanoes of the Cascades stand on theirs. The
+	dome is put under the land the rivers made: it falls away outwards, the way they run off it. So 6500 to 7500 m at the top:
+	the same law as all the land (erosion.js), its ridges and valleys worn into it as everywhere else
+*/
+const MASSIF = { tiles: 12, count: [1, 2], radius: [10000, 13000], core: 0.85, apart: 2.2, uplift: 15, slope: 1.7, heart: 0.45, wobble: 0.3, dome: [10500, 12000], domeShape: 1.6 };
 const HIGH = 1400;				// the Mountain Height the KSN and the SLOPE of the ranges are for
 const COAST = [0.012, 0.09];		// how far inland (see sample) the relief starts to rise, and where it is all there
 const OUTCROPS = { length: 260, height: 16, from: [40, 500] };	// the eroded noise on the high ground: how big, how high (world units), and from how high a relief to how high it is all there
 const shapes = new Map();
+const shapeMassifs = new Map();		// a continent's key -> its massifs, { x, z, radius } (for testing)
+export const massifsOf = () => [...shapeMassifs.values()].flat();
 
 // the continent the tile at (cx, cz) world units is in: its land tiles, as the world lays them out (one land without a world: all of it)
 function continentOf(params, cx, cz) {
@@ -570,7 +584,7 @@ function continentShape(params, sample, noise) {
 	const cols = Math.round((c.x1 - c.x0) / cell) + 1, rows = Math.round((c.z1 - c.z0) / cell) + 1, n = cols * rows;
 	const start = new Float32Array(n), outlet = new Uint8Array(n), ksn = new Float32Array(n), slopeMax = new Float32Array(n);
 	const rangeHigh = (params.mountainHeight ?? HIGH) / HIGH, hillHigh = params.hillHeight ?? 1, slopeHigh = Math.min(Math.sqrt(rangeHigh), 1.4);
-	const rough = new Float32Array(n), roughNoise = createNoise((params.seed ?? 0) + 9311);
+	const rough = new Float32Array(n), roughNoise = createNoise((params.seed ?? 0) + 9311), cores = new Float32Array(n);
 	for (let row = 0; row < rows; row++) {
 		for (let col = 0; col < cols; col++) {
 			const i = row * cols + col, x = c.x0 + col * cell, z = c.z0 + row * cell;
@@ -582,13 +596,55 @@ function continentShape(params, sample, noise) {
 			const foot = smoothstep(FOOT[0], FOOT[1], s.mountain), rock = KSN.rock[0] + (KSN.rock[1] - KSN.rock[0]) * (0.5 + 0.5 * noise(x / KSN.rockLength + 13.1, z / KSN.rockLength - 27.4)[0]);
 			ksn[i] = (KSN.hills * hillHigh + (KSN.foot * hillHigh - KSN.hills * hillHigh) * foot + (KSN.range * rangeHigh - KSN.foot * hillHigh) * Math.pow(s.rise, 1.2)) * rock * smoothstep(COAST[0], COAST[1] * 1.5, s.inland);
 			slopeMax[i] = SLOPE.hills + (SLOPE.foot * slopeHigh - SLOPE.hills) * foot + (SLOPE.range - SLOPE.foot) * slopeHigh * s.rise;
+			cores[i] = outlet[i] ? 0 : s.core;
 			let r = 0, a = 1, f = 1 / ROUGH.length;
 			for (let k = 0; k < 4; k++) { r += roughNoise(x * f + k * 17.3, z * f - k * 9.1)[0] * a; a *= 0.55; f *= 2.1; }
 			rough[i] = r * ROUGH.height;
 		}
 	}
+	// THE MASSIFS: where, and how far into each every point is
+	const tiles = c.key.split(' ').length;
+	let massifs = [], outline = null;
+	if (tiles >= MASSIF.tiles) {
+		const random = seededRandom(((params.seed ?? 0) * 104723 + [...c.key].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) >>> 0, 7)) >>> 0);
+		const want = MASSIF.count[0] + Math.floor(random() * (MASSIF.count[1] - MASSIF.count[0] + 1));
+		const heart = [];
+		for (let i = 0; i < n; i++) if (cores[i] >= MASSIF.core) heart.push(i);
+		massifs = [];
+		for (let tries = 0; tries < 60 && massifs.length < want && heart.length; tries++) {
+			const i = heart[Math.floor(random() * heart.length)], x = c.x0 + (i % cols) * cell, z = c.z0 + Math.floor(i / cols) * cell;
+			const radius = MASSIF.radius[0] + (MASSIF.radius[1] - MASSIF.radius[0]) * random();
+			if (massifs.some((o) => Math.hypot(o.x - x, o.z - z) < MASSIF.apart * Math.max(o.radius, radius) * 0.5 + 0.5 * MASSIF.apart * radius)) continue;
+			massifs.push({ x, z, radius, dome: MASSIF.dome[0] + (MASSIF.dome[1] - MASSIF.dome[0]) * random() });
+		}
+		outline = createNoise((params.seed ?? 0) + 6151);
+		for (let row = 0; row < rows; row++) for (let col = 0; col < cols; col++) {
+			const i = row * cols + col;
+			if (outlet[i]) continue;
+			const x = c.x0 + col * cell, z = c.z0 + row * cell;
+			let f = 0;
+			for (const o of massifs) {
+				const d = Math.hypot(x - o.x, z - o.z) / o.radius * (1 + MASSIF.wobble * outline(x / 5200 + 3.7, z / 5200 - 8.1)[0]);
+				f = Math.max(f, smoothstep(1, MASSIF.heart, d));		// (all of it over its heart: MASSIF.heart of its radius)
+			}
+			if (f <= 0) continue;
+			ksn[i] *= 1 + MASSIF.uplift * f;
+			slopeMax[i] = Math.max(slopeMax[i], slopeMax[i] + (MASSIF.slope - slopeMax[i]) * f);
+		}
+		shapeMassifs.set(c.key, massifs);
+	}
 	const land = steadyLand({ cols, rows, cell: cell / m, start, outlet, ksn, slopeMax, roughness: rough, random: seededRandom((params.seed * 7919 + c.key.length * 104729) >>> 0) });
 	const height = land.height.map((h, i) => outlet[i] ? 0 : h * m);
+	// (and the massifs' domes under it)
+	for (const o of massifs) {
+		for (let row = 0; row < rows; row++) for (let col = 0; col < cols; col++) {
+			const i = row * cols + col;
+			if (outlet[i]) continue;
+			const x = c.x0 + col * cell, z = c.z0 + row * cell;
+			const d = Math.hypot(x - o.x, z - o.z) / o.radius * (1 + MASSIF.wobble * outline(x / 5200 + 3.7, z / 5200 - 8.1)[0]);
+			if (d < 1) height[i] += o.dome * Math.pow(1 - d, MASSIF.domeShape);
+		}
+	}
 	const shape = { x0: c.x0, z0: c.z0, cell, cols, rows, height, area: land.area };
 	// (and the rivers in it: THE RIVERS, over the ground as it will be made, the relief in it)
 	const reliefOf = makeReliefAt(shape);

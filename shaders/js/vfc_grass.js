@@ -62,7 +62,7 @@ export const vf_grass =
 		grid : vec4f,				// x: how many rings there are, y: the draw distance, z: horizon fog distance, w: 1.0 if the atmosphere is on
 		windScroll : vec4f,			// these two are what windAt takes, see vf_wind.js
 		windBlow : vec4f,
-		wind : vec4f,				// xy: wind direction, z: height of the bank between the beach and the grass
+		wind : vec4f,				// xy: wind direction, z: height of the bank between the beach and the grass, w: 1 in a world of tiles (terrain.js)
 		clump : vec4f,				// x: how far apart the clumps are, y: pull, z: height, w: facing (see CLUMPS above)
 		clumpLook : vec4f,			// x: color. And the season: y: how far the grass has gone to hay, z: how much snow is lying on it (both 0 to 1, see weather.js)
 		rings : array<vec4f, ${GRASS_MAX_RINGS}>,	// a ring's x: blades along one side of its grid, y: cell size, z: how far out it reaches, w: pieces in a blade
@@ -265,8 +265,10 @@ export const vf_grass =
 		let clumped = saturate(0.6 * UBO.clump.x / cellSize - 0.6);	// only where there are several blades to a clump
 		root = mix(root, clump.middle, 0.85 * UBO.clump.y * clumped * (0.3 + 0.7 * random(seed + 11u)));
 
-		if (abs(root.x) >= UBO.terrain.x || abs(root.y) >= UBO.terrain.x) {
-			return output;	// off the edge of the land
+		// off the edge of the land: the one land of old's. In a world of tiles the land goes on past it (the data texture is a window on to
+		//		it round the camera: terrainAt), and where there is none its zones say so
+		if (UBO.wind.w < 0.5 && (abs(root.x) >= UBO.terrain.x || abs(root.y) >= UBO.terrain.x)) {
+			return output;
 		}
 
 		// zones: grass only grows on grassland. Same rules the terrain colors itself with, so the grass stops where the green does

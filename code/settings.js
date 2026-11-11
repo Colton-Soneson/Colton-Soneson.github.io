@@ -10,7 +10,7 @@ export const settings = {
     camPosX: 0.0,
     camPosY: 35.0,
     camPosZ: 150.0,
-    camFarPlane: 20000.0,	//far enough to see the other land masses (the world's continents across the straits: world.js)
+    camFarPlane: 50000.0,	//far enough to see the other land masses (the world's continents across the straits: world.js), and the massifs over them (terrainGenerator.js THE MASSIFS)
     camNearPlane: 1.0,
     gameMode: 'Observe',			//Observe: fly round (cameraControls.js). Hunting (the menu calls it Survival, survival.js): on foot, first person (hunting.js), with boats to sail (boat.js) and the rest from the spawn menu, T (radialMenu.js). Horde: the same, against waves of feral deer (horde.js)
     hordeFirstWave: 10,				//deer in the first round of the Horde game mode
@@ -144,7 +144,7 @@ export const settings = {
 	forestTreeSpacing: 9.0,				//distance between full grown trees where the forest is thickest. Thinner forest and wider trees stand further apart
 	forestMaxSlope: 0.4,				//the steepest ground a tree grows on: 0 only dead flat, 1 anything
 	forestConiferShare: 0.5,			//0 all broadleaf, 1 all conifer. The land still shifts it: conifers take the high and steep ground
-	forestMaxTrees: 60000,				//planting stops here however much forest there is left to fill, and no seed comes up while there are this many
+	forestMaxTrees: 150000,				//planting stops here however much forest there is left to fill, and no seed comes up while there are this many (a tile's: a continent's tile of forest planted full is about 480000)
 	forestLifeCycle: true,				//the trees grow, die, fall and seed as the days go by. Off = the forest stays as it is
 	forestYearsPerSunCycle: 150.0,		//years a tree ages in one day. Real trees take 45 (birch) to 100 (oak) years to grow up, so at 150 a tree is grown in under a day (5 minutes, see dayLengthSeconds)
 	forestYear: 0,						//the forest's clock. Read only

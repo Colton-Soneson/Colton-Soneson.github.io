@@ -123,7 +123,7 @@ function grassUniformBufferUpdates() {
 	bufferResult.push(settings.windDirection[0]);
 	bufferResult.push(settings.windDirection[1]);
 	bufferResult.push(settings.terrainBankHeight);
-	bufferResult.push(0);
+	bufferResult.push(terrain.world ? 1 : 0);	//(a world of tiles: the land goes on past the home tile, see vfc_grass.js)
 
 	//clumps
 	bufferResult.push(settings.grassClumpSize);

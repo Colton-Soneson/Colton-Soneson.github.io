@@ -288,6 +288,9 @@ export const vf_terrain =
 	const COLOR_BEACH: vec3f     = ${zoneColor(ZONE_BEACH)};
 	const COLOR_GRASSLAND: vec3f = ${zoneColor(ZONE_GRASSLAND)};
 	const COLOR_FOREST: vec3f    = ${zoneColor(ZONE_FOREST)};
+	const FOREST_FAR: vec3f      = vec3f(0.055, 0.12, 0.065);
+	const HAZE_FROM: f32 = 600.0;		// world units over the sea the haze is all there to
+	const HAZE_HEIGHT: f32 = 1600.0;	// and over that, how far up it takes to thin by e	// the forest from far off: its canopy, darker and duller than the green under it
 	const COLOR_MOUNTAIN: vec3f  = ${zoneColor(ZONE_MOUNTAIN)};
 	const COLOR_SNOW: vec3f      = ${zoneColor(ZONE_SNOW)};
 	const COLOR_LAKEBED: vec3f   = ${zoneColor(ZONE_LAKE)};
@@ -585,7 +588,9 @@ export const vf_terrain =
 		var albedo = mix(COLOR_GRASSLAND, COLOR_HAY, 0.8 * UBO.hay) * turf.rgb;
 		// (the forest floor: bare soil and moss over the roots and on the pits and mounds, the litter off them)
 		let bareFloor = saturate(rootFloor.g + (rootFloor.b + rootFloor.a) * 1.6);
-		albedo = mix(albedo, mix(COLOR_FOREST, litter.rgb, litterNear * (1.0 - 0.8 * bareFloor)), forest);
+		// (and from further off still the forest's own shade, deep in its crowns: FOREST_FAR)
+		let forestFar = mix(COLOR_FOREST, FOREST_FAR, smoothstep(300.0, 2000.0, away));
+		albedo = mix(albedo, mix(forestFar, litter.rgb, litterNear * (1.0 - 0.8 * bareFloor)), forest);
 		albedo = mix(albedo, mix(COLOR_EARTH * 0.72, FLOOR_MOSS, 0.6 * smoothstep(0.45, 0.75, noise(worldPos.xz * 1.7))), bareFloor * 0.6);
 		albedo = mix(albedo, rock, rocky);
 		albedo = mix(albedo, COLOR_SNOW, snow);
@@ -692,7 +697,9 @@ export const vf_terrain =
 		// same as the water: far land fades into the color of the sky on the horizon behind it
 		if (UBO.atmosphereEnabled > 0.5) {
 			let horizonColor = fogColorAt(toLand);
-			let fog = 1.0 - exp(-pow(away / UBO.horizonFogDistance, 2.0));
+			// (the haze lies in the low air: over HAZE_FROM it thins, by e every HAZE_HEIGHT, so a massif's top stands up out of it from far off)
+			let hazeHeight = 0.5 * (max(worldPos.y - UBO.seaLevel, 0.0) + max(Lights.camPos.y - UBO.seaLevel, 0.0));
+			let fog = 1.0 - exp(-pow(away / UBO.horizonFogDistance, 2.0) * exp(-max(hazeHeight - HAZE_FROM, 0.0) / HAZE_HEIGHT));
 			color = mix(color, horizonColor, fog);
 		}
 

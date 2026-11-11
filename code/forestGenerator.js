@@ -84,7 +84,7 @@ export function createSite(land, params) {
 		const slope = smoothstep(1 - params.maxSlope - 0.1, 1 - params.maxSlope + 0.1, flatness);
 		// nothing on the sand, and the tree line: it gets too cold and windy for trees some way under the snow
 		const shore = smoothstep(params.beachHeight + params.bankHeight, params.beachHeight + params.bankHeight + 4, height);
-		const treeLine = 1 - smoothstep(0.6 * params.snowLine, 0.85 * params.snowLine, height);
+		const treeLine = 1 - smoothstep(0.85 * params.snowLine, 1.12 * params.snowLine, height);
 		// clearings: about a sixth of the forest is open glade, with only the odd tree in it
 		const glade = noise(x / 230 + 17.3, z / 230 - 4.1)[0] + 0.5 * noise(x / 90 - 8.6, z / 90 + 31.9)[0];
 		const open = 0.1 + 0.9 * smoothstep(-0.62, -0.3, glade);
@@ -98,6 +98,9 @@ export function createSite(land, params) {
 
 		out.density = zone * slope * shore * treeLine * open * dryGround * offRiver * (1 - smoothstep(0.1, 0.55, town));
 		out.quality = clamp01(0.35 + 0.65 * treeLine * (0.6 + 0.4 * slope));
+		// and smaller the higher they grow: colder, windier, the soil thinner, the growing season shorter. Up by the tree line stunted,
+		//		under half the height they would have reached in the valley (makeTree)
+		out.stunt = 1 - 0.6 * smoothstep(0.3 * params.snowLine, 1.1 * params.snowLine, height);
 		out.standAge = clamp01(0.5 + 0.75 * noise(x / 310 - 71.2, z / 310 + 12.7)[0]);
 		out.gap = noise(x / 48 + 27.9, z / 48 - 63.4)[0];
 		out.pioneer = clamp01(1.15 - 1.1 * zone * open + 0.5 * noise(x / 140 + 3.3, z / 140 + 55.1)[0]);
@@ -145,7 +148,7 @@ export function makeTree(x, z, species, age, where, land, params, random, varian
 		species: species,
 		variant: Math.floor(random() * variants),
 		age: age,
-		scale: (0.84 + 0.3 * random()) * (0.55 + 0.45 * where.quality),
+		scale: (0.84 + 0.3 * random()) * (0.55 + 0.45 * where.quality) * (where.stunt ?? 1),
 		yaw: random() * 6.2832,
 		leanX: Math.cos(leanAngle) * lean,
 		leanZ: Math.sin(leanAngle) * lean,

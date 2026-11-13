@@ -36,7 +36,7 @@ self.onmessage = (event) => {
 		if (event.data.survey) {
 			self.postMessage({ tile, survey: land.towns.map((t) => {
 				const list = t.buildings.filter((b) => !b.onPier), n = Math.max(list.length, 1);
-				return { x: list.reduce((s, b) => s + b.x, 0) / n, z: list.reduce((s, b) => s + b.z, 0) / n, types: t.buildings.map((b) => b.type), dock: !!t.dock };
+				return { x: list.reduce((s, b) => s + b.x, 0) / n, z: list.reduce((s, b) => s + b.z, 0) / n, types: t.buildings.map((b) => b.type), dock: !!t.dock, river: !!t.site?.river };
 			}) });
 			return;
 		}
@@ -50,8 +50,8 @@ self.onmessage = (event) => {
 		for (const v of Object.values(data)) gather(v);
 		gather(data.chunkGrids?.paths);
 		// its towns' ground work (town.js draws it: townGround.js)
-		if (land.towns.length) {
-			const work = groundWork(land.towns, params.seaLevel, null, land.paths, land.groundAt, land.zoneAt, land.fireTowers, event.data.unitsPerMetre ?? 2);
+		if (land.towns.length || land.paths?.length || land.fireTowers?.length) {	// (and a tile with no town: its roads, its railway, its tunnels, its fire tower)
+			const work = groundWork(land.towns, params.seaLevel, null, land.paths, land.groundAt, land.zoneAt, land.fireTowers, event.data.unitsPerMetre ?? 2, land.stations);
 			data.townGround = work.done();
 			buffers.add(data.townGround.buffer);
 		}

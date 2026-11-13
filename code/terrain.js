@@ -140,7 +140,7 @@ device.queue.writeBuffer(chunkIndexBuffer, 0, chunkIndexData);
 //		how many are kept at the most (more the further it reaches)
 const tileLoad = () => Math.max(settings.worldViewDistance ?? 2500, 500) * settings.forestUnitsPerMetre;
 const TILE_DROP = 4000;
-const FAR_LAND = 45000, FAR_CELLS = 256;		// THE LAND FAR OFF: world units from a tile's edge it is drawn within; its data grid's cells a side
+const FAR_LAND = 100000, FAR_CELLS = 256;		// THE LAND FAR OFF: world units from a tile's edge it is drawn within; its data grid's cells a side
 const farTiles = new Map();					// key -> { key, chunkKey ('far:' and its key), land, params, rooted }
 // (and the ones put by while their own tile is in: back the moment it goes, so the land there is never gone while its far ground is made
 //		again. The chunk worker keeps their grids: dropFar)
@@ -151,6 +151,7 @@ const WINDOW_MOVE = 2048;					// world units
 const VOID_DEPTH = 600;						// world units under the sea: the bed of the endless sea, where there is no tile
 export let world = null;					// the world's layout (world.js); null with the one land of old
 const tiles = new Map();					// key -> { key, kind, land, params, usedAt }
+let tilesVersion = 0;						// (one more each time a tile comes or goes: THE WORLD OF TILES' gathered lists)
 export const tilesLoaded = () => [...tiles.values()];
 export const tileLand = (x, z) => world ? tiles.get(tileAt(x, z, settings.terrainWorldSize))?.land ?? null : land;
 const tileListeners = [];		// { fn, later }
@@ -478,8 +479,25 @@ function makeWorldLand(home) {
 	const deep = () => settings.waterWorldPosY - VOID_DEPTH;
 	const at = (x, z) => tileLand(x, z);
 	makeTownSlots(home);
+	// (every tile's there is, gathered again when a tile comes or goes: the paths and roads, the fire towers, the tunnels and bridges)
+	const gathered = new Map();
+	const every = (name) => {
+		const known = gathered.get(name);
+		if (known?.version === tilesVersion) return known.list;
+		const list = [...tiles.values()].flatMap((t) => name == 'farms' || name == 'stations' ? (t.land?.[name] ?? []).map((f) => ({ ...f, tile: t.key })) : t.land?.[name] ?? []);
+		gathered.set(name, { version: tilesVersion, list });
+		return list;
+	};
 	return {
 		...home, worldTiles: true, towns: townSlots,
+		get paths() { return every('paths'); },
+		get fireTowers() { return every('fireTowers'); },
+		get tunnels() { return every('tunnels'); },
+		// (a farm with its tile: its town is the tile's number k of its own, terrain.land.towns has it as the slot of that tile and k)
+		get farms() { return every('farms'); },
+		// (the main lines: each continent's once, terrainGenerator.js; its stations with their tiles, as the farms)
+		get railLines() { const seen = new Map(); for (const t of tiles.values()) if (t.land?.railLine && !seen.has(t.land.railLine.id)) seen.set(t.land.railLine.id, t.land.railLine); return [...seen.values()]; },
+		get stations() { return every('stations'); },
 		heightAt: (x, z) => at(x, z)?.heightAt(x, z) ?? deep(),
 		groundAt: (x, z) => at(x, z)?.groundAt(x, z) ?? deep(),
 		zoneAt: (x, z) => at(x, z)?.zoneAt(x, z) ?? ZONE_OCEAN,
@@ -605,6 +623,7 @@ let tileBase = '';
 function addTile(key, tileLandMade, params) {
 	const t = world.tiles.get(key);
 	tiles.set(key, { key, kind: t.kind, land: tileLandMade, params, usedAt: performance.now() });
+	tilesVersion++;
 	fillTowns(key, tileLandMade);
 	// (its chunk grids are with the chunk worker already, from the tile worker)
 	askRoots(tiles.get(key));
@@ -651,6 +670,7 @@ function dropFar(key, keep = false) {
 }
 function dropTile(key) {
 	tiles.delete(key);
+	tilesVersion++;
 	// (its far ground back at once, if it was put by)
 	const kept = farKept.get(key);
 	if (kept) { farKept.delete(key); farTiles.set(key, kept); askFarRoot(kept); }
@@ -983,8 +1003,26 @@ function terrainUniformBufferUpdates() {
 
 	const result = new Float32Array(bufferResult);
 	device.queue.writeBuffer(terrainUniformBuffer, 0, result.buffer, result.byteOffset, result.byteLength);
+	writeTunnels();
 
 	device.queue.writeBuffer(terrainHeightMapUniformBuffer, 0, topDownViewProjMat.buffer, topDownViewProjMat.byteOffset, topDownViewProjMat.byteLength);
+}
+
+// THE TUNNELS' PORTALS (vf_terrain.js: tunnelHole): the ground cut away where a bore goes into it, for the TUNNEL_SLOTS nearest the camera
+//		(footpaths.js: THE TUNNELS; terrain.land.tunnels, each { kind, a, b (its floor at its portals), half, height })
+const TUNNEL_SLOTS = 8, TUNNEL_REACH = 6000;
+const tunnelUniformBuffer = device.createBuffer({ label: 'terrain tunnels uniform', size: 16 + TUNNEL_SLOTS * 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+const tunnelData = new Float32Array(4 + TUNNEL_SLOTS * 8);
+export const tunnelStats = { near: 0 };
+function writeTunnels() {
+	const cx = settings.camPosX, cz = settings.camPosZ;
+	const away = (t) => { const ex = t.b[0] - t.a[0], ez = t.b[2] - t.a[2], ll = ex * ex + ez * ez || 1, s = Math.min(Math.max(((cx - t.a[0]) * ex + (cz - t.a[2]) * ez) / ll, 0), 1); return Math.hypot(cx - t.a[0] - ex * s, cz - t.a[2] - ez * s); };
+	const near = (land?.tunnels ?? []).filter((t) => t.kind != 'bridge').map((t) => [away(t), t]).filter(([d]) => d < TUNNEL_REACH).sort((p, q) => p[0] - q[0]).slice(0, TUNNEL_SLOTS);
+	tunnelData.fill(0);
+	tunnelData[0] = near.length;
+	near.forEach(([, t], k) => tunnelData.set([t.a[0], t.a[1], t.a[2], t.half, t.b[0], t.b[1], t.b[2], t.height], 4 + k * 8));
+	tunnelStats.near = near.length;
+	device.queue.writeBuffer(tunnelUniformBuffer, 0, tunnelData);
 }
 
 // Layouts
@@ -1070,6 +1108,11 @@ const bindGroupVFLayout = device.createBindGroupLayout({
     binding: 8,								//for reading the bakes of the far chunks: anisotropic, at the level the setting asks for
     visibility: GPUShaderStage.FRAGMENT,
     sampler: {}
+  },
+  {
+    binding: 12,							//the tunnels near the camera: the ground cut away at their portals (see THE TUNNELS' PORTALS)
+    visibility: GPUShaderStage.FRAGMENT,
+    buffer: {}
   }
   ]
 });
@@ -1155,6 +1198,10 @@ function createVFBindGroupTerrain() {
 			{
 				binding: 8,
 				resource: filteredSampler()
+			},
+			{
+				binding: 12,
+				resource: { buffer: tunnelUniformBuffer }
 			}
 			]
 		});

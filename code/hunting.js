@@ -5,6 +5,7 @@ import { settings } from './settings.js';
 import * as transformations from './transformations.js'
 import * as terrain from './terrain.js'
 import * as forest from './forest.js'
+import * as tunnels from './tunnels.js'
 import * as boulders from './boulders.js'
 import * as boat from './boat.js'
 import * as horse from './horse.js'
@@ -257,7 +258,10 @@ let cornersFor = null, cornersCell = 0;	// the land and the size of square the c
 const MOST_CORNERS = 4096;
 
 // (and the forest floor's pits and mounds over that: forest.js, THE FLOOR)
+//		(in a tunnel, its floor: the land is the mountain over it; on a road's bridge, its deck: tunnels.js)
 function groundUnder(x, z) {
+	const floor = tunnels.floorAt(x, z, hunter.y);
+	if (floor !== null) return floor;
 	return landUnder(x, z) + forest.floorRise(x, z);
 }
 function landUnder(x, z) {
@@ -367,7 +371,9 @@ function pushOut(axis, moved, half, step) {
 function supportUnder(step) {
 	const half = BODY_WIDTH * 0.5 * settings.forestUnitsPerMetre;
 	// (a root's top is a step up, as a box's would be: forest.js, THE FLOOR)
-	let highest = groundUnder(hunter.x, hunter.z) + forest.rootStep(hunter.x, hunter.z);
+	//		(not in a tunnel: the roots there are the mountain's over it)
+	const floor = tunnels.floorAt(hunter.x, hunter.z, hunter.y);
+	let highest = floor ?? groundUnder(hunter.x, hunter.z) + forest.rootStep(hunter.x, hunter.z);
 	for (const fn of floors) highest = Math.max(highest, fn(hunter.x, hunter.z, hunter.y + step));
 	for (let b = 0; b < boxCount; b++) {
 		const o = b * 6;
@@ -754,6 +760,7 @@ export function updateHunter() {
 		pushOut(0, hunter.vx + knock[0], half, step);
 		hunter.z += (hunter.vz + knock[1]) * dt;
 		pushOut(2, hunter.vz + knock[1], half, step);
+		tunnels.keepIn(hunter, half, hunter.y, fromX, fromZ);
 		knock[0] *= Math.exp(-dt * KNOCK_FADE); knock[1] *= Math.exp(-dt * KNOCK_FADE);
 		if (hunter.grounded && !hunter.swimming && onGround) {
 			const went = Math.hypot(hunter.x - fromX, hunter.z - fromZ);

@@ -10,6 +10,7 @@ import * as hunting from './hunting.js'
 import * as townFolk from './townFolk.js'
 import { BUILDING_TYPES } from './townLayout.js'
 import * as npcs from './npcs.js'
+import * as tunnels from './tunnels.js'
 
 /*
 	THE RIDERS (npcs.js's people): PER_TOWN from every town, each on a horse of its own (horse.js, ridden by its id), going between
@@ -39,12 +40,19 @@ import * as npcs from './npcs.js'
 		war beginning) are spread over a few frames: one waiting for its way stands.
 		THE FLANK: riding over from its own town, it has a chance (FLANK.chance) of going round: across country out to a point FLANK.out
 		off to one side of the way there, half way, then in to the edge of the town on that side, and on along its streets.
+	A CART'S GUARDS (carts.js: addEscort): riders that ride with a trading cart, each at its own place round it (the cart says where:
+		guardSpot), keeping its pace, and fight for it as any rider does (its group is the cart's). Killed, one is gone: its cart takes on
+		more at home. They do not rest at the inns.
+	A POSSE (addPosse: a farm's crops stolen, farmsteads.js): riders out of a town's inn after whoever did it, riding at them wherever they
+		are and fighting them as any rider does, for POSSE.seconds (or until they are dead), then gone.
 	World units (2 to the metre) for places, metres a second for paces
 */
 const PER_TOWN = 2;
+const RIVER_MORE = 1;
 const TROT = 3.6;					// metres a second (a real horse's: horse.js puts every pace times settings.horseSpeed)
 const LOOK_AHEAD = 8;				// metres
 const JOIN = 10;					// metres: a footpath's end joined to the nearest point of another, or a street
+const ROAD_PREFERRED = 0.8;			// a road's way as long as this much of a footpath's, to a rider choosing between them
 const REST = [25, 60];				// seconds at an inn
 const THINK = 0.2;					// seconds between looks round
 const PROBES = [2.5, 5, 8];			// metres out along a heading
@@ -55,6 +63,7 @@ const CHASE = 180;					// metres: further than RANGE, as far as this, it rides a
 const FIRE_EVERY = [1.8, 3.0];		// seconds
 const SPREAD = 0.014;				// radians, and as much again every 200 metres
 const GIVE_UP = 12;
+const POSSE = { seconds: 240 };
 const OFF_ROAD = { cell: 12, pad: 300, steep: 0.7, climb: 4, most: 60000, clear: 1.5, walls: 4, steepCost: 5, greed: 2, perFrame: 1 };	// ACROSS COUNTRY: metres a cell, round the two ends, too steep (rise over run) and how many times as dear, how dear a climb is, A*'s most steps, metres kept off a wall, how many times as dear a cell by a wall is, the A*'s heuristic weighted (quicker, a little less straight), ways found a frame
 const MUSTER = { out: 25, apart: 8, rows: 5 };	// THE WAR: metres out past the edge of its own town, apart in a row, horsemen to a row
 const FLANK = { chance: 0.35, out: [500, 400, 300, 200] };	// THE FLANK: a chance of it, and metres off to the side (the furthest on dry land; its side first)
@@ -71,15 +80,16 @@ export const riderStats = { riders: 0, roads: 0, routes: 0, stuck: 0, shots: 0, 
 let roads = null, builtFor = null;
 function buildRoads(land) {
 	const nodes = [], index = new Map();
-	const node = (x, y, z) => {
-		const key = Math.round(x) + ',' + Math.round(z);
+	// (a tunnel's own: under the land's, not one with a way over the mountain above it)
+	const node = (x, y, z, under = false) => {
+		const key = Math.round(x) + ',' + Math.round(z) + (under ? 'u' : '');
 		let n = index.get(key);
 		if (n === undefined) { n = nodes.length; nodes.push({ x, y, z, ways: [] }); index.set(key, n); }
 		return n;
 	};
-	const join = (a, b) => {
+	const join = (a, b, cheap = 1) => {
 		if (a == b || nodes[a].ways.some((w) => w[0] == b)) return;
-		const d = Math.hypot(nodes[b].x - nodes[a].x, nodes[b].z - nodes[a].z);
+		const d = Math.hypot(nodes[b].x - nodes[a].x, nodes[b].z - nodes[a].z) * cheap;
 		nodes[a].ways.push([b, d, 0, 1]); nodes[b].ways.push([a, d, 0, 1]);
 	};
 	const chains = [];		// the nodes of each footpath and each town: a footpath's ends are joined to the others
@@ -89,10 +99,12 @@ function buildRoads(land) {
 		ways.nodes.forEach((n, k) => { for (const [to] of n.ways) join(map[k], map[to]); });
 		chains.push({ from: first, to: nodes.length, ends: [] });
 	}
+	//		(the roads, their tunnels and bridges: a rider keeps to them, a little cheaper than the footpaths; a gate's other half is its tile's)
 	for (const path of land.paths ?? []) {
-		const first = nodes.length;
-		const list = path.points.map(([x, y, z]) => node(x, y, z));
-		for (let k = 0; k < list.length - 1; k++) join(list[k], list[k + 1]);
+		if (path.hidden || path.kind == 'rail' || path.rail) continue;		// (not the main line: trains.js's)
+		const first = nodes.length, cheap = path.kind == 'road' || path.kind == 'tunnel' || path.kind == 'bridge' ? ROAD_PREFERRED : 1;
+		const list = path.points.map(([x, y, z], k) => node(x, y, z, path.kind == 'tunnel' && k > 0 && k < path.points.length - 1));
+		for (let k = 0; k < list.length - 1; k++) join(list[k], list[k + 1], cheap);
 		chains.push({ from: first, to: nodes.length, ends: [list[0], list[list.length - 1]] });
 	}
 	// a footpath's ends to the nearest point not its own, within JOIN
@@ -164,7 +176,7 @@ terrain.onTiles((added, removed) => {
 // (in a world of tiles: the continent a place is on, world.js; a rider rides to the places of its own)
 const continentAt = (x, z) => terrain.world?.tiles.get(tileAt(x, z, settings.terrainWorldSize))?.continent ?? 0;
 function makeRiders(land) {
-	clearRiders();
+	clearRiders((r) => !r.war && !r.escort && !r.hunt);
 	roads = buildRoads(land);
 	const inns = (land.towns ?? []).filter((t) => t.buildings?.length).map(innOf).filter(Boolean);
 	places = inns.length > 1 ? inns : farEnds(land);
@@ -173,8 +185,10 @@ function makeRiders(land) {
 }
 function addRiders(inns) {
 	inns.forEach((inn, t) => {
-		for (let k = 0; k < PER_TOWN; k++) {
+		// (a river town's: one more, RIVER_MORE: it has its farm to keep)
+		for (let k = 0; k < PER_TOWN + (inn.town?.site?.river ? RIVER_MORE : 0); k++) {
 			const person = npcs.makePerson('rider', { hat: 'stetson', gun: 'revolver', home: inn, name: 'rider' });
+			person.group.town = (terrain.land?.towns ?? []).indexOf(inn.town);	// (its town's: townOpinion.js)
 			const r = { person, inn, horse: null, going: null, route: [], along: 0, rest: 0, wanted: 0, think: 0, stuck: 0, backing: 0, fire: 1, unseen: 0, turnSign: 1 };
 			riders.push(r);
 			mountNew(r);
@@ -325,7 +339,9 @@ function blockedAlong(r, heading) {
 	let cost = 0;
 	PROBES.forEach((d, k) => {
 		const x = h.x + fx * d * m, z = h.z + fz * d * m, weight = 1 / (k + 1);
-		const ground = land.heightAt(x, z), here = land.heightAt(h.x, h.z);
+		// (in a tunnel its floor, on a bridge its deck: not the mountain over it, nor the water under it: tunnels.js)
+		const under = (px, pz) => tunnels.floorAt(px, pz, h.y ?? -Infinity) ?? land.heightAt(px, pz);
+		const ground = under(x, z), here = under(h.x, h.z);
 		if ((ground - here) / (d * m) > 0.75) cost += 3 * weight;
 		if (settings.waterWorldPosY - ground > 1.0 * m) cost += 4 * weight;
 		const box = (bx, bz, half, bottom, top) => { if (top > h.y + 0.5 * m && bottom < h.y + 2 * m && Math.abs(bx - x) < half + 0.9 * m && Math.abs(bz - z) < half + 0.9 * m) cost += 5 * weight; };
@@ -375,6 +391,23 @@ function stepRider(r, dt) {
 			}
 		}
 		if (!p.fighting) planRoute(r);
+	} else if (r.hunt) {
+		// a posse's: at whoever it is after, wherever they are
+		const target = npcs.targets().find((t) => t.id === r.hunt.who && t.alive);
+		if (!target || npcs.now() > r.hunt.until) r.hunt.over = true;
+		else {
+			r.going = { x: target.x, z: target.z };
+			r.wanted = Math.atan2(target.x - h.x, target.z - h.z);
+			({ ahead, turn } = steer(r, dt, 1.6));
+		}
+	} else if (r.escort) {
+		// a cart's guard: at its place round the cart, at the cart's pace (faster to catch up), still while it stands
+		const cart = r.escort.cart, [tx, tz] = cart.guardSpot(r.escort.slot), d = Math.hypot(tx - h.x, tz - h.z);
+		r.going = { x: tx, z: tz };
+		if (!(d < 3 * m && cart.speed < 0.2)) {
+			r.wanted = Math.atan2(tx - h.x, tz - h.z);
+			({ ahead, turn } = steer(r, dt, d > 14 * m ? 1.6 : d > 5 * m ? 1.15 : Math.max(cart.speed / (TROT * pace()), 0.35)));
+		}
 	} else if (r.rest > 0) {
 		r.rest -= dt;
 		if (r.rest <= 0) setOff(r);
@@ -433,6 +466,14 @@ function fallen(r, dt) {
 		p.place = { x: side[0], y: terrain.land.groundAt(side[0], side[2]), z: side[2], heading: h.heading + Math.PI / 2, sit: 0 };
 		p.anchor = null;
 	}
+	if (p.respawnIn <= 0 && p.respawnIn > -1 && r.escort) {
+		// (a cart's guard does not come back: its cart takes on another at home)
+		const me = hunting.hunterPlace();
+		if (h.exists && !h.rider && !(me.active && Math.hypot(me.x - h.x, me.z - h.z) < 30 * m)) { horse.removeHorse(h); npcs.announce('horse', null, h); }
+		npcs.removePerson(p);
+		riders.splice(riders.indexOf(r), 1);
+		return;
+	}
 	if (p.respawnIn <= 0 && p.respawnIn > -1) {
 		const me = hunting.hunterPlace();
 		if (h.exists && !h.rider && !(me.active && Math.hypot(me.x - h.x, me.z - h.z) < 30 * m)) { horse.removeHorse(h); npcs.announce('horse', null, h); }
@@ -456,6 +497,7 @@ export function ridersUpdate(dt) {
 	else if (land !== builtFor) { builtFor = land; makeRiders(land); }
 	routeBudget = OFF_ROAD.perFrame;
 	for (const r of [...riders]) stepRider(r, dt);
+	if (riders.some((r) => r.hunt?.over || (r.hunt && !r.person.alive && r.person.respawnIn <= 0 && r.person.respawnIn > -1))) clearRiders((r) => r.hunt?.over || (r.hunt && !r.person.alive && r.person.respawnIn <= 0 && r.person.respawnIn > -1));
 }
 // (the riders between the towns, or which)
 function clearRiders(which = (r) => !r.war) {
@@ -495,6 +537,11 @@ export function addWarRider(side, home, enemy, k = 0) {
 	return r;
 }
 export function clearWarRiders() { clearRiders((r) => !!r.war); }
+// (a war rider landed from a troop ship, npcShips.js: on its horse there, and its way found again from there)
+export function landWarRider(r, x, z) {
+	Object.assign(r.horse, { x, z, ground: null, speed: 0 });
+	r.route = []; r.along = 0; r.replan = true;
+}
 // one of them taken away (survivalWar.js: a town's that it can no longer keep)
 export function removeWarRider(r) { clearRiders((one) => one === r); }
 // for testing: a side's horsemen put in the other town (world units: at, spread round it), and on their way about it
@@ -530,6 +577,44 @@ export function riderList() {
 	return riders.map((r) => ({ id: r.person.id, alive: r.person.alive, horse: r.horse.id, x: r.horse.x, z: r.horse.z, speed: r.horse.speed, going: r.going && { x: r.going.x, z: r.going.z }, route: r.route.length, along: r.along, rest: r.rest, fighting: r.person.fighting, stuck: r.stuck }));
 }
 export const roadsForTest = () => roads;
+// A CART'S GUARDS (see the top): one more for a cart (carts.js: { group, guardSpot(slot), speed, heading }), from its town's inn, at slot
+export function addEscort(cart, slot, inn) {
+	const person = npcs.makePerson('rider', { hat: 'stetson', gun: 'revolver', home: inn, name: 'guard', group: cart.group });
+	const [x, z] = cart.guardSpot(slot);
+	const r = { person, inn, horse: null, going: { x, z }, route: [], along: 0, rest: 0, wanted: cart.heading, think: 0, stuck: 0, backing: 0, fire: 1, unseen: 0, turnSign: 1, escort: { cart, slot } };
+	const h = horse.spawnHorse(x, z, { heading: cart.heading, owner: 'npc', authority: 0, coat: Math.random() });
+	horse.setRider(h, person.id);
+	r.horse = h;
+	npcs.announce('horse', h, null);
+	riders.push(r);
+	riderStats.riders = riders.length;
+	return r;
+}
+// A POSSE (see the top): count riders out of the inn (a town's: { x, z, heading, town }) after who, hostile to them
+export function addPosse(inn, k, who, count) {
+	const group = npcs.makeGroup();
+	group.town = k;
+	npcs.provoke(group, who);
+	const out = [];
+	for (let n = 0; n < count; n++) {
+		const person = npcs.makePerson('rider', { hat: 'stetson', gun: 'revolver', home: inn, name: 'posse', group });
+		const a = n / count * Math.PI * 2, x = inn.x + Math.cos(a) * 3 * metre(), z = inn.z + Math.sin(a) * 3 * metre();
+		const r = { person, inn, horse: null, going: { x, z }, route: [], along: 0, rest: 0, wanted: inn.heading, think: 0, stuck: 0, backing: 0, fire: 1, unseen: 0, turnSign: 1, hunt: { who, until: npcs.now() + POSSE.seconds } };
+		const h = horse.spawnHorse(x, z, { heading: inn.heading, owner: 'npc', authority: 0, coat: Math.random() });
+		horse.setRider(h, person.id);
+		r.horse = h;
+		npcs.announce('horse', h, null);
+		riders.push(r);
+		out.push(r);
+	}
+	riderStats.posses = (riderStats.posses ?? 0) + 1;
+	riderStats.riders = riders.length;
+	return out;
+}
+// (a cart's guards, all of them: its trip over, or it gone)
+export function removeEscorts(cart) { clearRiders((r) => r.escort?.cart === cart); riderStats.riders = riders.length; }
+export const posseFor = (who) => riders.filter((r) => r.hunt?.who === who && r.person.alive);
+export const escortsOf = (cart) => riders.filter((r) => r.escort?.cart === cart && r.person.alive);
 export const ridersForTest = riders;
 // for testing: the way across country between two places (world units), and how long it took to find
 export function landRouteForTest(from, to) {

@@ -48,6 +48,7 @@ import { seasonNow, SEASON_WINTER } from './weather.js'
 */
 const TAX = { bakery: 6, library: 2, shack: 4, shop: 5, chapel: 1, hotel: 10, inn: 8, warehouse: 7, tower: 1, townhouse: 1.5, mansard: 3, timbered: 3, turret: 1, cottages: 1, gabled: 2 };	// dollars a day
 const FOOD = { head: 0.6, reserve: 2, winter: 0.5 };	// dollars a person a day; days of it kept; more in the winter
+const FARM = { dollars: 600, winter: 0.25, food: 12 };	// a river town's farm: dollars a day (a whale every half a day: TRACK), as much of that in the winter, and dollars of food a day
 const FLOAT = 2000;						// cents left in the account, not shared out
 const SHARE = { works: 0.35 };			// of what is left once the food is seen to
 const WORKS = { most: 150000 };			// cents the works keep at the most (the rest to defense)
@@ -157,6 +158,14 @@ function live(k, t, days) {
 	let taxes = away ? s.seen?.taxes ?? TRACK.taxes : 0;
 	for (const h of houses) if (h.damage < 1) taxes += TAX[BUILDING_TYPES[h.building.type].name] ?? 1;
 	s.owed += taxes * working * days;
+	// THE FARM (a river town's: farmsteads.js): its crops sold, at as much a day as a whaler brings in but in the winter less, and a little
+	//		of them into the town's stores
+	if (isRiver(t)) {
+		const rate = seasonNow.index == SEASON_WINTER ? FARM.winter : 1;
+		s.farmOwed = (s.farmOwed ?? 0) + FARM.dollars * rate * days;
+		if (s.farmOwed >= 5) { const whole = Math.floor(s.farmOwed); s.farmOwed -= whole; treasury.pay(t, whole); economyStats.farmed = (economyStats.farmed ?? 0) + whole; }
+		s.food += Math.round(FARM.food * rate * days * 100);
+	}
 	// (THE WORLD TRACKER: a whale landed now and then, as its schooner would)
 	if (away && s.seen?.dock && (s.whaleDue += days) >= TRACK.whaleEvery) { s.whaleDue = 0; treasury.pay(t, TRACK.whale); }
 	if (s.owed >= 5) { const whole = Math.floor(s.owed); s.owed -= whole; treasury.pay(t, whole); economyStats.taxed += whole; }
@@ -220,7 +229,10 @@ function aid(k, t, root, alive, houses) {
 		if (need > 0 && R.works >= need) { R.works -= need; s.works += need; economyStats.aided += need / 100; }
 	}
 }
-const capOf = (t, kind) => kind == 'ships' && !t.dock && !t.surveyed?.dock ? 0 : CAPS[kind];	// (a town not here: as the survey found it, terrain.js)
+const capOf = (t, kind) => kind == 'ships' && !t.dock && !t.surveyed?.dock ? 0 : CAPS[kind] + (isRiver(t) ? RIVER_MORE[kind] ?? 0 : 0);	// (a town not here: as the survey found it, terrain.js)
+// (a river town: townLayout.js's THE RIVER TOWNS, here or as the survey found it)
+export const isRiver = (t) => !!(t?.site?.river || t?.surveyed?.river || t?.river);
+const RIVER_MORE = { riders: 6, planes: 3 };			// a river town keeps more horsemen and biplanes (it has its farm, and no schooner)
 function starveOne(k, t) {
 	const s = stateOf(k);
 	if (tracked(t)) {

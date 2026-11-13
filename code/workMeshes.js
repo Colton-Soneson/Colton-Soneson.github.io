@@ -20,7 +20,28 @@ import * as vm from './viewmodel.js'
 		floorTile, block, plank, ridge, dormer, porch, hearth	a floor (a unit square), a block of stone (a unit, its foot on y = 0), a board, the ridge's cap, a window in the roof, the posts of a porch, a fireplace
 		spiralStair		the stair of a hall two cubes high (cabins.js: STAIR): a post, its steps round it one turn up to the floor over, a handrail on the outside
 		railing			a metre of rail round the stairwell (posts, a top and a bottom rail: laid end to end), cornerBoard: a board up a corner (stretched)
+		wagon			a trading cart (carts.js): its bed of boards on its axles, a canvas cover on four hoops, the driver's seat at the front, the
+						shafts out to the horse, and the strongbox at its tail. Forward is +z, the ground under its middle y = 0. Under 400
+		wagonWheel		a spoked wheel, its iron tyre, a unit in radius, its axle along x through 0 (scaled to each, and turned as it rolls). Under 200
+		farmCabin		a river town's farm's (farmsteads.js): a cabin of boards, FARM_CABIN across and deep, its door in the middle of its +z side,
+						a window each side, a gabled roof (its ridge along x) and a stone chimney at its -x end. Under 250
 */
+export const FARM_CABIN = { w: 5, d: 4, h: 2.6, door: 0.5, doorTop: 2.0, roof: 1.6, eave: 0.4 };
+/*
+	THE TRAIN (trains.js): an old western one, its cars each under 1500 triangles, forward +z, their middles at 0, standing on the rails' tops (y = 0):
+		trainLoco		a 4-4-0 and its tender: the boiler, the balloon stack, the domes, the cab, the cowcatcher, the headlamp, four drivers
+						and the pilot's wheels, the tender behind with its coal
+		trainCoach		a passenger car: its body under a clerestory roof, a row of windows each side, a platform each end, on two trucks
+		trainExpress	the express car: a boxcar of boards, its sliding door each side, on two trucks (its strongbox in it: trains.js)
+	TRAIN_CARS: each one's length (metres), and where its people go in it ([x, y, z], metres from its middle)
+*/
+export const TRAIN_CARS = {
+	trainLoco: { length: 15.4, people: [[0.6, 1.3, -2.1], [-0.6, 1.3, -2.1]] },
+	trainCoach: { length: 14, people: [[0.7, 1.4, -4.5], [-0.7, 1.4, -2.5], [0.7, 1.4, -0.5], [-0.7, 1.4, 1.5], [0.7, 1.4, 3.5], [-0.7, 1.4, 5], [0, 4.25, -3], [0, 4.25, 2.5], [0.6, 1.25, 6.6], [-0.6, 1.25, -6.6]] },
+	trainExpress: { length: 12, people: [[0.6, 1.3, -3], [-0.6, 1.3, 3], [0, 3.85, 0], [0.5, 1.3, 5.6]] },
+};
+// THE WAGON (see the top): where its wheels go (metres: x either side, the axle's height = the wheel's radius, z), and its seat and chest
+export const WAGON = { rear: { x: 0.82, r: 0.66, z: -1.0 }, front: { x: 0.78, r: 0.5, z: 0.95 }, seat: [0, 1.28, 1.3], chest: [0, 0.84, -1.25], horse: 3.4 };
 
 export const CUBE = 4, CUBE_UP = 3;		// metres
 // THE SPIRAL STAIR (cabins.js): STAIR_STEPS steps of STAIR_RISE each round a post, a whole turn: step k from the angle STAIR_FROM + k turns of a step (an
@@ -28,7 +49,7 @@ export const CUBE = 4, CUBE_UP = 3;		// metres
 export const STAIR_STEPS = 15, STAIR_RISE = CUBE_UP / STAIR_STEPS, STAIR_RADIUS = 1.0;
 export const STAIR_TURN = Math.PI * 2 / STAIR_STEPS, STAIR_FROM = Math.PI / 2 + STAIR_TURN / 2;
 const ICE = 86, ORE_ROCK = 88, ORE = 89, SOIL = 90, WHEAT_GREEN = 91, WHEAT_GOLD = 92, CAST_IRON = 93, FIRE_STONE = 94, CAP = 95, STEM = 96, WALL = 97, ROOF = 98, WINDOW = 99, TWINE = 100, STAKE = 101,
-	INNER = 103, FLOOR = 104, PLINTH = 105, SOOT = 106, EMBER = 107, BOARDS = 30, LEATHER = 42;
+	INNER = 103, FLOOR = 104, PLINTH = 105, SOOT = 106, EMBER = 107, BOARDS = 30, LEATHER = 42, CANVAS = 37;
 
 function box(m, x0, x1, y0, y1, z0, z1, material, part = 0) {
 	const c = [[x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1], [x0, y1, z0], [x1, y1, z0], [x1, y1, z1], [x0, y1, z1]];
@@ -338,9 +359,137 @@ function railing() {
 }
 function cornerBoard() { const m = vm.meshBuilder(); box(m, -0.5, 0.5, 0, 1, -0.5, 0.5, STAKE); return m; }
 
+function wagon() {
+	const m = vm.meshBuilder(), W = 0.62, z0 = -1.5, z1 = 1.3, floor = 0.78, top = 1.3;
+	// the bed: its floor, its sides, its front board and its tailgate
+	box(m, -W, W, floor, floor + 0.06, z0, z1, BOARDS);
+	for (const s of [-1, 1]) box(m, s * W - 0.03, s * W + 0.03, floor + 0.06, top, z0, z1, BOARDS);
+	box(m, -W, W, floor + 0.06, top, z1 - 0.04, z1, BOARDS);
+	box(m, -W, W, floor + 0.06, top - 0.1, z0, z0 + 0.04, BOARDS);
+	// its axles and the reach between them
+	m.strut([-WAGON.rear.x, WAGON.rear.r, WAGON.rear.z], [WAGON.rear.x, WAGON.rear.r, WAGON.rear.z], 0.06, 0.06, 4, CAST_IRON);
+	m.strut([-WAGON.front.x, WAGON.front.r, WAGON.front.z], [WAGON.front.x, WAGON.front.r, WAGON.front.z], 0.06, 0.06, 4, CAST_IRON);
+	m.strut([0, WAGON.rear.r, WAGON.rear.z], [0, WAGON.front.r, WAGON.front.z], 0.05, 0.05, 4, BOARDS);
+	for (const z of [WAGON.rear.z, WAGON.front.z]) box(m, -W * 0.8, W * 0.8, (z < 0 ? WAGON.rear.r : WAGON.front.r) + 0.04, floor, z - 0.06, z + 0.06, BOARDS);
+	// the cover: canvas over four hoops, a bay between each two (open at its ends)
+	const hoops = [-1.42, -0.55, 0.3, 1.12], arch = (z) => Array.from({ length: 9 }, (_, k) => { const a = k / 8 * Math.PI; return [Math.cos(a) * (W + 0.04), top + Math.sin(a) * 0.95, z]; });
+	for (let i = 0; i < hoops.length - 1; i++) {
+		const A = arch(hoops[i]), B = arch(hoops[i + 1]);
+		for (let k = 0; k < 8; k++) { m.quad(A[k], A[k + 1], B[k + 1], B[k], 0, CANVAS); }
+	}
+	// the seat and its foot board, and the shafts out either side of the horse
+	const [sx, sy, sz] = WAGON.seat;
+	box(m, sx - 0.5, sx + 0.5, sy - 0.08, sy, sz - 0.18, sz + 0.18, BOARDS);
+	box(m, -0.5, 0.5, floor + 0.2, floor + 0.25, z1, z1 + 0.45, BOARDS);
+	for (const s of [-1, 1]) m.strut([s * 0.42, 0.62, z1 - 0.2], [s * 0.36, 1.05, WAGON.horse - 0.3], 0.045, 0.035, 4, BOARDS);
+	// the strongbox at its tail, bound in iron
+	const [cx, cy, cz] = WAGON.chest;
+	box(m, cx - 0.42, cx + 0.42, cy, cy + 0.42, cz - 0.2, cz + 0.2, LEATHER);
+	box(m, cx - 0.44, cx + 0.44, cy + 0.18, cy + 0.24, cz - 0.21, cz + 0.21, CAST_IRON);
+	return m;
+}
+function farmCabin() {
+	const m = vm.meshBuilder(), { w, d, h, door, doorTop, roof, eave } = FARM_CABIN, X = w / 2, Z = d / 2, t = 0.14;
+	// the walls (the front either side of the door, and over it), the floor
+	box(m, -X, X, 0, h, -Z, -Z + t, BOARDS);
+	box(m, -X, -X + t, 0, h, -Z, Z, BOARDS); box(m, X - t, X, 0, h, -Z, Z, BOARDS);
+	box(m, -X, -door, 0, h, Z - t, Z, BOARDS); box(m, door, X, 0, h, Z - t, Z, BOARDS); box(m, -door, door, doorTop, h, Z - t, Z, BOARDS);
+	box(m, -X + t, X - t, 0, 0.12, -Z + t, Z - t, BOARDS);
+	// a window each side of the door: its frame, dark glass
+	for (const s of [-1, 1]) { const cx = s * X * 0.55; m.quad([cx - 0.4, 1.0, Z + 0.01], [cx + 0.4, 1.0, Z + 0.01], [cx + 0.4, 1.8, Z + 0.01], [cx - 0.4, 1.8, Z + 0.01], 0, INNER); box(m, cx - 0.48, cx + 0.48, 0.92, 1.0, Z, Z + 0.06, STAKE); }
+	// the roof: two slopes, over the eaves, and the gables up under it
+	const top = h + roof, E = X + eave, F = Z + eave;
+	m.quad([-E, h - 0.1, -F], [E, h - 0.1, -F], [E, top, 0], [-E, top, 0], 0, ROOF);
+	m.quad([-E, h - 0.1, F], [-E, top, 0], [E, top, 0], [E, h - 0.1, F], 0, ROOF);
+	for (const s of [-1, 1]) m.tri([s * (X - 0.02), h, -Z], [s * (X - 0.02), h, Z], [s * (X - 0.02), top, 0], 0, BOARDS);
+	// the chimney, up past the roof at the -x end
+	box(m, -X - 0.5, -X + 0.3, 0, top + 0.5, -0.45, 0.45, FIRE_STONE);
+	return m;
+}
+// (a pair of wheels on their axle across x, radius r, at z: each wheel a short tube; and a truck: two pairs and its frame)
+function trainWheels(m, z, r, gauge = 0.72) {
+	for (const s of [-1, 1]) m.strut([s * (gauge - 0.06), r, z], [s * (gauge + 0.06), r, z], r, r, 10, CAST_IRON);
+	m.strut([-gauge, r, z], [gauge, r, z], 0.06, 0.06, 4, CAST_IRON);
+}
+function trainTruck(m, z) {
+	trainWheels(m, z - 0.85, 0.42); trainWheels(m, z + 0.85, 0.42);
+	box(m, -0.95, 0.95, 0.5, 0.75, z - 1.2, z + 1.2, CAST_IRON);
+}
+function trainLoco() {
+	const m = vm.meshBuilder();
+	// the frame, the boiler and its smokebox, the stack and the domes
+	box(m, -1.2, 1.2, 0.95, 1.2, -7.6, 6.2, CAST_IRON);
+	m.tube(0, 2.15, -1.6, 0.78, 5.4, 0.78, 12, CAST_IRON, 0, [1]);
+	m.tube(0, 2.15, 5.4, 0.84, 6.1, 0.84, 12, SOOT, 0, [1]);
+	m.strut([0, 2.8, 5.6], [0, 3.9, 5.6], 0.2, 0.24, 8, SOOT);
+	m.strut([0, 3.9, 5.6], [0, 4.6, 5.6], 0.26, 0.62, 8, SOOT);
+	for (const [z, r] of [[2.8, 0.36], [0.6, 0.3]]) m.strut([0, 2.7, z], [0, 3.35, z], r, r * 0.8, 8, CAST_IRON);
+	// the cab: its walls, its windows left open, its roof over
+	box(m, -1.35, 1.35, 1.2, 1.9, -3.4, -1.6, BOARDS);
+	for (const s of [-1, 1]) { box(m, s * 1.35 - 0.06, s * 1.35 + 0.06, 1.9, 3.6, -3.4, -3.2, BOARDS); box(m, s * 1.35 - 0.06, s * 1.35 + 0.06, 1.9, 3.6, -1.8, -1.6, BOARDS); }
+	box(m, -1.35, 1.35, 1.9, 3.6, -1.7, -1.6, BOARDS, 0);
+	box(m, -1.55, 1.55, 3.6, 3.75, -3.7, -1.3, ROOF);
+	// the cowcatcher and the headlamp
+	m.tri([-1.1, 0.95, 6.2], [1.1, 0.95, 6.2], [0, 0.15, 7.4], 0, CAST_IRON);
+	m.tri([-1.1, 0.95, 6.2], [0, 0.15, 7.4], [-1.1, 0.15, 6.4], 0, CAST_IRON);
+	m.tri([1.1, 0.95, 6.2], [1.1, 0.15, 6.4], [0, 0.15, 7.4], 0, CAST_IRON);
+	box(m, -0.28, 0.28, 3.0, 3.55, 5.7, 6.15, BOARDS);
+	m.quad([-0.2, 3.08, 6.16], [0.2, 3.08, 6.16], [0.2, 3.47, 6.16], [-0.2, 3.47, 6.16], 0, EMBER);
+	// the drivers and their rod, the pilot's wheels
+	for (const z of [-0.6, 1.4]) trainWheels(m, z, 0.85, 0.82);
+	for (const s of [-1, 1]) m.strut([s * 0.98, 0.75, -0.6], [s * 0.98, 0.75, 1.4], 0.05, 0.05, 4, CAST_IRON);
+	trainWheels(m, 4.2, 0.42); trainWheels(m, 5.2, 0.42);
+	// the tender: its body, its coal, on its truck
+	box(m, -1.3, 1.3, 1.2, 2.9, -7.6, -3.8, BOARDS);
+	box(m, -1.1, 1.1, 2.9, 3.2, -7.2, -4.2, SOOT);
+	trainTruck(m, -5.7);
+	return m;
+}
+function trainCoach() {
+	const m = vm.meshBuilder(), L = 6.6;
+	// the body: its sides, its ends, the floor
+	box(m, -1.4, 1.4, 1.1, 1.25, -L, L, BOARDS);
+	for (const s of [-1, 1]) {
+		box(m, s * 1.4 - 0.05, s * 1.4 + 0.05, 1.25, 3.55, -L + 0.8, L - 0.8, BOARDS);
+		// (its windows: dark glass in a row)
+		for (let k = 0; k < 7; k++) { const z = -L + 1.5 + k * 1.68, x = s * 1.46; m.quad([x, 2.2, z - 0.5], [x, 2.2, z + 0.5], [x, 3.0, z + 0.5], [x, 3.0, z - 0.5], 0, INNER); }
+	}
+	for (const e of [-1, 1]) box(m, -1.4, 1.4, 1.25, 3.55, e * (L - 0.8) - 0.05, e * (L - 0.8) + 0.05, BOARDS);
+	// the roof and its clerestory
+	box(m, -1.55, 1.55, 3.55, 3.75, -L, L, ROOF);
+	box(m, -0.8, 0.8, 3.75, 4.15, -L + 1, L - 1, ROOF);
+	// a platform each end, its rail
+	for (const e of [-1, 1]) { box(m, -1.4, 1.4, 1.0, 1.1, e * L - 0.8, e * L + 0.8, BOARDS); for (const s of [-1, 1]) m.strut([s * 1.3, 1.1, e * L], [s * 1.3, 2.1, e * L], 0.03, 0.03, 4, CAST_IRON); m.strut([-1.3, 2.1, e * L], [1.3, 2.1, e * L], 0.03, 0.03, 4, CAST_IRON); }
+	trainTruck(m, -4.6); trainTruck(m, 4.6);
+	return m;
+}
+function trainExpress() {
+	const m = vm.meshBuilder(), L = 6;
+	box(m, -1.45, 1.45, 1.1, 3.4, -L, L, BOARDS);
+	box(m, -1.55, 1.55, 3.4, 3.6, -L - 0.1, L + 0.1, ROOF);
+	// its doors, a little proud of its sides, on their track
+	for (const s of [-1, 1]) { box(m, s * 1.45, s * 1.52, 1.2, 3.1, -1, 1, STAKE); m.strut([s * 1.53, 3.15, -2.2], [s * 1.53, 3.15, 2.2], 0.03, 0.03, 4, CAST_IRON); }
+	trainTruck(m, -3.8); trainTruck(m, 3.8);
+	return m;
+}
+function wagonWheel() {
+	const m = vm.meshBuilder(), N = 14, T = 0.045;
+	const at = (a, r, x) => [x, Math.sin(a) * r, Math.cos(a) * r];
+	for (let k = 0; k < N; k++) {
+		const a0 = k / N * Math.PI * 2, a1 = (k + 1) / N * Math.PI * 2;
+		m.quad(at(a0, 1, -T), at(a1, 1, -T), at(a1, 1, T), at(a0, 1, T), 0, CAST_IRON);
+		m.quad(at(a0, 0.88, T), at(a1, 0.88, T), at(a1, 0.88, -T), at(a0, 0.88, -T), 0, BOARDS);
+		for (const x of [-T, T]) m.quad(at(a0, 0.88, x), at(a1, 0.88, x), at(a1, 1, x), at(a0, 1, x), 0, BOARDS);
+	}
+	for (let k = 0; k < 8; k++) { const a = k / 8 * Math.PI * 2; m.strut(at(a, 0.13, 0), at(a, 0.9, 0), 0.035, 0.028, 4, BOARDS); }
+	m.strut([-0.12, 0, 0], [0.12, 0, 0], 0.15, 0.15, 6, BOARDS);
+	return m;
+}
+
 const MAKERS = { spiralStair, railing, cornerBoard, iceTile, oreSmall, oreMid, oreBig, mushroom, smelter, smelterFire, anvil, cauldron, mortar, chest, farmBed,
 	wheat1: () => wheat(0.12, 40, WHEAT_GREEN), wheat2: () => wheat(0.32, 70, WHEAT_GREEN), wheat3: () => wheat(0.62, 100, WHEAT_GREEN), wheat4: () => wheat(0.85, 90, WHEAT_GOLD, WHEAT_GOLD), stake, twine,
 	wallOut: () => outside(null), wallIn: () => inside(null), windowOut, windowIn, doorOut: () => outside(DOOR_HOLE, STAKE), doorIn, gapIn: () => inside(GAP_HOLE),
-	roofOut: () => roofPiece(ROOF, 8), roofIn: () => roofPiece(INNER, 0), gableOut: () => gable(WALL, 8), gableIn: () => gable(INNER, 0), floorTile, block: () => block(PLINTH), plank: () => block(FLOOR), ridge, dormer, porch, hearth };
+	roofOut: () => roofPiece(ROOF, 8), roofIn: () => roofPiece(INNER, 0), gableOut: () => gable(WALL, 8), gableIn: () => gable(INNER, 0), floorTile, block: () => block(PLINTH), plank: () => block(FLOOR), ridge, dormer, porch, hearth,
+	wagon, wagonWheel, farmCabin, trainLoco, trainCoach, trainExpress };
 export const WORK_MESHES = Object.fromEntries(Object.entries(MAKERS).map(([name, make]) => { const m = make(); return [name, { data: m.done(), triangles: m.count() }]; }));
 export const workStats = Object.fromEntries(Object.entries(WORK_MESHES).map(([name, mesh]) => [name, mesh.triangles]));

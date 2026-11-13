@@ -105,6 +105,13 @@ function hostAdd(kind, at, yaw, extra = {}) {
 	return s;
 }
 export const addBuilt = (kind, at, yaw, cabin, id) => hostAdd(kind, at, yaw, { id, cabin, indoors: true });
+// (one that is part of the world, a fire tower's stove: fireTowers.js. Made once, the host's: whether it was made now)
+export function addFixed(kind, at, yaw, id) {
+	if (!survivalNet.authority() || stations.has(id)) return false;
+	hostAdd(kind, at, yaw, { id, cabin: 'world', indoors: true });
+	changed();
+	return true;
+}
 const kindOfItem = (type) => Object.keys(KINDS).find((k) => KINDS[k].item == type);
 // SET UP (see the top): out of the inventory, on the ground in front
 export function place(item) {

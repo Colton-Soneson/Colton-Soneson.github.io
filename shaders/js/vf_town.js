@@ -15,6 +15,7 @@ import { skyLookupShapes } from './vfc_atmosphere.js';
 	here and there, and the lamps.
 */
 export { TOWN_MATERIALS } from '../../code/townLayout.js';
+import { TUNNEL } from '../../code/footpaths.js';
 
 export const vf_town =
 `
@@ -170,6 +171,33 @@ export const vf_town =
 	}
 
 	// Cobbles: rounded setts in rows across the street, the rows offset
+	// THE LAMPS OF A TUNNEL (townGround.js: tunnelWork, tunnelLamps): a point of its lining or its floor in the bore's own terms from its
+	//		uv (along it, and round its section from the floor on the left: a wall up to the spring, the arch, the other wall down; on
+	//		the floor across it), and the light of the three lamps nearest it there
+	const BORE_HALF: f32 = ${TUNNEL.half.toFixed(2)};
+	const BORE_SPRING: f32 = ${(TUNNEL.height - TUNNEL.half).toFixed(2)};
+	const BORE_LAMPS: f32 = ${TUNNEL.lamps.toFixed(1)};
+	fn boreLamps(uv: vec2f, floor: bool) -> vec3f {
+		var across = uv.y;
+		var up = 0.0;
+		if (!floor) {
+			let arch = 3.14159265 * BORE_HALF;
+			if (uv.y < BORE_SPRING) { across = -BORE_HALF; up = uv.y; }
+			else if (uv.y < BORE_SPRING + arch) { let a = 3.14159265 - (uv.y - BORE_SPRING) / BORE_HALF; across = BORE_HALF * cos(a); up = BORE_SPRING + BORE_HALF * sin(a); }
+			else { across = BORE_HALF; up = BORE_SPRING - (uv.y - BORE_SPRING - arch); }
+		}
+		let nearest = round((uv.x - BORE_LAMPS * 0.5) / BORE_LAMPS);
+		var light = 0.0;
+		for (var k = -1; k <= 1; k++) {
+			let n = nearest + f32(k);
+			if (n < 0.0) { continue; }
+			let side = select(-1.0, 1.0, (i32(n) % 2) == 1);
+			let d = vec3f(uv.x - (BORE_LAMPS * 0.5 + n * BORE_LAMPS), across - side * (BORE_HALF - 0.4), up - (BORE_SPRING - 1.2));
+			light += 2.2 / (1.0 + dot(d, d) / 14.0);
+		}
+		return vec3f(1.0, 0.68, 0.38) * light;
+	}
+
 	fn cobbles(uv: vec2f) -> vec4f {
 		let size = vec2f(0.95, 0.75);
 		let row = floor(uv.x / size.y);
@@ -395,6 +423,54 @@ export const vf_town =
 				}
 				albedo = earth;
 			}
+			case 23, 24: {
+				// a main road (footpaths.js: ROADS; uv: along it and across it, world units): of packed dirt, two wheel ruts worn down it
+				//		and a strip of grass between them here and there, its edges ragged and the grass coming in at them. Or of poor
+				//		cobbles (24): stones gone in patches, more towards its edges, the dirt showing
+				let side = select(-13.0, 13.0, uv.y >= 0.0);
+				let edge = 5.5 - 0.9 * fbm2(vec2f(uv.x / 4.0, side)) - 0.35 * noise2(vec2f(uv.x * 0.9, side * 0.5));
+				if (abs(uv.y) > edge) { discard; }
+				let soil = mix(vec3f(0.35, 0.27, 0.18), vec3f(0.46, 0.37, 0.25), fbm2(uv / 4.0));
+				var earth = soil * (0.88 + 0.2 * noise2(uv * 3.0));
+				let rut = 1.0 - smoothstep(0.25, 0.75, abs(abs(uv.y) - 1.7 + 0.25 * noise2(vec2f(uv.x * 0.08, side))));
+				earth *= 1.0 - 0.2 * rut;
+				let crown = (1.0 - smoothstep(0.35, 0.8, abs(uv.y))) * smoothstep(0.5, 0.72, fbm2(uv / vec2f(7.0, 1.2)));
+				var grassy = smoothstep(edge - 1.5, edge - 0.2, abs(uv.y)) * smoothstep(0.42, 0.7, fbm2(uv / 2.0 + vec2f(5.0, 1.0))) + 0.8 * crown;
+				if (what == 24) {
+					let cobble = cobbles(uv);
+					let gone = smoothstep(0.5, 0.72, fbm2(uv / 2.3 + vec2f(2.0, 7.0)) + 0.3 * smoothstep(2.0, 5.0, abs(uv.y)));
+					earth = mix(cobble.rgb * 0.9, earth, gone);
+					joint = mix(0.7 + 0.3 * cobble.a, 1.0, gone);
+					grassy *= 0.6 + 0.4 * gone;
+				}
+				albedo = mix(earth, vec3f(0.21, 0.33, 0.12) * (0.8 + 0.35 * noise2(uv * 1.7)), saturate(grassy));
+			}
+			case 25: {
+				// a tunnel's lining (townGround.js: tunnelWork): dressed stone, sooty and damp
+				let block = dressed(uv);
+				albedo = block.rgb * (0.62 + 0.15 * noise2(uv * 0.7));
+				joint = 0.75 + 0.25 * block.a;
+			}
+			case 26: {
+				// and its floor: packed dirt, a wheel rut each side
+				albedo = mix(vec3f(0.27, 0.22, 0.16), vec3f(0.35, 0.29, 0.21), fbm2(uv / 3.0)) * (0.85 + 0.25 * noise2(uv * 4.0));
+				albedo *= 1.0 - 0.18 * (1.0 - smoothstep(0.25, 0.75, abs(abs(uv.y) - 1.7)));
+			}
+			case 28: {
+				// the main line's bed (uv: along it and across it, world units): grey stone ballast, the sleepers across it every 1.3, its
+				//		edges ragged (its rails are their own: townGround.js, railsAlong)
+				let edge = 4.3 - 0.6 * fbm2(vec2f(uv.x / 3.0, select(-7.0, 7.0, uv.y >= 0.0)));
+				if (abs(uv.y) > edge) { discard; }
+				let stone = mix(vec3f(0.36, 0.34, 0.31), vec3f(0.5, 0.47, 0.42), noise2(uv * 6.0)) * (0.8 + 0.3 * noise2(uv * 17.0));
+				let sleeper = (1.0 - smoothstep(0.32, 0.4, abs(fract(uv.x / 1.3) - 0.5) * 1.3)) * (1.0 - smoothstep(2.4, 2.6, abs(uv.y)));
+				albedo = mix(stone, vec3f(0.27, 0.19, 0.12) * (0.85 + 0.25 * noise2(uv * vec2f(9.0, 2.0))), sleeper);
+				joint = mix(0.85 + 0.15 * noise2(uv * 23.0), 1.0, sleeper);
+			}
+			case 27: {
+				// its lamps' lanterns: lit day and night
+				albedo = vec3f(0.85, 0.82, 0.7);
+				glow = vec3f(1.0, 0.7, 0.36) * 1.6;
+			}
 			default: {}
 		}
 
@@ -420,10 +496,14 @@ export const vf_town =
 		let L = normalize(Lights.sunPos.xyz);
 		let daylight = smoothstep(-0.08, 0.25, L.y);
 		let V = normalize(-toIt);
-		let light = (0.12 + daylight * (0.4 + 0.75 * saturate(dot(N, L)))) * joint;
+		// (in a tunnel, input.height: how far in from its nearer portal. The daylight gone a little way in: its lamps light it, the
+		//		point lights' pass)
+		let inside = select(0.0, smoothstep(2.0, 36.0, input.height), what == 25 || what == 26);
+		let light = (0.12 + daylight * (0.4 + 0.75 * saturate(dot(N, L)))) * joint * (1.0 - 0.95 * inside);
 		let sunTint = mix(vec3f(1.0, 1.0, 1.0), Lights.sunCol.rgb, 0.35 * (1.0 - saturate(L.y * 3.0)));
-		let gloss = pow(saturate(dot(N, normalize(L + V))), 24.0) * shine * daylight;
-		var color = albedo * (light * sunTint + moonLight(N)) + vec3f(gloss) + glow;
+		let gloss = pow(saturate(dot(N, normalize(L + V))), 24.0) * shine * daylight * (1.0 - inside);
+		var color = albedo * (light * sunTint + moonLight(N) * (1.0 - inside)) + vec3f(gloss) + glow;
+		if (what == 25 || what == 26) { color += albedo * boreLamps(uv, what == 26); }
 		if (TU.look.y > 0.5) {
 			let horizonColor = fogColorAt(toIt);
 			let fog = 1.0 - exp(-pow(away / TU.look.x, 2.0));

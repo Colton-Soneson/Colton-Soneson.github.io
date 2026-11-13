@@ -401,28 +401,46 @@ for (let i = 0; i < totalTileCount; i++) {
     }));
 }
 
-// Horizon plane: one flat ring of water from the outside edge of the tile grid out to (as good as) infinity. 4 quads, 8 vertices.
-//		the tiles have flattened out by their outside edge, so it meets them with no seam, and the vertex shader keeps it from being clipped at the far plane
+// Horizon plane: flat water from the outside edge of the tile grid out to (as good as) infinity, as square rings one round the next.
+//		The tiles have flattened out by their outside edge, so it meets them with no seam, and the vertex shader keeps it from being clipped at
+//		the far plane: by holding the depth of a corner past it just inside it. That depth is wrong, and so is all of the ring across from a
+//		corner held so, so the rings grow by HORIZON_GROWTH until their corners are as far out as HORIZON_INSIDE of the far plane, and only
+//		the last (out from there to as good as infinity) has corners held. Every ring before it is the true depth: with one ring all the
+//		way out, from up high the sea came in front of all the land out past the tiles (a massif's top, a plane)
 const horizonPlaneReach = 1000000.0;
+const HORIZON_GROWTH = 1.8, HORIZON_INSIDE = 0.65, HORIZON_RINGS = 16;
 const waterHorizonVertexBuffer = device.createBuffer({
 	label: "water horizon plane vertex buffer",
-	size: 8 * waterPlaneVertexStride * Float32Array.BYTES_PER_ELEMENT,
+	size: 4 * (HORIZON_RINGS + 1) * waterPlaneVertexStride * Float32Array.BYTES_PER_ELEMENT,
 	usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
 });
-const waterHorizonIndices = new Uint32Array([0,1,5, 0,5,4,  1,2,6, 1,6,5,  2,3,7, 2,7,6,  3,0,4, 3,4,7]);	//inner corners 0-3, outer corners 4-7
+// (each ring 4 quads: its inner square's corners 4k..4k+3, its outer square's the next 4)
+const waterHorizonIndices = new Uint32Array(HORIZON_RINGS * 24);
+for (let k = 0; k < HORIZON_RINGS; k++) {
+	const a = 4 * k, b = a + 4;
+	waterHorizonIndices.set([a, a + 1, b + 1, a, b + 1, b,  a + 1, a + 2, b + 2, a + 1, b + 2, b + 1,  a + 2, a + 3, b + 3, a + 2, b + 3, b + 2,  a + 3, a, b, a + 3, b, b + 3], k * 24);
+}
 const waterHorizonIndexBuffer = device.createBuffer({
 	label: "water horizon plane index buffer",
 	size: waterHorizonIndices.byteLength,
 	usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
 });
 device.queue.writeBuffer(waterHorizonIndexBuffer, 0, waterHorizonIndices);
+let waterHorizonRings = 1;		// how many rings there are this frame
 
 function waterHorizonPlaneUpdate(originX, originZ) {
 	const inner = settings.waterTileInstanceCount * settings.waterGridSize * 0.5;	//outside edge of the tile grid
 	const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+	// (the squares' half sizes: out from the tiles until a corner would be past HORIZON_INSIDE of the far plane, then as good as infinity)
+	const reaches = [inner];
+	const inside = HORIZON_INSIDE * settings.camFarPlane / Math.SQRT2;
+	while (reaches.length < HORIZON_RINGS && reaches[reaches.length - 1] * HORIZON_GROWTH < inside) reaches.push(reaches[reaches.length - 1] * HORIZON_GROWTH);
+	if (reaches[reaches.length - 1] < inside) reaches.push(inside);
+	reaches.push(inner + horizonPlaneReach);
+	waterHorizonRings = reaches.length - 1;
 
 	const verts = [];
-	for (const reach of [inner, inner + horizonPlaneReach]) {
+	for (const reach of reaches) {
 		for (const [signX, signZ] of corners) {
 			verts.push(originX + signX * reach, settings.waterWorldPosY, originZ + signZ * reach);	//position
 			verts.push(0.0, 1000.0);	//uv slot: no foam, and bottomless so its never see-through
@@ -2086,7 +2104,7 @@ export function waterPass(mainpassDepthTexture) {
 	waterHorizonPlaneUpdate(tileOriginX, tileOriginZ);
 	pass.setVertexBuffer(0, waterHorizonVertexBuffer);
 	pass.setIndexBuffer(waterHorizonIndexBuffer, 'uint32');
-	pass.drawIndexed(waterHorizonIndices.length, 1, 0, 0, 0);
+	pass.drawIndexed(waterHorizonRings * 24, 1, 0, 0, 0);
 	
 	pass.end();
 	

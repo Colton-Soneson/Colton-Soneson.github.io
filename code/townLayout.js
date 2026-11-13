@@ -102,7 +102,8 @@ export const BUILDING_TYPES = [
 export const FLOOR_HEIGHT = 6.4, GROUND_FLOOR = 7.2;
 // what the towns are made of, a number for each (see vf_town.js)
 export const TOWN_MATERIALS = { PLASTER: 0, STONE: 1, ROOF: 2, TIMBER: 3, PLANKS: 4, GLASS: 5, TRIM: 6, IRON: 7, LAMP: 8, COBBLE: 9, DRESSED: 10,
-	AWNING: 11, BRASS: 12, BRICK: 13, DOOR: 14, FLOWERS: 15, COPPER: 16, CLOCK: 17, LEAVES: 18, ROSES: 19, TULIPS: 20, DIRT: 21, PATH: 22 };
+	AWNING: 11, BRASS: 12, BRICK: 13, DOOR: 14, FLOWERS: 15, COPPER: 16, CLOCK: 17, LEAVES: 18, ROSES: 19, TULIPS: 20, DIRT: 21, PATH: 22,
+	ROAD: 23, ROAD_COBBLE: 24, BORE: 25, BORE_FLOOR: 26, BORE_LAMP: 27, BALLAST: 28 };
 // Each type comes in VARIANTS sizes (its meshes are made once for each, so they can be drawn many times over without being stretched):
 //		{ width, depth, floors } of one of them
 export const VARIANTS = 4;

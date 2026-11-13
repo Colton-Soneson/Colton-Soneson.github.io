@@ -383,7 +383,7 @@ camFolder.add(imguiParams, 'camPosX', -2000, 2000).name('Pos X');
 camFolder.add(imguiParams, 'camPosY', -2000, 2000).name('Pos Y');
 camFolder.add(imguiParams, 'camPosZ', -2000, 2000).name('Pos Z');
 camFolder.add(imguiParams, 'camNearPlane', 0.1, 100).name('Near Plane');
-camFolder.add(imguiParams, 'camFarPlane', 100, 20000).name('Far Plane');
+camFolder.add(imguiParams, 'camFarPlane', 100, 150000).name('Far Plane');
 camFolder.add(imguiParams, 'cameraFlyMode').name('Fly Camera (WASD + RMB)');
 camFolder.add(imguiParams, 'cameraFlySpeed', 5, 5000, 5).name('Fly Speed');
 

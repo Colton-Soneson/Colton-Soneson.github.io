@@ -196,7 +196,15 @@ function drawMap() {
 		ctx.fillText('Airstrip', lx, ly);
 	}
 	// the paths: dashed
-	for (const path of land.paths ?? []) charcoal(ctx, path.points.map(([x, , z]) => [px(x), pz(z)]), { width: 1.6, passes: 2, alpha: 0.6, dash: [7, 6], jitter: 0.8 });
+	//		(the roads solid and heavier, a tunnel thin and dotted through its mountain; another tile's half of a gate's stretch is its own)
+	for (const path of land.paths ?? []) {
+		if (path.hidden) continue;
+		const line = path.points.map(([x, , z]) => [px(x), pz(z)]);
+		if (path.kind == 'rail' || path.rail) charcoal(ctx, line, { width: 2.2, passes: 1, alpha: 0.85, dash: [10, 3], jitter: 0.2 });
+		else if (path.kind == 'road' || path.kind == 'bridge') charcoal(ctx, line, { width: 3.2, passes: 2, alpha: 0.75, jitter: 0.6 });
+		else if (path.kind == 'tunnel') charcoal(ctx, line, { width: 1.4, passes: 1, alpha: 0.6, dash: [2, 5], jitter: 0.3 });
+		else charcoal(ctx, line, { width: 1.6, passes: 2, alpha: 0.6, dash: [7, 6], jitter: 0.8 });
+	}
 	// the north arrow, and a title
 	ctx.font = 'bold 40px "Segoe Print", "Bradley Hand", cursive';
 	ctx.fillStyle = ink;

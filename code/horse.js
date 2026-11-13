@@ -12,6 +12,7 @@ import { vf_horse } from '../shaders/js/vf_horse.js'
 import * as transformations from './transformations.js'
 import * as temporalAA from './temporalAA.js'
 import * as terrain from './terrain.js'
+import * as tunnels from './tunnels.js'
 import * as forest from './forest.js'
 import * as boulders from './boulders.js'
 import * as ballistics from './ballistics.js'
@@ -311,6 +312,9 @@ addChoice('Vehicles', { label: 'Horse', detail: 'Saddled, with saddlebags of amm
 function groundUnder(h) {
 	const land = terrain.land;
 	if (!land) return 0;
+	// (in a tunnel, its floor; on a road's bridge, its deck: tunnels.js)
+	const floor = tunnels.floorAt(h.x, h.z, h.y ?? -Infinity);
+	if (floor !== null) return floor;
 	const rough = land.heightAt(h.x, h.z);
 	if (!h.ground || Math.hypot(h.x - h.ground.x, h.z - h.ground.z) > GROUND_AGAIN * metre()) h.ground = { x: h.x, z: h.z, exact: land.groundAt(h.x, h.z), rough };
 	return h.ground.exact + (rough - h.ground.rough);
@@ -356,12 +360,15 @@ function stepHorse(h, dt) {
 	const step = h.speed * m * dt;
 	if (Math.abs(step) > 0 && land) {
 		const look = Math.sign(step) * 1.2 * m;
-		const here = land.heightAt(h.x, h.z), there = land.heightAt(h.x + fx * look, h.z + fz * look);
+		const under = (x, z) => tunnels.floorAt(x, z, h.y ?? -Infinity) ?? land.heightAt(x, z);
+		const here = under(h.x, h.z), there = under(h.x + fx * look, h.z + fz * look);
+		const fromX = h.x, fromZ = h.z;
 		if ((there - here) / Math.abs(look) > STEEPEST && h.swim < 0.5) {
 			h.speed = 0;
 		} else {
 			h.x += fx * step;
 			h.z += fz * step;
+			tunnels.keepIn(h, RADIUS * m, h.y ?? 0, fromX, fromZ);
 		}
 	}
 	// out of the trunks and the boulders round its chest and its quarters
@@ -395,7 +402,8 @@ function stepHorse(h, dt) {
 	h.y = h.swim > 0.5 ? Math.max(ground, floating) : ground;
 	if (land) {
 		const look = 0.9 * m;
-		const ahead = land.heightAt(h.x + fx * look, h.z + fz * look), behind = land.heightAt(h.x - fx * look, h.z - fz * look);
+		const under = (x, z) => tunnels.floorAt(x, z, h.y) ?? land.heightAt(x, z);
+		const ahead = under(h.x + fx * look, h.z + fz * look), behind = under(h.x - fx * look, h.z - fz * look);
 		const slope = h.swim > 0.5 ? 0 : clamp(Math.atan2(ahead - behind, 2 * look), -0.5, 0.5);
 		h.slope += (slope - h.slope) * Math.min(dt * 5, 1);
 	}

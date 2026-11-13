@@ -12,6 +12,7 @@ import * as npcs from './npcs.js'
 import * as npcPlanes from './npcPlanes.js'
 import * as npcRiders from './npcRiders.js'
 import * as npcShips from './npcShips.js'
+import * as trains from './trains.js'
 import * as survivalNet from './survivalNet.js'
 import * as atmosphere from './atmosphere.js'
 import * as townEconomy from './townEconomy.js'
@@ -177,8 +178,11 @@ const outOf = (k, kind) => units.filter((u) => u.k == k && u.kind == kind && u.r
 function putOut(w, k, kind) {
 	const side = nationOf(k), t = townList()[k], attacking = side == w.attacker;
 	const enemy = townList()[attacking ? w.target : (w.staging >= 0 ? w.staging : w.target)];
-	const n = outOf(k, kind);
+	const n = outOf(k, kind) + (kind == 'riders' ? aboardOf(k) : 0);
 	let obj = null;
+	// (horsemen that cannot ride there, over the water: the shipbuilders' to carry, THE SHIPBUILDERS; and those that can go there by the
+	//		main line, the trains', BY TRAIN)
+	if (kind == 'riders' && attacking && (!overLand(t, enemy) || byTrain(t, enemy))) return null;
 	if (kind == 'riders') obj = npcRiders.addWarRider(side, t, enemy, n);
 	if (kind == 'planes') obj = npcPlanes.addWarFlight(side, t, enemy, attacking || w.staging >= 0 ? TASKS[n % TASKS.length] : 'defend', n);
 	if (kind == 'ships') {
@@ -192,6 +196,84 @@ function putOut(w, k, kind) {
 	units.push(u);
 	return u;
 }
+// THE SHIPBUILDERS: a town at war with one over the water (another land: its horsemen cannot ride there) builds a troop ship at its dock (two
+//		shipwrights at work on it, BUILD seconds), one at a time, and puts as many of its horsemen aboard as it has out of the war (they are
+//		still its, under its cap), up to BUILD.carry. She lands them at the other town's dock (npcShips.js: A TROOP SHIP), each a horseman of
+//		the war there (its unit), and blows up; lost on the way, so are they. Then the next is built
+const BUILD = { seconds: 70, carry: 10, wrights: 2 };
+const yards = new Map();		// a town's number -> { wrights: [people], built (seconds of work on the one being built), ship, aboard }
+const aboardOf = (k) => (yards.get(k)?.aboard ?? 0) + (entrained.get(k)?.aboard ?? 0);
+// BY TRAIN (trains.js: A TROOP TRAIN): a town at war with one on the same main line, far enough off (RAIL_WAR.far), sends its horsemen by
+//		train, RAIL_WAR.carry at a time, one train at a time; they are landed at the other's station as the war's, and the next goes
+const RAIL_WAR = { far: 6000, carry: 10, least: 3 };
+const entrained = new Map();		// a town's number -> { train, aboard }
+function byTrain(a, b) { const A = town.townMiddle(a), B = town.townMiddle(b); return Math.hypot(A.x - B.x, A.z - B.z) > RAIL_WAR.far && trains.onSameLine(a, b); }
+function railTroops(w) {
+	for (const k of townsOf(w.attacker)) {
+		const t = townList()[k], enemy = townList()[w.target];
+		if (!present(k) || !overLand(t, enemy) || !byTrain(t, enemy)) continue;
+		let E = entrained.get(k);
+		if (!E) entrained.set(k, E = { train: null, aboard: 0 });
+		if (E.train && trains.troopTrainDone(E.train)) { E.train = null; E.aboard = 0; }
+		if (E.train) continue;
+		const spare = forcesOf(k).riders - outOf(k, 'riders') - aboardOf(k);
+		if (spare < RAIL_WAR.least) continue;
+		const count = Math.min(spare, RAIL_WAR.carry), side = nationOf(k);
+		E.train = trains.carryTroops(t, enemy, count, (x, z) => {
+			const r = npcRiders.addWarRider(side, t, enemy, outOf(k, 'riders'));
+			npcRiders.landWarRider(r, x, z);
+			units.push({ kind: 'riders', k, side, obj: r, had: false, retireAt: -1 });
+			E.aboard = Math.max(E.aboard - 1, 0);
+		});
+		if (E.train) { E.aboard = count; survivalWarStats.troopTrains = (survivalWarStats.troopTrains ?? 0) + 1; }
+	}
+}
+export const entrainedForTest = () => [...entrained.entries()].map(([k, E]) => ({ k, aboard: E.aboard, train: !!E.train }));
+// (whether a town's horsemen can ride to another: the same land, a continent of the world, world.js)
+function overLand(a, b) {
+	if (!terrain.world) return true;
+	const S = settings.terrainWorldSize, at = (t) => { const M = town.townMiddle(t); return terrain.world.tiles.get(Math.round(M.x / S) + ',' + Math.round(M.z / S))?.continent ?? -1; };
+	return at(a) == at(b);
+}
+function shipbuilders(w, dt) {
+	for (const k of townsOf(w.attacker)) {
+		const t = townList()[k], enemy = townList()[w.target];
+		if (!present(k) || !t.dock || !enemy?.dock || overLand(t, enemy) || !seaWay(t, enemy)) continue;
+		let Y = yards.get(k);
+		if (!Y) {
+			Y = { wrights: [], built: 0, ship: null, aboard: 0 };
+			const D = npcShips.dockOf(t), m = settings.forestUnitsPerMetre, { a } = t.dock;
+			for (let n = 0; n < BUILD.wrights; n++) {
+				const p = npcs.makePerson('shipwright', { hat: 'beanie', gun: 'none', name: 'shipwright' });
+				const x = a[0] + (D.out[0] * (4 + n * 3) + D.side[0] * 4) * m, z = a[2] + (D.out[1] * (4 + n * 3) + D.side[1] * 4) * m;
+				p.place = { x, y: terrain.land.groundAt(x, z), z, heading: Math.atan2(-D.side[0], -D.side[1]), sit: 0 };
+				Y.wrights.push(p);
+			}
+			yards.set(k, Y);
+		}
+		// (her horsemen landed or lost: the yard is free)
+		if (Y.ship && npcShips.troopShipDone(Y.ship)) {
+			const lost = Y.lostCount ?? 0;
+			if (lost > 0) { const F = forcesOf(k); F.riders = Math.max(F.riders - lost, 0); survivalWarStats.lost += lost; }
+			Y.ship = null; Y.aboard = 0; Y.built = 0;
+		}
+		if (Y.ship) { Y.lostCount = npcShips.troopsLost(Y.ship); continue; }
+		const spare = forcesOf(k).riders - outOf(k, 'riders');
+		for (const p of Y.wrights) p.armsDown = spare > 0 ? 0 : 1;
+		if (spare <= 0 || (Y.built += dt) < BUILD.seconds) continue;
+		const count = Math.min(spare, BUILD.carry), side = nationOf(k);
+		Y.ship = npcShips.addTroopShip(t, side, enemy, count, (x, z, n) => {
+			const r = npcRiders.addWarRider(side, t, enemy, outOf(k, 'riders'));
+			npcRiders.landWarRider(r, x, z);
+			units.push({ kind: 'riders', k, side, obj: r, had: false, retireAt: -1 });
+			Y.aboard = Math.max(Y.aboard - 1, 0);
+		});
+		if (Y.ship) { Y.aboard = count; survivalWarStats.troopShips = (survivalWarStats.troopShips ?? 0) + 1; }
+		Y.built = 0;
+	}
+}
+function clearYards() { for (const Y of yards.values()) for (const p of Y.wrights) npcs.removePerson(p); yards.clear(); }
+export const yardsForTest = () => [...yards.entries()].map(([k, Y]) => ({ k, built: Math.round(Y.built), aboard: Y.aboard, ship: !!Y.ship, wrights: Y.wrights.length }));
 // (whether there is a way by sea from one town to another: found once, it is long work)
 const seaWays = new Map();
 function seaWay(from, to) {
@@ -258,9 +340,13 @@ npcs.addTargets((add) => {
 		if (inWar(side)) add({ id: 'folk:' + person.index, kind: 'folk', x: p.x, y: p.y + 1.2 * m, z: p.z, feet: p.y, alive: true, vehicle: null, sit: 0, heading: p.heading, side });
 	});
 });
-function harmFolk(index, amount) {
+// told when one of the townsfolk is hurt or killed: fn(person, who did it (npcs.js: firedBy), killed) (townOpinion.js)
+const folkHarmListeners = [];
+export function onFolkHarm(fn) { folkHarmListeners.push(fn); }
+function harmFolk(index, amount, who = null, person = null) {
 	const left = (folkHealth.get(index) ?? FOLK_HEALTH) - amount;
 	folkHealth.set(index, left);
+	if (person) for (const fn of folkHarmListeners) fn(person, who, left <= 0);
 	if (left <= 0) {
 		militia.delete(index);
 		townFolk.killFolk(index);
@@ -362,8 +448,10 @@ npcs.war.blastFolk = (at, radius) => {
 };
 townFolk.folkHit.take = (person, bullet) => {
 	if (!survival()) return theirs.take ? theirs.take(person, bullet) : false;
-	if (!active().length || !inWar(folkSide(person))) return false;
-	if (here()) harmFolk(person.index, FOLK_HARM * (ballistics.ROUNDS[bullet?.round]?.damage ?? 1));
+	// (out of a war, a player's round still hurts them: and their town hears of it, townOpinion.js)
+	const who = npcs.firedBy(bullet), fighting = active().length && inWar(folkSide(person));
+	if (!fighting && (who === null || who === undefined)) return false;
+	if (here()) harmFolk(person.index, FOLK_HARM * (ballistics.ROUNDS[bullet?.round]?.damage ?? 1), who, person);
 	return true;
 };
 
@@ -456,7 +544,8 @@ function warsUpdate(dt) {
 		if (w.attacker.startsWith('n') && !townsOf(w.attacker).length) { end(w, 'beaten'); continue; }
 	}
 	watchUnits(now);
-	if (!active().length) return;
+	if (!active().length) { if (yards.size) clearYards(); entrained.clear(); return; }
+	for (const w of active()) { shipbuilders(w, dt); railTroops(w); }
 	fightBack(dt);
 	if (now >= reinforceDue) { reinforceDue = now + REINFORCE; for (const w of active()) muster(w); }
 	if (now >= weighDue) {
@@ -481,6 +570,7 @@ export function survivalWarUpdate() {
 	// (out of the Survival mode: whatever war there was put away, as it stood)
 	if (!survival() || !terrain.land || !settings.enableTownFolk) {
 		if (here() && active().length) { for (const u of units) takeAway(u); units = []; calmAll(); }
+		if (yards.size) clearYards();
 		show();
 		return;
 	}

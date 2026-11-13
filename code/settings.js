@@ -10,7 +10,7 @@ export const settings = {
     camPosX: 0.0,
     camPosY: 35.0,
     camPosZ: 150.0,
-    camFarPlane: 50000.0,	//far enough to see the other land masses (the world's continents across the straits: world.js), and the massifs over them (terrainGenerator.js THE MASSIFS)
+    camFarPlane: 120000.0,	//far enough to see the other land masses (the world's continents across the straits: world.js), and the massifs over them (terrainGenerator.js THE MASSIFS)
     camNearPlane: 1.0,
     gameMode: 'Observe',			//Observe: fly round (cameraControls.js). Hunting (the menu calls it Survival, survival.js): on foot, first person (hunting.js), with boats to sail (boat.js) and the rest from the spawn menu, T (radialMenu.js). Horde: the same, against waves of feral deer (horde.js)
     hordeFirstWave: 10,				//deer in the first round of the Horde game mode

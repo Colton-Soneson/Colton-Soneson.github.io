@@ -56,8 +56,13 @@ import { VESSELS } from './vessels.js'
 		the end of the dock (moored, her bow out to sea with the wind on her beam if it can be), each of them aboard as he comes back, and
 		she sails when all of them are. A schooner whose crew
 		are all dead is left where she is (anyone can sail her), until the next one is.
+	A TROOP SHIP (survivalWar.js: THE SHIPBUILDERS, addTroopShip): one of a side's built to carry its horsemen over the water to a town they
+		cannot ride to. One gun a side manned (TROOPS.guns of them) and her lookouts at their Lewis guns; she sails to lie off the other
+		town's dock as the war's do (warStation), and there lands her horsemen one by one (every TROOPS.every seconds: troops.land, at the
+		shore end of its dock), and when the last of them is off she is blown up (TROOPS.blast). Lost before then, they are lost with her.
 	Metres and seconds (the people's places are world units)
 */
+const TROOPS = { guns: 2, every: 1.4, near: 220, blast: 8, gone: 6 };	// guns manned, seconds between horsemen landed, metres from her station she lands them within, the blast (metres), seconds after it she is let go
 const NO_GO = 0.8;						// radians either side of the wind: no course is sailed closer than this
 const CLOSE = 0.9;						// and close-hauled is this far off it
 const TACK_HOLD = 40;					// seconds a tack is kept, at least
@@ -197,7 +202,7 @@ function makeShip(town, war = null) {
 	const V = VESSELS.Schooner;
 	const make = (kind, hat, k, name) => npcs.makePerson(kind, { hat, gun: 'none', group, home: spot(k), name });
 	const people = [make('captain', 'captain', 0, 'schooner\'s helmsman')];
-	V.guns.forEach((G, k) => people.push(make('gunner', 'sailor', k + 1, 'schooner\'s gunner')));
+	V.guns.forEach((G, k) => { if (!war?.troops || k < TROOPS.guns) people.push(make('gunner', 'sailor', k + 1, 'schooner\'s gunner')); });
 	V.nests.forEach((N, k) => { const p = make('lookout', 'sailor', V.guns.length + 1 + k, 'schooner\'s lookout'); p.nest = k; people.push(p); });
 	const s = { boat: null, town, dock: D, people, roles: new Map(), where: new Map(people.map((p) => [p, 'dock'])), fell: new Map(), group, patrol: [], wp: 0, wpAt: 0,
 		reload: V.guns.map(() => 0), lostAt: -1, replacing: -1, waiting: false, war };
@@ -406,6 +411,32 @@ function quarry(s, at) {
 
 function stepShip(s, dt) {
 	const now = npcs.now(), m = metre();
+	// A TROOP SHIP (see the top): blown up, let go; or her horsemen landed, one by one, then blown up
+	const T = s.war?.troops;
+	if (T) {
+		if (T.done >= 0) { if (now - T.done > TROOPS.gone) clearShip(s); return; }
+		if (!s.boat || s.boat.destroyed >= 0) { T.lost = T.count - T.landed; T.done = now; return; }
+		const station = warStation(s), at = s.boat.frame.toWorld([0, 0, 0]);
+		if (station && s.route && s.route.at >= s.route.points.length - 1 && Math.hypot(station[0] - at[0] / m, station[1] - at[2] / m) < TROOPS.near) {
+			s.boat.v[0] *= 0.9; s.boat.v[2] *= 0.9;
+			if ((T.next -= dt) <= 0 && T.landed < T.count) {
+				T.next = TROOPS.every;
+				const D = dockOf(otherTown(s)), { a } = otherTown(s).dock;
+				T.land(a[0] - D.out[0] * (6 + (T.landed % 3) * 3) * m + D.side[0] * ((T.landed % 3) - 1) * 3 * m, a[2] - D.out[1] * (6 + (T.landed % 3) * 3) * m + D.side[1] * ((T.landed % 3) - 1) * 3 * m, T.landed);
+				T.landed++;
+				shipStats.troopsLanded = (shipStats.troopsLanded ?? 0) + 1;
+			}
+			if (T.landed >= T.count) {
+				// (all off: she goes up)
+				boat.blast(s.boat.frame.toWorld([0, 1, 0]), TROOPS.blast, s.boat.vessel.health * 4);
+				for (const p of s.people) npcs.removePerson(p);
+				s.people = [];
+				T.done = now;
+				shipStats.troopShipsBlown = (shipStats.troopShipsBlown ?? 0) + 1;
+				return;
+			}
+		}
+	}
 	// the dead back on the dock in time; aboard at once if she is still there at anchor
 	for (const p of s.people) {
 		if (!p.alive && s.where.get(p) != 'dead' && p.respawnIn > 0) {
@@ -801,6 +832,10 @@ export function warSeaWay(home, other) {
 // a side's schooners, out of its town's dock (null if it has none); and all of them gone when it is over (war.js)
 //		(guard: THE PORT GUARD, see the top)
 export function addWarShip(town, side, guard = false, target = null) { return town.dock ? makeShip(town, target ? { side, guard, target } : { side, guard }) : null; }
+// A TROOP SHIP (see the top): count horsemen, landed at target's dock by land(x, z, n) (world units). Whether she is done: troopShipDone
+export function addTroopShip(town, side, target, count, land) { return town.dock && target?.dock ? makeShip(town, { side, guard: false, target, troops: { count, landed: 0, next: 0, land, done: -1, lost: 0 } }) : null; }
+export const troopShipDone = (s) => !ships.includes(s);
+export const troopsLost = (s) => s.war?.troops?.lost ?? 0;
 // one of them taken away (survivalWar.js: a town's that it can no longer keep)
 export function removeWarShip(s) { if (ships.includes(s)) clearShip(s); }
 export function clearWarShips() { for (const s of ships.filter((one) => one.war)) clearShip(s); }

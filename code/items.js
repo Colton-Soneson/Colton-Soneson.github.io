@@ -61,6 +61,8 @@ export const ITEMS = {
 	rainCollector: { name: 'Rain collector', slot: ['primary', 'secondary'], w: 3, h: 4, kg: 3, price: 8, weapon: 'carry', camp: 'collector', icon: 'funnel', tint: '#8a7a5a', detail: 'A tent attachment: stands outside the tent. Fills with water in the rain and the snow (E: the water)' },
 	bedroll: { name: 'Canvas bedroll', w: 3, h: 1, icon: 'bedroll', tint: '#9a8a62', use: 'deploy', camp: 'bed', detail: 'Laid out (right click): E to sleep on it, F to roll it up. Down, you come back where you last slept' },
 	// money (shops.js), and the pocket every walker has (inventory.js: a grid of its own)
+	letter: { name: 'Sealed letter', slot: ['item'], w: 1, h: 1, stack: 1, kg: 0.05, icon: 'letter', tint: '#e6d8b4', detail: 'For the town hall it is addressed to: a quest (the journal)' },
+	strongbox: { name: 'Strongbox', slot: ['item'], w: 2, h: 1, stack: 1, kg: 4, icon: 'chest', tint: '#6a4a2a', detail: 'Locked, and heavy: for the bank it is going to (the journal)' },
 	money: { name: 'Money', w: 1, h: 1, stack: Infinity, kg: 0, money: true, icon: 'coin', tint: '#d4b04a', detail: 'Coins and notes, any amount in one place: in a pocket or a backpack' },
 	pocket: { name: 'Pocket', w: 1, h: 1, grid: [1, 1], kg: 0, icon: 'pouch', tint: '#6a5a44' },
 	// food and drink (survival.js)
@@ -261,5 +263,7 @@ export const ICONS = {
 	antlers: 'M19 36 L21 36 L21 22 L30 14 L31 4 L34 5 L33 15 L37 12 L38 15 L24 26 L24 36 L16 36 L16 26 L2 15 L3 12 L7 15 L6 5 L9 4 L10 14 L19 22 Z',
 	bones: 'M6 10 A3 3 0 1 1 11 7 L29 25 A3 3 0 1 1 34 30 A3 3 0 1 1 29 34 A3 3 0 1 1 25 29 L7 11 Z M30 6 A3 3 0 1 1 34 11 L28 17 L24 13 Z',
 	pelt: 'M14 4 L26 4 L28 12 L36 16 L32 22 L28 20 L30 34 L24 36 L20 30 L16 36 L10 34 L12 20 L8 22 L4 16 L12 12 Z',
+	letter: 'M5 11 L35 11 L35 30 L5 30 Z M8 13 L20 23 L32 13 L32 14 L20 24.5 L8 14 Z',
+	chest: 'M6 15 Q20 6 34 15 L34 33 L6 33 Z M18 18 L22 18 L22 24 L18 24 Z',
 	trap: 'M4 34 L36 34 L36 37 L4 37 Z M18 34 L22 34 L22 10 L18 10 Z M20 4 A7 7 0 1 1 19.99 4 Z M20 8 A3 3 0 1 0 20.01 8 Z',
 };

@@ -124,8 +124,11 @@ export function provoke(group, who) {
 	if (who === null || who === undefined) return;
 	for (const g of [group, ...group.allies]) { g.hostile.set(who, clock + HOSTILE_SECONDS); g.lastShotBy = who; }
 }
-// whether a group is hostile to who now
-export const hostileTo = (group, who) => (group.hostile.get(who) ?? -1) > clock;
+// whether a group is hostile to who now: shot at by them, or (a group with a town: its horsemen) of a town that has come to hate them
+//		(townOpinion.js: setTownHostility)
+let townHostility = null;
+export function setTownHostility(fn) { townHostility = fn; }
+export const hostileTo = (group, who) => (group.hostile.get(who) ?? -1) > clock || (group.town !== undefined && group.town >= 0 && !!townHostility?.(group.town, who));
 // who it is hostile to now, of the targets (targets()), nearest first from (x, y, z) world units
 // (each group's list made once a frame: every one of a crew asks)
 const hostileThisFrame = new Map();

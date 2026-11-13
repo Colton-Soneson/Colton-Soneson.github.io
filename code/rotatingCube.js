@@ -95,10 +95,15 @@ import * as sharps from './sharps.js'
 import * as discgolf from './discgolf.js'
 import * as staff from './staff.js'
 import * as town from './town.js'
+import * as tunnels from './tunnels.js'
+import * as fireTowers from './fireTowers.js'
 import * as smoke from './smoke.js'
 import * as townFolk from './townFolk.js'
 import * as npcs from './npcs.js'
 import * as npcRiders from './npcRiders.js'
+import * as carts from './carts.js'
+import * as farmsteads from './farmsteads.js'
+import * as trains from './trains.js'
 import * as npcPlanes from './npcPlanes.js'
 import * as npcShips from './npcShips.js'
 import * as war from './war.js'
@@ -428,6 +433,9 @@ export function updateRotatingCubePass() {
 	saveGame.savesUpdate();			//(a save file being loaded: what is not kept in the browser put back once the world is made)
 	profiler.cpuMark('NPCs: Riders');
 	npcRiders.ridersUpdate(npcSeconds);
+	carts.cartsUpdate(npcSeconds);		//(the trading carts, their guards being riders)
+	farmsteads.farmsteadsUpdate(npcSeconds);	//(the river towns' farms, their farmers)
+	trains.trainsUpdate(npcSeconds);		//(the trains on the main lines)
 	profiler.cpuMark('NPCs: Airmen');
 	npcPlanes.planesUpdate(npcSeconds);
 	profiler.cpuMark('NPCs: Sailors');
@@ -492,7 +500,9 @@ export function updateRotatingCubePass() {
 	profiler.cpuMark('Boulders, Particles, Birds Update');
 	boulders.boulderUpdate();	//and the boulders laid out again
 	profiler.cpuMark('Towns, Smoke, Townsfolk');
-	town.townUpdate();			//and the seaside towns built again (their layout comes with the land), the houses that are hurt smoking
+	town.townUpdate();
+	tunnels.tunnelsUpdate();	//(the tunnels' lamps, for the land there is now)
+	fireTowers.fireTowersUpdate();	//(and the fire towers' stoves: the host's)			//and the seaside towns built again (their layout comes with the land), the houses that are hurt smoking
 	smoke.smokeUpdate();		//(the smoke, the fire and the dust drift on)
 	townFolk.townFolkUpdate();	//and their people about their day
 	profiler.cpuMark('Particles, Birds, Deer, Horde');

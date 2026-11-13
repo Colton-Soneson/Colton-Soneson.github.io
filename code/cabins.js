@@ -21,6 +21,7 @@ import * as loot from './loot.js'
 import * as bedrolls from './bedrolls.js'
 import * as stations from './stations.js'
 import * as farms from './farms.js'
+import * as fireTowers from './fireTowers.js'
 import * as journal from './journalUI.js'
 
 /*

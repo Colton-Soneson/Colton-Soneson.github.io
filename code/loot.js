@@ -23,6 +23,8 @@ import * as outfits from './outfits.js'
 		pile		things put down or thrown (inventoryUI.js, survivalTools.js): a sack of them, near others merged into one
 		trap		a snare a player set (rabbits.js is what walks into it): THREE slots, empty until it has caught something, then what the rabbit
 					comes to (fillTrap). Nothing can be put into one; emptied, it is set again. F takes it up
+		cartChest	a trading cart's strongbox (carts.js): its town's goods for the trip, filled by the host as it sets out (addCartChest), where the
+					cart is (carts.js moves it: at). Whatever is taken out of one is told of (onTaken: stolen)
 	What is in each is drawn by lot (TABLES) the first time it is looked in, and the caches fill again RESTOCK days after
 	they were emptied.
 	IN A GAME WITH OTHERS (survivalNet.js) the host keeps what is in every one. A joiner asks what is in one it opens (lootOpen: lootIs back),
@@ -36,8 +38,8 @@ const RESTOCK = 3;					// days
 const BODY_SECONDS = 8 * 60;
 const PILE_MERGE = 1.5;				// metres
 const FALLEN = 2;					// seconds an NPC down takes to come to rest
-const GRIDS = { cache: [7, 5], body: [8, 8], npcBody: [6, 4], pile: [5, 4], trap: [3, 1], chest: [6, 4], chestBig: [8, 6] };
-const LABELS = { chest: 'Chest', chestBig: 'Big chest', cache: 'Supply crate', body: 'Body', npcBody: 'Body', pile: 'Things on the ground', trap: 'Snare' };
+const GRIDS = { cache: [7, 5], body: [8, 8], npcBody: [6, 4], pile: [5, 4], trap: [3, 1], chest: [6, 4], chestBig: [8, 6], cartChest: [7, 5], trainChest: [8, 6] };
+const LABELS = { chest: 'Chest', chestBig: 'Big chest', cache: 'Supply crate', body: 'Body', npcBody: 'Body', pile: 'Things on the ground', trap: 'Snare', cartChest: 'Trading cart\'s strongbox', trainChest: 'The express car\'s strongbox' };
 const SNARED = ['smallBones', 'rabbitPelt', 'rabbitMeat'];		// what a rabbit in a snare comes to
 const SNARED_SINEW = 0.12;			// (and now and then a little sinew)
 // [type, chance, most]: rolled for each
@@ -146,8 +148,12 @@ export function take(id, uid, where = null, done = () => {}) {
 	lootStats.taken++;
 	emptied(c);
 	changedHere(c);
+	for (const fn of takenListeners) fn(c, item, 'me');
 	done(true);
 }
+// (told of each thing taken out of a container, on the host: fn(container, item, who took it: 'me' or a joiner's id))
+const takenListeners = [];
+export function onTaken(fn) { takenListeners.push(fn); }
 const pending = new Map();
 function landIn(item, where) {
 	if (where && inventory.put(where.where, item, where.x, where.y, where.rot)) return true;
@@ -223,6 +229,17 @@ export function addChest(id, at, yaw, kind) {
 	told(id);
 	for (const fn of chestListeners) fn();
 }
+// A TRADING CART'S STRONGBOX (carts.js): the host's, with what it carries; and gone again (the cart home, or gone)
+export function addCartChest(id, at, items, kind = 'cartChest') {
+	const c = { id, kind, at, items: [], grid: [...GRIDS[kind]], until: -1, yaw: 0 };
+	for (const item of items) { const place = placeFor(c.grid, c.items, item); if (place) c.items.push(Object.assign(item, place)); }
+	containers.delete(id);
+	add(c);
+	survivalNet.send('lootAdd', { c: shareOf(c) });
+	told(id);
+	return c;
+}
+export const removeContainer = (id) => remove(id);
 export const chestsSave = () => [...containers.values()].filter((c) => c.kind == 'chest' || c.kind == 'chestBig').map(shareOf);
 export function chestsLoad(list) { for (const c of list ?? []) if (Array.isArray(c.at)) add({ id: c.id, kind: c.kind, at: c.at.map(Number), items: c.items ?? [], grid: c.grid, until: -1, yaw: Number(c.yaw) || 0 }); }
 // THE SAVE FILE's (saveGame.js): every container but the cabins' chests (cabins.js keeps them) and the soldiers' bodies (gone soon anyway):
@@ -230,7 +247,7 @@ export function chestsLoad(list) { for (const c of list ?? []) if (Array.isArray
 export function lootRecord() {
 	const out = [];
 	for (const c of containers.values()) {
-		if (c.kind == 'chest' || c.kind == 'chestBig' || c.kind == 'npcBody') continue;
+		if (c.kind == 'chest' || c.kind == 'chestBig' || c.kind == 'npcBody' || c.kind == 'cartChest' || c.kind == 'trainChest') continue;
 		if (c.kind == 'cache') { if (c.items !== null) out.push({ id: c.id, kind: c.kind, items: c.items, restockAt: c.restockAt }); continue; }
 		out.push({ ...shareOf(c), restockAt: c.restockAt });
 	}
@@ -350,6 +367,7 @@ survivalNet.on('lootTake', (m, from) => {
 	emptied(c);
 	survivalNet.sendTo(from, 'lootGot', { id: m.id, uid: m.uid, item });
 	changedHere(c);
+	for (const fn of takenListeners) fn(c, item, from);
 });
 survivalNet.on('lootGot', (m) => {
 	const p = pending.get(m.uid);
@@ -369,7 +387,7 @@ survivalNet.on('lootAdd', (m) => {
 	told(m.c.id);
 });
 survivalNet.on('lootDel', (m) => { if (!survivalNet.authority()) { containers.delete(m.id); told(m.id); } });
-survivalNet.onJoin((id) => { for (const c of containers.values()) if (c.kind == 'body' || c.kind == 'npcBody' || c.kind == 'pile' || c.kind == 'trap' || c.kind == 'chest' || c.kind == 'chestBig') survivalNet.sendTo(id, 'lootAdd', { c: shareOf(c) }); });
+survivalNet.onJoin((id) => { for (const c of containers.values()) if (c.kind == 'body' || c.kind == 'npcBody' || c.kind == 'pile' || c.kind == 'trap' || c.kind == 'chest' || c.kind == 'chestBig' || c.kind == 'cartChest' || c.kind == 'trainChest') survivalNet.sendTo(id, 'lootAdd', { c: shareOf(c) }); });
 
 // E AT ONE (see the top), and what is said of it
 export function inView() {

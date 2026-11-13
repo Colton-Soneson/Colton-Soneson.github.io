@@ -28,7 +28,7 @@
 	land or built up over it, and level across each path.
 */
 import { findTownSites, findRiverSites, planTownGround, layoutTowns, makeRoadFlattener, makePadCutter, buildingPads } from './townLayout.js'
-import { planFootpaths, makePathFlattener, PATHS } from './footpaths.js'
+import { planFootpaths, makePathFlattener, SEG, segmentReach } from './footpaths.js'
 import { steadyLand } from './erosion.js'
 
 // index = the tag stored for every grid point. name and color are what the rest of the engine reads
@@ -543,10 +543,10 @@ const ROUGH = { height: 60, length: 1500 };	// the lie of the rock the streams g
 	of it over its heart (MASSIF.heart of its radius), less and less out to its edge. That wears it into ridges and valleys a few
 	kilometres high; under them the whole of it stands on a dome of the earth's crust pushed up (MASSIF.dome, world units at its middle,
 	falling away to its edge as (1 - how far out) to the MASSIF.domeShape), as the great volcanoes of the Cascades stand on theirs. The
-	dome is put under the land the rivers made: it falls away outwards, the way they run off it. So 6500 to 7500 m at the top:
+	dome is put under the land the rivers made: it falls away outwards, the way they run off it. So 5000 to 6000 m at the top:
 	the same law as all the land (erosion.js), its ridges and valleys worn into it as everywhere else
 */
-const MASSIF = { tiles: 12, count: [1, 2], radius: [10000, 13000], core: 0.85, apart: 2.2, uplift: 15, slope: 1.7, heart: 0.45, wobble: 0.3, dome: [10500, 12000], domeShape: 1.6 };
+const MASSIF = { tiles: 12, count: [1, 2], radius: [10000, 13000], core: 0.85, apart: 2.2, uplift: 15, slope: 1.7, heart: 0.45, wobble: 0.3, dome: [7500, 9000], domeShape: 1.6 };
 const HIGH = 1400;				// the Mountain Height the KSN and the SLOPE of the ranges are for
 const COAST = [0.012, 0.09];		// how far inland (see sample) the relief starts to rise, and where it is all there
 const OUTCROPS = { length: 260, height: 16, from: [40, 500] };	// the eroded noise on the high ground: how big, how high (world units), and from how high a relief to how high it is all there
@@ -649,9 +649,297 @@ function continentShape(params, sample, noise) {
 	// (and the rivers in it: THE RIVERS, over the ground as it will be made, the relief in it)
 	const reliefOf = makeReliefAt(shape);
 	shape.rivers = riverLines(shape, land.receiver, (x, z) => sample(x, z, reliefOf(x, z)).height);
+	// (and its main peaks, and where its roads cross from one tile to the next: THE ROADS OF A CONTINENT)
+	const S = params.world?.size ?? params.worldSize, mine = new Set(c.key.split(' '));
+	shape.peaks = mainPeaks(shape, (x, z) => sample(x, z, reliefOf(x, z)).height).filter(([x, z]) => !params.world || mine.has(Math.round(x / S) + ',' + Math.round(z / S)));
+	shape.gates = roadGates(params, c, (x, z) => sample(x, z, reliefOf(x, z)).height, shape.rivers);
+	// (and its railway: THE MAIN LINE)
+	//		(planned the first time a tile with paths wants it: a far tile's never does, generateTerrain)
+	shape.makeRails = () => mainLine(params, c, shape, (x, z) => sample(x, z, reliefOf(x, z)).height);
 	shapes.set(key, shape);
 	if (shapes.size > SHAPE.kept) shapes.delete(shapes.keys().next().value);
 	return shape;
+}
+
+//-------------------------------THE ROADS OF A CONTINENT-------------------------------
+/*
+	What is planned for a whole continent at once, so the tiles it is made of agree (footpaths.js plans each tile's own roads and paths):
+		THE MAIN PEAKS	the tops that are the highest for PEAKS.apart round (2500 m), at least PEAKS.least over the sea: a fire tower on each
+						(footpaths.js: THE FIRE TOWERS). Found on the relief's grid: each point the highest of the square round it, the
+						highest of those first and none within PEAKS.apart of one taken already (a long level top is one peak)
+		THE GATES		where a road crosses from one tile of it to the next. Every side two of its tiles share has one at its best place
+						(the gentlest ground across the side, on land, not far from its middle: GATES); of those, a tree joining every tile
+						(Kruskal, the best first), its branches out to tiles with no towns cut off (they lead nowhere), and a few more
+						between tiles that both have towns (GATES.extra), so there is more than one way round. Each tile routes its roads
+						to its own gates (footpaths.js: THE ROADS), and its neighbour from the same point on
+*/
+const PEAKS = { apart: 5000, least: 500 };
+const GATES = { reach: 0.36, step: 64, across: 96, steepest: 0.12, sides: 0.6, worst: 0.35, extra: 0.35, river: 60 };
+function mainPeaks(shape, groundAt) {
+	// (the highest of the square inside the circle round each point first: a peak is that at least; then the whole circle round those)
+	const { cols, rows, cell, height } = shape, R = Math.max(Math.round(PEAKS.apart / cell), 1), r = Math.max(Math.round(PEAKS.apart / Math.SQRT2 / cell), 1), n = cols * rows;
+	// (the most of the relief within r points each way: across, then down)
+	const across = new Float32Array(n), most = new Float32Array(n);
+	for (let row = 0; row < rows; row++) for (let col = 0; col < cols; col++) {
+		let m = -Infinity;
+		for (let c = Math.max(col - r, 0); c <= Math.min(col + r, cols - 1); c++) m = Math.max(m, height[row * cols + c]);
+		across[row * cols + col] = m;
+	}
+	for (let row = 0; row < rows; row++) for (let col = 0; col < cols; col++) {
+		let m = -Infinity;
+		for (let k = Math.max(row - r, 0); k <= Math.min(row + r, rows - 1); k++) m = Math.max(m, across[k * cols + col]);
+		most[row * cols + col] = m;
+	}
+	const tops = [];
+	const highest = (i) => {
+		const col = i % cols, row = (i - col) / cols;
+		for (let dr = -R; dr <= R; dr++) {
+			const rr = row + dr, w = Math.floor(Math.sqrt(R * R - dr * dr));
+			if (rr < 0 || rr >= rows) continue;
+			for (let c = Math.max(col - w, 0); c <= Math.min(col + w, cols - 1); c++) if (height[rr * cols + c] > height[i]) return false;
+		}
+		return true;
+	};
+	for (let i = 0; i < n; i++) if (height[i] > 0 && height[i] >= most[i] && highest(i)) tops.push(i);
+	tops.sort((a, b) => height[b] - height[a]);
+	const peaks = [];
+	for (const i of tops) {
+		const x = shape.x0 + (i % cols) * cell, z = shape.z0 + Math.floor(i / cols) * cell;
+		if (peaks.some(([px, pz]) => Math.hypot(px - x, pz - z) < PEAKS.apart)) continue;
+		if (groundAt(x, z) < PEAKS.least) continue;
+		peaks.push([x, z]);
+	}
+	return peaks;
+}
+function roadGates(params, c, groundAt, rivers = null) {
+	if (!params.world) return [];
+	// (not where a river runs: the heights here are the land's before it is cut, and the road would stand over it on a bank)
+	const wet = [];
+	if (rivers) for (let o = 0; o < rivers.points.length; o += RIVER_FLOATS) wet.push(rivers.points[o], rivers.points[o + 1], rivers.points[o + 3]);
+	const byRiver = (x, z) => { for (let k = 0; k < wet.length; k += 3) if (Math.abs(wet[k] - x) < 200 && Math.abs(wet[k + 1] - z) < 200 && Math.hypot(wet[k] - x, wet[k + 1] - z) < wet[k + 2] + GATES.river) return true; return false; };
+	const S = params.world.size, keys = c.key.split(' '), set = new Set(keys), towns = params.world.towns ?? {};
+	if (keys.length < 2) return [];
+	const sides = [];
+	for (const k of keys) {
+		const [tx, tz] = k.split(',').map(Number);
+		for (const [dx, dz] of [[1, 0], [0, 1]]) {
+			const o = (tx + dx) + ',' + (tz + dz);
+			if (!set.has(o)) continue;
+			// (the side's middle; along it; across it, from this one into the other)
+			const mx = (tx + dx / 2) * S, mz = (tz + dz / 2) * S, ux = dz, uz = dx;
+			let best = null;
+			for (let t = -GATES.reach * S; t <= GATES.reach * S; t += GATES.step) {
+				// (its stretch: straight across the seam from a point of the paths' grid (16 units: footpaths.js) either side, between the
+				//		land's heights there)
+				const x = Math.round((mx + ux * t) / 16) * 16, z = Math.round((mz + uz * t) / 16) * 16;
+				const ax = Math.round((x - dx * GATES.across) / 16) * 16, az = Math.round((z - dz * GATES.across) / 16) * 16, bx = Math.round((x + dx * GATES.across) / 16) * 16, bz = Math.round((z + dz * GATES.across) / 16) * 16;
+				const y0 = groundAt(x, z), y1 = groundAt(ax, az), y2 = groundAt(bx, bz);
+				if (Math.min(y0, y1, y2) < 3 || byRiver(x, z) || byRiver(ax, az) || byRiver(bx, bz)) continue;
+				const steep = Math.max(Math.abs(y1 - y0), Math.abs(y2 - y0), Math.abs(y2 - y1) / 2) / GATES.across;
+				if (steep >= GATES.worst) continue;
+				// (and the ground at each end gentle enough for a road to go on from it: the gentle first, the best of the rest if none is)
+				const slopeAt = (px, pz) => Math.hypot(groundAt(px + 16, pz) - groundAt(px - 16, pz), groundAt(px, pz + 16) - groundAt(px, pz - 16)) / 32;
+				const sides = Math.max(slopeAt(ax, az), slopeAt(bx, bz));
+				const score = steep * 400 + sides * 100 + y0 * 0.02 + Math.abs(t) / S * 30 + (steep < GATES.steepest && sides < GATES.sides ? 0 : 1000);
+				if (!best || score < best.score) best = { x, z, nx: dx, nz: dz, a: k, b: o, inA: [ax, y1, az], inB: [bx, y2, bz], score };
+			}
+			if (best) sides.push(best);
+		}
+	}
+	// (the tree: the best sides first, each that joins two tiles not yet joined)
+	sides.sort((p, q) => p.score - q.score);
+	const parent = new Map(keys.map((k) => [k, k]));
+	const root = (k) => { while (parent.get(k) !== k) k = parent.get(k); return k; };
+	let kept = [];
+	const rest = [];
+	for (const s of sides) { const a = root(s.a), b = root(s.b); if (a !== b) { parent.set(a, b); kept.push(s); } else rest.push(s); }
+	// (its branches out to no town cut off, a leaf at a time)
+	for (let changed = true; changed;) {
+		changed = false;
+		const degree = new Map();
+		for (const s of kept) { degree.set(s.a, (degree.get(s.a) ?? 0) + 1); degree.set(s.b, (degree.get(s.b) ?? 0) + 1); }
+		const cut = kept.find((s) => (degree.get(s.a) == 1 && !towns[s.a]) || (degree.get(s.b) == 1 && !towns[s.b]));
+		if (cut) { kept = kept.filter((s) => s !== cut); changed = true; }
+	}
+	const random = seededRandom(((params.seed ?? 0) * 31337 + keys.length * 977) >>> 0);
+	for (const s of rest) if (towns[s.a] && towns[s.b] && random() < GATES.extra) kept.push(s);
+	return kept.map(({ x, z, nx, nz, a, b, inA, inB }) => ({ x, z, nx, nz, a, b, inA, inB }));
+}
+//-------------------------------THE MAIN LINE-------------------------------
+/*
+	A continent's railway (trains.js runs a train on it): one line, from one end of it to the other through the tiles it has towns on, laid
+	out once for the whole continent, so every tile has the same of it.
+		THE WAY		the two tiles with towns furthest apart its ends, and between them as many as RAIL.stops more of those with two towns, in
+					order along it, each one's middle a place on the way (moved on to the land), and between each two the cheapest way over the
+					relief's grid (A*): by how long it is, how much it climbs (RAIL.climb), how high it goes past RAIL.highFrom (RAIL.high: by
+					the valleys and the passes), and dearer along the coast (lower than RAIL.coast). Not over the sea or a lake
+		THE LINE	that way rounded off (Chaikin, RAIL.round times) and a point every RAIL.step, each at the height of the land, then held to
+					RAIL.grade at the most from one to the next: evened out, and cut down or built up where it must be (RAIL.passes of each)
+		WHAT IT IS ON	the ground (laid on it, footpaths.js: a rail's cutting or bank), a TUNNEL where the land stands over it by RAIL.bore or
+					more for RAIL.least or more (straight from portal to portal), and a BRIDGE (stone arches) where it stands over the land by
+					RAIL.over or more, or over a river
+	Gives { points: Float32Array, RAIL_FLOATS each: x, y (over the sea), z, what it is on (0 the ground, 1 a tunnel, 2 a bridge), length }, or
+	null (no line: fewer than two tiles with towns, or no way between them)
+*/
+export const RAIL = { cell: 64, climb: 8, high: 0.01, highFrom: 400, coast: 80, coastCost: 3, dry: 14, greed: 1.25, round: 3, step: 16, grade: 0.04, passes: 12, hold: 0.5, bore: 34, least: 160, over: 30, river: 12, stops: 2, half: 4, tunnel: { half: 4.5, height: 12 } };
+export const RAIL_FLOATS = 4;
+function mainLine(params, c, shape, groundAt) {
+	if (!params.world) return null;
+	const S = params.world.size, keys = c.key.split(' '), towns = params.world.towns ?? {};
+	const stops = keys.filter((k) => towns[k] > 0).map((k) => k.split(',').map(Number));
+	if (stops.length < 2) return null;
+	const { cols, rows, cell, x0, z0, height } = shape, at = (i) => [x0 + (i % cols) * cell, z0 + Math.floor(i / cols) * cell];
+	const cellOf = (x, z) => Math.min(Math.max(Math.round((z - z0) / cell), 0), rows - 1) * cols + Math.min(Math.max(Math.round((x - x0) / cell), 0), cols - 1);
+	// (the land's height at a point of the grid, worked out the first time it is wanted)
+	const known = new Float32Array(cols * rows).fill(NaN);
+	const groundOf = (i) => { let v = known[i]; if (v !== v) { const [x, z] = at(i); v = known[i] = groundAt(x, z); } return v; };
+	const dry = (i) => height[i] > 0 && groundOf(i) > RAIL.dry;
+	// THE WAY: its ends the two town tiles furthest apart, the rest in order along between them
+	let ends = [stops[0], stops[1]], far = -1;
+	for (const a of stops) for (const b of stops) { const d = Math.hypot(a[0] - b[0], a[1] - b[1]); if (d > far) { far = d; ends = [a, b]; } }
+	const ax = ends[1][0] - ends[0][0], az = ends[1][1] - ends[0][1], along = (p) => (p[0] - ends[0][0]) * ax + (p[1] - ends[0][1]) * az;
+	// (between the ends, those with two towns nearest the way straight across, as many as RAIL.stops)
+	const between = stops.filter((p) => p !== ends[0] && p !== ends[1] && towns[p.join(',')] >= 2).sort((p, q) => Math.abs((p[0] - ends[0][0]) * az - (p[1] - ends[0][1]) * ax) - Math.abs((q[0] - ends[0][0]) * az - (q[1] - ends[0][1]) * ax)).slice(0, RAIL.stops);
+	stops.length = 0;
+	stops.push(ends[0], ...between.sort((p, q) => along(p) - along(q)), ends[1]);
+	// (each a place on dry land near its tile's middle)
+	const places = stops.map(([tx, tz]) => {
+		let best = -1, bestD = Infinity;
+		for (let r = -24; r <= 24; r++) for (let q = -24; q <= 24; q++) {
+			const i = cellOf(tx * S + q * cell, tz * S + r * cell);
+			if (!dry(i)) continue;
+			const d = Math.hypot(q, r) + groundOf(i) * 0.01;
+			if (d < bestD) { bestD = d; best = i; }
+		}
+		return best;
+	}).filter((i) => i >= 0);
+	if (places.length < 2) return null;
+	const n = cols * rows, cost = new Float64Array(n), from = new Int32Array(n);
+	const way = (s, goal) => {
+		cost.fill(Infinity); from.fill(-1);
+		cost[s] = 0;
+		const heap = [[0, s]];
+		const push = (item) => { heap.push(item); let i = heap.length - 1; while (i > 0) { const p = (i - 1) >> 1; if (heap[p][0] <= heap[i][0]) break; [heap[p], heap[i]] = [heap[i], heap[p]]; i = p; } };
+		const pop = () => { const top = heap[0], last = heap.pop(); if (heap.length) { heap[0] = last; let i = 0; for (;;) { const l = 2 * i + 1, r = l + 1; let m = i; if (l < heap.length && heap[l][0] < heap[m][0]) m = l; if (r < heap.length && heap[r][0] < heap[m][0]) m = r; if (m == i) break; [heap[m], heap[i]] = [heap[i], heap[m]]; i = m; } } return top; };
+		const [gx, gz] = at(goal);
+		while (heap.length) {
+			const [, k] = pop();
+			if (k == goal) break;
+			const col = k % cols, row = (k - col) / cols;
+			for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+				if (!dr && !dc) continue;
+				const cc = col + dc, rr = row + dr;
+				if (cc < 1 || rr < 1 || cc >= cols - 1 || rr >= rows - 1) continue;
+				const a = rr * cols + cc;
+				if (!dry(a)) continue;
+				const run = cell * Math.hypot(dc, dr), ha = groundOf(a), rise = Math.abs(ha - groundOf(k));
+				const g = cost[k] + run * (1 + RAIL.high * Math.max(ha - RAIL.highFrom, 0)) * (ha < RAIL.coast ? RAIL.coastCost : 1) + rise * RAIL.climb * Math.min(rise / run / RAIL.grade, 4);
+				if (g < cost[a]) { cost[a] = g; from[a] = k; const [x, z] = at(a); push([g + Math.hypot(x - gx, z - gz) * RAIL.greed, a]); }
+			}
+		}
+		if (from[goal] < 0 && goal != s) return null;
+		const out = [goal];
+		while (out[out.length - 1] != s) out.push(from[out[out.length - 1]]);
+		return out.reverse();
+	};
+	let cells = [places[0]];
+	for (let i = 1; i < places.length; i++) { const w = way(places[i - 1], places[i]); if (w) cells.push(...w.slice(1)); }
+	if (cells.length < 4) return null;
+	// THE LINE: rounded off, a point every RAIL.step
+	let pts = cells.map(at);
+	for (let r = 0; r < RAIL.round; r++) {
+		const next = [pts[0]];
+		for (let i = 0; i < pts.length - 1; i++) { const a = pts[i], b = pts[i + 1]; next.push([a[0] * 0.75 + b[0] * 0.25, a[1] * 0.75 + b[1] * 0.25], [a[0] * 0.25 + b[0] * 0.75, a[1] * 0.25 + b[1] * 0.75]); }
+		next.push(pts[pts.length - 1]);
+		pts = next;
+	}
+	const even = [pts[0]];
+	let carry = 0;
+	for (let i = 0; i < pts.length - 1; i++) {
+		const a = pts[i], b = pts[i + 1], length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+		let t = RAIL.step - carry;
+		for (; t < length; t += RAIL.step) even.push([a[0] + (b[0] - a[0]) * t / length, a[1] + (b[1] - a[1]) * t / length]);
+		carry = length - (t - RAIL.step);
+	}
+	const land = even.map(([x, z]) => groundAt(x, z));
+	// (by a river: on a bridge over it, whatever its height)
+	const wet = [];
+	if (shape.rivers) for (let o = 0; o < shape.rivers.points.length; o += RIVER_FLOATS) wet.push(shape.rivers.points[o], shape.rivers.points[o + 1], shape.rivers.points[o + 3]);
+	const byRiver = even.map(([x, z]) => { for (let k = 0; k < wet.length; k += 3) if (Math.abs(wet[k] - x) < 120 && Math.abs(wet[k + 1] - z) < 120 && Math.hypot(wet[k] - x, wet[k + 1] - z) < wet[k + 2] + RAIL.river) return true; return false; });
+	// (its heights: the land's, held to the grade, evened out)
+	let y = land.slice(), most = RAIL.grade * RAIL.step;
+	for (let pass = 0; pass < RAIL.passes; pass++) {
+		y = y.map((v, i) => i == 0 || i == y.length - 1 ? v : (y[i - 1] + 2 * v + y[i + 1]) / 4 * (1 - RAIL.hold) + land[i] * RAIL.hold);
+		for (let i = 1; i < y.length; i++) y[i] = Math.min(Math.max(y[i], y[i - 1] - most), y[i - 1] + most);
+		for (let i = y.length - 2; i >= 0; i--) y[i] = Math.min(Math.max(y[i], y[i + 1] - most), y[i + 1] + most);
+	}
+	for (let i = 0; i < y.length; i++) y[i] = Math.max(y[i], 3);
+	// WHAT IT IS ON: tunnels (long enough stretches deep under the land, straight), bridges (high over it, or a river), the ground
+	const what = y.map((v, i) => land[i] - v > RAIL.bore ? 1 : byRiver[i] || v - land[i] > RAIL.over ? 2 : 0);
+	const stretch = (kind, least) => {
+		for (let i = 0; i < what.length;) {
+			if (what[i] != kind) { i++; continue; }
+			let j = i;
+			while (j + 1 < what.length && what[j + 1] == kind) j++;
+			if ((j - i + 1) * RAIL.step < least) for (let k = i; k <= j; k++) what[k] = 0;
+			else if (kind == 1) {
+				// (a tunnel straight, portal to portal: the land over it as it is)
+				for (let k = i + 1; k < j; k++) { const t = (k - i) / (j - i); even[k] = [even[i][0] + (even[j][0] - even[i][0]) * t, even[i][1] + (even[j][1] - even[i][1]) * t]; y[k] = y[i] + (y[j] - y[i]) * t; }
+			}
+			i = j + 1;
+		}
+	};
+	stretch(1, RAIL.least);
+	stretch(2, RAIL.step * 2);
+	const points = new Float32Array(even.length * RAIL_FLOATS);
+	even.forEach(([x, z], i) => points.set([x, y[i], z, what[i]], i * RAIL_FLOATS));
+	let length = 0;
+	for (let i = 1; i < even.length; i++) length += Math.hypot(even[i][0] - even[i - 1][0], even[i][1] - even[i - 1][1]);
+	// (its id from where it is: the same wherever it is planned, whatever the world's tiles were made from)
+	return { id: 'line ' + Math.round(points[0]) + ',' + Math.round(points[2]) + ' ' + even.length, points, length };
+}
+
+// A TILE'S OF THE MAIN LINE: its stretches on the ground in the tile (and a little past it, so the land either side of a seam is laid the same),
+//		each tunnel and bridge whose middle is in it (each in one tile only), as footpaths.js's paths: { kind ('rail', 'tunnel', 'bridge'),
+//		points, half, portals (a rail's: at a tunnel's end) }; and the whole line (trains.js runs on it)
+function railWindow(params, shape) {
+	const R = shape.rails;
+	if (!R) return null;
+	const [ox, oz] = params.center ?? [0, 0], half = params.worldSize / 2, n = R.points.length / RAIL_FLOATS, P = (i) => [R.points[i * RAIL_FLOATS], R.points[i * RAIL_FLOATS + 1], R.points[i * RAIL_FLOATS + 2]], kind = (i) => R.points[i * RAIL_FLOATS + 3];
+	const inside = (p, margin) => Math.abs(p[0] - ox) < half + margin && Math.abs(p[2] - oz) < half + margin;
+	const pieces = [];
+	for (let i = 0; i < n;) {
+		const k = kind(i);
+		let j = i;
+		while (j + 1 < n && kind(j + 1) == k) j++;
+		// (one past it either end: they meet)
+		const a = Math.max(i - 1, 0), b = Math.min(j + 1, n - 1);
+		if (k == 0) {
+			let run = [];
+			const flush = (end) => { if (run.length >= 2) pieces.push({ kind: 'rail', points: run, half: RAIL.half, portals: [run.start == a && a < i && kind(a) == 1, end == b && b > j && kind(b) == 1] }); run = []; };
+			for (let q = a; q <= b; q++) {
+				const p = P(q);
+				if (inside(p, 80)) { if (!run.length) run.start = q; run.push(p); }
+				else flush(q - 1);
+			}
+			flush(b);
+		} else {
+			const mid = P(Math.floor((a + b) / 2));
+			if (inside(mid, 0)) pieces.push({ kind: k == 1 ? 'railTunnel' : 'railBridge', points: Array.from({ length: b - a + 1 }, (_, q) => P(a + q)) });
+		}
+		i = j + 1;
+	}
+	return { pieces, line: R };
+}
+// a tile's gates (THE ROADS OF A CONTINENT), each { x, z (on its edge), own, other: [x, y, z] (its stretch's ends: in this tile, in the other) },
+//		and its main peaks
+function tileGates(params, shape) {
+	const tile = params.tile ?? null;
+	return (shape.gates ?? []).filter((g) => g.a === tile || g.b === tile).map((g) => g.a === tile ? { x: g.x, z: g.z, own: g.inA, other: g.inB } : { x: g.x, z: g.z, own: g.inB, other: g.inA });
+}
+function tilePeaks(params, shape) {
+	const [ox, oz] = params.center ?? [0, 0], half = params.worldSize / 2;
+	return (shape.peaks ?? []).filter(([x, z]) => Math.abs(x - ox) < half - 40 && Math.abs(z - oz) < half - 40);
 }
 
 // a tile's window of its continent's relief: the points over it and 2 more all round (for the cubic between them). Plain data: it goes to the
@@ -1121,6 +1409,7 @@ export function generateTerrain(params) {
 	const { sample, erodedFbm, seamFade } = createTerrainSampler(params);
 	// the shape of the land (THE SHAPE OF THE LAND): its continent's, and this tile's window of it
 	const shape = continentShape(params, sample, createNoise((params.seed ?? 0) + 4057));
+	if (params.footpaths && shape.rails === undefined) shape.rails = shape.makeRails();
 	const relief = reliefWindow(params, shape);
 	const rivers = riverWindow(params, shape), riverCut = makeRiverCutter(rivers.cut);
 	const reliefAt = makeReliefAt(relief);
@@ -1462,13 +1751,15 @@ export function generateTerrain(params) {
 	const footpaths = params.footpaths ? planFootpaths({
 		worldSize: params.worldSize, ox, oz, keep: siteGrids.keep, ground: landAt, heightAt: (x, z) => gridValue(heights, x, z) - params.seaLevel,
 		zoneAt: (x, z) => zones[Math.min(Math.max(Math.round((z - oz + half) / cellSize), 0), cells) * points + Math.min(Math.max(Math.round((x - ox + half) / cellSize), 0), cells)],
-		Z: { OCEAN: ZONE_OCEAN, BEACH: ZONE_BEACH, GRASSLAND: ZONE_GRASSLAND, FOREST: ZONE_FOREST, MOUNTAIN: ZONE_MOUNTAIN, SNOW: ZONE_SNOW, LAKE: ZONE_LAKE, MARSH: ZONE_MARSH, TOWN: ZONE_TOWN },
+		Z: { OCEAN: ZONE_OCEAN, BEACH: ZONE_BEACH, GRASSLAND: ZONE_GRASSLAND, FOREST: ZONE_FOREST, MOUNTAIN: ZONE_MOUNTAIN, SNOW: ZONE_SNOW, LAKE: ZONE_LAKE, MARSH: ZONE_MARSH, TOWN: ZONE_TOWN, RIVER: ZONE_RIVER },
 		townAt, onRoad: (x, z) => roadAt(x, z) !== null, towns: town.towns, strip, stripAt: strip ? (x, z) => stripWeight(strip, x, z) : () => 0,
+		gates: tileGates(params, shape), peaks: tilePeaks(params, shape), seaLevel: params.seaLevel, rails: railWindow(params, shape),
 	}) : null;
 	if (footpaths) {
 		chunkGrids.paths = { segments: footpaths.segments, clearings: footpaths.clearings };
-		const s = footpaths.segments, reach = PATHS.half + PATHS.reach + cellSize, redone = new Set();
-		for (let o = 0; o < s.length; o += 6) {
+		const s = footpaths.segments, redone = new Set();
+		for (let o = 0; o < s.length; o += SEG) {
+			const reach = segmentReach(s[o + 6], s[o + 7]) + cellSize;
 			const c0 = Math.max(Math.floor((Math.min(s[o], s[o + 3]) - ox - reach + half) / cellSize), 0), c1 = Math.min(Math.ceil((Math.max(s[o], s[o + 3]) - ox + reach + half) / cellSize), cells);
 			const r0 = Math.max(Math.floor((Math.min(s[o + 1], s[o + 4]) - oz - reach + half) / cellSize), 0), r1 = Math.min(Math.ceil((Math.max(s[o + 1], s[o + 4]) - oz + reach + half) / cellSize), cells);
 			for (let row = r0; row <= r1; row++) for (let col = c0; col <= c1; col++) redone.add(row * points + col);
@@ -1525,6 +1816,7 @@ export function generateTerrain(params) {
 	return wrapLand(params, {
 		cells, points, cellSize, heights, mountains, woodlands, covers, marshes, lakes, zones, normals, shoreDistances, ridgeCrests, chunkGrids,
 		riverLines: rivers.draw, towns: town.towns, townStrength: townGround.strength, strip, paths: footpaths?.paths ?? [], pathPlaces: footpaths?.places ?? null, fireTowers: footpaths?.towers ?? [],
+		tunnels: footpaths?.tunnels ?? [], farms: footpaths?.farms ?? [], stations: footpaths?.stations ?? [], railLine: shape.rails ? { id: shape.rails.id, points: shape.rails.points.slice(), length: shape.rails.length } : null,
 	}, { landAt, buildChunk, roadAt, pathsLaid });
 }
 

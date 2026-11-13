@@ -17,6 +17,8 @@ import * as treasury from './treasury.js'
 import * as townEconomy from './townEconomy.js'
 import * as town from './town.js'
 import * as survivalWar from './survivalWar.js'
+import * as townOpinion from './townOpinion.js'
+import * as quests from './quests.js'
 
 /*
 	THE SHOPS of the Survival mode: E at one of the townsfolk (townFolk.js) who has a TRADE, within REACH and looked at, opens its shop (and
@@ -66,7 +68,11 @@ export const TRADES = {
 	librarian: { title: 'Town Hall', hall: true },
 };
 const cents = (type) => Math.round((ITEMS[type]?.price ?? 0) * 100);
-const offer = (item) => Math.floor(cents(item.type) * SELL * (QUALITY[qualityOf(item)]?.worth ?? 1));		// (what is paid for one: a pelt by its quality)
+const offer = (item) => Math.floor(cents(item.type) * SELL * (QUALITY[qualityOf(item)]?.worth ?? 1) * townOpinion.sellFactor(hereTown()));		// (what is paid for one: a pelt by its quality, and by what the town thinks of the player)
+// (the town of the shop open, and what it asks for a thing there: by what it thinks of the player, townOpinion.js)
+const hereTown = () => shop.person ? treasury.townNumber(shop.person.town) : -1;
+const asked = (type) => Math.round(cents(type) * townOpinion.priceFactor(hereTown()));
+const GIFTS = [1, 5, 20, 100];		// dollars: what can be given at a town's hall
 const title = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
 // THE ONE LOOKED AT, within REACH, who trades
@@ -162,20 +168,21 @@ function render() {
 	const trade = shop.trade, carried = inventory.moneyCarried();
 	const row = (left, right) => `<div style="display:flex; align-items:center; gap:10px; padding:6px 8px; border-bottom:1px solid rgba(200,180,140,0.15);">${left}<div style="margin-left:auto; display:flex; align-items:center;">${right}</div></div>`;
 	let body = '';
+	const k = hereTown(), work = quests.workHtml(k, shop.person.profession.name, html, button);
 	if (trade.hall) {
-		body = survivalWar.hallHtml(treasury.townNumber(shop.person.town), button);
+		body = survivalWar.hallHtml(k, button) + `<div style="padding:8px; display:flex; align-items:center; flex-wrap:wrap;">Give to the town (its treasury): ${GIFTS.map((d) => button('gift:' + d * 100, '$' + d)).join('')}</div>` + work;
 	} else if (trade.bank) {
 		body = `<div style="padding:8px;">In the bank: <b>${bank.cents === null ? '…' : dollars(bank.cents)}</b> · it earns ${Math.round(INTEREST * 100)}% every day</div>
 			<div style="padding:0 8px 8px;">Town treasury: <b>${dollars(treasury.centsOf(treasury.townNumber(shop.person.town)))}</b> <span style="font-size:11px; color:#b8a888;">its taxes, and what its hunters and whalers bring in, before it is shared out</span></div>
 			${ledger(treasury.townNumber(shop.person.town))}
 			<div style="padding:8px; display:flex; align-items:center;">$ <input data-amount value="${html(shop.amount)}" placeholder="0.00" style="width:90px; margin:0 6px; padding:4px; background:#1e1812; color:#f0e4c8; border:1px solid #6a5a44; border-radius:4px; font:inherit;">
-			${button('put', 'Put in')}${button('take', 'Take out')}${button('putAll', 'Put in all')}${button('takeAll', 'Take out all')}</div>`;
+			${button('put', 'Put in')}${button('take', 'Take out')}${button('putAll', 'Put in all')}${button('takeAll', 'Take out all')}</div>${work}`;
 	} else {
 		let buy = '';
 		for (const type of trade.sells) {
 			const it = ITEMS[type];
 			const colours = it.clothing ? it.colours.map((c, k) => `<span data-act="buy" data-type="${type}" data-colour="${k}" title="${c}" style="display:inline-block; width:16px; height:16px; margin-left:4px; border-radius:3px; border:1px solid #000; background:${COLOURS[c]}; cursor:pointer;"></span>`).join('') : button('buy', 'Buy', `data-type="${type}"`);
-			buy += row(`${picture(type, it.clothing ? COLOURS[it.colours[0]] : it.tint)}<div><div>${html(it.name)}</div><div style="font-size:11px; color:#b8a888;">${html(it.detail ?? '')}</div></div>`, `<span style="margin-right:4px;">${dollars(cents(type))}</span>${colours}`);
+			buy += row(`${picture(type, it.clothing ? COLOURS[it.colours[0]] : it.tint)}<div><div>${html(it.name)}</div><div style="font-size:11px; color:#b8a888;">${html(it.detail ?? '')}</div></div>`, `<span style="margin-right:4px;">${dollars(asked(type))}</span>${colours}`);
 		}
 		if (trade.horse) buy = row(`${picture('haversack', '#6a4a2a')}<div><div>Saddled horse</div><div style="font-size:11px; color:#b8a888;">Brought round for you: its saddlebags carry the camp (a tent, its stove, its rain collector, two bedrolls)</div></div>`,
 			`<span style="margin-right:4px;">${dollars(HORSE * 100)}</span>${button('horse', 'Buy')}`) + buy;
@@ -186,12 +193,12 @@ function render() {
 		for (const { item } of mine) sell += row(`${picture(item.type, tintOf(item))}<div>${html(nameOf(item))}${item.count > 1 ? ` × ${item.count}` : ''}</div>`, `<span>${dollars(offer(item))}</span>${button('sell', 'Sell', `data-uid="${item.uid}"`)}`);
 		body = `<div style="display:flex; gap:16px; align-items:flex-start;">
 			<div style="flex:1; min-width:300px;"><div style="font-size:11px; letter-spacing:0.18em; color:#b8a888; margin:6px 8px;">FOR SALE</div>${buy}</div>
-			<div style="flex:1; min-width:260px;"><div style="font-size:11px; letter-spacing:0.18em; color:#b8a888; margin:6px 8px;">YOURS TO SELL (from your bags)</div>${sell || '<div style="padding:8px; color:#9a8a70;">Nothing they would buy</div>'}</div></div>`;
+			<div style="flex:1; min-width:260px;"><div style="font-size:11px; letter-spacing:0.18em; color:#b8a888; margin:6px 8px;">YOURS TO SELL (from your bags)</div>${sell || '<div style="padding:8px; color:#9a8a70;">Nothing they would buy</div>'}</div></div>${work}`;
 	}
 	root.innerHTML = `<div style="margin:auto; width:min(860px, calc(100vw - 32px)); background:rgba(40,32,24,0.96); border:1px solid #5a4a36; border-radius:6px; padding:12px 16px;">
 		<div style="display:flex; align-items:center; margin-bottom:8px;"><div style="font-size:16px; letter-spacing:0.12em;">${html(trade.title.toUpperCase())}${trade.hall ? ' · Town clerk' : trade.title != title(shop.person.profession.name) ? ' · ' + html(title(shop.person.profession.name)) : ''}</div>
 		<div style="margin-left:auto;">You carry <b>${dollars(carried)}</b>${button('close', 'Close')}</div></div>${body}
-		<div style="margin-top:8px; font-size:11px; color:#9a8a70;">${trade.hall ? '' : `They pay ${Math.round(SELL * 100)}% of the price · `}Esc, Tab, F or E to leave</div></div>`;
+		<div style="margin-top:8px; font-size:11px; color:#9a8a70;">${html(town.townName(k))} thinks ${Math.round(townOpinion.opinionOf(k) * 100)}% of you · ${trade.hall ? '' : `they ask ${Math.round(townOpinion.priceFactor(k) * 100)}% of the price and pay ${Math.round(SELL * townOpinion.sellFactor(k) * 100)}% · `}Esc, Tab, F or E to leave</div></div>`;
 	const input = root.querySelector('[data-amount]');
 	if (input) input.addEventListener('input', () => { shop.amount = input.value; });
 }
@@ -219,7 +226,7 @@ export function closeShop() {
 }
 // buying, selling, the bank
 export function buy(type, colour = null) {
-	const price = cents(type);
+	const price = asked(type);
 	if (!inventory.pay(price)) { help.toast('Not enough money'); return false; }
 	const item = makeItem(type, 1, colour);
 	if (!inventory.give(item)) { loot.dropHere([item]); help.toast('No room for it: on the ground at your feet'); }
@@ -254,6 +261,9 @@ root.addEventListener('click', (e) => {
 	if (!el) return;
 	const act = el.dataset.act;
 	if (act == 'close') { closeShop(); return; }
+	if ((act.startsWith('q:') || act.startsWith('gift:')) && !shop.person) return;
+	if (act.startsWith('q:')) { quests.act(act, hereTown(), shop.person.profession.name); render(); return; }
+	if (act.startsWith('gift:')) { if (!townOpinion.donate(shop.person.town, Number(act.slice(5)))) help.toast('You do not carry that much'); render(); return; }
 	if (act.startsWith('sw:')) { survivalWar.hallAct(act, treasury.townNumber(shop.person.town)); render(); return; }
 	if (act == 'buy') buy(el.dataset.type, el.dataset.colour !== undefined ? Number(el.dataset.colour) : null);
 	if (act == 'horse') buyHorse();
@@ -277,6 +287,8 @@ window.addEventListener('keydown', (e) => {
 	if (e.code == 'Escape' || e.code == 'Tab' || (!e.target?.matches?.('input') && (e.code == 'KeyE' || e.code == 'KeyF'))) { e.preventDefault(); closeShop(); }
 });
 inventory.onChange(() => render());
+quests.onChange(() => render());
+townOpinion.onChange(() => render());
 
 // Once a frame: walked away, or the trader gone in, the shop shuts
 export function shopsUpdate() {

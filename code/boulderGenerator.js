@@ -221,7 +221,9 @@ export function placeBoulders(land, params) {
 
 	//---small stones along the footpaths through the forest: here and there, on the tread or at its edges, pebbles to fist-sized
 	//		(the walker steps over them)
+	//		(not the roads, the tunnels or the bridges: the footpaths)
 	for (const path of land.paths ?? []) {
+		if (path.kind == 'road' || path.kind == 'rail' || path.kind == 'tunnel' || path.kind == 'bridge' || path.hidden) continue;
 		for (let i = 0; i < path.points.length - 1; i++) {
 			const [x, , z] = path.points[i], [nx, , nz] = path.points[i + 1];
 			if (land.zoneAt(x, z) != ZONE_FOREST || random() > 0.3) continue;

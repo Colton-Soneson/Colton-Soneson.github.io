@@ -16,6 +16,8 @@ import * as rabbits from './rabbits.js'
 import * as medical from './medical.js'
 import * as stations from './stations.js'
 import * as journal from './journalUI.js'
+import * as quests from './quests.js'
+import * as townOpinion from './townOpinion.js'
 import * as spit from './spit.js'
 
 /*
@@ -36,7 +38,7 @@ import * as spit from './spit.js'
 const CELL = 42;					// pixels
 const SLOT = 68;
 
-const ui = { open: false, container: null, camp: null, drag: null, menu: null, crafting: false, aid: false, spit: null };
+const ui = { open: false, container: null, camp: null, drag: null, menu: null, crafting: false, aid: false, quests: false, towns: false, spit: null };
 export const uiState = ui;
 const root = document.createElement('div');
 root.style.cssText = `position: fixed; inset: 0; z-index: 20; display: none; background: rgba(12, 10, 8, 0.75); color: ${journal.INK}; font: 12px ${journal.HAND}; user-select: none; overflow: auto;`;
@@ -128,13 +130,16 @@ function render() {
 	const craftColumn = ui.crafting ? `<div>${panel('CRAFTING', `<div style="display:flex; gap:12px; align-items:center;">${gridBox('craft', inventory.CRAFT_GRID, I.craft, 'grid:craft')}
 		<div style="text-align:center;"><div style="font-size:18px; margin-bottom:4px;">⇒</div>${slotBox('craftOut', 'Output', crafting.outputNow(), 84, 84)}</div></div>
 		<div style="margin-top:8px; max-width:360px; line-height:1.5;">${recipe ? html(crafting.describe(recipe)) : 'Lay things out in the grid, any way round'}<br><span style="color:rgba(43,37,32,0.6);">Makes: ${crafting.RECIPES.map((r) => html(crafting.describe(r))).join(' · ')}</span>${inventory.isGod() ? `<div style="margin-top:8px;"><b>God mode, free:</b><div style="display:flex; flex-wrap:wrap; gap:5px; margin-top:4px;">${crafting.freeMakes().map((type) => `<button class="jr-btn" data-free="${type}">${html(ITEMS[type].name)}</button>`).join('')}</div></div>` : ''}</div>`)}</div>` : '';
-	root.innerHTML = `<div style="position:fixed; left:32px; top:4px; z-index:1;">${tab('bag', 'INVENTORY', !ui.crafting && !ui.aid)}${tab('craft', 'CRAFTING', ui.crafting)}${tab('aid', 'FIRST AID', ui.aid)}</div><div class="jr-spread" style="position:relative; display:flex; gap:16px; padding:18px 22px 34px; align-items:flex-start; min-width:max-content; margin:auto; margin-top:30px; margin-bottom:12px;">
-		<div>${panel('GEAR', gear)}</div>
+	// (the Quests and the Towns tabs: a page each, the journal's writing of quests.js's and townOpinion.js's)
+	const opinions = ui.towns ? townOpinion.journalHtml(html) : null;
+	const page = ui.quests ? `<div>${panel('QUESTS', quests.journalHtml(html))}</div>` : ui.towns ? `<div style="width:620px;">${panel('WHAT THE TOWNS THINK OF YOU', `<div style="columns:2; column-gap:26px;">${opinions.towns}</div>`)}</div><div style="width:300px;">${panel('THE WARS', opinions.wars)}</div>` : null;
+	root.innerHTML = `<div style="position:fixed; left:32px; top:4px; z-index:1;">${tab('bag', 'INVENTORY', !ui.crafting && !ui.aid && !ui.quests && !ui.towns)}${tab('craft', 'CRAFTING', ui.crafting)}${tab('aid', 'FIRST AID', ui.aid)}${tab('quests', 'QUESTS', ui.quests)}${tab('towns', 'TOWNS', ui.towns)}</div><div class="jr-spread" style="position:relative; display:flex; gap:16px; padding:18px 22px 34px; align-items:flex-start; min-width:max-content; margin:auto; margin-top:30px; margin-bottom:12px;">
+		${page ?? `<div>${panel('GEAR', gear)}</div>
 		<div style="width:250px;">${panel('EQUIPPED', hands)}${panel('CONDITION', status)}</div>
 		<div>${pack}</div>
 		${found ? `<div>${found}</div>` : ''}
 		${craftColumn}
-		${ui.aid ? `<div>${firstAidPanel()}</div>` : ''}
+		${ui.aid ? `<div>${firstAidPanel()}</div>` : ''}`}
 		<div style="position:absolute; left:22px; right:22px; bottom:8px; text-align:center; font-size:11px; color:rgba(43,37,32,0.62);">Drag to move · R turns · drop off the screen to put it down · double click: in or out · right click: more · Tab, I, Esc or F to close</div>
 	</div>`;
 }
@@ -322,7 +327,9 @@ root.addEventListener('pointerdown', (e) => {
 	if (e.button != 0) return;
 	closeMenu();
 	const tabEl = e.target.closest('[data-tab]');
-	if (tabEl) { ui.crafting = tabEl.dataset.tab == 'craft'; ui.aid = tabEl.dataset.tab == 'aid'; render(); return; }
+	if (tabEl) { ui.crafting = tabEl.dataset.tab == 'craft'; ui.aid = tabEl.dataset.tab == 'aid'; ui.quests = tabEl.dataset.tab == 'quests'; ui.towns = tabEl.dataset.tab == 'towns'; render(); return; }
+	const dropEl = e.target.closest('[data-quest-drop]');
+	if (dropEl) { quests.abandon(dropEl.dataset.questDrop); render(); return; }
 	const freeEl = e.target.closest('[data-free]');
 	if (freeEl) { crafting.makeFree(freeEl.dataset.free); render(); return; }
 	const el = e.target.closest('.it');

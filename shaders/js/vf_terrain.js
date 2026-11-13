@@ -284,6 +284,31 @@ export const vf_terrain =
 	${floorShapes(9, 10, 11)}
 	const FLOOR_MOSS: vec3f = vec3f(0.15, 0.19, 0.08);
 
+	// THE TUNNELS' PORTALS (terrain.js): the ground where a road's bore goes into it, the shape of the bore (straight walls up to a round
+	//		arch: townGround.js, tunnelWork) cut out of it, so the bore is seen through it. Inside the mountain the ground is far over the bore,
+	//		so nothing else of it is cut. a: one end of its floor (w: its half width), b: the other (w: its height to the crown)
+	struct Tunnel { a: vec4f, b: vec4f, };
+	struct TunnelUniforms { count: vec4f, list: array<Tunnel, 8>, };
+	@group(0) @binding(12) var<uniform> TUNNELS: TunnelUniforms;
+	fn tunnelHole(p: vec3f) -> bool {
+		let count = i32(TUNNELS.count.x + 0.5);
+		for (var i = 0; i < count; i++) {
+			let A = TUNNELS.list[i].a.xyz;
+			let B = TUNNELS.list[i].b.xyz;
+			let d = B.xz - A.xz;
+			let ll = max(dot(d, d), 1.0);
+			let s = dot(p.xz - A.xz, d) / ll;
+			if (s < 0.0 || s > 1.0) { continue; }
+			let across = abs((p.x - A.x) * d.y - (p.z - A.z) * d.x) / sqrt(ll);
+			let hw = TUNNELS.list[i].a.w + 0.25;
+			let up = p.y - mix(A.y, B.y, s);
+			let spring = TUNNELS.list[i].b.w - TUNNELS.list[i].a.w;
+			if (up < -1.5 || across > hw) { continue; }
+			if (up <= spring || across * across + (up - spring) * (up - spring) <= hw * hw) { return true; }
+		}
+		return false;
+	}
+
 	const COLOR_SEABED: vec3f    = ${zoneColor(ZONE_OCEAN)};
 	const COLOR_BEACH: vec3f     = ${zoneColor(ZONE_BEACH)};
 	const COLOR_GRASSLAND: vec3f = ${zoneColor(ZONE_GRASSLAND)};
@@ -375,6 +400,7 @@ export const vf_terrain =
 	// Near the camera: the color, and the depth moved by the relief
 	@fragment
 	fn fragmentMain(input: FragInput) -> FragOutput {
+		if (tunnelHole(input.worldPos)) { discard; }
 		let m = liveMaterial(input);
 		var output: FragOutput;
 		output.color = vec4f(lightLand(m, input.worldPos, input.shadowPos), 1.0);
@@ -394,6 +420,7 @@ export const vf_terrain =
 	//		something nearer, which is most of the land behind a hill. (terrainPass draws the chunks nearest first, to make the most of it)
 	@fragment
 	fn fragmentMainFar(input: FragInput) -> FarFragOutput {
+		if (tunnelHole(input.worldPos)) { discard; }
 		var output: FarFragOutput;
 		output.color = vec4f(lightLand(liveMaterial(input), input.worldPos, input.shadowPos), 1.0);
 		return output;

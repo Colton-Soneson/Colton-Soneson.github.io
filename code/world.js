@@ -124,7 +124,7 @@ export function layoutWorld(seed, homeTowns = 2) {
 export function tileParams(base, world, key) {
 	const t = world.tiles.get(key);
 	if (!t) return null;
-	return { ...base, center: [t.tx * base.worldSize, t.tz * base.worldSize], tile: key, world: { size: base.worldSize, land: world.landKeys },
+	return { ...base, center: [t.tx * base.worldSize, t.tz * base.worldSize], tile: key, world: { size: base.worldSize, land: world.landKeys, towns: world.townsOf ??= Object.fromEntries(world.landKeys.map((k) => [k, world.tiles.get(k).towns])) },
 		townCount: t.kind == 'land' ? (key == HOME ? base.townCount : t.towns) : 0, landingStrip: key == HOME && base.landingStrip, footpaths: t.kind == 'land' && base.footpaths };
 }
 // the tile a world position is in (its key), and its middle

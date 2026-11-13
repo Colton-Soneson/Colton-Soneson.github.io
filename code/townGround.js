@@ -2,7 +2,7 @@ import { settings } from './settings.js';
 
 import { townMeshBuilder } from './townBuildings.js'
 import { BUILDING_TYPES, TOWN_MATERIALS as MAT } from './townLayout.js'
-import { PATHS } from './footpaths.js'
+import { PATHS, TUNNEL, BRIDGE, STATION } from './footpaths.js'
 import { ZONE_FOREST } from './terrainGenerator.js'
 
 /*
@@ -11,7 +11,7 @@ import { ZONE_FOREST } from './terrainGenerator.js'
 	the world's other tiles have theirs made off the main thread with their land (tileWorker.js: world.js, terrain.js)
 */
 //-------------------------------THE GROUND WORK-------------------------------
-export function groundWork(towns, seaLevel, strip, paths, groundAt, zoneAt, towers, unitsPerMetre = settings.forestUnitsPerMetre) {
+export function groundWork(towns, seaLevel, strip, paths, groundAt, zoneAt, towers, unitsPerMetre = settings.forestUnitsPerMetre, stations = []) {
 	const m = townMeshBuilder();
 	const lift = 0.06;		// over the land the roads are cut into
 	// a ribbon along a line of [x, y, z] points, width wide, up over them (or over the ground at each side and in the middle, if
@@ -136,6 +136,31 @@ export function groundWork(towns, seaLevel, strip, paths, groundAt, zoneAt, towe
 	//		than the tread: the shader makes its edges ragged. Through the forest, strewn with fallen leaves (how much: each point's
 	//		share of forest round it, along the path)
 	for (const path of paths ?? []) {
+		// (a road's: of dirt or poor cobbles, a little wider than it is for the shader's ragged edges; a tunnel's bore; a bridge of stone
+		//		over the water; another tile's half of a gate's stretch is that tile's to draw)
+		if (path.hidden) continue;
+		if (path.kind == 'tunnel') { tunnelWork(m, path); if (path.rail) railsAlong(m, path.points, (p) => p[1] + 0.06); continue; }
+		if (path.kind == 'bridge') {
+			// (its arches down to the water under it: the sea's, or a river's or a lake's, a little over its bed)
+			const bed = Math.min(...path.points.map((p) => groundAt(p[0], p[2])));
+			bridge(m, { points: path.points.map((p) => [p[0], p[1] + 0.3, p[2]]), width: path.half * 2 }, Math.max(seaLevel, bed + 1), ribbon, groundAt, BRIDGE.arch);
+			if (path.rail) railsAlong(m, path.points, (p) => p[1] + 0.36);
+			continue;
+		}
+		if (path.kind == 'rail') {
+			// (the main line on the ground: its bed, a little wider than it for its ragged edges, and its rails on it)
+			const fine = [path.points[0]];
+			for (let j = 1; j < path.points.length; j++) { const a = path.points[j - 1], b = path.points[j]; for (let s = 1; s <= 4; s++) fine.push([a[0] + (b[0] - a[0]) * s / 4, 0, a[2] + (b[2] - a[2]) * s / 4]); }
+			ribbon(fine, (path.half + 0.6) * 2, MAT.BALLAST, 0.12, groundAt);
+			railsAlong(m, fine, (p) => groundAt(p[0], p[2]) + 0.12);
+			continue;
+		}
+		if (path.kind == 'road') {
+			const fine = [path.points[0]];
+			for (let j = 1; j < path.points.length; j++) { const a = path.points[j - 1], b = path.points[j]; for (let s = 1; s <= 2; s++) fine.push([a[0] + (b[0] - a[0]) * s / 2, 0, a[2] + (b[2] - a[2]) * s / 2]); }
+			ribbon(fine, (path.half + 1.1) * 2, path.surface == 'cobble' ? MAT.ROAD_COBBLE : MAT.ROAD, 0.1, groundAt);
+			continue;
+		}
 		const fine = [path.points[0]];
 		for (let j = 1; j < path.points.length; j++) {
 			const a = path.points[j - 1], b = path.points[j];
@@ -146,15 +171,56 @@ export function groundWork(towns, seaLevel, strip, paths, groundAt, zoneAt, towe
 		ribbon(fine, PATHS.half * 2 + 0.8, MAT.PATH, 0.08, groundAt, leafy);
 	}
 	for (const [x, z] of towers ?? []) fireTower(m, x, z, groundAt, unitsPerMetre);
+	for (const s of stations ?? []) station(m, s, groundAt);
 	return m;
+}
+
+// THE MAIN LINE's rails (footpaths.js: a 'rail' path, or a tunnel's or a bridge's of it): two of iron, RAIL_GAUGE apart, along the points
+//		given, at the height floor(point) gives
+const RAIL_GAUGE = 2.87, RAIL_TOP = 0.3, RAIL_HEAD = 0.14;
+function railsAlong(m, P, floor) {
+	const n = P.length;
+	if (n < 2) return;
+	const across = P.map((p, j) => { const a = P[Math.max(j - 1, 0)], c = P[Math.min(j + 1, n - 1)], l = Math.hypot(c[0] - a[0], c[2] - a[2]) || 1; return [-(c[2] - a[2]) / l, (c[0] - a[0]) / l]; });
+	const ys = P.map(floor);
+	for (const side of [-1, 1]) {
+		let along = 0;
+		for (let j = 0; j < n - 1; j++) {
+			const a = P[j], b = P[j + 1], len = Math.hypot(b[0] - a[0], b[2] - a[2]);
+			const off = (k, w) => [P[k][0] + across[k][0] * (side * RAIL_GAUGE / 2 + w), P[k][2] + across[k][1] * (side * RAIL_GAUGE / 2 + w)];
+			const [ax0, az0] = off(j, -RAIL_HEAD / 2), [ax1, az1] = off(j, RAIL_HEAD / 2), [bx0, bz0] = off(j + 1, -RAIL_HEAD / 2), [bx1, bz1] = off(j + 1, RAIL_HEAD / 2);
+			const ya = ys[j] + RAIL_TOP, yb = ys[j + 1] + RAIL_TOP;
+			m.quad([ax0, ya, az0], [ax1, ya, az1], [bx1, yb, bz1], [bx0, yb, bz0], MAT.IRON, [[along, 0], [along, 1], [along + len, 1], [along + len, 0]]);
+			m.quad([ax0, ya - RAIL_TOP, az0], [ax0, ya, az0], [bx0, yb, bz0], [bx0, yb - RAIL_TOP, bz0], MAT.IRON, [[along, 0], [along, 1], [along + len, 1], [along + len, 0]]);
+			along += len;
+		}
+	}
+}
+// A STATION of the main line (footpaths.js: THE STATIONS): its platform beside the line on the town's side, and a small depot of boards on
+//		it under a roof
+function station(m, s, groundAt) {
+	const { x, z, heading, side } = s, fx = Math.sin(heading), fz = Math.cos(heading), sx = fz * side, sz = -fx * side, L = STATION.platform / 2;
+	const at = (u, w) => [x + sx * u + fx * w, z + sz * u + fz * w];
+	const y = Math.max(groundAt(x, z), groundAt(...at(8, 0))) + 0.1;
+	// (the platform: a slab beside the line, its face to the rails)
+	const c = [at(4, -L), at(4, L), at(10, L), at(10, -L)];
+	m.quad([c[0][0], y + 1.6, c[0][1]], [c[1][0], y + 1.6, c[1][1]], [c[2][0], y + 1.6, c[2][1]], [c[3][0], y + 1.6, c[3][1]], MAT.PLANKS, [[0, 0], [2 * L, 0], [2 * L, 6], [0, 6]]);
+	m.wall(c[0][0], c[0][1], c[1][0], c[1][1], y - 1.5, y + 1.6, y - 1.5, y + 1.6, MAT.DRESSED);
+	// (the depot: four walls, a door to the platform, a roof over to the platform's edge)
+	const D = [at(11, -9), at(11, 9), at(19, 9), at(19, -9)], top = y + 1.6 + 6.5;
+	for (let k = 0; k < 4; k++) { const [ax, az] = D[k], [bx, bz] = D[(k + 1) % 4]; m.wall(ax, az, bx, bz, y + 1.6, top, y + 1.6, top, MAT.PLANKS); }
+	const R = [at(8, -11), at(8, 11), at(21, 11), at(21, -11)], ridge = top + 3;
+	const mid = [at(14.5, -11), at(14.5, 11)];
+	m.quad([R[0][0], top, R[0][1]], [R[1][0], top, R[1][1]], [mid[1][0], ridge, mid[1][1]], [mid[0][0], ridge, mid[0][1]], MAT.ROOF, [[0, 0], [22, 0], [22, 7], [0, 7]]);
+	m.quad([mid[0][0], ridge, mid[0][1]], [mid[1][0], ridge, mid[1][1]], [R[2][0], top, R[2][1]], [R[3][0], top, R[3][1]], MAT.ROOF, [[0, 0], [22, 0], [22, 7], [0, 7]]);
 }
 
 // A stone bridge: its deck (cobbled, along its points), a parapet either side, and under it arches on piers, about SPAN_POINTS of its
 //		points to an arch. Its faces go down from the parapet to the arch under it, and a pier stands under every join of two arches,
 //		down into the water or the land
 const SPAN_POINTS = 4;
-function bridge(m, { points: P, width }, seaLevel, ribbon, heightAt) {
-	const n = P.length - 1, spans = Math.max(Math.round(n / SPAN_POINTS), 1);
+function bridge(m, { points: P, width }, seaLevel, ribbon, heightAt, spanPoints = SPAN_POINTS) {
+	const n = P.length - 1, spans = Math.max(Math.round(n / spanPoints), 1);
 	const piers = Array.from({ length: spans + 1 }, (_, i) => Math.round(i * n / spans));
 	// the line across the bridge at each point
 	const across = P.map((p, j) => {
@@ -250,10 +316,24 @@ function tulipBed(m, { x, y, z, ax, az, long, wide, colour }) {
 }
 const STREET_EDGE = 4.5;		// how far into a street a lane or stair starts: its own edge
 
-// THE FIRE TOWER (terrain.land.fireTowers: on a top in the mountains, with a footpath up to it, see footpaths.js): a lookout's cab
-//		of timber and glass on four splayed legs, braced in three panels, a walkway round the cab with a rail, and a ladder up one side.
-//		About 770 triangles. In metres (TOWER) from its foot, the ground under its middle: each leg goes down to the ground under it
-export const TOWER = { base: 2.2, top: 1.6, floor: 11, cab: 1.6, walk: 2.3, wall: 1.0, window: 2.3, roof: 3.4, levels: [1.5, 5.0, 8.0, 11] };
+// THE FIRE TOWER (terrain.land.fireTowers: on each main peak, with a footpath up to it, see footpaths.js): a lookout's cab of timber and
+//		glass on four splayed legs, braced in two panels, a walkway round the cab with a rail, and a stair up to it on its -z side. The cab
+//		is a shelter: its door over the stair head, a cot along its +x wall and an iron stove in its -x, +z corner, its pipe up through the
+//		roof (fireTowers.js: E sleeps on the cot; the stove is a fireplace, stations.js). Under 800 triangles. In metres (TOWER) from its
+//		foot, the ground under its middle: each leg goes down to the ground under it
+export const TOWER = { base: 2.0, top: 1.7, floor: 5, cab: 1.7, walk: 2.4, wall: 1.0, window: 2.3, roof: 3.0, levels: [0.4, 2.7, 5],
+	stair: { width: 0.9, rise: 0.25, going: 0.28 }, door: 0.45, cot: [1.2, 0, 0, 0.4, 0.95], stove: [-1.2, 0, 1.2, 0.27] };
+// (where the cot is, and the stove: their middles, metres from the tower's foot, and the cot's heading; fireTowers.js)
+// the stair of the tower at (x, z): as many steps as it takes from the ground at its foot (not the tower's: the top of a peak falls away)
+//		up to the walkway, metres: { steps, out (how far it reaches out from the walkway), foot (its foot's height from the tower's) }
+export function towerStair(x, z, groundAt, M = settings.forestUnitsPerMetre) {
+	const S = TOWER.stair, deck = TOWER.floor + 0.25, y0 = groundAt(x, z);
+	let foot = 0, steps = Math.ceil(deck / S.rise);
+	for (let k = 0; k < 2; k++) { foot = (groundAt(x, z - (TOWER.walk + steps * S.going) * M) - y0) / M; steps = Math.ceil((deck - foot) / S.rise); }
+	return { steps, out: steps * S.going, foot };
+}
+export const towerCot = () => ({ at: [TOWER.cot[0], TOWER.floor + 0.25 + 0.45, TOWER.cot[2]], yaw: 0 });
+export const towerStove = () => ({ at: [TOWER.stove[0], TOWER.floor + 0.25, TOWER.stove[2]] });
 function fireTower(m, x, z, groundAt, M = settings.forestUnitsPerMetre) {
 	const y0 = groundAt(x, z), yF = y0 + TOWER.floor * M;
 	const at = ([u, h, w]) => [x + u * M, y0 + h * M, z + w * M];
@@ -271,30 +351,32 @@ function fireTower(m, x, z, groundAt, M = settings.forestUnitsPerMetre) {
 			m.quad(corner(a, s0, t0), corner(a, s1, t1), corner(b, s1, t1), corner(b, s0, t0), material, [[k, 0], [k + 1, 0], [k + 1, length], [k, length]]);
 		}
 	};
+	// (a box, metres from the foot)
+	const box = (u0, h0, w0, u1, h1, w1, material, skip = ['bottom']) => m.box(x + u0 * M, y0 + h0 * M, z + w0 * M, x + u1 * M, y0 + h1 * M, z + w1 * M, material, skip);
 	const corners = [[1, 1], [1, -1], [-1, -1], [-1, 1]];
 	const leg = ([sx, sz], h) => { const half = TOWER.base + (TOWER.top - TOWER.base) * h / TOWER.floor; return [sx * half, h, sz * half]; };
 	for (const c of corners) {
 		const foot = leg(c, 0), ground = (groundAt(x + foot[0] * M, z + foot[2] * M) - y0) / M;
 		beam([foot[0], ground - 0.5, foot[2]], leg(c, TOWER.floor), 0.14, MAT.TIMBER);
 	}
-	// the girts and the cross braces, each side, three panels up
+	// the girts and the cross braces, each side, two panels up
 	const L = TOWER.levels;
 	for (let c = 0; c < 4; c++) {
 		const a = corners[c], b = corners[(c + 1) % 4];
 		for (let l = 0; l < L.length - 1; l++) beam(leg(a, L[l]), leg(b, L[l]), 0.07, MAT.TIMBER);
 		for (let l = 1; l < L.length; l++) { beam(leg(a, L[l - 1]), leg(b, L[l]), 0.05, MAT.TIMBER); beam(leg(b, L[l - 1]), leg(a, L[l]), 0.05, MAT.TIMBER); }
 	}
-	// the walkway, the cab's walls to the sills, its corner posts, the glass, and the roof
-	const W = TOWER.walk * M, C = TOWER.cab * M, deck = yF + 0.25 * M, sill = deck + TOWER.wall * M, head = deck + TOWER.window * M, t = 0.08 * M;
+	// the walkway, the cab's walls to the sills (the door's gap in the -z one, full height), its corner posts, the glass, and the roof
+	const W = TOWER.walk * M, C = TOWER.cab * M, deck = yF + 0.25 * M, sill = deck + TOWER.wall * M, head = deck + TOWER.window * M, t = 0.08 * M, D = TOWER.door * M;
 	m.box(x - W, yF, z - W, x + W, deck, z + W, MAT.PLANKS);
 	m.box(x - C, deck, z + C - t, x + C, sill, z + C, MAT.PLANKS, ['bottom']);
-	m.box(x - C, deck, z - C, x + C, sill, z - C + t, MAT.PLANKS, ['bottom']);
+	m.box(x - C, deck, z - C, x - D, head, z - C + t, MAT.PLANKS, ['bottom']);
+	m.box(x + D, deck, z - C, x + C, head, z - C + t, MAT.PLANKS, ['bottom']);
 	m.box(x + C - t, deck, z - C + t, x + C, sill, z + C - t, MAT.PLANKS, ['bottom', '-z', '+z']);
 	m.box(x - C, deck, z - C + t, x - C + t, sill, z + C - t, MAT.PLANKS, ['bottom', '-z', '+z']);
 	for (const [sx, sz] of corners) m.box(x + sx * C - 0.06 * M, sill, z + sz * C - 0.06 * M, x + sx * C + 0.06 * M, head, z + sz * C + 0.06 * M, MAT.TIMBER, ['bottom']);
 	const g = 0.04 * M;
 	m.quad([x - C, sill, z + C - g], [x + C, sill, z + C - g], [x + C, head, z + C - g], [x - C, head, z + C - g], MAT.GLASS, [[0, 0], [1, 0], [1, 1], [0, 1]]);
-	m.quad([x + C, sill, z - C + g], [x - C, sill, z - C + g], [x - C, head, z - C + g], [x + C, head, z - C + g], MAT.GLASS, [[0, 0], [1, 0], [1, 1], [0, 1]]);
 	m.quad([x + C - g, sill, z + C], [x + C - g, sill, z - C], [x + C - g, head, z - C], [x + C - g, head, z + C], MAT.GLASS, [[0, 0], [1, 0], [1, 1], [0, 1]]);
 	m.quad([x - C + g, sill, z - C], [x - C + g, sill, z + C], [x - C + g, head, z + C], [x - C + g, head, z - C], MAT.GLASS, [[0, 0], [1, 0], [1, 1], [0, 1]]);
 	const E = C + 0.4 * M, apex = [x, deck + TOWER.roof * M, z], eave = (sx, sz) => [x + sx * E, head, z + sz * E];
@@ -302,13 +384,82 @@ function fireTower(m, x, z, groundAt, M = settings.forestUnitsPerMetre) {
 		const [ax, az] = corners[c], [bx, bz] = corners[(c + 1) % 4];
 		m.tri(eave(bx, bz), eave(ax, az), apex, MAT.ROOF, [[0, 0], [2 * E, 0], [E, E]]);
 	}
-	// the rail round the walkway (open over the ladder), and the ladder up the -z side to it
-	const R = TOWER.walk - 0.08, rail = TOWER.floor + 1.25, deckM = TOWER.floor + 0.25;
+	// the rail round the walkway (open over the stair head)
+	const R = TOWER.walk - 0.08, rail = TOWER.floor + 1.25, deckM = TOWER.floor + 0.25, S = TOWER.stair, sw = S.width / 2;
 	for (const [sx, sz] of [...corners, [1, 0], [-1, 0], [0, 1]]) beam([sx * R, deckM, sz * R], [sx * R, rail, sz * R], 0.04, MAT.TIMBER);
-	for (const [a, b] of [[[1, 1], [1, -1]], [[-1, -1], [-1, 1]], [[-1, 1], [1, 1]], [[-1, -1], [-0.3, -1]], [[0.3, -1], [1, -1]]]) beam([a[0] * R, rail, a[1] * R], [b[0] * R, rail, b[1] * R], 0.04, MAT.TIMBER);
-	const ladder = -(TOWER.walk + 0.08);
-	for (const s of [-0.28, 0.28]) beam([s, -0.3, ladder], [s, rail, ladder], 0.04, MAT.TIMBER);
-	for (let h = 0.35; h < TOWER.floor; h += 0.4) beam([-0.28, h, ladder], [0.28, h, ladder], 0.025, MAT.TIMBER);
+	for (const [a, b] of [[[1, 1], [1, -1]], [[-1, -1], [-1, 1]], [[-1, 1], [1, 1]], [[-1, -1], [-sw / R, -1]], [[sw / R, -1], [1, -1]]]) beam([a[0] * R, rail, a[1] * R], [b[0] * R, rail, b[1] * R], 0.04, MAT.TIMBER);
+	// the stair: straight out from the walkway's -z edge down to the ground, its two stringers and its treads
+	const { steps, out, foot } = towerStair(x, z, groundAt, M);
+	for (const side of [-sw, sw]) beam([side, deckM, -TOWER.walk], [side, foot - 0.1, -TOWER.walk - out], 0.05, MAT.TIMBER);
+	for (let k = 1; k < steps; k++) {
+		const h = deckM - k * S.rise, w = -TOWER.walk - k * S.going;
+		m.quad(at([-sw, h, w]), at([sw, h, w]), at([sw, h, w - S.going]), at([-sw, h, w - S.going]), MAT.PLANKS, [[0, 0], [S.width, 0], [S.width, S.going], [0, S.going]]);
+	}
+	// inside: the cot (its frame and its blanket) and the stove (its body and its pipe up through the roof)
+	const [cu, , cw, chw, chl] = TOWER.cot, [su, , swz, sh] = TOWER.stove;
+	box(cu - chw, deckM, cw - chl, cu + chw, deckM + 0.35, cw + chl, MAT.TIMBER);
+	box(cu - chw + 0.04, deckM + 0.35, cw - chl + 0.04, cu + chw - 0.04, deckM + 0.45, cw + chl - 0.3, MAT.AWNING);
+	box(su - sh, deckM, swz - sh, su + sh, deckM + 0.7, swz + sh, MAT.IRON);
+	beam([su, deckM + 0.7, swz], [su, deckM + TOWER.roof + 0.4, swz], 0.06, MAT.IRON);
+}
+// (its triangles, for testing)
+export function fireTowerTriangles() { const m = townMeshBuilder(); fireTower(m, 0, 0, () => 0, 2); return m.triangles(); }
+
+// A TUNNEL's bore (footpaths.js: THE TUNNELS; a path of kind 'tunnel', its floor's points from portal to portal): lined with dressed stone,
+//		straight walls up to the spring of a round arch, its floor of dirt (each vertex's value: how far in from the nearer portal, for the
+//		shader's dark inside: vf_town.js), a portal face of stone round each end, and a lamp on the wall every TUNNEL.lamps (tunnelLamps:
+//		their lights, tunnels.js)
+const BORE_ARCH = 6;
+export function tunnelLamps(path) {
+	const P = path.points, A = P[0], B = P[P.length - 1], length = Math.hypot(B[0] - A[0], B[2] - A[2]);
+	const ux = (B[0] - A[0]) / length, uz = (B[2] - A[2]) / length, sx = -uz, sz = ux, spring = TUNNEL.height - path.half, out = [];
+	for (let s = TUNNEL.lamps / 2, k = 0; s < length; s += TUNNEL.lamps, k++) {
+		const t = s / length, side = k % 2 ? 1 : -1, w = (path.half - 0.4) * side;
+		out.push([A[0] + ux * s + sx * w, A[1] + (B[1] - A[1]) * t + spring - 1.2, A[2] + uz * s + sz * w]);
+	}
+	return out;
+}
+function tunnelWork(m, path) {
+	const P = path.points, n = P.length - 1, hw = path.half, H = TUNNEL.height, spring = H - hw;
+	const A = P[0], B = P[n], length = Math.hypot(B[0] - A[0], B[2] - A[2]);
+	if (length < 1) return;
+	const ux = (B[0] - A[0]) / length, uz = (B[2] - A[2]) / length, sx = -uz, sz = ux;
+	// (the section: up one wall, round the arch, down the other, x across and y up from the floor)
+	const section = [[-hw, 0], [-hw, spring]];
+	for (let k = 1; k < BORE_ARCH; k++) { const a = Math.PI - k * Math.PI / BORE_ARCH; section.push([hw * Math.cos(a), spring + hw * Math.sin(a)]); }
+	section.push([hw, spring], [hw, 0]);
+	const along = P.map((p) => Math.hypot(p[0] - A[0], p[2] - A[2]));
+	const point = (j, [u, v]) => [P[j][0] + sx * u, P[j][1] + v, P[j][2] + sz * u];
+	const inside = (j) => Math.min(along[j], length - along[j]);
+	let round = 0;
+	const arc = section.map((p, i) => i ? (round += Math.hypot(p[0] - section[i - 1][0], p[1] - section[i - 1][1])) : 0);
+	for (let j = 0; j < n; j++) {
+		const d0 = inside(j), d1 = inside(j + 1);
+		// (uv: along it from the first portal, and round the section from the floor on its left: the shader lights it by its lamps from them)
+		for (let i = 0; i < section.length - 1; i++) m.quad(point(j, section[i]), point(j, section[i + 1]), point(j + 1, section[i + 1]), point(j + 1, section[i]), MAT.BORE, [[along[j], arc[i]], [along[j], arc[i + 1]], [along[j + 1], arc[i + 1]], [along[j + 1], arc[i]]], [d0, d0, d1, d1]);
+		m.quad(point(j, [-hw, 0.05]), point(j, [hw, 0.05]), point(j + 1, [hw, 0.05]), point(j + 1, [-hw, 0.05]), MAT.BORE_FLOOR, [[along[j], -hw], [along[j], hw], [along[j + 1], hw], [along[j + 1], -hw]], [d0, d0, d1, d1]);
+	}
+	// the portals: a face of stone from the opening out to a square round it, and a coping over it
+	const F = hw + 4, top = H + 3.5;
+	for (const [j, dir] of [[0, -1], [n, 1]]) {
+		const outer = section.map(([u, v], i) => {
+			if (i == 0) return [-F, 0];
+			if (i == section.length - 1) return [F, 0];
+			const du = u, dv = v - spring, l = Math.hypot(du, dv) || 1, ex = du / l, ey = dv / l;
+			const k = Math.min(ex ? F / Math.abs(ex) : Infinity, ey > 0 ? (top - spring) / ey : Infinity);
+			return [ex * k, spring + ey * k];
+		});
+		for (let i = 0; i < section.length - 1; i++) m.quad(point(j, section[i]), point(j, section[i + 1]), point(j, outer[i + 1]), point(j, outer[i]), MAT.DRESSED, [[section[i][0], section[i][1]], [section[i + 1][0], section[i + 1][1]], [outer[i + 1][0], outer[i + 1][1]], [outer[i][0], outer[i][1]]]);
+		// (the corners of the square the fan of the arch leaves)
+		const c = (u, v) => point(j, [u, v]);
+		m.tri(c(-F, 0), c(-F, top), point(j, outer[1]), MAT.DRESSED, [[-F, 0], [-F, top], [outer[1][0], outer[1][1]]]);
+		m.tri(c(F, 0), point(j, outer[outer.length - 2]), c(F, top), MAT.DRESSED, [[F, 0], [outer[outer.length - 2][0], outer[outer.length - 2][1]], [F, top]]);
+		const o = (u, v, w) => [P[j][0] + sx * u + ux * w * dir, P[j][1] + v, P[j][2] + sz * u + uz * w * dir];
+		m.quad(o(-F - 0.5, top, 0), o(F + 0.5, top, 0), o(F + 0.5, top, 1.2), o(-F - 0.5, top, 1.2), MAT.DRESSED, [[0, 0], [2 * F, 0], [2 * F, 1.2], [0, 1.2]]);
+		m.quad(o(-F - 0.5, top - 0.8, 1.2), o(F + 0.5, top - 0.8, 1.2), o(F + 0.5, top, 1.2), o(-F - 0.5, top, 1.2), MAT.DRESSED, [[0, 0], [2 * F, 0], [2 * F, 0.8], [0, 0.8]]);
+	}
+	// the lamps: a lantern on a bracket
+	for (const [lx, ly, lz] of tunnelLamps(path)) m.box(lx - 0.35, ly - 0.5, lz - 0.35, lx + 0.35, ly + 0.5, lz + 0.35, MAT.BORE_LAMP, []);
 }
 
 // a gas lamp at the foot (x, y, z): a stone foot, an iron post, the lantern and its cap

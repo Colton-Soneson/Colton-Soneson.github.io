@@ -183,9 +183,8 @@ function drawMap() {
 		ctx.fillText(town.townName(k), cx + r * 0.8, cy - r * 0.8);
 		ctx.globalAlpha = 1;
 	});
-	// the airstrip
-	const S = land.strip;
-	if (S) {
+	// the airstrips (every tile's here)
+	for (const S of land.strips ?? [land.strip].filter(Boolean)) {
 		const along = [S.ax, S.az], across = [-S.az, S.ax], w = S.width / 2;
 		const c = (u, v) => [px(S.x + along[0] * u + across[0] * v), pz(S.z + along[1] * u + across[1] * v)];
 		charcoal(ctx, [c(-S.half, -w), c(S.half, -w), c(S.half, w), c(-S.half, w), c(-S.half, -w)], { width: 2.4, passes: 3, alpha: 0.75 });

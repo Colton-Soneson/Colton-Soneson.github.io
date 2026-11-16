@@ -24,13 +24,14 @@ const found = { s: 0, across: 0, floor: 0, lead: 0 };
 function along(t, x, z) {
 	const ex = t.b[0] - t.a[0], ez = t.b[2] - t.a[2], ll = ex * ex + ez * ez || 1, l = Math.sqrt(ll);
 	found.s = ((x - t.a[0]) * ex + (z - t.a[2]) * ez) / ll;
-	found.lead = t.kind == 'bridge' ? 0 : LEAD / l;
+	found.lead = (t.kind == 'bridge' ? DECK_LEAD : LEAD) / l;
 	found.across = ((x - t.a[0]) * ez - (z - t.a[2]) * ex) / l;
 	const s = Math.min(Math.max(found.s, 0), 1);
 	found.floor = t.a[1] + (t.b[1] - t.a[1]) * s + (t.kind == 'bridge' ? DECK + (t.rise ?? 0) * Math.sin(Math.PI * s) : 0);
 	return found;
 }
 const LEAD = 1.5;					// world units: a tunnel's floor from this far out of its portals (its road cut on in under it: footpaths.js)
+const DECK_LEAD = 1.0;				// world units: a bridge's deck this far past each end of a stretch of it (where one meets the next at a bend, no gap)
 const inside = (t, f, y) => f.s >= -f.lead && f.s <= 1 + f.lead && Math.abs(f.across) <= t.half && y >= f.floor - UNDER && (t.kind == 'bridge' || y <= f.floor + t.height - 1);
 // (a quick look first: is it near the box round it at all)
 const near = (t, x, z) => x > Math.min(t.a[0], t.b[0]) - t.half - 2 && x < Math.max(t.a[0], t.b[0]) + t.half + 2 && z > Math.min(t.a[2], t.b[2]) - t.half - 2 && z < Math.max(t.a[2], t.b[2]) + t.half + 2;

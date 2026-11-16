@@ -1,4 +1,5 @@
 import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.19/+esm';
+import { VERSION } from './version.js';
 import { settings } from './settings.js';
 import * as scene from './scene.js';
 import * as water from './water.js';	//for water options
@@ -11,6 +12,7 @@ import { reversedDepth, rememberDepthChoice } from './depthMode.js';
 
 export const imguiParams = {
     worldViewDistance: settings.worldViewDistance,
+    observeInspectRadius: settings.observeInspectRadius,
     // Time
     step: settings.step,
     // Camera
@@ -104,6 +106,14 @@ export const imguiParams = {
     terrainTownCount: settings.terrainTownCount,
     worldTiles: settings.worldTiles,
     terrainTownSize: settings.terrainTownSize,
+    terrainTownDensity: settings.terrainTownDensity,
+    terrainPlains: settings.terrainPlains,
+    terrainPlainsSize: settings.terrainPlainsSize,
+    terrainRolling: settings.terrainRolling,
+    terrainMassifInland: settings.terrainMassifInland,
+    terrainMassifHeight: settings.terrainMassifHeight,
+    terrainRailGrade: settings.terrainRailGrade,
+    terrainLakeSize: settings.terrainLakeSize,
     terrainLandingStrip: settings.terrainLandingStrip,
     terrainFootpaths: settings.terrainFootpaths,
     enableTownFolk: settings.enableTownFolk,
@@ -112,6 +122,9 @@ export const imguiParams = {
     terrainGroundDetail: settings.terrainGroundDetail,
     terrainDepthBias: settings.terrainDepthBias,
     enableGrass: settings.enableGrass,
+    enableFlora: settings.enableFlora,
+    floraDensity: settings.floraDensity,
+    floraDrawDistance: settings.floraDrawDistance,
     grassTotalBladeCount: settings.grassTotalBladeCount,
     grassDrawDistance: settings.grassDrawDistance,
     grassLodRings: settings.grassLodRings,
@@ -196,12 +209,56 @@ export const imguiParams = {
     cloudCoverageBias: settings.cloudCoverageBias,
     cloudDensity: settings.cloudDensity,
     cloudHeight: settings.cloudHeight,
+    cloudSizeX: settings.cloudSizeX,
+    cloudSizeY: settings.cloudSizeY,
+    cloudSizeZ: settings.cloudSizeZ,
     cloudLayers: settings.cloudLayers,
     cloudCrispness: settings.cloudCrispness,
     cloudDriftSpeed: settings.cloudDriftSpeed,
     cloudSteps: settings.cloudSteps,
     cloudResolution: settings.cloudResolution,
     cloudDrawDistance: settings.cloudDrawDistance,
+    cloudHeapAmount: settings.cloudHeapAmount,
+    cloudPuffAmount: settings.cloudPuffAmount,
+    cloudHeapSpacing: settings.cloudHeapSpacing,
+    cloudHeapWidth: settings.cloudHeapWidth,
+    cloudLobes: settings.cloudLobes,
+    cloudHeapLean: settings.cloudHeapLean,
+    cloudBulbSize: settings.cloudBulbSize,
+    cloudBulbDepth: settings.cloudBulbDepth,
+    cloudEdgeSoftness: settings.cloudEdgeSoftness,
+    cloudBaseRagged: settings.cloudBaseRagged,
+    cloudWispiness: settings.cloudWispiness,
+    cloudBaseScale: settings.cloudBaseScale,
+    cloudHeapTop: settings.cloudHeapTop,
+    cloudToweringTop: settings.cloudToweringTop,
+    cloudTowering: settings.cloudTowering,
+    cloudHeightVariety: settings.cloudHeightVariety,
+    cloudSteepness: settings.cloudSteepness,
+    cloudTowerTop: settings.cloudTowerTop,
+    cloudTowerWidth: settings.cloudTowerWidth,
+    cloudDeckFrom: settings.cloudDeckFrom,
+    cloudDeckDepth: settings.cloudDeckDepth,
+    cloudSunStrength: settings.cloudSunStrength,
+    cloudAmbient: settings.cloudAmbient,
+    cloudForwardScatter: settings.cloudForwardScatter,
+    cloudBackScatter: settings.cloudBackScatter,
+    cloudBackShare: settings.cloudBackShare,
+    cloudMultiScatter: settings.cloudMultiScatter,
+    cloudScatterDepth: settings.cloudScatterDepth,
+    cloudShadowStrength: settings.cloudShadowStrength,
+    cloudShadowReach: settings.cloudShadowReach,
+    cloudCrevices: settings.cloudCrevices,
+    cloudUndersides: settings.cloudUndersides,
+    cloudCirrusAmount: settings.cloudCirrusAmount,
+    cloudCirrusHeight: settings.cloudCirrusHeight,
+    cloudCirrusScale: settings.cloudCirrusScale,
+    cloudMiddleAmount: settings.cloudMiddleAmount,
+    cloudMiddleHeight: settings.cloudMiddleHeight,
+    cloudMiddleScale: settings.cloudMiddleScale,
+    cloudLightSteps: settings.cloudLightSteps,
+    cloudSkipping: settings.cloudSkipping,
+    cloudFarDetail: settings.cloudFarDetail,
     // Birds
     enableBirds: settings.enableBirds,
     birdGroups: settings.birdGroups,
@@ -285,8 +342,12 @@ document.body.appendChild(guiDock);
 
 export const gui = new GUI({ title: 'Controls', container: dockLeft });
 
+// the very first: the version (version.js), to be seen and not changed
+gui.add({ version: String(VERSION) }, 'version').name('Version').disable();
+
 // the first of all: how far the whole world's tiles are streamed in and drawn (terrain.js: TILE_LOAD)
 gui.add(imguiParams, 'worldViewDistance', 1000, 8000, 250).name('World Render Distance (m)');
+gui.add(imguiParams, 'observeInspectRadius', 100, 8000, 50).name('Inspect Radius, V in Observe (m)');
 
 //-----------------------GRAPHICS PRESETS----------------------------
 // At the top, outside the folders. The preset to start on is guessed from the GPU, then checked by the frame rate: see
@@ -444,9 +505,17 @@ terrainFolder.add(imguiParams, 'terrainShelfWidth', 1, 6, 0.1).name('Shelf Width
 terrainFolder.add(imguiParams, 'terrainHillHeight', 0, 3, 0.05).name('Hill Height');
 terrainFolder.add(imguiParams, 'terrainWoodland', 0, 1, 0.01).name('Woodland');
 terrainFolder.add(imguiParams, 'terrainLakes', 0, 1, 0.01).name('Lakes');
+terrainFolder.add(imguiParams, 'terrainLakeSize', 0.3, 3, 0.05).name('Highland Lake Size');
+terrainFolder.add(imguiParams, 'terrainRolling', 0, 3, 0.05).name('Grassland Swell');
+terrainFolder.add(imguiParams, 'terrainPlains', 0, 1, 0.01).name('Valley Plains');
+terrainFolder.add(imguiParams, 'terrainPlainsSize', 0.4, 2.5, 0.05).name('Plains Size');
+terrainFolder.add(imguiParams, 'terrainMassifHeight', 0, 2, 0.05).name('Big Range Height');
+terrainFolder.add(imguiParams, 'terrainMassifInland', 0, 2.5, 0.05).name('Big Ranges Inland');
 terrainFolder.add(imguiParams, 'terrainTownCount', 0, 4, 1).name('Seaside Towns');
 terrainFolder.add(imguiParams, 'worldTiles').name('Whole World (many lands)');
 terrainFolder.add(imguiParams, 'terrainTownSize', 0.5, 1.6, 0.05).name('Town Size');
+terrainFolder.add(imguiParams, 'terrainTownDensity', 0, 4, 0.05).name('Towns on Other Lands');
+terrainFolder.add(imguiParams, 'terrainRailGrade', 0.04, 0.3, 0.01).name('Railway Steepest Grade');
 terrainFolder.add(imguiParams, 'terrainLandingStrip').name('Landing Strip');
 terrainFolder.add(imguiParams, 'terrainFootpaths').name('Footpaths');
 terrainFolder.add(imguiParams, 'enableTownFolk').name('Townsfolk');
@@ -458,6 +527,11 @@ terrainFolder.add(imguiParams, 'terrainDepthBias', 0, 4, 0.05).name('Depth Bias'
 terrainFolder.add(imguiParams, 'terrainResolution', { '256': 256, '512': 512, '1k': 1024, '2k': 2048, '4k': 4096, '8k': 8192 }).name('Mesh Detail');	//these two only change the mesh, the land stays as it is
 terrainFolder.add(imguiParams, 'terrainDetailDistance', 0.75, 5, 0.05).name('Detail Distance');
 terrainFolder.add(imguiParams, 'terrainFarBake', { '256 (about 140MB)': 256, '128 (about 35MB)': 128, 'disabled (worked out live)': 0 }).name('Far Land Bake');	//see THE BAKE in terrain.js
+
+const floraFolder = gui.addFolder('Plants');	//ferns, flowers, mushrooms, bushes, wild wheat: see flora.js
+floraFolder.add(imguiParams, 'enableFlora').name('Enable');
+floraFolder.add(imguiParams, 'floraDensity', 0.25, 3, 0.05).name('Density');
+floraFolder.add(imguiParams, 'floraDrawDistance', 60, 300, 5).name('Draw Distance');
 
 const grassFolder = gui.addFolder('Grass');
 grassFolder.add(imguiParams, 'enableGrass').name('Enable');
@@ -522,13 +596,68 @@ cloudFolder.add(imguiParams, 'enableLightning').name('Lightning');
 cloudFolder.add(imguiParams, 'lightningRate', 0.1, 5, 0.1).name('Lightning Rate');
 cloudFolder.add(imguiParams, 'cloudCoverageBias', -0.5, 0.5, 0.01).name('More / Less Cloud');
 cloudFolder.add(imguiParams, 'cloudDensity', 0.2, 3, 0.05).name('Density');
-cloudFolder.add(imguiParams, 'cloudLayers', { 'low': 1, 'low and middle': 2, 'low, middle and high': 3 }).name('Layers');
+cloudFolder.add(imguiParams, 'cloudLayers', { 'low': 1, 'low and high': 2, 'low, middle and high': 3 }).name('Layers');
 cloudFolder.add(imguiParams, 'cloudCrispness', 0, 1, 0.01).name('Crispness');
 cloudFolder.add(imguiParams, 'cloudHeight', -400, 4000, 50).name('Height');
+cloudFolder.add(imguiParams, 'cloudSizeX', 0.5, 6, 0.05).name('Size X (east-west)');
+cloudFolder.add(imguiParams, 'cloudSizeY', 0.5, 6, 0.05).name('Size Y (height and depth)');
+cloudFolder.add(imguiParams, 'cloudSizeZ', 0.5, 6, 0.05).name('Size Z (north-south)');
 cloudFolder.add(imguiParams, 'cloudDriftSpeed', 0, 20, 0.5).name('Drift Speed');
 cloudFolder.add(imguiParams, 'cloudSteps', 16, 128, 1).name('Quality (steps)');
 cloudFolder.add(imguiParams, 'cloudResolution', { 'half': 2, 'third': 3, 'quarter': 4 }).name('Resolution (of the frame)');
 cloudFolder.add(imguiParams, 'cloudDrawDistance', 8000, 80000, 500).name('Draw Distance');
+// (every number of the heaps' look, their light and the layers above: see the settings of the same names)
+const cloudHeapsFolder = cloudFolder.addFolder('Heaps');
+cloudHeapsFolder.add(imguiParams, 'cloudHeapAmount', 0, 3, 0.05).name('Heap Amount');
+cloudHeapsFolder.add(imguiParams, 'cloudPuffAmount', 0, 3, 0.05).name('Small Puffs');
+cloudHeapsFolder.add(imguiParams, 'cloudHeapSpacing', 0.4, 3, 0.05).name('Heap Spacing');
+cloudHeapsFolder.add(imguiParams, 'cloudHeapWidth', 0.5, 1.5, 0.01).name('Heap Width');
+cloudHeapsFolder.add(imguiParams, 'cloudLobes', 0, 2, 0.05).name('Lobed Outline');
+cloudHeapsFolder.add(imguiParams, 'cloudHeapLean', 0, 0.6, 0.01).name('Lean Downwind');
+cloudHeapsFolder.add(imguiParams, 'cloudBulbSize', 0.3, 3, 0.05).name('Bulb Size');
+cloudHeapsFolder.add(imguiParams, 'cloudBulbDepth', 0, 1, 0.01).name('Bulb Depth');
+cloudHeapsFolder.add(imguiParams, 'cloudEdgeSoftness', 0.05, 1, 0.01).name('Edge Thickness');
+cloudHeapsFolder.add(imguiParams, 'cloudBaseRagged', 0, 1000, 10).name('Ragged Bottoms (units)');
+cloudHeapsFolder.add(imguiParams, 'cloudWispiness', 0, 1, 0.01).name('Wispy Edges');
+cloudHeapsFolder.close();
+const cloudHeapHeightsFolder = cloudFolder.addFolder('Heap Heights');
+cloudHeapHeightsFolder.add(imguiParams, 'cloudBaseScale', 0.3, 3, 0.05).name('Cloud Base Height');
+cloudHeapHeightsFolder.add(imguiParams, 'cloudHeapTop', 1000, 16000, 100).name('Tallest Fair Heap (units)');
+cloudHeapHeightsFolder.add(imguiParams, 'cloudToweringTop', 2000, 24000, 100).name('Tallest Towering Heap (units)');
+cloudHeapHeightsFolder.add(imguiParams, 'cloudTowering', -1, 1, 0.01).name('More Towering');
+cloudHeapHeightsFolder.add(imguiParams, 'cloudHeightVariety', 0, 1, 0.01).name('Height Variety');
+cloudHeapHeightsFolder.add(imguiParams, 'cloudSteepness', 0.3, 3, 0.05).name('Steep Sides');
+cloudHeapHeightsFolder.add(imguiParams, 'cloudTowerTop', 6000, 30000, 250).name('Cumulonimbus Top (units)');
+cloudHeapHeightsFolder.add(imguiParams, 'cloudTowerWidth', 0.5, 6, 0.05).name('Cumulonimbus Width');
+cloudHeapHeightsFolder.add(imguiParams, 'cloudDeckFrom', 0.3, 1.01, 0.01).name('Deck From Coverage');
+cloudHeapHeightsFolder.add(imguiParams, 'cloudDeckDepth', 0.3, 5, 0.05).name('Deck Depth');
+cloudHeapHeightsFolder.close();
+const cloudCloudLightingFolder = cloudFolder.addFolder('Cloud Lighting');
+cloudCloudLightingFolder.add(imguiParams, 'cloudSunStrength', 0.2, 3, 0.05).name('Sunlight');
+cloudCloudLightingFolder.add(imguiParams, 'cloudAmbient', 0, 4, 0.05).name('Skylight');
+cloudCloudLightingFolder.add(imguiParams, 'cloudForwardScatter', 0, 0.95, 0.01).name('Silver Lining');
+cloudCloudLightingFolder.add(imguiParams, 'cloudBackScatter', 0, 0.9, 0.01).name('Back Glow');
+cloudCloudLightingFolder.add(imguiParams, 'cloudBackShare', 0, 1, 0.01).name('Back Glow Share');
+cloudCloudLightingFolder.add(imguiParams, 'cloudMultiScatter', 0, 0.95, 0.01).name('Multiple Scattering');
+cloudCloudLightingFolder.add(imguiParams, 'cloudScatterDepth', 0.05, 1, 0.01).name('Scatter Reach');
+cloudCloudLightingFolder.add(imguiParams, 'cloudShadowStrength', 0, 3, 0.05).name('Self Shadow');
+cloudCloudLightingFolder.add(imguiParams, 'cloudShadowReach', 0.3, 3, 0.05).name('Shadow Reach');
+cloudCloudLightingFolder.add(imguiParams, 'cloudCrevices', 0, 1, 0.01).name('Dark Crevices');
+cloudCloudLightingFolder.add(imguiParams, 'cloudUndersides', 0, 1, 0.01).name('Dark Undersides');
+cloudCloudLightingFolder.close();
+const cloudHighandMiddleLayersFolder = cloudFolder.addFolder('High and Middle Layers');
+cloudHighandMiddleLayersFolder.add(imguiParams, 'cloudCirrusAmount', 0, 3, 0.05).name('Cirrus Amount');
+cloudHighandMiddleLayersFolder.add(imguiParams, 'cloudCirrusHeight', 6000, 30000, 250).name('Cirrus Height (units)');
+cloudHighandMiddleLayersFolder.add(imguiParams, 'cloudCirrusScale', 0.5, 6, 0.05).name('Cirrus Size');
+cloudHighandMiddleLayersFolder.add(imguiParams, 'cloudMiddleAmount', 0, 3, 0.05).name('Middle Amount');
+cloudHighandMiddleLayersFolder.add(imguiParams, 'cloudMiddleHeight', 3000, 20000, 250).name('Middle Height (units)');
+cloudHighandMiddleLayersFolder.add(imguiParams, 'cloudMiddleScale', 0.5, 6, 0.05).name('Middle Size');
+cloudHighandMiddleLayersFolder.close();
+const cloudCloudQualityFolder = cloudFolder.addFolder('Cloud Quality');
+cloudCloudQualityFolder.add(imguiParams, 'cloudLightSteps', 2, 12, 1).name('Sun Walk Steps');
+cloudCloudQualityFolder.add(imguiParams, 'cloudSkipping').name('Stride Clear Air');
+cloudCloudQualityFolder.add(imguiParams, 'cloudFarDetail', 0, 30000, 500).name('Fine Detail Fades From (units)');
+cloudCloudQualityFolder.close();
 
 const animalFolder = gui.addFolder('Animal Life');
 const birdFolder = animalFolder.addFolder('Hawks');	//see birds.js

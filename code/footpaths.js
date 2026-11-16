@@ -112,7 +112,7 @@ export const TUNNEL = {
 };
 // A RIVER TOWN'S FARM (THE FARMS: farmsteads.js keeps it): its ground, metres, across (x) and along (z, away from the town), the cabin
 //		at its near end and the plots past it; how far out from the town's streets it may be, and how level its ground must be (world units)
-export const FARM = { across: 20, along: 28, out: [70, 280], level: 14, clearing: 40 };	// (level: as uneven as its ground may be: it is laid level, a pad)
+export const FARM = { across: 20, along: 28, out: [60, 640], rings: 9, ways: 36, level: 18, clearing: 40, count: [5, 10], apart: 12 };	// (level: as uneven as its ground may be: it is laid level, a pad; count: how many a river town has, at the most; apart: metres between two)
 // A ROAD'S BRIDGES (THE BRIDGES): of stone, on arches, straight across water (a river, a lake's narrows, an inlet of the sea) from bank to bank
 export const BRIDGE = {
 	least: 16, most: 520,	// how long, bank to bank
@@ -453,19 +453,21 @@ export function planFootpaths(land) {
 		const sea = land.seaLevel ?? 0;
 		if (piece.kind == 'rail') { paths.push(piece); continue; }
 		if (piece.kind == 'railTunnel') {
-			const A = piece.points[0], B = piece.points[piece.points.length - 1];
-			paths.push({ kind: 'tunnel', points: piece.points, half: STATION.bore.half, rail: true });
-			tunnels.push({ kind: 'tunnel', a: A, b: B, half: STATION.bore.half, height: STATION.bore.height });
+			// (it bends with the line: to stand in, a chord of it from each point to the next; only those at its portals cut the land away
+			//		(terrain.js), the rest are deep under it)
+			const P = piece.points;
+			paths.push({ kind: 'tunnel', points: P, half: STATION.bore.half, rail: true });
+			for (let i = 0; i < P.length - 1; i++) tunnels.push({ kind: 'tunnel', a: P[i], b: P[i + 1], half: STATION.bore.half, height: STATION.bore.height, hole: i == 0 || i == P.length - 2 });
 			continue;
 		}
-		// (a bridge: its deck every STATION.step, and to stand on, a chord of it every so often)
+		// (a bridge: its deck every STATION.step, and to stand on, a chord of it from each point of the line to the next: it bends with it)
 		const pts = [];
 		for (let i = 1; i < piece.points.length; i++) {
 			const a = piece.points[i - 1], b = piece.points[i], l = Math.hypot(b[0] - a[0], b[2] - a[2]), c = Math.max(Math.ceil(l / STATION.step), 1);
 			for (let s = i == 1 ? 0 : 1; s <= c; s++) pts.push(a.map((v, k) => v + (b[k] - v) * s / c));
 		}
 		paths.push({ kind: 'bridge', points: pts, half: RAILS.half, rail: true });
-		for (let i = 0; i < piece.points.length - 1; i += 4) { const a = piece.points[i], b = piece.points[Math.min(i + 4, piece.points.length - 1)]; tunnels.push({ kind: 'bridge', a, b, half: RAILS.half + 0.6, height: 0, rise: 0 }); }
+		for (let i = 0; i < piece.points.length - 1; i++) tunnels.push({ kind: 'bridge', a: piece.points[i], b: piece.points[i + 1], half: RAILS.half + 0.6, height: 0, rise: 0 });
 	}
 	const join = (start, kind, limit, mode = PATH) => {
 		if (network[start]) return null;
@@ -535,7 +537,7 @@ export function planFootpaths(land) {
 			if (found) paths.push(...makeRoad(found.way, found.marks, g.own[1]));
 			places.roads.gates.push(!!found);
 		}
-		places.roads.tunnels = tunnels.filter((t) => t.kind == 'tunnel').length;
+		places.roads.tunnels = tunnels.filter((t) => t.kind == 'tunnel' && t.hole !== false).length;
 		places.roads.bridges = tunnels.filter((t) => t.kind == 'bridge').length;
 	}
 	// THE STATIONS: by each town within STATION.reach of the line on the ground, where it comes nearest, out to the town's side of it; a road
@@ -701,8 +703,9 @@ export function planFootpaths(land) {
 		network[k] = 1;
 		return !!way;
 	});
-	// THE FARMS: a river town's (townLayout.js: THE RIVER TOWNS), out from its streets on open, level, dry ground, laid along the way out
-	//		from the town (its cabin nearest it), the trees and the rocks kept off it (a clearing), and a track from it to the paths
+	// THE FARMS: a river town's (townLayout.js: THE RIVER TOWNS), FARM.count of them (as many as there is room for: its own number of them,
+	//		from where it is), out from its streets on open, level, dry ground, laid along the way out from the town (its cabin nearest it),
+	//		the best places first and none on another, the trees and the rocks kept off each (a clearing), and a track from it to the paths
 	const farms = [];
 	places.farms = [];
 	for (const [k, t] of towns.entries()) {
@@ -712,10 +715,11 @@ export function planFootpaths(land) {
 		const cx = pts.reduce((s, p) => s + p[0], 0) / pts.length, cz = pts.reduce((s, p) => s + p[2], 0) / pts.length;
 		const reachOut = Math.max(...pts.map((p) => Math.hypot(p[0] - cx, p[2] - cz)));
 		const m = 2, ha = FARM.across / 2 * m, hl = FARM.along / 2 * m;
-		let best = null;
+		const found = [];
 		const why = { edge: 0, ground: 0, level: 0, path: 0 };
-		for (let d = 0; d < 24; d++) for (const out of [FARM.out[0], (FARM.out[0] + FARM.out[1]) / 2, FARM.out[1]]) {
-			const a = d / 24 * Math.PI * 2, ux = Math.cos(a), uz = Math.sin(a), sx = -uz, sz = ux;
+		const rings = Array.from({ length: FARM.rings }, (_, i) => FARM.out[0] + (FARM.out[1] - FARM.out[0]) * i / (FARM.rings - 1));
+		for (let d = 0; d < FARM.ways; d++) for (const out of rings) {
+			const a = d / FARM.ways * Math.PI * 2, ux = Math.cos(a), uz = Math.sin(a), sx = -uz, sz = ux;
 			const x = cx + ux * (reachOut + out + hl), z = cz + uz * (reachOut + out + hl);
 			if (!inTile(x, z, hl + 80)) { why.edge++; continue; }
 			let lo = Infinity, hi = -Infinity, ok = true;
@@ -729,18 +733,29 @@ export function planFootpaths(land) {
 			// (not on a road or a path: none of their lines through it)
 			if (lines.some((line) => line.some((p) => Math.abs((p[0] - x) * sx + (p[2] - z) * sz) < ha + 6 && Math.abs((p[0] - x) * ux + (p[2] - z) * uz) < hl + 6))) { why.path++; continue; }
 			const score = (hi - lo) * 10 + out / 20;
-			if (!best || score < best.score) best = { x, z, yaw: Math.atan2(ux, uz), score, lo, hi };
+			found.push({ x, z, yaw: Math.atan2(ux, uz), score, lo, hi });
 		}
-		places.farms.push(best ? true : why);
-		if (!best) continue;
-		// (its ground laid level: a pad as wide as it, at the middle of its heights, banked down or up to the land round it as a road is)
-		const y = (best.lo + best.hi) / 2, fx = Math.sin(best.yaw) * hl, fz = Math.cos(best.yaw) * hl;
-		paths.push({ kind: 'pad', points: [[best.x - fx, y, best.z - fz], [best.x + fx, y, best.z + fz]], half: ha + 3, hidden: true, portals: [false, false] });
-		farms.push({ x: best.x, z: best.z, yaw: best.yaw, town: k, y });
-		clearings.push([best.x, best.z, FARM.clearing]);
-		// (its track: from its near end, by the cabin, to the paths)
-		const gate = nodeAt(best.x - Math.sin(best.yaw) * (hl + 4), best.z - Math.cos(best.yaw) * (hl + 4));
-		if (walkable(gate)) join(gate, 'farm', 12000);
+		// (how many: its own, from where it is)
+		const want = FARM.count[0] + Math.floor((Math.abs(Math.sin(cx * 0.0123 + cz * 0.0071) * 43758.5453) % 1) * (FARM.count[1] - FARM.count[0] + 1));
+		const taken = [], room = Math.hypot(ha, hl) * 2 + FARM.apart * m;
+		for (const f of found.sort((a, b) => a.score - b.score)) {
+			if (taken.length >= want) break;
+			if (taken.some((o) => Math.hypot(o.x - f.x, o.z - f.z) < room)) continue;
+			// (nor on the track to one taken)
+			if (taken.some((o) => { const gx = o.x - Math.sin(o.yaw) * (hl + 4), gz = o.z - Math.cos(o.yaw) * (hl + 4); return Math.hypot(gx - f.x, gz - f.z) < Math.hypot(ha, hl) + 6; })) continue;
+			taken.push(f);
+		}
+		places.farms.push(taken.length ? taken.length : why);
+		for (const best of taken) {
+			// (its ground laid level: a pad as wide as it, at the middle of its heights, banked down or up to the land round it as a road is)
+			const y = (best.lo + best.hi) / 2, fx = Math.sin(best.yaw) * hl, fz = Math.cos(best.yaw) * hl;
+			paths.push({ kind: 'pad', points: [[best.x - fx, y, best.z - fz], [best.x + fx, y, best.z + fz]], half: ha + 3, hidden: true, portals: [false, false] });
+			farms.push({ x: best.x, z: best.z, yaw: best.yaw, town: k, y });
+			clearings.push([best.x, best.z, FARM.clearing]);
+			// (its track: from its near end, by the cabin, to the paths)
+			const gate = nodeAt(best.x - Math.sin(best.yaw) * (hl + 4), best.z - Math.cos(best.yaw) * (hl + 4));
+			if (walkable(gate)) join(gate, 'farm', 12000);
+		}
 	}
 	places.lookouts = reach('lookout', pick('lookout', top), (k) => join(k, 'lookout', 30000));
 	places.clearings = reach('clearing', pick('clearing', deep), (k) => { const way = join(k, 'clearing', 8000); if (way) clearings.push([xOf(k), zOf(k), PATHS.clearing]); return way; });

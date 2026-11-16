@@ -58,7 +58,7 @@ const OUTFITTED = [...CLOTHING.filter((type) => CLOTHES[type].slot == 'feetOuter
 export const TRADES = {
 	// (the medicine: the outfitter's, in GEAR; the inn keeps the tincture and bandages)
 	blacksmith: { title: 'Blacksmith', sells: IRON, buys: IRON },
-	baker: { title: 'Bakery', sells: ['bread', 'wheat'], buys: [...FOOD, 'wheat'] },
+	baker: { title: 'Bakery', sells: ['bread', 'wheat', 'wheatSeeds'], buys: [...FOOD, 'wheat'] },
 	butcher: { title: 'Butcher', sells: ['sausage', 'venison', 'cookedVenison', 'deerHide'], buys: [...FOOD, ...HIDES] },
 	fisherman: { title: 'Fish', sells: ['smokedFish', 'water'], buys: FOOD },
 	innkeeper: { title: 'Inn', sells: ['beer', 'water', 'bread', 'sausage', 'cookedVenison', 'alcohol', 'bandage', 'boiledMushroom', ...SPIRITS], buys: [...FOOD, ...MEDICINE, ...SPIRITS, 'mushroom'], room: true },

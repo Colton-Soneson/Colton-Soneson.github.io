@@ -111,6 +111,14 @@ function getTerrainParams() {
 		seaLevel: settings.waterWorldPosY,
 		townCount: settings.terrainTownCount,
 		townSize: settings.terrainTownSize,
+		townDensity: settings.terrainTownDensity,
+		plains: settings.terrainPlains,
+		plainsSize: settings.terrainPlainsSize,
+		rolling: settings.terrainRolling,
+		massifInland: settings.terrainMassifInland,
+		massifHeight: settings.terrainMassifHeight,
+		railGrade: settings.terrainRailGrade,
+		lakeSize: settings.terrainLakeSize,
 		landingStrip: settings.terrainLandingStrip,
 		footpaths: settings.terrainFootpaths,
 		worldTiles: settings.worldTiles,
@@ -295,6 +303,10 @@ try {
 		const made = event.data;
 		const name = chunkName(made.x0, made.z0, made.size);
 		inFlight.delete(name);
+		// (none made: the worker has no grids for that tile of this land. Lost somehow on the way (the tile worker's, over its own port):
+		//		sent again from here, a tile at a time, now and then)
+		if (world && tiles.get(made.tile)?.lost) made.vertices = null;		// (for testing: loseGridsForTest)
+		if (!made.vertices && made.generation == landGeneration) resendGrids(made.tile);
 		if (made.generation == landGeneration && made.vertices && (!chunks.has(name) || chunks.get(name).tile !== made.tile) && (!world || landOfChunkTile(made.tile))) {
 			addChunk(made.x0, made.z0, made.size, made, made.tile);
 		}
@@ -309,6 +321,19 @@ try {
 	chunkWorker = null;
 }
 
+const resent = new Map();		// a tile's key -> when its grids were last sent to the chunk worker again
+let loseNext = null;			// (for testing: the next tile to come has its grids lost on the way, and maybe none sent again)
+export function loseGridsForTest(resend = true, key = null) { loseNext = { resend, key }; }
+function resendGrids(key) {
+	if (tiles.get(key)?.noResend) return;
+	if (!chunkWorker || performance.now() - (resent.get(key) ?? -Infinity) < 1500) return;
+	const t = !world ? { params: JSON.parse(generatedParams || '{}'), land } : String(key).startsWith('far:') ? farTiles.get(key.slice(4)) ?? farKept.get(key.slice(4)) : tiles.get(key);
+	const grids = t?.land?.chunkGrids;
+	if (!grids) return;
+	resent.set(key, performance.now());
+	terrainStats.gridsResent = (terrainStats.gridsResent ?? 0) + 1;
+	chunkWorker.postMessage({ land: landGeneration, tile: key, params: t.params, grids });
+}
 // the tile a chunk is of (its key; 'land' for the one land of old)
 const chunkTile = (x0, z0, size) => {
 	if (!world) return 'land';
@@ -498,6 +523,8 @@ function makeWorldLand(home) {
 		// (the main lines: each continent's once, terrainGenerator.js; its stations with their tiles, as the farms)
 		get railLines() { const seen = new Map(); for (const t of tiles.values()) if (t.land?.railLine && !seen.has(t.land.railLine.id)) seen.set(t.land.railLine.id, t.land.railLine); return [...seen.values()]; },
 		get stations() { return every('stations'); },
+		// (every tile's landing strip, with its tile: the home tile's, and one by the first town of every other with towns, world.js)
+		get strips() { return [...tiles.values()].map((t) => { const s = t.key == HOME ? home.strip : t.land?.strip; return s && { ...s, tile: t.key }; }).filter(Boolean); },
 		heightAt: (x, z) => at(x, z)?.heightAt(x, z) ?? deep(),
 		groundAt: (x, z) => at(x, z)?.groundAt(x, z) ?? deep(),
 		zoneAt: (x, z) => at(x, z)?.zoneAt(x, z) ?? ZONE_OCEAN,
@@ -622,26 +649,30 @@ function startTileWorker() {
 let tileBase = '';
 function addTile(key, tileLandMade, params) {
 	const t = world.tiles.get(key);
-	tiles.set(key, { key, kind: t.kind, land: tileLandMade, params, usedAt: performance.now() });
+	tiles.set(key, { key, kind: t.kind, land: tileLandMade, params, usedAt: performance.now(), addedAt: performance.now() });
 	tilesVersion++;
 	fillTowns(key, tileLandMade);
 	// (its chunk grids are with the chunk worker already, from the tile worker)
+	if (loseNext && chunkWorker && (!loseNext.key || loseNext.key == key)) { chunkWorker.postMessage({ drop: key }); tiles.get(key).noResend = !loseNext.resend; tiles.get(key).lost = !loseNext.resend; loseNext = null; }
 	askRoots(tiles.get(key));
 	tileInWindow(t);
 	tellTiles([key], []);
 }
 // a tile's top of the tree: from the worker, as wanted chunks are, those not made yet and not asked for (its grids may not have got to the
 //		worker yet: it says so, and they are asked for again); or here
+const ROOTS_WAIT = 4000;			// milliseconds a tile's top chunks are waited for from the worker before they are made here
 function askRoots(t) {
+	// (still none from the worker this long after the tile came: made here, so its ground is there whatever went wrong on the way)
+	const here = !chunkWorker || performance.now() - (t.addedAt ?? 0) > ROOTS_WAIT;
 	const size = settings.terrainWorldSize / ROOT_CHUNKS, half = settings.terrainWorldSize * 0.5, [cx, cz] = t.land.center;
 	let missing = 0;
 	for (let k = 0; k < ROOT_CHUNKS * ROOT_CHUNKS; k++) {
 		const x0 = cx - half + (k % ROOT_CHUNKS) * size, z0 = cz - half + Math.floor(k / ROOT_CHUNKS) * size, name = chunkName(x0, z0, size);
 		if (chunks.get(name)?.tile === t.key) continue;
 		missing++;
+		if (here) { if (buildChunk(x0, z0, size)) { missing--; terrainStats.rootsHere = (terrainStats.rootsHere ?? 0) + 1; } continue; }
 		if (inFlight.has(name)) continue;
-		if (chunkWorker) { inFlight.add(name); chunkWorker.postMessage({ generation: landGeneration, tile: t.key, x0, z0, size, cells: CHUNK_CELLS }); }
-		else buildChunk(x0, z0, size);
+		inFlight.add(name); chunkWorker.postMessage({ generation: landGeneration, tile: t.key, x0, z0, size, cells: CHUNK_CELLS });
 	}
 	t.rooted = missing == 0;
 }
@@ -864,7 +895,7 @@ function regenerateTerrain() {
 	tileAsked = null;
 	windowAt = null;
 	windowJobs = [];
-	world = params.worldTiles ? layoutWorld(params.seed, params.townCount) : null;
+	world = params.worldTiles ? layoutWorld(params.seed, params.townCount, params.townDensity) : null;
 	if (world) {
 		const homeParams = tileParams(params, world, HOME);
 		tiles.set(HOME, { key: HOME, kind: 'land', land: generateTerrain(homeParams), params: homeParams, usedAt: performance.now() });
@@ -1009,7 +1040,8 @@ function terrainUniformBufferUpdates() {
 }
 
 // THE TUNNELS' PORTALS (vf_terrain.js: tunnelHole): the ground cut away where a bore goes into it, for the TUNNEL_SLOTS nearest the camera
-//		(footpaths.js: THE TUNNELS; terrain.land.tunnels, each { kind, a, b (its floor at its portals), half, height })
+//		(footpaths.js: THE TUNNELS; terrain.land.tunnels, each { kind, a, b (its floor at its portals), half, height }; a curved one in
+//		chords, those deep under the land with hole false)
 const TUNNEL_SLOTS = 8, TUNNEL_REACH = 6000;
 const tunnelUniformBuffer = device.createBuffer({ label: 'terrain tunnels uniform', size: 16 + TUNNEL_SLOTS * 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 const tunnelData = new Float32Array(4 + TUNNEL_SLOTS * 8);
@@ -1017,7 +1049,7 @@ export const tunnelStats = { near: 0 };
 function writeTunnels() {
 	const cx = settings.camPosX, cz = settings.camPosZ;
 	const away = (t) => { const ex = t.b[0] - t.a[0], ez = t.b[2] - t.a[2], ll = ex * ex + ez * ez || 1, s = Math.min(Math.max(((cx - t.a[0]) * ex + (cz - t.a[2]) * ez) / ll, 0), 1); return Math.hypot(cx - t.a[0] - ex * s, cz - t.a[2] - ez * s); };
-	const near = (land?.tunnels ?? []).filter((t) => t.kind != 'bridge').map((t) => [away(t), t]).filter(([d]) => d < TUNNEL_REACH).sort((p, q) => p[0] - q[0]).slice(0, TUNNEL_SLOTS);
+	const near = (land?.tunnels ?? []).filter((t) => t.kind != 'bridge' && t.hole !== false).map((t) => [away(t), t]).filter(([d]) => d < TUNNEL_REACH).sort((p, q) => p[0] - q[0]).slice(0, TUNNEL_SLOTS);
 	tunnelData.fill(0);
 	tunnelData[0] = near.length;
 	near.forEach(([, t], k) => tunnelData.set([t.a[0], t.a[1], t.a[2], t.half, t.b[0], t.b[1], t.b[2], t.height], 4 + k * 8));

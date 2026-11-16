@@ -165,6 +165,9 @@ let holesDirty = true, holesFrom = [0, 0];
 const holeTexture = device.createTexture({ label: 'grass holes', size: [HOLES, HOLES], format: 'r8unorm', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
 const holeData = new Uint8Array(HOLES * HOLES);
 export function setGrassHoles(owner, list) { grassHoles.set(owner, list); holesDirty = true; }
+// (the plants, flora.js, keep out of the same places: the picture, and its corner and size as the uniform has them)
+export const grassHolesView = () => holeTexture.createView();
+export const grassHolesUniform = () => { paintHoles(); return [holesFrom[0] - HOLES / 2, holesFrom[1] - HOLES / 2, HOLES, 0]; };
 function paintHoles() {
 	const cx = settings.camPosX, cz = settings.camPosZ;
 	if (!holesDirty && Math.abs(cx - holesFrom[0]) < HOLES_AGAIN && Math.abs(cz - holesFrom[1]) < HOLES_AGAIN) return;

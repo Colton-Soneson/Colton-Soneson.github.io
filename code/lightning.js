@@ -1,3 +1,4 @@
+import * as clouds from './clouds.js'
 import { DEPTH_FORMAT, depthTest, DEPTH_CLEAR } from './depthMode.js'
 import {device} from './deviceSelection.js'
 import { frameTexture } from './deviceSelection.js'
@@ -190,7 +191,7 @@ export function lightningUpdate() {
 		calledAt = null;
 		const sea = settings.waterWorldPosY;
 		const ground = Math.max(terrain.land ? terrain.land.heightAt(x, z) : sea, sea);
-		const cloudBottom = sea + weatherNow.base + settings.cloudHeight;
+		const cloudBottom = sea + clouds.lowLayer().bottom;
 		const topY = Math.max(cloudBottom + 140, ground + 600);
 		// the top a little off from straight over it, the bottom right there
 		const lean = Math.random() * Math.PI * 2, off = (topY - ground) * 0.12 * Math.random();
@@ -222,7 +223,7 @@ export function lightningUpdate() {
 			// where: anywhere round the camera, more of them far off than near (there is more far off)
 			const bearing = Math.random() * Math.PI * 2, away = 350 + (STRIKE_REACH - 350) * Math.sqrt(Math.random());
 			const x = settings.camPosX + Math.cos(bearing) * away, z = settings.camPosZ + Math.sin(bearing) * away;
-			const cloudBottom = settings.waterWorldPosY + weatherNow.base + settings.cloudHeight;
+			const cloudBottom = settings.waterWorldPosY + clouds.lowLayer().bottom;
 			const top = [x, cloudBottom + 140, z];
 			lightningNow.position = [x, cloudBottom + 260, z];
 			lightningNow.reach = 900 + 900 * Math.random();

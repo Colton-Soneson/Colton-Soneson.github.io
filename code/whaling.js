@@ -15,7 +15,8 @@ import { WHALE_STAGES } from './creatureMeshes.js'
 
 /*
 	WHALING: the whales, and the schooner's harpoons (vessels.js: where they stand on her bow, either side).
-	THE WHALES: WHALES of them in all the sea, swimming from one deep place to another, down and up to blow. 800 triangles (creatureMeshes.js). One that is gone comes back again a RESPAWN (days) later, far off.
+	THE WHALES: WHALES of them in all the sea (a tile's worth each), and PER_DOCK more off every town's dock there, kept within HOME_RANGE of it (its
+		schooner's crew hunts them: npcShips.js), swimming from one deep place to another, down and up to blow. 800 triangles (creatureMeshes.js). One that is gone comes back again a RESPAWN (days) later, far off.
 	THE HARPOON GUNS: F at one mans it, the view along it (as her howitzers, shipGuns.js; left click fires). A harpoon flies (SPEED, falling), a cable out to it from her bow all the way (as the anchor's rode: boat.js).
 		Its cable runs out at CABLE, or it lands in the sea: it is hauled back. RELOAD seconds after it is back it can be fired again.
 	FAST TO A WHALE: a harpoon that meets one sticks. She REELs it in (at REEL, whatever it does), and once it is at her side it dies there, lying alongside, and is cut up: over an ninth of a day (FLENSE: by the
@@ -44,6 +45,7 @@ const NPC_RANGE = 75;				// metres a crew's harpoon is fired from
 const YAW = 1.2, PITCH = [-0.6, 0.6];
 const GEAR_RATE = 5;
 const DRAW = 2200;					// metres
+const PER_DOCK = 2, HOME_OUT = [250, 1200], HOME_RANGE = 1300;	// whales of a town's own off its dock, metres out from it, and as far from it as they go (in its schooner's HUNT)
 
 const metre = () => settings.forestUnitsPerMetre;
 const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
@@ -73,8 +75,14 @@ let followed = null;			// joiner: the host's
 const surface = () => settings.waterWorldPosY;
 const depthAt = (x, z) => (surface() - terrain.land.heightAt(x, z)) / metre();
 // (in a world of tiles, terrain.js: anywhere in the tiles here, WHALES for each of them)
-function spot() {
+function spot(home = null) {
 	const m = metre(), half = settings.terrainWorldSize * 0.5 - 200 * m, here = terrain.landsHere();
+	// (off a town's dock: out from it, in the deep water)
+	if (home) for (let k = 0; k < 80; k++) {
+		const a = Math.random() * Math.PI * 2, out = (HOME_OUT[0] + Math.random() * (HOME_OUT[1] - HOME_OUT[0])) * m, x = home.x + Math.sin(a) * out, z = home.z + Math.cos(a) * out;
+		if (terrain.inWorld(x, z, 100 * m) && depthAt(x, z) > DEEP && Math.hypot(x - settings.camPosX, z - settings.camPosZ) > 250 * m) return [x, z];
+	}
+	if (home) return null;
 	for (let k = 0; k < 60; k++) {
 		const [cx, cz] = here[Math.floor(Math.random() * here.length)]?.land.center ?? [0, 0];
 		const x = cx + (Math.random() * 2 - 1) * half, z = cz + (Math.random() * 2 - 1) * half;
@@ -82,28 +90,43 @@ function spot() {
 	}
 	return null;
 }
-function newWhale() {
-	const at = spot();
+function newWhale(home = null) {
+	const at = spot(home);
 	if (!at) return null;
-	return { id: nextId++, x: at[0], z: at[1], y: surface() - 4 * metre(), heading: Math.random() * 6.28, swim: Math.random() * 6.28, dive: Math.random() * 6.28, pitch: 0, roll: 0, own: Math.random(), state: 'swim', target: null, blown: 0, boat: null, side: 1, since: 0, stage: 0 };
+	return { id: nextId++, home: home?.key ?? null, x: at[0], z: at[1], y: surface() - 4 * metre(), heading: Math.random() * 6.28, swim: Math.random() * 6.28, dive: Math.random() * 6.28, pitch: 0, roll: 0, own: Math.random(), state: 'swim', target: null, blown: 0, boat: null, side: 1, since: 0, stage: 0 };
 }
 const whalesWanted = () => WHALES * Math.max(terrain.landsHere().length, 1);
+// (the towns' docks here: { key, x, z } each, the end of it)
+function docksHere() {
+	const tiles = new Set(terrain.landsHere().map((t) => t.key));
+	return (terrain.land?.towns ?? []).filter((t) => t.dock && (t.tile === undefined || tiles.has(t.tile))).map((t) => ({ key: (t.tile ?? 'land') + ':' + (t.k ?? t.slot ?? 0), x: t.dock.b[0], z: t.dock.b[2] }));
+}
+const homeOf = (w) => w.home ? docksHere().find((d) => d.key == w.home) ?? null : null;
+// (each dock's own, up to PER_DOCK: those it is short)
+function topUp() {
+	for (const d of docksHere()) for (let k = whales.filter((w) => w.home == d.key).length; k < PER_DOCK; k++) { const w = newWhale(d); if (!w) break; whales.push(w); }
+}
 function build() {
 	builtFor = terrain.land;
 	whales = []; spawnQueue = [];
 	for (let k = 0; k < whalesWanted(); k++) { const w = newWhale(); if (w) whales.push(w); }
+	topUp();
 }
-// (a tile come: its whales; gone: those in it, but one a boat is after)
+// (a tile come: its whales, and its docks'; gone: those in it, but one a boat is after)
 terrain.onTiles((added, removed) => {
 	if (builtFor !== terrain.land || !here()) return;
-	if (removed.length) whales = whales.filter((w) => w.boat !== null || terrain.inWorld(w.x, w.z));
-	while (whales.length < whalesWanted() && added.length) { const w = newWhale(); if (!w) break; whales.push(w); }
+	if (removed.length) { const docks = new Set(docksHere().map((d) => d.key)); whales = whales.filter((w) => w.boat !== null || (terrain.inWorld(w.x, w.z) && (!w.home || docks.has(w.home)))); }
+	while (whales.filter((w) => !w.home).length < whalesWanted() && added.length) { const w = newWhale(); if (!w) break; whales.push(w); }
+	if (added.length) topUp();
 });
 function swim(w, dt) {
 	const m = metre();
 	if (!w.target || Math.hypot(w.target[0] - w.x, w.target[1] - w.z) < 30 * m) {
+		// (a dock's own keeps near it: its legs from where it is, but never out past HOME_RANGE of it)
+		const home = homeOf(w);
 		for (let k = 0; k < 10; k++) {
 			const a = Math.random() * 6.28, x = w.x + Math.sin(a) * LEG * m, z = w.z + Math.cos(a) * LEG * m;
+			if (home && Math.hypot(x - home.x, z - home.z) > HOME_RANGE * m) continue;
 			if (terrain.inWorld(x, z, 100 * m) && depthAt(x, z) > DEEP && depthAt((x + w.x) / 2, (z + w.z) / 2) > DEEP) { w.target = [x, z]; break; }
 		}
 	}
@@ -434,7 +457,8 @@ export function whalingUpdate() {
 	if (!settings.enableWhales || !settings.enableWater || !terrain.land) return;
 	if (here()) {
 		if (terrain.land !== builtFor) build();
-		while (spawnQueue.length && spawnQueue[0] <= clock()) { spawnQueue.shift(); const w = newWhale(); if (w) whales.push(w); }
+		// (one gone comes back: a dock's own to its dock, short of one; otherwise anywhere)
+		while (spawnQueue.length && spawnQueue[0] <= clock()) { spawnQueue.shift(); if (whales.filter((w) => !w.home).length < whalesWanted()) { const w = newWhale(); if (w) whales.push(w); } topUp(); }
 		for (const w of [...whales]) {
 			const b = w.boat !== null ? boat.boatById(w.boat) : null;
 			if (w.state == 'swim') swim(w, dt);

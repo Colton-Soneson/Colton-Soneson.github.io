@@ -22,7 +22,7 @@ import { seasonNow, weatherNow, SEASON_SPRING, SEASON_SUMMER, SEASON_FALL } from
 import { setStillLights } from './pointLights.js'
 import { setTownMask } from './townMask.js'
 import { PATHS } from './footpaths.js'
-import { groundWork, ROSE_RADIUS, TOWER, towerStair } from './townGround.js'
+import { groundWork, ROSE_RADIUS, TOWER } from './townGround.js'
 import * as ballistics from './ballistics.js'
 import * as smoke from './smoke.js'
 
@@ -206,7 +206,7 @@ terrain.onTiles((added, removed) => {
 	for (const t of terrain.tilesLoaded()) if (t.land?.fireTowers?.length) towersOf.add(t.key);
 	for (const k of removed) towersOf.delete(k);
 });
-terrain.onWindow(() => { if (terrain.world && builtFor) setTownMask(...windowed(maskOf(terrain.land.towns.filter((t) => t.buildings.length), terrain.land.strip, terrain.land.paths))); });
+terrain.onWindow(() => { if (terrain.world && builtFor) setTownMask(...windowed(maskOf(terrain.land.towns.filter((t) => t.buildings.length), terrain.land.strips ?? terrain.land.strip, terrain.land.paths))); });
 // (the grass's mask is a window too, in a world of tiles: only what is in it, townMask.js)
 function windowed([stretches, boxes]) {
 	if (!terrain.world) return [stretches, boxes];
@@ -288,21 +288,20 @@ const BOX_STEP = 20000;
 function* makeBoxSteps(houseList, towns, towers = [], groundAt = null, into = {}) {
 	const legs = [];
 	const add = (x, z, half, bottom, top) => legs.push(x, z, half, bottom, top);
-	// (the fire towers: their legs, their stairs a step at a time, the walkway, the cab's walls but for its door, and the rail but over
-	//		the stair head: townGround.js, THE FIRE TOWER)
+	// (the fire towers: their legs, the walkway, the cab's walls but for its door, and the rail all the way round: the ladder at its -z
+	//		edge is climbed (hunting.js: LADDERS ON THE LAND), and the walkway is not to be walked off through the rail's opening for it.
+	//		townGround.js, THE FIRE TOWER)
 	for (const [x, z] of towers) {
-		const M = settings.forestUnitsPerMetre, y0 = groundAt(x, z), deck = y0 + (TOWER.floor + 0.25) * M, S = TOWER.stair;
+		const M = settings.forestUnitsPerMetre, y0 = groundAt(x, z), deck = y0 + (TOWER.floor + 0.25) * M;
 		for (const [sx, sz] of [[1, 1], [1, -1], [-1, -1], [-1, 1]]) {
 			const lx = x + sx * (TOWER.base - 0.3) * M, lz = z + sz * (TOWER.base - 0.3) * M;
 			add(lx, lz, 0.25 * M, groundAt(lx, lz) - M, y0 + TOWER.floor * M);
 		}
-		const { steps } = towerStair(x, z, groundAt, M);
-		for (let k = 1; k < steps; k++) for (const u of [-0.25, 0.25]) add(x + u * M, z - (TOWER.walk + k * S.going) * M, 0.2 * M, deck - k * S.rise * M - S.rise * M, deck - k * S.rise * M);
 		add(x, z, TOWER.walk * M, y0 + TOWER.floor * M, deck);
 		const C = TOWER.cab, rim = (u, w, top) => add(x + u * M, z + w * M, 0.1 * M, deck, deck + top * M);
 		for (let u = -C; u <= C + 0.01; u += 0.3) { rim(u, C, 2.3); if (Math.abs(u) > TOWER.door + 0.1) rim(u, -C, 2.3); rim(C, u, 2.3); rim(-C, u, 2.3); }
 		const R = TOWER.walk - 0.08;
-		for (let u = -R; u <= R + 0.01; u += 0.3) { rim(u, R, 1.0); if (Math.abs(u) > S.width / 2 + 0.1) rim(u, -R, 1.0); rim(R, u, 1.0); rim(-R, u, 1.0); }
+		for (let u = -R; u <= R + 0.01; u += 0.3) { rim(u, R, 1.0); rim(u, -R, 1.0); rim(R, u, 1.0); rim(-R, u, 1.0); }
 	}
 	const parts = [new Float32Array(legs)];
 	let count = legs.length / 5;
@@ -481,7 +480,7 @@ function* buildSteps() {
 	heard.clear();
 	yield;
 	if (terrain.land !== land) return;
-	setTownMask(...windowed(maskOf(towns, land.strip, land.paths)));
+	setTownMask(...windowed(maskOf(towns, land.strips ?? land.strip, land.paths)));
 	yield;
 	if (terrain.land !== land) return;
 	// the lamps light what is round them by night (pointLights.js): from the lantern, warm, about 12 metres out
@@ -505,7 +504,7 @@ function placeOf(b, mesh) {
 }
 
 // where the grass does not grow (townMask.js): the roads and walls a little wider than they are drawn, under the houses and lamps
-function maskOf(towns, strip, paths) {
+function maskOf(towns, strips, paths) {
 	const stretches = [], boxes = [];
 	// (the footpaths, their edges ragged and a tuft of grass on them here and there; the landing strip's earth, ragged at its edges)
 	//		(a road's as wide as it is: a tunnel's and a bridge's are not on the ground; a gate's other half is the other tile's)
@@ -514,7 +513,7 @@ function maskOf(towns, strip, paths) {
 		const road = path.kind == 'road' || path.kind == 'rail', half = (path.half ?? PATHS.half) + (road ? 0.6 : 0.3);
 		for (let j = 0; j < path.points.length - 1; j++) stretches.push({ a: [path.points[j][0], path.points[j][2]], b: [path.points[j + 1][0], path.points[j + 1][2]], half, ragged: road ? 1.2 : 0.9, tufts: road ? 0.03 : 0.06 });
 	}
-	if (strip) boxes.push({ at: [strip.x, strip.z], axis: [strip.ax, strip.az], half: [strip.half + 1, strip.width / 2 + 1], ragged: 9 });
+	for (const strip of [].concat(strips ?? [])) boxes.push({ at: [strip.x, strip.z], axis: [strip.ax, strip.az], half: [strip.half + 1, strip.width / 2 + 1], ragged: 9 });
 	const along = (points, half) => { for (let j = 0; j < points.length - 1; j++) stretches.push({ a: [points[j][0], points[j][2]], b: [points[j + 1][0], points[j + 1][2]], half }); };
 	for (const town of towns) {
 		for (const street of town.streets) along(street.points, (street.width + 1.0) / 2 + 0.3);

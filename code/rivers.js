@@ -18,6 +18,8 @@ import { uniformBufferLights } from './rotatingCube.js'
 	A river is not drawn where its water is at the sea's (ABOVE_SEA): the sea is the water there, and comes up its mouth by itself.
 	Far off a small stream is too narrow to see, and the land there too coarse to have its channel: each stretch is drawn out to SEEN
 	times its width (and no further than settings.camFarPlane)
+	And the highland lakes (terrainGenerator.js THE HIGHLAND LAKES; land.lakeQuads): a square of water at each one's level, the land
+	standing over it round its shore. In the same buffer, its half width -1 (the shader's still water: vf_rivers.js)
 */
 const EDGE = 2.5;					// world units past the water's edge each side
 const ABOVE_SEA = 0.4;				// world units: water lower than this over the sea is the sea's
@@ -74,9 +76,9 @@ const pipeline = device.createRenderPipeline({
 const ribbons = new Map();		// land -> { buffer, vertices, stretches: [{ x, z, seen, first, count }] }
 // the ribbon of a land's rivers (null if it has none): its vertices, and its stretches, so the ones out of sight can be left out
 function ribbonOf(land) {
-	const lines = land?.riverLines;
-	if (!lines || lines.points.length == 0) return null;
-	const { points, starts } = lines, sea = settings.waterWorldPosY;
+	const lines = land?.riverLines, quads = land?.lakeQuads;
+	if ((!lines || lines.points.length == 0) && !quads?.length) return null;
+	const { points, starts } = lines ?? { points: new Float32Array(0), starts: new Int32Array(0) }, sea = settings.waterWorldPosY;
 	const P = (k, q) => points[k * RIVER_FLOATS + q];
 	const out = [], stretches = [];
 	for (let l = 0; l < starts.length - 1; l++) {
@@ -100,6 +102,15 @@ function ribbonOf(land) {
 			v(e0, -1); v(e1, 1); v(e1, -1);
 			stretches.push({ x: 0.5 * (e0.x + e1.x), z: 0.5 * (e0.z + e1.z), seen: Math.min(SEEN * Math.max(e0.w, e1.w), settings.camFarPlane ?? 20000) + run, first, count: 6 });
 		}
+	}
+	// (a lake's squares: still water, which way it runs nowhere)
+	for (let q = 0; q + 5 <= (quads?.length ?? 0); q += 5) {
+		const [x0, z0, x1, z1, L] = quads.subarray(q, q + 5), y = sea + L;
+		const v = (x, z) => out.push(x, y, z, 0, 0, -1, 0, 1, 0, 0);
+		const first = out.length / VERTEX_FLOATS;
+		v(x0, z0); v(x1, z0); v(x1, z1);
+		v(x0, z0); v(x1, z1); v(x0, z1);
+		stretches.push({ x: 0.5 * (x0 + x1), z: 0.5 * (z0 + z1), seen: settings.camFarPlane ?? 20000, first, count: 6 });
 	}
 	if (out.length == 0) return null;
 	const data = new Float32Array(out);

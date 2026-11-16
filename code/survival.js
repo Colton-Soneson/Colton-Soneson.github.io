@@ -127,7 +127,7 @@ hunting.onUse((place) => {
 		if (riverWater(land, x, z, place.y, m)) {
 			status.thirst = Math.max(status.thirst - DRINK, 0);
 			survivalStats.drinks++;
-			help.toast('A drink from the river');
+			help.toast(riverWater(land, x, z, place.y, m).lake ? 'A drink from the lake' : 'A drink from the river');
 			return true;
 		}
 		if (land.heightAt(x, z) < settings.waterWorldPosY + 0.05 * m && Math.abs(place.y - settings.waterWorldPosY) < 1.5 * m) {
@@ -146,7 +146,7 @@ hunting.addPrompt(() => {
 	const p = hunting.hunterPlace(), land = terrain.land, m = settings.forestUnitsPerMetre;
 	const x = p.x + Math.sin(settings.camYaw) * 1.2 * m, z = p.z - Math.cos(settings.camYaw) * 1.2 * m;
 	// (a river's bank stands over its water: a little further out too)
-	if (settings.camPitch < -0.25 && [1.2, 2].some((ahead) => riverWater(land, p.x + Math.sin(settings.camYaw) * ahead * m, p.z - Math.cos(settings.camYaw) * ahead * m, p.y, m))) return { name: 'River water', keys: 'E drink' };
+	if (settings.camPitch < -0.25) for (const ahead of [1.2, 2]) { const w = riverWater(land, p.x + Math.sin(settings.camYaw) * ahead * m, p.z - Math.cos(settings.camYaw) * ahead * m, p.y, m); if (w) return { name: w.lake ? 'Lake water' : 'River water', keys: 'E drink' }; }
 	return land.heightAt(x, z) < settings.waterWorldPosY && land.zoneAt(x, z) == terrain.ZONE_LAKE && settings.camPitch < -0.25 ? { name: 'Lake water', keys: 'E drink' } : null;
 });
 

@@ -24,8 +24,11 @@ export const gpuIsFallback = !!(adapter.info?.isFallbackAdapter ?? adapter.isFal
 export const canTimestamp = adapter.features.has('timestamp-query');
 
 //device options can be passed in for specific hardware feature requests
+//	(and buffers as big as the GPU can have: WebGPU's own limit to bind is 128 MB, and the forest's list of every tree (forest.js) goes past
+//	that with many tiles of forest in, at long view distances. Past it nothing the forest drew was valid, and the frame went black)
 export const device = await adapter.requestDevice({
 	requiredFeatures: canTimestamp ? ['timestamp-query'] : [],
+	requiredLimits: { maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize, maxBufferSize: adapter.limits.maxBufferSize },
 });
 setLoadingStage('Downloading the models', 0.15);	//(the loading screen: see loading.js. The models are what is fetched next)
 

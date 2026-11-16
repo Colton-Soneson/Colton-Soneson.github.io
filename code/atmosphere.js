@@ -89,7 +89,7 @@ const atmosphereQuadVertexBuffer = device.createBuffer({
 });
 device.queue.writeBuffer(atmosphereQuadVertexBuffer, 0, scene.fullScreenQuad);
 
-const CLOUD_TOP = 6900.0;	// world units above the sea: the top of the highest layer of cloud at its deepest (HIGH_HEIGHT + HIGH_DEPTH in clouds.js)
+const CLOUD_TOP = [16000.0, 1400.0];	// world units above the sea: the bottom of the highest layer of cloud, and its depth at its deepest (HIGH_HEIGHT, HIGH_DEPTH in clouds.js)
 
 function updateSkyUniforms() {
 	const bufferResult = [];
@@ -120,7 +120,7 @@ function updateSkyUniforms() {
 	//the weather: how much of the sky is taken up by cloud (none until it is most of it), and how dark that cloud is
 	//		(only from under it: climbing out through the top of the highest layer of cloud the sky clears, and from above it
 	//		the air is as clear as any other day. The clouds draw themselves under the camera then)
-	const cloudTop = CLOUD_TOP + settings.cloudHeight;
+	const cloudTop = (settings.cloudCirrusHeight ?? CLOUD_TOP[0]) * (1 + ((settings.cloudSizeY ?? 1) - 1) * 0.5) + CLOUD_TOP[1] * (settings.cloudSizeY ?? 1) + settings.cloudHeight;		// (the clouds' size: clouds.js)
 	const aboveCloud = Math.min(Math.max((settings.camPosY - settings.waterWorldPosY - cloudTop) / (0.5 * cloudTop), 0), 1);
 	const overcast = settings.enableClouds ? weatherNow.skyCover * (1 - aboveCloud * aboveCloud * (3 - 2 * aboveCloud)) : 0;
 	bufferResult.push(overcast);

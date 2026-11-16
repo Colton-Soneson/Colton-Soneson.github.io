@@ -8,7 +8,8 @@
 					where a land tile meets one that is not land), each continent kept from sharing a side with another (they may meet at
 					a corner, a strait between them), the home island with sea on all four sides (a continent may meet it at a corner), and all of them as near home as that lets them be: each starts on the free tile nearest home (a little
 					at random among the nearest, NEAR), and grows the way home is. Each land tile has
-					its own towns: 0 to 2 (TOWNS: how likely each on the coast, TOWNS_INLAND inland, where they are by its rivers), the home tile its settings.terrainTownCount
+					its own towns: 0 to 2 (TOWNS: how likely each on the coast, TOWNS_INLAND inland, where they are by its rivers; more or fewer
+					for settings.terrainTownDensity), the home tile its settings.terrainTownCount
 		SEA			SEA tiles: open sea with a sea bed under it (the shelf and the drop-off of the land beside it, and the deep bed past
 					that), round the continents and in the straits between them, the nearest first
 		BEYOND		everything else: the endless sea with no bed under it, as there has always been round the island
@@ -20,8 +21,8 @@ import { seededRandom } from './terrainGenerator.js'
 export const GRID = 14;							// tiles along a side of the world: tx and tz from -GRID / 2 to GRID / 2 - 1
 export const LAND = 40, SEA = 60;
 export const CONTINENTS = [3, 3];				// how many continents (the home island one of them)
-const TOWNS = [0.1, 0.4, 0.5];					// of a land tile on the coast (not home): no town, one, two
-const TOWNS_INLAND = [0.15, 0.55, 0.3];			// and of one inland: its towns are by its rivers (townLayout.js: THE RIVER TOWNS), if it has a big enough one
+const TOWNS = [0.05, 0.4, 0.55];					// of a land tile on the coast (not home): no town, one, two
+const TOWNS_INLAND = [0.1, 0.45, 0.45];			// and of one inland: its towns are by its rivers (townLayout.js: THE RIVER TOWNS), if it has a big enough one
 const NEAR = 1.5;								// tiles: how much at random a continent's first tile is, among those nearest home
 const INWARD = 0.8;								// how much a continent grows towards home, against the rest (see layoutWorld)
 
@@ -29,7 +30,12 @@ export const keyOf = (tx, tz) => tx + ',' + tz;
 export const HOME = keyOf(0, 0);
 
 // the world for a seed: { tiles: Map key -> { tx, tz, kind ('land', 'sea'), continent, towns }, continents: [{ id, tiles: [keys] }] }
-export function layoutWorld(seed, homeTowns = 2) {
+export function layoutWorld(seed, homeTowns = 2, density = 1) {
+	// (the odds of no town, one, two, for how many towns there are to be: fewer of all of them under 1, over it the none and the ones
+	//		going to two. Over 2: two on every tile and more, as many as 4 (past = density - 2 more of them on average, by the same roll))
+	const oddsOf = ([none, one, two]) => density <= 1 ? [1 - density * (1 - none), density * one, density * two] : density <= 2 ? [none * (2 - density), one * (2 - density), two + (density - 1) * (none + one)] : [0, 0, 1];
+	const past = Math.min(Math.max(density - 2, 0), 2);
+	const coastOdds = oddsOf(TOWNS), inlandOdds = oddsOf(TOWNS_INLAND);
 	const random = seededRandom((seed ?? 0) * 104729 + 7);
 	const lo = -GRID / 2, hi = GRID / 2 - 1;
 	const inside = (tx, tz) => tx >= lo && tx <= hi && tz >= lo && tz <= hi;
@@ -100,7 +106,7 @@ export function layoutWorld(seed, homeTowns = 2) {
 		const [tx, tz] = k.split(',').map(Number);
 		// (on the coast: a side of it on a tile not of its continent)
 		const coast = [[tx + 1, tz], [tx - 1, tz], [tx, tz + 1], [tx, tz - 1]].some(([x, z]) => owner.get(keyOf(x, z)) !== c.id);
-		const roll = random(), odds = coast ? TOWNS : TOWNS_INLAND, towns = k == HOME ? homeTowns : roll < odds[0] ? 0 : roll < odds[0] + odds[1] ? 1 : 2;
+		const roll = random(), odds = coast ? coastOdds : inlandOdds, towns = k == HOME ? homeTowns : past > 0 ? 2 + Math.min(Math.floor(past + roll), 2) : roll < odds[0] ? 0 : roll < odds[0] + odds[1] ? 1 : 2;
 		tiles.set(k, { key: k, tx, tz, kind: 'land', continent: c.id, towns });
 	}
 	// THE SEA tiles: next to the land, those beside the most of it (and the straits between two continents) first, the home island's all round
@@ -125,7 +131,7 @@ export function tileParams(base, world, key) {
 	const t = world.tiles.get(key);
 	if (!t) return null;
 	return { ...base, center: [t.tx * base.worldSize, t.tz * base.worldSize], tile: key, world: { size: base.worldSize, land: world.landKeys, towns: world.townsOf ??= Object.fromEntries(world.landKeys.map((k) => [k, world.tiles.get(k).towns])) },
-		townCount: t.kind == 'land' ? (key == HOME ? base.townCount : t.towns) : 0, landingStrip: key == HOME && base.landingStrip, footpaths: t.kind == 'land' && base.footpaths };
+		townCount: t.kind == 'land' ? (key == HOME ? base.townCount : t.towns) : 0, landingStrip: (key == HOME || (t.kind == 'land' && t.towns > 0)) && base.landingStrip, footpaths: t.kind == 'land' && base.footpaths };
 }
 // the tile a world position is in (its key), and its middle
 export const tileAt = (x, z, size) => keyOf(Math.round(x / size), Math.round(z / size));

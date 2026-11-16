@@ -11,6 +11,7 @@ import { skyLookupShapes } from './vfc_atmosphere.js';
 						ABSORB a metre, and the light the water sends back itself, SCATTER), a little bent by the ripples
 		THE SKY			reflected as much as the angle lets it (Schlick's Fresnel), and the sun glinting off it
 		FOAM			on the rapids, and a little at the edges
+	A highland lake (its half width -1) is still water: ripples from the wind drifting slowly over it, no foam
 	And faded into the horizon as everything else is, and soft at the shore where the water gets thin
 */
 export const vf_rivers =
@@ -107,11 +108,13 @@ export const vf_rivers =
 		//------------------THE SURFACE-----------------
 		// carried along at the speed of the water: a slow river about 0.6 metres a second, rapids up to 4
 		let speed = clamp(0.6 + 30.0 * fall, 0.6, 4.0) * m;
-		let p = vec2f(input.river.x - speed * UBO.time, input.river.y * input.river.z) / (1.4 * m);
+		let lake = input.river.z < 0.0;
+		var p = vec2f(input.river.x - speed * UBO.time, input.river.y * input.river.z) / (1.4 * m);
+		if (lake) { p = (input.worldPos.xz + vec2f(0.25, 0.1) * m * UBO.time) / (2.2 * m); }
 		let e = 0.08;
 		let h0 = ripples(p);
 		let slope = vec2f(ripples(p + vec2f(e, 0.0)) - h0, ripples(p + vec2f(0.0, e)) - h0) / e;
-		let rough = 0.06 + 0.3 * smoothstep(0.01, 0.08, fall);
+		let rough = select(0.06 + 0.3 * smoothstep(0.01, 0.08, fall), 0.045, lake);
 		let g = (flow * slope.x + side * slope.y) * rough;
 		let N = normalize(vec3f(-g.x, 1.0, -g.y));
 
@@ -150,7 +153,7 @@ export const vf_rivers =
 		//------------------FOAM-----------------
 		let rapids = smoothstep(0.03, 0.14, fall) * smoothstep(0.45, 0.75, ripples(p * 2.3 + 11.0));
 		let edge = 0.35 * smoothstep(0.8, 1.0, abs(input.river.y)) * smoothstep(0.4, 0.7, ripples(p * 3.1 - 5.0));
-		let foam = saturate(rapids + edge);
+		let foam = select(saturate(rapids + edge), 0.0, lake);
 		color = mix(color, vec3f(0.85, 0.88, 0.88) * (0.25 + 0.75 * daylight), foam * 0.8);
 
 		// and the same fade into the horizon

@@ -10,6 +10,7 @@ import { settings } from './settings.js';
 
 import { c_cloudNoise } from '../shaders/js/vfc_clouds.js'
 import { c_cloudCoverage } from '../shaders/js/vfc_clouds.js'
+import { c_cloudCells, CLOUD_CELLS_SIZE, CLOUD_CELLS_WORKGROUP } from '../shaders/js/vfc_clouds.js'
 import { vf_cloudMarch } from '../shaders/js/vfc_clouds.js'
 import { vf_cloudComposite } from '../shaders/js/vfc_clouds.js'
 import { CLOUD_SHAPE_SIZE, CLOUD_DETAIL_SIZE, CLOUD_NOISE_WORKGROUP, CLOUD_MAP_SIZE, CLOUD_MAP_WORKGROUP } from '../shaders/js/vfc_clouds.js'
@@ -28,22 +29,44 @@ import {skyViewLUTtexture} from './atmosphere.js'
 	The clouds. See the top of vfc_clouds.js for how they work, and weather.js for what decides how much of them there is.
 
 	Twice a frame:
-		cloudUpdate		early, before anything is drawn: moves the weather on, lets the clouds drift, and takes the picture
-						of them from above (the coverage map) that the shadows on the ground and the water are read from
+		cloudUpdate		early, before anything is drawn: moves the weather on, lets the clouds drift, lays out the heaps
+						round the camera (the heaps' map, c_cloudCells), and takes the picture of them from above (the
+						coverage map) that the shadows on the ground and the water are read from
 		cloudPass		last, over the finished frame and the sky: marches the clouds at half size, and lays them on
 */
 
 const WEATHER_MAP_SIZE = 256;		// texels along a side of the weather map
 const WEATHER_TILE = 21000.0;		// and the stretch of world one tile of it covers
 const MOUNTAIN_MAP_SIZE = 64;
-const HIGH_HEIGHT = 6200.0;			// the bottom of the high layer, world units above the sea
-const HIGH_DEPTH = [260.0, 700.0];	// how deep it is: as cirrus, and as the sheet of an overcast day
+// (the bottom of the high layer, world units above the sea: settings.cloudCirrusHeight, 8 km)
+const HIGH_DEPTH = [500.0, 1400.0];	// how deep it is: as cirrus, and as the sheet of an overcast day
 const SHELF_BOTTOM = 230.0;			// a shelf cloud: the height of its bottom above the sea, and how deep it is
 const SHELF_DEPTH = 760.0;
-const MIDDLE_HEIGHT = 2550.0;		// the bottom of the middle layer: clear of the highest peaks
-const MIDDLE_DEPTH = 420.0;
-const TOWER_TOP = 4300.0;			// how high a cumulonimbus stands, whatever the depth of the layer it grows out of
+// (the bottom of the middle layer, Layers 3 only: settings.cloudMiddleHeight, over the tops of all but the towering heaps)
+const MIDDLE_DEPTH = 900.0;
+// (how high a cumulonimbus stands above the sea, and how much wider than the weather has it: settings.cloudTowerTop, cloudTowerWidth)
+// THE HEAPS (c_cloudCells, heapDensity in vfc_clouds.js): the low layer is heaps, each its own cloud. Their numbers are settings
+//		(settings.js: THE HEAPS): the bottom, the weather's base times BASE_LIFT and Cloud Base Height (a fair day's 500: 1800, 900 m up);
+//		the tallest heap of a fair day and of a towering one; the deck, the weather's depth times Deck Depth
+const BASE_LIFT = 3.6;
+const HEAP_CELL = 4400.0;			// one heap at most to a cell this wide: 0.6 to 0.9 of it across (times the size across, and Heap Spacing)
+const CELLS_REACH = 60000.0;		// the heaps' map reaches as far from the camera as the clouds are drawn, but no further than this
 const COVERAGE_MAP_WIDTH = 16384.0;	// the stretch of world the coverage map covers, centered on the camera
+// THE CLOUDS' SIZE (settings.cloudSizeX, Y and Z): the heights and depths above, and the weather's own (weather.js), are at Y 1; the
+//		billows, the heads and the fields of them (the shape noise, vfc_clouds.js; WEATHER_TILE) at X and Z 1
+const sizeY = () => Math.max(settings.cloudSizeY ?? 1, 0.1);
+// (the layers' bottoms go up half as fast as they deepen: the clouds stand taller, not only higher)
+const raiseY = () => 1 + (sizeY() - 1) * 0.5;
+const sizeAcross = () => Math.sqrt(Math.max(settings.cloudSizeX ?? 1, 0.1) * Math.max(settings.cloudSizeZ ?? 1, 0.1));
+// the low layer's bottom and top (world units above the sea, as the weather has them, the size and the Height setting on them): lightning.js, lightShafts.js
+//		(its top: the tallest heap there can be. The heaps tower where the weather's kind is over 0.5, and it is up to 0.175 over the day's here and there: weatherAt)
+const toweringMost = () => Math.min(Math.max((weatherNow.kind + 0.175 - 0.5) * 2.2 + settings.cloudTowering, 0), 1);
+const heapsTallest = () => (settings.cloudHeapTop + (settings.cloudToweringTop - settings.cloudHeapTop) * toweringMost()) * sizeY();
+const deckDepth = () => weatherNow.depth * settings.cloudDeckDepth * sizeY();
+export const lowLayer = () => {
+	const bottom = weatherNow.base * BASE_LIFT * settings.cloudBaseScale * raiseY() + settings.cloudHeight;
+	return { bottom: bottom, top: bottom + Math.max(heapsTallest(), deckDepth()) };
+};
 
 // Shader modules
 //-------------------------------------------------
@@ -197,6 +220,15 @@ export const cloudCoverageTexture = device.createTexture({
 });
 export const cloudCoverageView = cloudCoverageTexture.createView();
 
+// the heaps' map: where the heaps stand, round the camera (c_cloudCells). Made every frame
+const cellsTexture = device.createTexture({
+	label: "cloud heaps map",
+	size: [CLOUD_CELLS_SIZE, CLOUD_CELLS_SIZE],
+	format: 'rgba16float',
+	usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+});
+const cellsView = cellsTexture.createView();
+
 // the march. rgb: the light the clouds send to the eye, a: how much of what is behind them shows through. At a half, a third or a
 //		quarter of the canvas's size (settings.cloudResolution: the clouds are soft, and the march is most of their cost), and made
 //		again when that or the canvas's size changes (see display.js)
@@ -220,7 +252,7 @@ onRenderResize(makeCloudTexture);
 
 const cloudUniformBuffer = device.createBuffer({
   label: "cloud Uniform",
-  size: 512,
+  size: 768,
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 });
 
@@ -228,6 +260,7 @@ const cloudUniformBuffer = device.createBuffer({
 let driftX = 0, driftZ = 0;
 let lastTime = performance.now();
 let mapMiddle = [0, 0];
+let cellsMiddle = [0, 0], cellsWidth = 1;		// the heaps' map: its middle in the clouds' frame (the world less how far they have drifted), and its width
 
 // The 4 numbers cloudShadeAt (vfc_clouds.js) takes to read the coverage map: its middle (x, z), 1 / its width, and the height its shadows are worked out at
 export function cloudMapValues() {
@@ -256,35 +289,37 @@ function cloudUniformBufferUpdates() {
 	const light = lightNow();
 	bufferResult.push(light.direction[0], light.direction[1], light.direction[2], 0);
 	if (light.isMoon) {
-		const strength = 0.13 * 0.08 * light.moonlight;
+		const strength = 0.13 * 0.08 * light.moonlight * settings.cloudSunStrength;
 		bufferResult.push(0.6 * strength, 0.75 * strength, 1.0 * strength, 1.0);
 	} else {
 		const low = 0.55 * (1 - Math.min(Math.max(light.direction[1] * 3, 0), 1));
-		const strength = 0.13 * light.daylight;
+		const strength = 0.13 * light.daylight * settings.cloudSunStrength;
 		bufferResult.push((1 + (settings.sunColor[0] - 1) * low) * strength, (1 + (settings.sunColor[1] - 1) * low) * strength, (1 + (settings.sunColor[2] - 1) * low) * strength, 1.0);
 	}
 
 	//layer
 	const seaLevel = settings.waterWorldPosY;
-	bufferResult.push(seaLevel + weatherNow.base + settings.cloudHeight);
-	bufferResult.push(seaLevel + weatherNow.base + settings.cloudHeight + weatherNow.depth);
-	bufferResult.push(0);
+	const Y = sizeY(), B = raiseY(), low = lowLayer();
+	bufferResult.push(seaLevel + low.bottom);
+	bufferResult.push(seaLevel + low.top);
+	bufferResult.push(Math.max(settings.cloudSizeX ?? 1, 0.1));		//(the size across: x here, z in weather.w)
 	bufferResult.push(settings.terrainWorldSize * 0.5);
 
 	//weather
 	bufferResult.push(weatherNow.coverage);
 	bufferResult.push(weatherNow.kind);
-	bufferResult.push(weatherNow.density * settings.cloudDensity);
-	bufferResult.push(0);
+	//(a deeper cloud is walked further through: about as much light goes through it as through the old one, or a big cloud is black)
+	bufferResult.push(weatherNow.density * settings.cloudDensity / Math.sqrt(Y));
+	bufferResult.push(Math.max(settings.cloudSizeZ ?? 1, 0.1));
 
 	//scroll
 	bufferResult.push(driftX);
 	bufferResult.push(driftZ);
-	bufferResult.push(1 / WEATHER_TILE);
+	bufferResult.push(1 / (WEATHER_TILE * sizeAcross()));
 	bufferResult.push(weatherNow.gloom);
 
 	//tower
-	bufferResult.push(weatherNow.tower[0], weatherNow.tower[1], weatherNow.tower[2], weatherNow.tower[3]);
+	bufferResult.push(weatherNow.tower[0], weatherNow.tower[1], weatherNow.tower[2] * settings.cloudTowerWidth * sizeAcross(), weatherNow.tower[3]);
 
 	//screen: the size the march draws at, and the two numbers of the projection matrix a depth is made from
 	bufferResult.push(halfSize[0], halfSize[1], transformations.projectionMatrix[10], transformations.projectionMatrix[14]);
@@ -299,16 +334,16 @@ function cloudUniformBufferUpdates() {
 	bufferResult.push(Math.max(weatherNow.rain, weatherNow.snow));	//(the coverage map says where it rains. In winter the same places are where it snows)
 
 	//the middle layer
-	bufferResult.push(seaLevel + MIDDLE_HEIGHT + settings.cloudHeight);
-	bufferResult.push(seaLevel + MIDDLE_HEIGHT + settings.cloudHeight + MIDDLE_DEPTH);
-	bufferResult.push(settings.cloudLayers >= 2 ? weatherNow.middle : 0);
-	bufferResult.push(settings.cloudDensity);
+	bufferResult.push(seaLevel + settings.cloudMiddleHeight * B + settings.cloudHeight);
+	bufferResult.push(seaLevel + settings.cloudMiddleHeight * B + MIDDLE_DEPTH * Y + settings.cloudHeight);
+	bufferResult.push(settings.cloudLayers >= 3 ? Math.min(weatherNow.middle * settings.cloudMiddleAmount, 1) : 0);
+	bufferResult.push(settings.cloudDensity / Math.sqrt(Y));
 
-	//shape: how many times deeper than the low layer the cumulonimbus stands, and how sharp the edges of the heaps are
-	bufferResult.push(Math.max((TOWER_TOP - weatherNow.base) / weatherNow.depth, 1.2));
+	//shape: how tall the cumulonimbus stands over the bottom of the layer, how sharp the edges of the heaps are, and how tall the tallest heap stands on a fair day and a towering one
+	bufferResult.push(Math.max(settings.cloudTowerTop * Y + settings.cloudHeight - low.bottom, heapsTallest() * 1.2));
 	bufferResult.push(settings.cloudCrispness);
-	bufferResult.push(0);
-	bufferResult.push(0);
+	bufferResult.push(settings.cloudHeapTop * Y);
+	bufferResult.push(settings.cloudToweringTop * Y);
 
 	//the moon: drawn with the clouds, so that they can hide it. Which way it is and the angle from the middle of its disc to
 	//		the edge, then how strongly it shows (a pale ghost of itself by day)
@@ -318,25 +353,40 @@ function cloudUniformBufferUpdates() {
 
 	//the high layer: cirrus, or the sheet of an overcast day (deeper, and thick enough to be grey from underneath)
 	const sheet = weatherNow.sheet;
-	bufferResult.push(seaLevel + HIGH_HEIGHT + settings.cloudHeight);
-	bufferResult.push(seaLevel + HIGH_HEIGHT + settings.cloudHeight + HIGH_DEPTH[0] + (HIGH_DEPTH[1] - HIGH_DEPTH[0]) * sheet);
-	bufferResult.push(settings.cloudLayers >= 3 ? weatherNow.cirrus : 0);
+	bufferResult.push(seaLevel + settings.cloudCirrusHeight * B + settings.cloudHeight);
+	bufferResult.push(seaLevel + settings.cloudCirrusHeight * B + (HIGH_DEPTH[0] + (HIGH_DEPTH[1] - HIGH_DEPTH[0]) * sheet) * Y + settings.cloudHeight);
+	bufferResult.push(settings.cloudLayers >= 2 ? Math.min(weatherNow.cirrus * settings.cloudCirrusAmount, 1.5) : 0);
 	bufferResult.push(sheet);
 	//how thick it is, how much of the sun it lets down on to the layers under it, and how far off it fades into the haze
-	bufferResult.push((0.22 - 0.07 * sheet) * settings.cloudDensity);
-	bufferResult.push(settings.cloudLayers >= 3 ? 1 - 0.55 * sheet : 1);
+	bufferResult.push((0.22 - 0.07 * sheet) * settings.cloudDensity / Math.sqrt(Y));
+	bufferResult.push(settings.cloudLayers >= 2 ? 1 - 0.55 * sheet : 1);
 	bufferResult.push(settings.cloudDrawDistance * 1.7);
 	bufferResult.push(0);
 
 	//the shelf cloud (see weather.js for when there is one, and shelfDensity in vfc_clouds.js for its shape)
 	bufferResult.push(weatherNow.shelf[0], weatherNow.shelf[1], weatherNow.shelf[2], weatherNow.shelf[3]);
-	bufferResult.push(weatherNow.shelf[4], weatherNow.shelf[5], seaLevel + SHELF_BOTTOM + settings.cloudHeight, seaLevel + SHELF_BOTTOM + SHELF_DEPTH + settings.cloudHeight);
+	bufferResult.push(weatherNow.shelf[4], weatherNow.shelf[5], seaLevel + SHELF_BOTTOM * B + settings.cloudHeight, seaLevel + SHELF_BOTTOM * B + SHELF_DEPTH * Y + settings.cloudHeight);
 
 	//what the storm has brought (weather.js): the tornado, the hurricane, how far each has turned, the green of the light, and the lightning (lightning.js)
 	bufferResult.push(weatherNow.tornado[0], weatherNow.tornado[1], weatherNow.tornado[2], weatherNow.tornado[3]);
 	bufferResult.push(weatherNow.hurricane[0], weatherNow.hurricane[1], weatherNow.hurricane[2], weatherNow.hurricane[3]);
 	bufferResult.push(weatherNow.spin[0], weatherNow.spin[1], weatherNow.green, lightningNow.flash);
 	bufferResult.push(lightningNow.position[0], lightningNow.position[1], lightningNow.position[2], lightningNow.reach);
+
+	//the heaps' map, and the heaps: the size of a heap's cell, how far one leans downwind for every unit up, and how deep the deck is
+	bufferResult.push(cellsMiddle[0], cellsMiddle[1], 1 / cellsWidth, cellsWidth / CLOUD_CELLS_SIZE);
+	const windLength = Math.hypot(settings.windDirection[0], settings.windDirection[1]) || 1;
+	const lean = settings.cloudHeapLean;
+	bufferResult.push(HEAP_CELL * settings.cloudHeapSpacing * sizeAcross(), settings.windDirection[0] / windLength * lean, settings.windDirection[1] / windLength * lean, deckDepth());
+
+	//the look (settings.js: THE HEAPS), as CloudUniforms in vfc_clouds.js has them
+	bufferResult.push(settings.cloudBulbSize, settings.cloudBulbDepth, settings.cloudEdgeSoftness, settings.cloudBaseRagged);
+	bufferResult.push(settings.cloudHeapAmount, settings.cloudPuffAmount, settings.cloudHeapWidth, settings.cloudHeightVariety);
+	bufferResult.push(settings.cloudTowering, settings.cloudSteepness, settings.cloudLobes, settings.cloudWispiness);
+	bufferResult.push(settings.cloudDeckFrom, settings.cloudSkipping ? 1 : 0, Math.round(settings.cloudLightSteps), settings.cloudShadowReach);
+	bufferResult.push(settings.cloudForwardScatter, -settings.cloudBackScatter, settings.cloudBackShare, settings.cloudMultiScatter);
+	bufferResult.push(settings.cloudShadowStrength, settings.cloudCrevices, settings.cloudUndersides, settings.cloudAmbient);
+	bufferResult.push(settings.cloudCirrusScale, settings.cloudMiddleScale, settings.cloudScatterDepth, settings.cloudFarDetail);
 
 	const result = new Float32Array(bufferResult);
 	device.queue.writeBuffer(cloudUniformBuffer, 0, result.buffer, result.byteOffset, result.byteLength);
@@ -380,6 +430,11 @@ const densityEntries = (visibility) => [
     binding: 6,
     visibility: visibility,
     sampler: {}
+  },
+  {
+    binding: 9,								//the heaps' map
+    visibility: visibility,
+    texture: {}
   }
 ];
 
@@ -391,7 +446,21 @@ const densityResources = () => [
 	{ binding: 4, resource: mountainMapTexture.createView() },
 	{ binding: 5, resource: repeatSampler },
 	{ binding: 6, resource: clampSampler },
+	{ binding: 9, resource: cellsView },
 ];
+
+// the heaps' map is made from the weather alone
+const cellsBindGroupLayout = device.createBindGroupLayout({
+  label: "cloud heaps Bind Group Layout",
+  entries: [
+  { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: {} },
+  { binding: 3, visibility: GPUShaderStage.COMPUTE, texture: {} },			//weather map
+  { binding: 4, visibility: GPUShaderStage.COMPUTE, texture: {} },			//mountain map
+  { binding: 5, visibility: GPUShaderStage.COMPUTE, sampler: {} },
+  { binding: 6, visibility: GPUShaderStage.COMPUTE, sampler: {} },
+  { binding: 10, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'write-only', format: 'rgba16float' } },
+  ]
+});
 
 const coverageBindGroupLayout = device.createBindGroupLayout({
   label: "cloud coverage Bind Group Layout",
@@ -445,6 +514,12 @@ const compositeBindGroupLayout = device.createBindGroupLayout({
 
 // Pipelines
 //-------------------------------------------------
+const cellsPipeline = device.createComputePipeline({
+	label: "cloud heaps pipeline",
+	layout: device.createPipelineLayout({ label: "cloud heaps Pipeline Layout", bindGroupLayouts: [ cellsBindGroupLayout ] }),
+	compute: { module: device.createShaderModule({ label: "c_cloudCells", code: c_cloudCells }), entryPoint: "computeMain" },
+});
+
 const coveragePipeline = device.createComputePipeline({
 	label: "cloud coverage pipeline",
 	layout: device.createPipelineLayout({ label: "cloud coverage Pipeline Layout", bindGroupLayouts: [ coverageBindGroupLayout ] }),
@@ -514,6 +589,10 @@ export function cloudUpdate(aEncoder) {
 	// the coverage map follows the camera in whole texels, so the shadows do not crawl as the camera moves
 	const texel = COVERAGE_MAP_WIDTH / CLOUD_MAP_SIZE;
 	mapMiddle = [Math.round(settings.camPosX / texel) * texel, Math.round(settings.camPosZ / texel) * texel];
+	// and the heaps' map follows it in whole texels of its own, in the clouds' frame, so a heap stays the same shape as it drifts
+	cellsWidth = 2 * Math.min(settings.cloudDrawDistance, CELLS_REACH);
+	const cellsTexel = cellsWidth / CLOUD_CELLS_SIZE;
+	cellsMiddle = [Math.round((settings.camPosX - driftX) / cellsTexel) * cellsTexel, Math.round((settings.camPosZ - driftZ) / cellsTexel) * cellsTexel];
 
 	updateMountainMap();
 	cloudUniformBufferUpdates();
@@ -532,6 +611,24 @@ export function cloudUpdate(aEncoder) {
 		clearPass.end();
 		return;
 	}
+
+	const cellsPass = aEncoder.beginComputePass({ timestampWrites: profiler.timestamps('Heaps', 'c_cloudCells') });
+	cellsPass.setPipeline(cellsPipeline);
+	cellsPass.setBindGroup(0, device.createBindGroup({
+		label: "cloud heaps bind group",
+		layout: cellsBindGroupLayout,
+		entries: [
+			{ binding: 0, resource: { buffer: cloudUniformBuffer } },
+			{ binding: 3, resource: weatherMapTexture.createView() },
+			{ binding: 4, resource: mountainMapTexture.createView() },
+			{ binding: 5, resource: repeatSampler },
+			{ binding: 6, resource: clampSampler },
+			{ binding: 10, resource: cellsView },
+		],
+	}));
+	const cellGroups = Math.ceil(CLOUD_CELLS_SIZE / CLOUD_CELLS_WORKGROUP);
+	cellsPass.dispatchWorkgroups(cellGroups, cellGroups);
+	cellsPass.end();
 
 	const computePass = aEncoder.beginComputePass({ timestampWrites: profiler.timestamps('Coverage', 'c_cloudCoverage') });
 	computePass.setPipeline(coveragePipeline);

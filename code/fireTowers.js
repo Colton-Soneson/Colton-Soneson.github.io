@@ -6,13 +6,14 @@ import * as survival from './survival.js'
 import * as survivalNet from './survivalNet.js'
 import * as bedrolls from './bedrolls.js'
 import * as stations from './stations.js'
-import { towerCot, towerStove } from './townGround.js'
+import { towerCot, towerStove, towerLadder } from './townGround.js'
 
 /*
 	THE FIRE TOWERS' SHELTER (townGround.js: THE FIRE TOWER, on each main peak: terrain.land.fireTowers). In the Survival mode:
 		the cot		E sleeps on it (bedrolls.js: sleepAt, as on a bedroll: the place the player last slept, where they come back to)
 		the stove	a fireplace (stations.js): E firewood, the lighter, and it warms the cab. The host's, one for each tower, made when its
 					tile is here (addFixed: once, and kept with the rest of the stations)
+	And in every mode the walker walks in, its ladder (townGround.js: towerLadder): climbed with F, W and S (hunting.js: LADDERS ON THE LAND)
 */
 const REACH = 2.4;				// metres: how near the cot to sleep on it
 const metre = () => settings.forestUnitsPerMetre;
@@ -36,6 +37,17 @@ function cotInView() {
 hunting.onUse(() => { const cot = cotInView(); if (!cot || survival.status.asleep > 0) return false; bedrolls.sleepAt(cot); towerStats.slept++; return true; });
 hunting.addPrompt(() => cotInView() ? { name: 'Cot', keys: 'E sleep' } : null);
 
+// the ladders of the towers near (x, z), world units, as hunting.addLadders has them. The walker climbs on their -z side, away from the tower
+hunting.addLadders((x, z) => {
+	const land = terrain.land, m = metre(), found = [];
+	for (const tower of land?.fireTowers ?? []) {
+		if (Math.hypot(tower[0] - x, tower[1] - z) > 20 * m) continue;
+		const L = towerLadder(tower[0], tower[1], land.groundAt, m);
+		found.push({ id: idOf(tower), foot: place(tower, L.foot), head: place(tower, L.head), off: place(tower, L.off), out: [0, -1] });
+	}
+	return found;
+});
+
 // the stoves: the host's, a fireplace for each tower there is
 let madeFor = null;
 function stovesNow() {
@@ -48,4 +60,5 @@ export function fireTowersUpdate() {
 	if (now !== madeFor) { madeFor = now; stovesNow(); }
 }
 // (for testing) a tower's cot and its stove's station, where they are
-export const towerForTest = (tower) => ({ cot: place(tower, towerCot().at), stove: place(tower, towerStove().at), id: idOf(tower) });
+export const towerForTest = (tower) => ({ cot: place(tower, towerCot().at), stove: place(tower, towerStove().at), id: idOf(tower),
+	ladder: (({ foot, head, off }) => ({ foot: place(tower, foot), head: place(tower, head), off: place(tower, off) }))(towerLadder(tower[0], tower[1], terrain.land.groundAt, metre())) });

@@ -13,7 +13,7 @@ import * as inventory from './inventory.js'
 import * as loot from './loot.js'
 
 /*
-	THE FARM BEDS of the Survival mode. A hoe's click (survivalTools.js) digs one on the ground in front of the walker, on the grid (BED metres a side, the whole world's): the grass goes (computeGrass.js: setGrassHoles), a bed of dirt is raised
+	THE FARM BEDS of the Survival mode. A hoe's click (survivalTools.js), with a wheat seed (items.js: wheatSeeds, used up), digs one on the ground in front of the walker, on the grid (BED metres a side, the whole world's): the grass goes (computeGrass.js: setGrassHoles), a bed of dirt is raised
 	(farmBed: workMeshes.js) and wheat starts in it. It takes GROW days to come ripe, through four stages, each its own model: in the winter it hardly grows (WINTER times as fast). E at it ripe: HARVEST wheat, and it starts again. A hoe's click at a bed digs it out.
 	IN A GAME (survivalNet.js) the host keeps them, growing each by the world's clock: a joiner asks (farmDig, farmOut, farmReap: what came of it back, farmGot), and everyone is told of each as it changes stage (farmIs), and when one goes (farmDel); a joiner come in, of all of them.
 	The host's are kept in its browser with the rest of what is built (cabins.js: its save).
@@ -89,6 +89,10 @@ export function hoeClick() {
 	}
 	const p = hunting.hunterPlace();
 	if (p.on != 'land' || p.swimming) { help.toast('On firm ground'); return false; }
+	// (a bed needs a seed to start its wheat: wheat seeds, off wild wheat (flora.js) or the baker)
+	const seed = inventory.everything().find((one) => one.item.type == 'wheatSeeds')?.item;
+	if (!seed) { help.toast('No wheat seeds: E at wild wheat on the grassland, or the baker sells them', 2.6); return false; }
+	inventory.useOne(seed);
 	const s = spot();
 	if (survivalNet.authority()) { const ok = hostDig(s.i, s.j); help.toast(ok ? 'A bed dug, wheat sown: it takes two days, and hardly grows in the winter' : 'Not on this ground: too steep, or too wet', 2.4); return ok; }
 	survivalNet.send('farmDig', { i: s.i, j: s.j });

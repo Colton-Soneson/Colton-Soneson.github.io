@@ -51,7 +51,7 @@ self.onmessage = (event) => {
 		gather(data.chunkGrids?.paths);
 		// its towns' ground work (town.js draws it: townGround.js)
 		if (land.towns.length || land.paths?.length || land.fireTowers?.length) {	// (and a tile with no town: its roads, its railway, its tunnels, its fire tower)
-			const work = groundWork(land.towns, params.seaLevel, null, land.paths, land.groundAt, land.zoneAt, land.fireTowers, event.data.unitsPerMetre ?? 2, land.stations);
+			const work = groundWork(land.towns, params.seaLevel, land.strip, land.paths, land.groundAt, land.zoneAt, land.fireTowers, event.data.unitsPerMetre ?? 2, land.stations);
 			data.townGround = work.done();
 			buffers.add(data.townGround.buffer);
 		}

@@ -87,6 +87,7 @@ import * as interiors from './interiors.js'
 import * as fish from './fish.js'
 import * as whaling from './whaling.js'
 import * as npcHunters from './npcHunters.js'
+import * as flora from './flora.js'
 import * as shotgun from './shotgun.js'
 import * as revolver from './revolver.js'
 import * as mauser from './mauser.js'
@@ -442,6 +443,7 @@ export function updateRotatingCubePass() {
 	npcShips.shipsUpdate(npcSeconds);
 	npcDinghies.dinghiesUpdate(npcSeconds);
 	npcHunters.huntersUpdate(npcSeconds);
+	flora.floraUpdate();		//(the walker pushing through a bush)
 	profiler.cpuMark('Boats');
 	boat.boatUpdate();			//the boats sail on, before the walker on one is carried along
 	profiler.cpuMark('Horses and Biplanes');
@@ -653,6 +655,12 @@ export function updateRotatingCubePass() {
 	if(settings.enableGrass)
 	{
 		profiler.section('Grass', () => grassPass(encoder, depthTexture));
+	}
+	//the plants: ferns, flowers, mushrooms, bushes, the wild wheat (flora.js)
+	profiler.cpuMark('Plants');
+	if(settings.enableFlora)
+	{
+		profiler.section('Plants', () => flora.floraPass(encoder, depthTexture));
 	}
 
 	profiler.cpuMark('Forest');

@@ -8,7 +8,7 @@ import { seasonNow, weatherNow } from './weather.js'
 /*
 	THE PONDS FROZEN, in the winter (weather.js: seasonNow.ice, going on through the first of the winter and off through the first of the spring). The land's lake zone is cut into CELL metre squares,
 	and each knows how far it is from the shore of its pond as a share of the furthest of that pond (shore): the ice comes in from the banks, and goes back to them, as seasonNow.ice passes that.
-	A square frozen is a sheet (iceTile: props, drawn near the camera; the snow lying on it drifts across them all: vf_props.js) a little over the water (OVER), the land's banks standing up through it, and a floor to walk on
+	A square frozen is a sheet (iceTile: props, drawn near the camera; the snow lying on it drifts across them all: vf_props.js) a little over the water (OVER: the sea's level, or a highland lake's), the land's banks standing up through it, and a floor to walk on
 	(hunting.js: addFloor). Everything about it comes of the world's clock and the land, which everyone has, so there is nothing about it to send.
 */
 const CELL = 8;				// metres
@@ -42,8 +42,9 @@ function buildOf(here, tile) {
 	for (let i = ci - n; i <= ci + n; i++) for (let j = cj - n; j <= cj + n; j++) {
 		const x = (i + 0.5) * size, z = (j + 0.5) * size;
 		if (here.zoneAt(x, z) != terrain.ZONE_LAKE) continue;
-		// (a square with any of its water under it)
-		if ([[0, 0], [-0.45, -0.45], [0.45, -0.45], [-0.45, 0.45], [0.45, 0.45]].some(([a, b]) => land.heightAt(x + a * size, z + b * size) < sea)) wet.set(keyOf(i, j), { i, j, x, z, d: Infinity });
+		// (a square with any of its water under it: the sea's level, or a highland lake's, terrainGenerator.js THE HIGHLAND LAKES)
+		const lake = here.riverAt?.(x, z), level = lake?.lake ? lake.surface : sea;
+		if ([[0, 0], [-0.45, -0.45], [0.45, -0.45], [-0.45, 0.45], [0.45, 0.45]].some(([a, b]) => land.heightAt(x + a * size, z + b * size) < level)) wet.set(keyOf(i, j), { i, j, x, z, d: Infinity, level });
 	}
 	// how far in from the shore: out in steps from every square with a side that is not water, pond by pond
 	const near = ([i, j]) => [[i + 1, j], [i - 1, j], [i, j + 1], [i, j - 1]];
@@ -64,7 +65,7 @@ function buildOf(here, tile) {
 			most = Math.max(most, pond[k].d);
 			for (const [a, b] of near([pond[k].i, pond[k].j])) { const o = wet.get(keyOf(a, b)); if (o && !seen.has(o)) { seen.add(o); pond.push(o); } }
 		}
-		for (const c of pond) cells.set(keyOf(c.i, c.j), { x: c.x, z: c.z, shore: c.d / (most + 1), tile });
+		for (const c of pond) cells.set(keyOf(c.i, c.j), { x: c.x, z: c.z, shore: c.d / (most + 1), tile, level: c.level });
 	}
 }
 const frozen = (c) => seasonNow.ice > SOLID + (1 - SOLID) * c.shore;
@@ -73,7 +74,7 @@ export function iceAt(x, z) {
 	if (!seasonNow.ice || !terrain.land) return null;
 	if (builtFor !== terrain.land) build();
 	const size = CELL * metre(), c = cells.get(keyOf(Math.floor(x / size), Math.floor(z / size)));
-	return c && frozen(c) ? settings.waterWorldPosY + OVER * metre() : null;
+	return c && frozen(c) ? c.level + OVER * metre() : null;
 }
 hunting.addFloor((x, z) => iceAt(x, z) ?? -Infinity);
 
@@ -81,10 +82,10 @@ export function iceUpdate() {
 	iceStats.drawn = 0;
 	if (!seasonNow.ice || !terrain.land) return;
 	if (builtFor !== terrain.land) build();
-	const m = metre(), y = settings.waterWorldPosY + OVER * m, reach = DRAW * m, cx = settings.camPosX, cz = settings.camPosZ, snow = weatherNow.snowCover ?? 0;
+	const m = metre(), reach = DRAW * m, cx = settings.camPosX, cz = settings.camPosZ, snow = weatherNow.snowCover ?? 0;
 	for (const c of cells.values()) {
 		if (Math.abs(c.x - cx) > reach || Math.abs(c.z - cz) > reach || !frozen(c)) continue;
-		props.show('iceTile', props.place([c.x, y, c.z], 0, 0, 0, CELL), undefined, [0, 0, snow, 0]);
+		props.show('iceTile', props.place([c.x, c.level + OVER * m, c.z], 0, 0, 0, CELL), undefined, [0, 0, snow, 0]);
 		iceStats.drawn++;
 	}
 }

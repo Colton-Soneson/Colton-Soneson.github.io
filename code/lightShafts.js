@@ -146,7 +146,7 @@ function shaftUniformBufferUpdates(shaftStrength) {
 
 	//air: the bottom of the low cloud, how far the shafts are followed, and whether there are clouds at all
 	//		(and in the slot left over: how bright the lightning is on the scene at this moment)
-	bufferResult.push(settings.waterWorldPosY + weatherNow.base + settings.cloudHeight, SHAFT_REACH, clouds.cloudsShowing() ? 1 : 0, lightningNow.sceneFlash);
+	bufferResult.push(settings.waterWorldPosY + clouds.lowLayer().bottom, SHAFT_REACH, clouds.cloudsShowing() ? 1 : 0, lightningNow.sceneFlash);
 
 	bufferResult.push(drawn.width, drawn.height, 1 / drawn.width, 1 / drawn.height);
 

@@ -339,10 +339,16 @@ function blockedAlong(r, heading) {
 	let cost = 0;
 	PROBES.forEach((d, k) => {
 		const x = h.x + fx * d * m, z = h.z + fz * d * m, weight = 1 / (k + 1);
-		// (in a tunnel its floor, on a bridge its deck: not the mountain over it, nor the water under it: tunnels.js)
-		const under = (px, pz) => tunnels.floorAt(px, pz, h.y ?? -Infinity) ?? land.heightAt(px, pz);
+		// (in a tunnel its floor, on a bridge its deck: not the mountain over it, nor the water under it: tunnels.js. A deck it could not
+		//		step on to from the side (horse.js: DECK_STEP) is a wall there: its parapet)
+		const floorOf = (px, pz) => tunnels.floorAt(px, pz, h.y ?? -Infinity);
+		const deck = (px, pz) => { const f = floorOf(px, pz); return f !== null && (h.held || f - land.heightAt(px, pz) <= 1.0 * m) ? f : null; };
+		const under = (px, pz) => deck(px, pz) ?? land.heightAt(px, pz);
 		const ground = under(x, z), here = under(h.x, h.z);
 		if ((ground - here) / (d * m) > 0.75) cost += 3 * weight;
+		// (and a drop as steep: off the side of a bridge, or over a cliff)
+		if ((here - ground) / (d * m) > 1.0) cost += 3 * weight;
+		if (!h.held && floorOf(x, z) !== null && deck(x, z) === null) cost += 4 * weight;
 		if (settings.waterWorldPosY - ground > 1.0 * m) cost += 4 * weight;
 		const box = (bx, bz, half, bottom, top) => { if (top > h.y + 0.5 * m && bottom < h.y + 2 * m && Math.abs(bx - x) < half + 0.9 * m && Math.abs(bz - z) < half + 0.9 * m) cost += 5 * weight; };
 		if (settings.enableForest) forest.trunksNear(x, z, 2 * m, box);
@@ -620,4 +626,11 @@ export const ridersForTest = riders;
 export function landRouteForTest(from, to) {
 	const t0 = performance.now(), P = landRoute(from, to);
 	return { points: P?.length ?? 0, ms: Math.round((performance.now() - t0) * 10) / 10, steps: riderStats.landSteps };
+}
+// for testing: a rider put at a place (world units) and sent by the roads to another
+export function sendRiderForTest(r, from, to, straight = false) {
+	Object.assign(r.horse, { x: from[0], z: from[1], ground: null, speed: 0, held: false });
+	r.going = { x: to[0], z: to[1] }; r.rest = 0; r.stuck = 0; r.hunt = null; r.person.fighting = null;
+	r.route = Array.isArray(straight) ? straight : straight ? [to] : roadWay(from, to) ?? [to]; r.along = 0;
+	return r.route.length;
 }

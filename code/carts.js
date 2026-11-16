@@ -254,7 +254,8 @@ function draw(at, heading, pitch, spin) {
 
 // Per frame
 export function cartsUpdate(dt) {
-	if (!terrain.land || !inventory.survivalOn() || !npcs.on()) {	// (a war of the Survival mode's: they go on)
+	// (in the Survival mode; and in the Observe mode, to be watched: highlights.js)
+	if (!terrain.land || !(inventory.survivalOn() || settings.gameMode == 'Observe') || !npcs.on()) {	// (a war of the Survival mode's: they go on)
 		if (carts.length && survivalNet.authority()) for (const cart of [...carts]) remove(cart);
 		return;
 	}

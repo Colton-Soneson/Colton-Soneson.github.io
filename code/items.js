@@ -100,6 +100,7 @@ export const ITEMS = {
 	rock: { name: 'Stone', w: 2, h: 1, stack: 5, kg: 2, price: 0.4, icon: 'rock', tint: '#7a7670', detail: 'Broken out of a boulder with a pickaxe. Crafting: a smelter, a mortar' },
 	mushroom: { name: 'Mushroom', slot: ['item'], w: 1, h: 1, stack: 8, kg: 0.05, price: 0.25, food: 3, weapon: 'eat', icon: 'mushroom', tint: '#8a5a30', detail: 'Hunger -3, raw. Boiled in a cauldron it is better, and three boiled make antibiotics' },
 	boiledMushroom: { name: 'Boiled mushroom', slot: ['item'], w: 1, h: 1, stack: 8, kg: 0.05, price: 0.5, food: 12, weapon: 'eat', icon: 'mushroom', tint: '#5a3a20', detail: 'Hunger -12. Three of them, at a mortar: antibiotics' },
+	wheatSeeds: { name: 'Wheat seeds', w: 1, h: 1, stack: 20, kg: 0.02, price: 0.15, icon: 'wheat', tint: '#d8c070', detail: 'Off wild wheat (E at a stand of it, on the grassland), or the baker. A bed dug with a hoe takes one to start its wheat' },
 	wheat: { name: 'Wheat', w: 1, h: 1, stack: 10, kg: 0.1, price: 0.3, icon: 'wheat', tint: '#b89a48', detail: 'Off a farm bed. With a small bone, in a cauldron: grain alcohol. The baker buys it' },
 	deerHide: { name: 'Deer hide', w: 2, h: 2, kg: 3, price: 5, icon: 'pelt', tint: '#8a6a44', pelt: true, detail: 'Off a deer. Crafting: a bedroll. The butcher buys it, for more the cleaner the kill' },
 	boneAlcohol: { name: 'Bone alcohol', w: 1, h: 1, stack: 4, kg: 0.5, price: 2.5, drink: 2, stress: -10, tired: 6, icon: 'bottle', tint: '#8a7a5a', detail: 'Rough stuff, boiled from big bones. At a mortar: tincture' },

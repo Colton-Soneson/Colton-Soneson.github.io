@@ -253,7 +253,8 @@ function draw(line, s, dir) {
 
 // Per frame
 export function trainsUpdate(dt) {
-	if (!terrain.land || !inventory.survivalOn() || !npcs.on()) {	// (a war of the Survival mode's: they run on, carrying its troops)
+	// (in the Survival mode; and in the Observe mode, to be watched: highlights.js)
+	if (!terrain.land || !(inventory.survivalOn() || settings.gameMode == 'Observe') || !npcs.on()) {	// (a war of the Survival mode's: they run on, carrying its troops)
 		if (trains.length && survivalNet.authority()) for (const t of [...trains]) remove(t);
 		madeFor = null;
 		return;

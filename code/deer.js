@@ -79,6 +79,7 @@ const TRIPS_A_DAY = 3;
 const TRIP_SPARE = 25;				// seconds more than a trip should take, when working out whether the day is running out on them
 const WALK = 1.3, TROT = 4.0;		// metres a second: wandering, and going to and from the water
 const WANDER = 80;					// metres round home they wander
+const NEAR_TOWN = { groups: 2, out: [250, 650] };	// groups more by each town, metres from its middle: game for its hunters (npcHunters.js)
 const DRINK_SECONDS = [12, 20];
 const GRAZE_SECONDS = [6, 18];
 const STRIDE = 1.4;					// metres a stride takes
@@ -448,6 +449,22 @@ function* herdSteps(land, tile) {
 		for (const spot of forestSpots) {
 			if (homes.length >= wanted) break;
 			if (homes.every((home) => Math.hypot(home.x - spot.x, home.z - spot.z) > spacing)) homes.push(spot);
+		}
+	}
+
+	// and by every town of the tile's, NEAR_TOWN.groups of them in the woods round it (or on its grass, with none), NEAR_TOWN.out from its
+	//		middle: game for its hunters (npcHunters.js: within its REACH), whatever the drinking places
+	if (wanted > 0) for (const t of land.towns ?? []) {
+		if (!t.site) continue;
+		const at = [t.site.x, t.site.z], m = metre();
+		const near = [terrain.ZONE_FOREST, terrain.ZONE_GRASSLAND].flatMap((zone) => land.findSpawnPoints(zone, 24, { seed: 57, near: at, radius: NEAR_TOWN.out[1] * m, minSpacing: 40, maxSlope: 0.4 }))
+			.filter((s) => { const d = Math.hypot(s.x - at[0], s.z - at[1]); return d > NEAR_TOWN.out[0] * m && walkable(s.x, s.z) && (land.townAt?.(s.x, s.z) ?? 0) < 0.02; });
+		let made = 0;
+		for (const spot of near) {
+			if (made >= NEAR_TOWN.groups) break;
+			if (homes.some((home) => Math.hypot(home.x - spot.x, home.z - spot.z) < 60 * m)) continue;
+			homes.push(spot);
+			made++;
 		}
 	}
 

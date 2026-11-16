@@ -25,8 +25,11 @@ function heard(event) {
 	const message = event.data;
 	const tile = message.tile ?? 'land';
 	if (message.land !== undefined) {
-		// (a new land: every tile's builder gone with the old one's. A tile of the same land: added to them)
-		if (message.land !== generation) { generation = message.land; builders.clear(); }
+		// (a new land: every tile's builder gone with the old one's. A tile of the same land: added to them. One of an OLDER land (a
+		//		tile the tile worker was making when the land was made again) is thrown away: going back to it would throw away every
+		//		builder of the land there is now, and its chunks would never be made)
+		if (message.land < generation) return;
+		if (message.land > generation) { generation = message.land; builders.clear(); }
 		builders.set(tile, makeChunkBuilder(message.params, message.grids));
 		return;
 	}

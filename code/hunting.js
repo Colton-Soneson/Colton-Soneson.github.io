@@ -73,6 +73,11 @@ import * as vm from './viewmodel.js'
 	LYING_EYE, and the view turns no further than the gun's arc either side of the way it faces, nor up or down further than it
 	allows. A deer's shove does not move it.
 
+	LADDERS ON THE LAND (addLadders: a fire tower's, fireTowers.js): F at the foot of one, facing it, takes hold of it (on: 'climb'), and
+	F at its head, from what it leads up to, facing out over it. W climbs up it and S down (Shift faster), at CLIMB_PACE; at the top
+	it steps over on to what it leads to, and at the foot back on to the ground. Space jumps off it (out from it, LADDER_LEAP) and F
+	lets go of it: down as hard as it falls (FALLING).
+
 	RIDING (horse.js): F at a horse's saddle (or right beside it) puts the walker in the saddle (on: 'saddle'), F again puts it down on
 	the horse's left. W, S, A, D and Shift ride it (see THE HORSE in horse.js). The view turns as the horse turns, and rides up and
 	down with its gait, and the gun in the hands with it (vm.ride: horse.riderLag). The gun can be used from the saddle. F at the
@@ -102,6 +107,10 @@ const LYING_EYE = 0.38;				// metres up the eyes are, lying behind a gun on its 
 const LIE_SECONDS = 0.6;			// to get down, or up
 const FALL = { safe: 8.5, deadly: 17 };	// metres a second coming down: see FALLING at the top
 const LADDER_LEAP = 2.2;			// metres a second out from a mast's ladder, jumping off it
+const CLIMB_PACE = 1.3;				// metres a second up or down a ladder on the land (half as fast again with Shift)
+const LADDER_HANG = 0.4;			// metres out from such a ladder the walker's middle is, on it
+const LADDER_OVER = 0.8;			// metres of the climb it takes to step over from its head on to what it leads to
+const LADDER_HOLD = 1.0;			// metres from its foot (or the place at its head) it can be taken hold of
 const RIDE_HANDS = { bob: 0.45, rock: 0.35 };	// how much of horse.riderLag the gun in the hands goes by
 const CHUTE_SINK = 6;				// metres a second: how fast it comes down under a parachute (thrown out of a plane shot to pieces, plane.js)
 
@@ -114,10 +123,11 @@ export const hunterStats = { boxes: 0, gathers: 0, cornerReads: 0, grounded: fal
 export const input = { menuOpen: false, lookScale: 1 };
 export const crouch = { on: false, amount: 0 };		// C (see the top): crouching, and how far down, 0 to 1
 // (the Survival mode, survival.js: pace, how much of its walking pace it has; frozen, asleep: it does not move)
-export const effects = { pace: 1, frozen: false, noRun: false, noJump: false };	// (noRun, noJump: medical.js: a broken leg)
+export const effects = { pace: 1, frozen: false, noRun: false, noJump: false, brush: 1 };	// (noRun, noJump: medical.js: a broken leg. brush: pushing through a bush, flora.js)
 
 const hunter = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, grounded: false, swimming: false,
-	on: 'land',					// land, ladder, deck or seat (see SAILING at the top), mast or nest (THE MASTS), saddle (RIDING), or aboard (SEATS)
+	on: 'land',					// land, ladder, deck or seat (see SAILING at the top), mast or nest (THE MASTS), saddle (RIDING), aboard (SEATS), or climb (LADDERS ON THE LAND)
+	rungs: null,				// climb: the ladder (addLadders), and hunter.climb is how far along it, metres from its foot
 	nest: 0, climbingUp: true,	// the mast it is climbing, or whose nest it is in, and which way
 	ride: null,					// aboard: { rides (whose seat it is: addRides), vehicle, seat }
 	boat: null,					// the boat it is on (off the land)
@@ -507,6 +517,99 @@ function promptInView() {
 	return null;
 }
 
+// Ladders on the land (see LADDERS ON THE LAND at the top)
+//-------------------------------------------------
+// whoever has ladders: fn(x, z) gives those near (x, z): [{ id, foot, head, off (where on what it leads to it is stepped off on to),
+//		out: [x, z] (the way out from it, the side it is climbed on) }], world units
+const landLadders = [];
+export function addLadders(fn) { landLadders.push(fn); }
+// the ladder the walker could take hold of now: { ladder, top (at its head), name, keys } or null
+function ladderInReach() {
+	const m = settings.forestUnitsPerMetre, look = transformations.getCameraForward();
+	for (const fn of landLadders) for (const L of fn(hunter.x, hunter.z)) {
+		const facingOut = look[0] * L.out[0] + look[2] * L.out[1];
+		const d = Math.hypot(hunter.x - (L.foot[0] + L.out[0] * LADDER_HANG * m), hunter.z - (L.foot[2] + L.out[1] * LADDER_HANG * m)) / m;
+		if (d < LADDER_HOLD && Math.abs(hunter.y - L.foot[1]) < 1.2 * m && (d < 0.5 || facingOut < -0.2)) return { ladder: L, top: false, name: 'Ladder', keys: 'F climb' };
+		const t = Math.hypot(hunter.x - L.off[0], hunter.z - L.off[2]) / m;
+		if (t < LADDER_HOLD && Math.abs(hunter.y - L.off[1]) < 0.6 * m && facingOut > 0.2) return { ladder: L, top: true, name: 'Ladder', keys: 'F climb down' };
+	}
+	return null;
+}
+// how long a ladder is, metres
+const ladderLength = (L) => Math.hypot(L.head[0] - L.foot[0], L.head[1] - L.foot[1], L.head[2] - L.foot[2]) / settings.forestUnitsPerMetre;
+function takeLadder(L, top) {
+	hunter.on = 'climb';
+	hunter.rungs = L;
+	hunter.climb = top ? ladderLength(L) + LADDER_OVER : 0;
+	hunter.vx = hunter.vy = hunter.vz = 0;
+	crouch.on = false;
+}
+// off it, with this going (world units a second), on to the land's walking
+function offLadder(vx, vy, vz) {
+	hunter.on = 'land';
+	hunter.rungs = null;
+	hunter.vx = vx; hunter.vy = vy; hunter.vz = vz;
+	hunter.grounded = false;
+	gatheredAt = null;
+}
+// on it this frame: up and down it with W and S, and off it
+function climbLadder(seconds) {
+	const L = hunter.rungs, m = settings.forestUnitsPerMetre;
+	showPrompt(null);
+	if (!L || !hunterLife.alive) { offLadder(0, 0, 0); return; }
+	const length = ladderLength(L);
+	let way = 0;
+	if (keysDown.has('KeyW')) way += 1;
+	if (keysDown.has('KeyS')) way -= 1;
+	if (effects.frozen) way = 0;
+	const fast = (keysDown.has('ShiftLeft') || keysDown.has('ShiftRight')) && !effects.noRun ? 1.5 : 1;
+	hunter.climb = Math.max(Math.min(hunter.climb + way * CLIMB_PACE * fast * effects.pace * seconds, length + LADDER_OVER), 0);
+	const out = [L.out[0] * LADDER_HANG * m, L.out[1] * LADDER_HANG * m];
+	if (jumpPressed || vehicleNow) {
+		// Space: out from it; F: let go
+		const leap = jumpPressed ? LADDER_LEAP * m : 0;
+		offLadder(L.out[0] * leap, jumpPressed ? Math.sqrt(2 * GRAVITY * settings.huntingJumpHeight) * 0.5 * m : 0, L.out[1] * leap);
+		jumpPressed = vehicleNow = false;
+		usePressed = false;
+		return;
+	}
+	usePressed = false;
+	if (hunter.climb >= length + LADDER_OVER && way > 0) {
+		// over the top, standing on what it leads to
+		offLadder(0, 0, 0);
+		hunter.x = L.off[0]; hunter.y = L.off[1]; hunter.z = L.off[2];
+		hunter.grounded = true;
+	} else if (hunter.climb <= 0 && way < 0) {
+		// down at its foot, a step back from it
+		offLadder(0, 0, 0);
+		hunter.x = L.foot[0] + out[0] * 1.6; hunter.z = L.foot[2] + out[1] * 1.6;
+		hunter.y = Math.max(groundUnder(hunter.x, hunter.z), L.foot[1]);
+	} else if (hunter.climb > length) {
+		// stepping over its head: across to the place on what it leads to, a little up and down
+		const k = (hunter.climb - length) / LADDER_OVER;
+		const fromX = L.head[0] + out[0], fromZ = L.head[2] + out[1];
+		hunter.x = fromX + (L.off[0] - fromX) * k; hunter.z = fromZ + (L.off[2] - fromZ) * k;
+		hunter.y = L.head[1] + (L.off[1] - L.head[1]) * k + 0.15 * m * Math.sin(Math.PI * k);
+	} else {
+		const s = hunter.climb / length;
+		hunter.x = L.foot[0] + (L.head[0] - L.foot[0]) * s + out[0];
+		hunter.y = L.foot[1] + (L.head[1] - L.foot[1]) * s;
+		hunter.z = L.foot[2] + (L.head[2] - L.foot[2]) * s + out[1];
+	}
+	if (hunter.on == 'climb') {
+		hunter.vx = hunter.vz = 0;
+		hunter.vy = way * CLIMB_PACE * fast * m;
+		hunter.grounded = false;
+		hunter.swimming = false;
+	}
+	jumpPressed = false;
+	hunterStats.grounded = hunter.grounded;
+	hunterStats.swimming = false;
+	settings.camPosX = hunter.x;
+	settings.camPosY = hunter.y + EYE_HEIGHT * m;
+	settings.camPosZ = hunter.z;
+}
+
 // Seats (see SEATS at the top)
 //-------------------------------------------------
 // whoever has seats: { inView(eye, look) (the seat the crosshair is on: { vehicle, seat, name, keys } or null), board(vehicle, seat) (false
@@ -643,6 +746,11 @@ export function updateHunter() {
 		}
 		dismount();
 	}
+	if (hunter.on == 'climb') {
+		climbLadder(seconds);
+		showControls();
+		return;
+	}
 	if (hunter.on != 'land' && !(hunter.boat && hunter.boat.exists)) leaveBoat();
 	if (hunter.on != 'land') {
 		onBoat(seconds);
@@ -666,9 +774,18 @@ export function updateHunter() {
 	horse.setHovered(tack?.horse ?? null, tack?.kind ?? '');
 	// a seat (the biplane's cockpits): F at it to climb in
 	const seat = !control && !tack && hunterLife.alive ? seatInView() : null;
+	// a ladder (a fire tower's): F at its foot or its head to take hold of it
+	const rungs = !control && !tack && !seat && hunterLife.alive && !hunter.swimming ? ladderInReach() : null;
 	// (and whatever else has something to say about what the eye is on: addPrompt)
-	const other = !control && !tack && !seat && hunterLife.alive ? promptInView() : null;
-	showPrompt(control ?? tack ?? seat ?? other);
+	const other = !control && !tack && !seat && !rungs && hunterLife.alive ? promptInView() : null;
+	showPrompt(control ?? tack ?? seat ?? rungs ?? other);
+	if (vehicleNow && rungs) {
+		takeLadder(rungs.ladder, rungs.top);
+		vehicleNow = usePressed = false;	// (the press that took hold is spent: it is not the press to let go as well)
+		climbLadder(0);
+		showControls();
+		return;
+	}
 	if (vehicleNow && seat && !hunter.swimming && seat.rides.board(seat.vehicle, seat.seat)) {
 		hunter.on = 'aboard';
 		hunter.ride = { rides: seat.rides, vehicle: seat.vehicle, seat: seat.seat };
@@ -727,7 +844,7 @@ export function updateHunter() {
 	// crouched (see C at the top): only on its feet on the land; up again to jump or to run
 	if (running && (ahead || side) || jumpPressed || hunter.swimming || hunter.on != 'land' || stance.hold || !hunterLife.alive) crouch.on = false;
 	crouch.amount = Math.min(Math.max(crouch.amount + (crouch.on ? 1 : -1) * seconds / CROUCH.seconds, 0), 1);
-	const pace = settings.huntingWalkSpeed * metre * (running ? RUN : 1) * (hunter.swimming ? SWIM_PACE : 1) * effects.pace * (1 - (1 - CROUCH.pace) * crouch.amount);
+	const pace = settings.huntingWalkSpeed * metre * (running ? RUN : 1) * (hunter.swimming ? SWIM_PACE : 1) * effects.pace * (effects.brush ?? 1) * (1 - (1 - CROUCH.pace) * crouch.amount);
 	const wantX = (forward[0] * ahead + right[0] * side) / length * pace;
 	const wantZ = (forward[1] * ahead + right[2] * side) / length * pace;
 
@@ -1136,6 +1253,8 @@ function showControls() {
 		]);
 	} else if (hunter.on == 'ladder') {
 		help.showHelp('Climbing aboard', [['', 'up the ladder and over the side']], false);
+	} else if (hunter.on == 'climb') {
+		help.showHelp('On a ladder', [['W', 'climb up (over the top at its head)'], ['S', 'climb down'], ['Shift', 'faster'], ['Space', 'jump off'], ['F', 'let go']], false);
 	} else if (hunter.on == 'mast') {
 		help.showHelp('Climbing', [['', hunter.climbingUp ? 'up to the crow\'s nest' : 'down to the deck'], ['Space', 'jump off'], ['F', 'let go']], false);
 	} else if (hunter.on == 'nest') {
@@ -1158,7 +1277,7 @@ function showControls() {
 			['C', 'crouch, and again to stand'],
 			...(settings.gameMode == 'Hunting' ? [['T', 'what you have equipped, and the map'], ['Tab / I', 'inventory'], ['M', 'map'], ['E', 'search a crate, a body, a pile, a snare · at a lake: drink · at a villager: trade'], ['X', 'at a burning campfire or stove: cook meat'], ['V (held)', 'what is what: names over things and people']]
 				: [['T', 'spawn menu: vehicles and weapons'], ['E', 'by your disc: pick it up']]),
-			['F', 'at a horse: get on · at its saddlebags: fill up your ammunition · at a biplane\'s cockpit: climb in · at its wheels: floats or wheels'],
+			['F', 'at a horse: get on · at its saddlebags: fill up your ammunition · at a biplane\'s cockpit: climb in · at its wheels: floats or wheels · at a ladder: climb it'],
 			settings.gameMode == 'Hunting' ? ['Esc', 'let go of the mouse'] : ['Tab / Esc', 'let go of the mouse'],
 			...(settings.gameMode == 'Hunting' ? [] : [['V (held)', 'who is who: names over the heads']]),
 		]);
@@ -1170,7 +1289,7 @@ function showControls() {
 export function hunterPlace() {
 	const seat = hunter.on == 'aboard' ? hunter.ride.rides.local(hunter.ride.vehicle, hunter.ride.seat) : null;
 	return { x: hunter.x, y: hunter.y, z: hunter.z, vx: hunter.vx, vz: hunter.vz, grounded: hunter.grounded && hunter.on != 'saddle', swimming: hunter.swimming, boxes: boxCount, active: active, on: hunter.on,
-		boat: hunter.on != 'land' && hunter.on != 'saddle' && hunter.on != 'aboard' && hunter.boat ? hunter.boat.id : null,
+		boat: hunter.on != 'land' && hunter.on != 'saddle' && hunter.on != 'aboard' && hunter.on != 'climb' && hunter.boat ? hunter.boat.id : null,
 		vehicle: hunter.on == 'saddle' && hunter.horse ? hunter.horse.id : seat ? hunter.ride.vehicle.id : null, local: seat ? seat.local : [...hunter.local], sit: seat?.sit ?? 0, seat: seat ? hunter.ride.seat : null, chute: hunter.chute,
 		crouch: crouch.amount };
 }

@@ -7,9 +7,10 @@ import * as ballistics from './ballistics.js'
 import * as npcs from './npcs.js'
 import * as boat from './boat.js'
 import * as town from './town.js'
+import { GRID, HOME } from './world.js'
 
 /*
-	THE AIRMEN (npcs.js's people): PER_STRIP biplanes (plane.js) to the landing strip, each with its pilot and its gunner, flown by the
+	THE AIRMEN (npcs.js's people): PER_STRIP biplanes (plane.js) to every landing strip near (STRIPS), each with its pilot and its gunner, flown by the
 	same sums as the players' (their stick, their rudder, their throttle and their mixture: THE AUTOPILOT), out of the strip's hangar
 	(their home: beside the end of the strip).
 
@@ -55,6 +56,7 @@ import * as town from './town.js'
 	Metres and seconds (the plane's p and v are; the people's places are world units)
 */
 const PER_STRIP = 2;
+const STRIPS = { most: 3, reach: 7000 };	// the strips with their airmen up: the nearest of those here (every tile with towns has one: world.js), no more than this many, this many metres off
 const PATROL = { height: 300, radius: 700, wander: 600, apart: 900, stagger: 70 };	// metres: over the strip, the circle, its middle's wandering, flock separation, height between them
 const CRUISE = 44, FIGHT = 56;			// metres a second
 const MAX_G = 4.5;
@@ -89,7 +91,8 @@ const scale = (a, s) => [a[0] * s, a[1] * s, a[2] * s];
 const len = (a) => Math.hypot(a[0], a[1], a[2]);
 const A = plane.AIRFRAME;
 const seaLevel = () => settings.waterWorldPosY / metre();
-const halfWorld = () => settings.terrainWorldSize * 0.5 / metre();
+// (metres: in a world of tiles, the whole world's, world.js; or the one land's)
+const halfWorld = () => (terrain.world ? GRID / 2 - 0.5 : 0.5) * settings.terrainWorldSize / metre();
 const groundAt = (x, z) => Math.max(terrain.land.heightAt(x * metre(), z * metre()) / metre(), seaLevel());	// (metres: the land, or the sea over it)
 
 export const airStats = { planes: 0, launches: 0, vickers: 0, lewis: 0, crashes: 0, shotDown: 0, phases: {} };
@@ -99,19 +102,17 @@ export const airStats = { planes: 0, launches: 0, vickers: 0, lewis: 0, crashes:
 // each: { pilot, gunner (npcs.js people), plane (plane.js's, or null), index, wingmen (the others), group, phase, phaseAt, fight (its
 //		memory: side, circle, reversals, the ground run's way out), guns ({ since, burst, rest } each), pan, relaunch, slump }
 const flights = [];
-let builtFor = null, hangar = null, strip = null;
+let builtFor = null;
 
-function makeFlights(land) {
-	clearFlights();
-	strip = land.strip;
-	if (!strip) return;
+// a strip's flights (key: which it is)
+function makeFlights(strip, key) {
 	const m = metre();
 	// the hangar: beside the strip's end nearer its middle... out from its side, by its first end
 	const side = [-strip.az, strip.ax];
 	const endAt = (end, along, out) => ({ x: strip.x + strip.ax * end * (strip.half - along * m) + side[0] * out * m, z: strip.z + strip.az * end * (strip.half - along * m) + side[1] * out * m });
 	const h = endAt(-1, 25, strip.flat / m + 14);
-	hangar = { x: h.x, z: h.z, heading: Math.atan2(-side[0], -side[1]), endAt };
-	const groups = [];
+	const hangar = { x: h.x, z: h.z, heading: Math.atan2(-side[0], -side[1]), endAt };
+	const groups = [], made = [];
 	for (let k = 0; k < PER_STRIP; k++) {
 		const group = npcs.makeGroup();
 		groups.forEach((g) => npcs.allyGroups(g, group));
@@ -119,12 +120,20 @@ function makeFlights(land) {
 		const spot = (n) => ({ x: hangar.x + side[0] * 0 + strip.ax * (k * 6 + n * 2.5) * m, z: hangar.z + strip.az * (k * 6 + n * 2.5) * m, heading: hangar.heading });
 		const pilot = npcs.makePerson('pilot', { hat: 'aviator', gun: 'none', group, home: spot(0), name: 'pilot' });
 		const gunner = npcs.makePerson('gunner', { hat: 'aviator', gun: 'none', group, home: spot(1), name: 'air gunner' });
-		const f = { pilot, gunner, plane: null, index: k, group, phase: 'patrol', phaseAt: 0, fight: {}, guns: { vickers: gunState(), lewis: gunState() }, pan: lewis.PAN, panChange: -1, relaunch: RELAUNCH, slump: null, aim: [0, 0.05, -1], seat: { pilot: 'aboard', gunner: 'aboard' } };
+		const f = { strip, hangar, stripKey: key, pilot, gunner, plane: null, index: k, group, phase: 'patrol', phaseAt: 0, fight: {}, guns: { vickers: gunState(), lewis: gunState() }, pan: lewis.PAN, panChange: -1, relaunch: RELAUNCH, slump: null, aim: [0, 0.05, -1], seat: { pilot: 'aboard', gunner: 'aboard' } };
 		flights.push(f);
+		made.push(f);
 		launchAirborne(f);
 	}
-	for (const f of flights) if (!f.war) f.wingmen = flights.filter((o) => o !== f && !o.war);
+	for (const f of made) f.wingmen = made.filter((o) => o !== f);
 	airStats.planes = flights.length;
+}
+// the strips to have airmen at: { key, strip } each, the nearest first (see STRIPS)
+function stripsNow(land) {
+	const all = land.strips ?? (land.strip ? [{ ...land.strip, tile: 'land' }] : []);
+	const cx = settings.camPosX, cz = settings.camPosZ, reach = STRIPS.reach * metre();
+	return all.map((s) => ({ key: s.tile + ':' + Math.round(s.x) + ',' + Math.round(s.z), strip: s, d: Math.hypot(s.x - cx, s.z - cz) }))
+		.filter((s) => s.d < reach || s.strip.tile == HOME || s.strip.tile == 'land').sort((a, b) => a.d - b.d).slice(0, STRIPS.most);
 }
 const gunState = () => ({ since: 0, burst: 0, rest: 0, owed: 0 });
 // (the strip's own, or which)
@@ -152,7 +161,7 @@ function newPlane(f, x, z, heading) {
 	return p;
 }
 function launchAirborne(f) {
-	const m = metre(), a = f.index / PER_STRIP * Math.PI * 2;
+	const m = metre(), a = f.index / PER_STRIP * Math.PI * 2, strip = f.strip;
 	const x = strip.x + Math.cos(a) * PATROL.radius * m, z = strip.z + Math.sin(a) * PATROL.radius * m;
 	const heading = Math.atan2(-Math.sin(a), -Math.cos(a));		// (round the circle the way patrol goes)
 	const p = newPlane(f, x, z, heading);
@@ -166,9 +175,9 @@ function launchAirborne(f) {
 }
 function launchFromStrip(f) {
 	// (from the end that has it taking off into the wind: the wind blows along windDirection)
-	const dir = settings.windDirection;
+	const dir = settings.windDirection, strip = f.strip;
 	const end = f.end = dir[0] * strip.ax + dir[1] * strip.az < 0 ? -1 : 1;
-	const at = hangar.endAt(end, 14, 0);
+	const at = f.hangar.endAt(end, 14, 0);
 	newPlane(f, at.x, at.z, Math.atan2(-end * strip.ax, end * strip.az));
 	f.plane.throttle = 0;
 	setPhase(f, 'takeoff');
@@ -267,7 +276,7 @@ function safe(f, want, floor = FLOOR, look = LOOK_AHEAD) {
 function patrol(f, dt) {
 	const p = f.plane, t = npcs.now();
 	// (round the strip; in the war, its own town defending, the other's otherwise)
-	const C = f.war ? (f.war.task == 'defend' ? f.war.home : f.war.enemy) : strip;
+	const C = f.war ? (f.war.task == 'defend' ? f.war.home : f.war.enemy) : f.strip;
 	// (the circle kept inside the world)
 	const inside = halfWorld() - EDGE - PATROL.radius - 100;
 	const centre = [clamp(C.x / metre() + Math.cos(t * 0.011) * PATROL.wander, -inside, inside), 0, clamp(C.z / metre() + Math.sin(t * 0.017) * PATROL.wander, -inside, inside)];
@@ -292,7 +301,7 @@ function patrol(f, dt) {
 // TAKING OFF: down the strip, the tail up, lifted off, and climbing away straight ahead
 function takeOff(f, dt) {
 	const p = f.plane;
-	const heading = Math.atan2(-f.end * strip.ax, f.end * strip.az);
+	const heading = Math.atan2(-f.end * f.strip.ax, f.end * f.strip.az);
 	const ahead = [Math.sin(heading), 0, -Math.cos(heading)];
 	p.brake = false;
 	p.mixture = plane.mixtureBest(p.p[1] - seaLevel());
@@ -582,7 +591,7 @@ function stepFlight(f, dt) {
 		if (f.seat.pilot == 'home') {
 			f.relaunch -= dt;
 			// (one at a time off the strip)
-			const busy = flights.some((o) => o !== f && o.phase == 'takeoff' && o.plane && inPhase(o) < 12);
+			const busy = flights.some((o) => o !== f && o.stripKey == f.stripKey && o.phase == 'takeoff' && o.plane && inPhase(o) < 12);
 			if (f.relaunch <= 0 && !busy) {
 				if (f.seat.gunner == 'home') f.seat.gunner = 'aboard';
 				f.seat.pilot = 'aboard';
@@ -760,6 +769,7 @@ function bombRun(f, H, dt) {
 
 // Per frame (after npcs.js's)
 //-------------------------------------------------
+let stripsLook = 0;
 export function planesUpdate(dt) {
 	const land = terrain.land;
 	if (!npcs.on() || !npcs.runsHere()) {
@@ -768,7 +778,16 @@ export function planesUpdate(dt) {
 	}
 	// (in THE WAR only the sides' fly: the strip's own are put away until it is over)
 	if (npcs.war.on) { if (flights.some((f) => !f.war)) clearFlights(); builtFor = null; }
-	else if (land !== builtFor) { builtFor = land; makeFlights(land); }
+	else {
+		if (land !== builtFor) { clearFlights(); builtFor = land; }
+		// (every strip near with its own: those come near made, those gone off put away; looked at every so often)
+		if ((stripsLook -= dt) <= 0) {
+			stripsLook = 1;
+			const near = stripsNow(land), keys = new Set(near.map((s) => s.key));
+			clearFlights((f) => !f.war && !keys.has(f.stripKey));
+			for (const s of near) if (!flights.some((f) => !f.war && f.stripKey == s.key)) makeFlights(s.strip, s.key);
+		}
+	}
 	for (const f of [...flights]) stepFlight(f, dt);
 }
 
@@ -780,4 +799,5 @@ export function flightList() {
 	});
 }
 export const flightsForTest = flights;
-export const hangarForTest = () => hangar;
+export const hangarForTest = () => flights.find((f) => !f.war)?.hangar ?? null;
+export const stripsForTest = () => [...new Set(flights.filter((f) => !f.war).map((f) => f.stripKey))];

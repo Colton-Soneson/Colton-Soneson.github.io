@@ -281,7 +281,7 @@ export function weatherUpdate() {
 	}
 	weatherNow.coverage = Math.min(Math.max(weatherNow.coverage + settings.cloudCoverageBias, 0), 1);
 	// (without the high layer there is no sheet to close the sky)
-	weatherNow.skyCover = Math.max(smooth((weatherNow.coverage - 0.6) / 0.35), settings.cloudLayers >= 3 ? weatherNow.sheet : 0);
+	weatherNow.skyCover = Math.max(smooth((weatherNow.coverage - 0.6) / 0.35), settings.cloudLayers >= 2 ? weatherNow.sheet : 0);
 	weatherNow.mode = current.mode;
 	weatherNow.from = last.mode;
 	weatherNow.change = change;

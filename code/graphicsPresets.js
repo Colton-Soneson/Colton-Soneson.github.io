@@ -59,7 +59,7 @@ export const PRESETS = {
 		antiAliasing: 'smaa', anisotropicFiltering: 8,
 		grassTotalBladeCount: 420000, grassDrawDistance: 900, grassLodRings: 6,
 		forestDetailDistance: 60, forestMidDistance: 180, forestThinnedRings: 2, forestBillboardDistance: 420, forestDrawDistance: 5000,
-		boulderDrawDistance: 2500, waterTileResolution: 512, waterCascadeResolution: 256, cloudSteps: 48, cloudDrawDistance: 36000, cloudResolution: 2, waterTileInstanceCount: 5,
+		boulderDrawDistance: 2500, waterTileResolution: 512, waterCascadeResolution: 256, cloudSteps: 48, cloudDrawDistance: 45000, cloudResolution: 2, waterTileInstanceCount: 5,
 	},
 	'ultra': {
 		reversedDepth: true, terrainResolution: 8192, terrainDetailDistance: 1.5, terrainFarBake: 256, terrainRockDetail: 1, terrainRockVeins: 1, terrainGroundDetail: 1,
@@ -68,7 +68,7 @@ export const PRESETS = {
 		antiAliasing: 'smaa', anisotropicFiltering: 16,
 		grassTotalBladeCount: 600000, grassDrawDistance: 1200, grassLodRings: 7,
 		forestDetailDistance: 80, forestMidDistance: 240, forestThinnedRings: 2, forestBillboardDistance: 600, forestDrawDistance: 7000,
-		boulderDrawDistance: 3500, waterTileResolution: 512, waterCascadeResolution: 256, cloudSteps: 64, cloudDrawDistance: 45000, cloudResolution: 2, waterTileInstanceCount: 5,
+		boulderDrawDistance: 3500, waterTileResolution: 512, waterCascadeResolution: 256, cloudSteps: 64, cloudDrawDistance: 60000, cloudResolution: 2, waterTileInstanceCount: 5,
 	},
 };
 

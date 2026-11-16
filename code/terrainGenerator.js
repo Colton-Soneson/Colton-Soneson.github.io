@@ -402,6 +402,13 @@ export function createTerrainSampler(params) {
 
 	// relief: the shape of the land there (THE SHAPE OF THE LAND), world units; or null for the land as the noise alone has it (what the shape's
 	//		first round is routed over, and what the window on to the noise is chosen by)
+	// THE PLAINS (see PLAINS): how much of the valley floor is laid level here, 0 to PLAINS.amount
+	function plainsAt(x, z) {
+		const most = params.plains ?? PLAINS.amount;
+		if (most <= 0) return 0;
+		const across = PLAINS.scale * (params.plainsSize ?? 1);
+		return most * smoothstep(PLAINS.from, PLAINS.to, fbm((x + offsetX) / across + 71.3, (z + offsetZ) / across - 19.7, 3));
+	}
 	function sample(x, z, relief = null) {
 		const nx = x + offsetX, nz = z + offsetZ;
 
@@ -453,6 +460,8 @@ export function createTerrainSampler(params) {
 		let hills = relief === null ? fbm(nx / 1150 + 3.1, nz / 1150 - 7.4, 3) * 36 + fbm(nx / 330, nz / 330, 4) * 27 + fbm(nx / 95 + 5.2, nz / 95 + 1.3, 3) * 5 : fbm(nx / 95 + 5.2, nz / 95 + 1.3, 3) * 5;
 		hills *= (params.hillHeight ?? 1) * smoothstep(0.03, 0.22, inland);
 		if (relief !== null) hills += relief * smoothstep(COAST[0], COAST[1], inland) + (erodedFbm(nx / OUTCROPS.length, nz / OUTCROPS.length, 5) - 0.5) * OUTCROPS.height * smoothstep(OUTCROPS.from[0], OUTCROPS.from[1], relief);
+		// (THE ROLL of the grassland: not on the plains, nor up in the ranges)
+		if (relief !== null) hills += ROLL.height * (params.rolling ?? 1) * fbm(nx / ROLL.length + 13.7, nz / ROLL.length - 3.1, 3) * (1 - plainsAt(x, z)) * (1 - smoothstep(0.05, 0.4, rise)) * smoothstep(COAST[0], COAST[1] * 2, inland);
 		hills *= 0.3 + 0.7 * smoothstep(180, 650, Math.hypot(x, z + 70));	// gentler round the start: there are buildings to stand on it
 		hills = Math.max(hills, -0.45 * base);	// a dip between hills never gets back down to beach level, so the beach stays at the shore
 		let height = base + hills * (relief === null ? 1 - 0.6 * rise : 1);
@@ -468,7 +477,9 @@ export function createTerrainSampler(params) {
 		//		Not in the mountains or their forest, not hard up against the coast, and not on top of the start
 		const hollow = fbm(nx / 560 + 51.3, nz / 560 - 22.6, 3) + 0.3 * fbm(nx / 150 - 6.1, nz / 150 + 40.2, 2);
 		const wet = 0.5 - 0.42 * (params.lakes ?? 0.5);		// the noise has to be above this for there to be water: lower = more lakes
-		const allowed = smoothstep(0.1, 0.24, inland) * (1 - smoothstep(0, FOREST_THRESHOLD, mountain)) * smoothstep(420, 800, Math.hypot(x, z)) * seam;
+		//		(and only down on the low ground: up in the hills a hollow down to the sea's level is a pit. The lakes up there are THE
+		//		HIGHLAND LAKES, at their own level)
+		const allowed = smoothstep(0.1, 0.24, inland) * (1 - smoothstep(0, FOREST_THRESHOLD, mountain)) * smoothstep(420, 800, Math.hypot(x, z)) * seam * (relief === null ? 1 : 1 - smoothstep(LAKES.lowland[0], LAKES.lowland[1], relief));
 		// the valley: over a wide band of the noise the hills are levelled away and the ground brought down to just above the water.
 		//		A lake lies in the bottom of a broad dip, the land does not drop into it off a ledge
 		const valley = smoothstep(wet - 0.32, wet, hollow) * allowed;
@@ -510,7 +521,7 @@ export function createTerrainSampler(params) {
 	}
 	findHomeOffset();
 
-	return { sample: sample, erodedFbm: (x, z, octaves) => erodedFbm(x + offsetX * 0.001, z + offsetZ * 0.001, octaves), seamFade };
+	return { sample: sample, erodedFbm: (x, z, octaves) => erodedFbm(x + offsetX * 0.001, z + offsetZ * 0.001, octaves), seamFade, plainsAt };
 }
 
 //-------------------------------THE SHAPE OF THE LAND-------------------------------
@@ -546,7 +557,34 @@ const ROUGH = { height: 60, length: 1500 };	// the lie of the rock the streams g
 	dome is put under the land the rivers made: it falls away outwards, the way they run off it. So 5000 to 6000 m at the top:
 	the same law as all the land (erosion.js), its ridges and valleys worn into it as everywhere else
 */
-const MASSIF = { tiles: 12, count: [1, 2], radius: [10000, 13000], core: 0.85, apart: 2.2, uplift: 15, slope: 1.7, heart: 0.45, wobble: 0.3, dome: [7500, 9000], domeShape: 1.6 };
+const MASSIF = { tiles: 12, count: [1, 2], radius: [10000, 13000], least: 5000, inland: 4000, core: 0.85, apart: 2.2, uplift: 15, slope: 1.7, heart: 0.35, wobble: 0.3, dome: [7500, 9000], domeShape: 1.8 };
+/*
+	THE PLAINS: broad flat valley floors at the feet of the mountains (the Champlain valley, the Connecticut's in Vermont). Where its own broad
+	noise says (PLAINS.scale across, over PLAINS.from to PLAINS.to of it, PLAINS.amount of it at most: params.plains, params.plainsSize), the
+	valley floor round it (the lowest of the relief within PLAINS.reach, evened out) is filled up PLAINS.fill (what the rivers brought down),
+	and the land within PLAINS.top of that laid all but level to it; higher than that, the mountains stand up from it as they are. Not on a massif, and the coast's own rise kept (sample)
+	THE ROLL of the grassland: a gentle swell over it, ROLL.height (params.rolling times) over ROLL.length, not on the plains nor in the ranges
+*/
+const PLAINS = { amount: 0.9, scale: 5200, from: -0.12, to: 0.15, reach: 900, fill: 60, top: 260 };
+const ROLL = { height: 14, length: 520 };
+const PLAIN_WOODS = 0.75;		// how much of the woodland goes off a plain (a few copses left on it)
+/*
+	THE HIGHLAND LAKES: water with its own level, up in the land (the sea's lakes are hollows under the level of the sea: sample). The
+	erosion leaves no hollow anywhere (its water finds its way over every rim to the sea), so they are made: on a stream (LAKES.area
+	or more draining to it, LAKES.above or more over the sea, LAKES.coast from the open sea, not round the start; its stream going on
+	down from it gently, no more than LAKES.spill a point for LAKES.out points, not over a fall: its river would cut the shore away), its valley floor
+	above that point flooded to the point's height, as far up as the floor is less than LAKES.reach over it (a valley glacier's
+	overdeepened floor, a moraine's lake): those points dug down under the water (LAKES.shelf at the edge, LAKES.deepen more a point
+	further in, LAKES.depth at the most), the land round them held up LAKES.bank over it (the water never runs out over a low
+	side), and no lake of fewer points than LAKES.least nor more than LAKES.most (a smaller reach then). LAKES.perTile a tile on a
+	continent, for params.lakes 0.5 (more or fewer with it), none nearer another than LAKES.apart; params.lakeSize times as far up their
+	valleys (and as many more times as big at the most). The water's level at every point
+	of the continent's grid (lake: under it where there is a lake there, NO_LAKE elsewhere); a tile's from its relief window. (The sea's
+	lakes, sample's hollows, only where the relief is under LAKES.lowland: higher, a hollow down to the sea's level would be a pit)
+	(lakeOf: the highest of the points round it), its water drawn by rivers.js
+*/
+const LAKES = { perTile: 5, area: 0.4e6, above: 30, coast: 1500, start: 1400, reach: [16, 90], shelf: 3, deepen: 7, depth: [12, 40], bank: 3, least: 5, most: 1600, apart: 1800, out: 4, spill: 9, lowland: [25, 70], floor: 8 };
+export const NO_LAKE = -1e9;
 const HIGH = 1400;				// the Mountain Height the KSN and the SLOPE of the ranges are for
 const COAST = [0.012, 0.09];		// how far inland (see sample) the relief starts to rise, and where it is all there
 const OUTCROPS = { length: 260, height: 16, from: [40, 500] };	// the eroded noise on the high ground: how big, how high (world units), and from how high a relief to how high it is all there
@@ -574,10 +612,10 @@ function continentOf(params, cx, cz) {
 }
 
 // the relief of the continent a tile is in (see THE CONTINENT): { x0, z0, cell, cols, rows, height (world units over the land under it), area (square metres drained) }
-function continentShape(params, sample, noise) {
+function continentShape(params, sample, noise, plainsAt = null) {
 	const [cx, cz] = params.center ?? [0, 0];
 	const c = continentOf(params, cx, cz);
-	const key = [params.seed, params.mountainHeight, params.hillHeight ?? 1, params.worldSize, c.key].join('|');		// (and the land's other settings, through sample: the cache is let go with the land)
+	const key = [params.seed, params.mountainHeight, params.hillHeight ?? 1, params.worldSize, params.plains ?? PLAINS.amount, params.plainsSize ?? 1, params.massifInland ?? 1, params.massifHeight ?? 1, params.railGrade ?? RAIL.grade, params.lakes ?? 0.5, params.lakeSize ?? 1, c.key].join('|');		// (and the land's other settings, through sample: the cache is let go with the land)
 	const known = shapes.get(key);
 	if (known) return known;
 	const cell = SHAPE.cell, m = SHAPE.metre;
@@ -602,20 +640,31 @@ function continentShape(params, sample, noise) {
 			rough[i] = r * ROUGH.height;
 		}
 	}
-	// THE MASSIFS: where, and how far into each every point is
-	const tiles = c.key.split(' ').length;
+	// (how far every point is from the open sea round the land, world units: the sea the water the edge of the grid is in reaches (not a
+	//		lake), then two passes over the grid, a step and a corner step each way)
+	const seaDist = new Float32Array(n).fill(1e9), ocean = new Uint8Array(n), reach = [];
+	for (let i = 0; i < n; i++) { const col = i % cols, row = (i - col) / cols; if (outlet[i] && (col == 0 || row == 0 || col == cols - 1 || row == rows - 1)) { ocean[i] = 1; reach.push(i); } }
+	while (reach.length) { const i = reach.pop(), col = i % cols, row = (i - col) / cols; for (const j of [col > 0 ? i - 1 : -1, col < cols - 1 ? i + 1 : -1, row > 0 ? i - cols : -1, row < rows - 1 ? i + cols : -1]) if (j >= 0 && outlet[j] && !ocean[j]) { ocean[j] = 1; reach.push(j); } }
+	for (let i = 0; i < n; i++) if (ocean[i]) seaDist[i] = 0;
+	const near = (i, j, d) => { if (seaDist[j] + d < seaDist[i]) seaDist[i] = seaDist[j] + d; };
+	for (let row = 0; row < rows; row++) for (let col = 0; col < cols; col++) { const i = row * cols + col; if (col) near(i, i - 1, cell); if (row) { near(i, i - cols, cell); if (col) near(i, i - cols - 1, cell * 1.414); if (col < cols - 1) near(i, i - cols + 1, cell * 1.414); } }
+	for (let row = rows - 1; row >= 0; row--) for (let col = cols - 1; col >= 0; col--) { const i = row * cols + col; if (col < cols - 1) near(i, i + 1, cell); if (row < rows - 1) { near(i, i + cols, cell); if (col < cols - 1) near(i, i + cols + 1, cell * 1.414); if (col) near(i, i + cols - 1, cell * 1.414); } }
+	// THE MASSIFS: where (kept well in from the sea: MASSIF.inland of foothills and plains between them and it), and how far into each every point is
+	const tiles = c.key.split(' ').length, inland = MASSIF.inland * (params.massifInland ?? 1);
+	const massifOf = new Float32Array(n);
 	let massifs = [], outline = null;
 	if (tiles >= MASSIF.tiles) {
 		const random = seededRandom(((params.seed ?? 0) * 104723 + [...c.key].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) >>> 0, 7)) >>> 0);
 		const want = MASSIF.count[0] + Math.floor(random() * (MASSIF.count[1] - MASSIF.count[0] + 1));
 		const heart = [];
-		for (let i = 0; i < n; i++) if (cores[i] >= MASSIF.core) heart.push(i);
+		for (let i = 0; i < n; i++) if (cores[i] >= MASSIF.core && seaDist[i] >= inland + MASSIF.least) heart.push(i);
 		massifs = [];
 		for (let tries = 0; tries < 60 && massifs.length < want && heart.length; tries++) {
 			const i = heart[Math.floor(random() * heart.length)], x = c.x0 + (i % cols) * cell, z = c.z0 + Math.floor(i / cols) * cell;
-			const radius = MASSIF.radius[0] + (MASSIF.radius[1] - MASSIF.radius[0]) * random();
-			if (massifs.some((o) => Math.hypot(o.x - x, o.z - z) < MASSIF.apart * Math.max(o.radius, radius) * 0.5 + 0.5 * MASSIF.apart * radius)) continue;
-			massifs.push({ x, z, radius, dome: MASSIF.dome[0] + (MASSIF.dome[1] - MASSIF.dome[0]) * random() });
+			// (no bigger than keeps its edge MASSIF.inland from the sea)
+			const radius = Math.min(MASSIF.radius[0] + (MASSIF.radius[1] - MASSIF.radius[0]) * random(), seaDist[i] - inland), dome = (MASSIF.dome[0] + (MASSIF.dome[1] - MASSIF.dome[0]) * random()) * (params.massifHeight ?? 1);
+			if (radius < MASSIF.least || massifs.some((o) => Math.hypot(o.x - x, o.z - z) < MASSIF.apart * Math.max(o.radius, radius) * 0.5 + 0.5 * MASSIF.apart * radius)) continue;
+			massifs.push({ x, z, radius, dome });
 		}
 		outline = createNoise((params.seed ?? 0) + 6151);
 		for (let row = 0; row < rows; row++) for (let col = 0; col < cols; col++) {
@@ -642,13 +691,40 @@ function continentShape(params, sample, noise) {
 			if (outlet[i]) continue;
 			const x = c.x0 + col * cell, z = c.z0 + row * cell;
 			const d = Math.hypot(x - o.x, z - o.z) / o.radius * (1 + MASSIF.wobble * outline(x / 5200 + 3.7, z / 5200 - 8.1)[0]);
-			if (d < 1) height[i] += o.dome * Math.pow(1 - d, MASSIF.domeShape);
+			if (d < 1) { height[i] += o.dome * Math.pow(1 - d, MASSIF.domeShape); massifOf[i] = Math.max(massifOf[i], 1 - d); }
 		}
 	}
-	const shape = { x0: c.x0, z0: c.z0, cell, cols, rows, height, area: land.area };
+	// THE PLAINS (see PLAINS): the valley floors laid level, up to PLAINS.top over the lowest of the land round them (plain: how much each
+	//		point was, 0 to 1: open grassland there, not forest, plainOf)
+	const plain = new Float32Array(n);
+	if (plainsAt && (params.plains ?? PLAINS.amount) > 0) {
+		const r = Math.max(Math.round(PLAINS.reach / cell), 1), low = new Float32Array(n), floor = new Float32Array(n);
+		for (let row = 0; row < rows; row++) for (let col = 0; col < cols; col++) { let v = Infinity; for (let c2 = Math.max(col - r, 0); c2 <= Math.min(col + r, cols - 1); c2++) { const j = row * cols + c2; if (!outlet[j]) v = Math.min(v, height[j]); } low[row * cols + col] = v; }
+		for (let row = 0; row < rows; row++) for (let col = 0; col < cols; col++) { let v = Infinity; for (let r2 = Math.max(row - r, 0); r2 <= Math.min(row + r, rows - 1); r2++) v = Math.min(v, low[r2 * cols + col]); floor[row * cols + col] = v; }
+		// (evened out: a box over it, twice)
+		for (let pass = 0; pass < 2; pass++) {
+			const was = floor.slice();
+			for (let row = 0; row < rows; row++) for (let col = 0; col < cols; col++) {
+				let s = 0, k = 0;
+				for (let dr = -3; dr <= 3; dr++) for (let dc = -3; dc <= 3; dc++) { const rr = row + dr, cc = col + dc; if (rr < 0 || cc < 0 || rr >= rows || cc >= cols || !Number.isFinite(was[rr * cols + cc])) continue; s += was[rr * cols + cc]; k++; }
+				if (k) floor[row * cols + col] = s / k;
+			}
+		}
+		for (let i = 0; i < n; i++) {
+			if (outlet[i] || !Number.isFinite(floor[i])) continue;
+			const x = c.x0 + (i % cols) * cell, z = c.z0 + Math.floor(i / cols) * cell, P = plainsAt(x, z) * (1 - Math.min(massifOf[i] * 3, 1));
+			if (P <= 0) continue;
+			const level = floor[i] + PLAINS.fill, over = height[i] - level, laid = P * (over > 0 ? 1 - smoothstep(PLAINS.top * 0.5, PLAINS.top, over) : 1);
+			height[i] -= over * laid;
+			plain[i] = laid;
+		}
+	}
+	// THE HIGHLAND LAKES (see LAKES)
+	const lake = highlandLakes(params, c, { cols, rows, cell, height, outlet, seaDist, receiver: land.receiver, area: land.area }, (x, z, relief) => sample(x, z, relief).height);
+	const shape = { x0: c.x0, z0: c.z0, cell, cols, rows, height, area: land.area, plain, lake };
 	// (and the rivers in it: THE RIVERS, over the ground as it will be made, the relief in it)
-	const reliefOf = makeReliefAt(shape);
-	shape.rivers = riverLines(shape, land.receiver, (x, z) => sample(x, z, reliefOf(x, z)).height);
+	const reliefOf = makeReliefAt(shape), lakeOf = makeLakeOf(shape);
+	shape.rivers = riverLines(shape, land.receiver, (x, z) => sample(x, z, reliefOf(x, z)).height, lakeOf);
 	// (and its main peaks, and where its roads cross from one tile to the next: THE ROADS OF A CONTINENT)
 	const S = params.world?.size ?? params.worldSize, mine = new Set(c.key.split(' '));
 	shape.peaks = mainPeaks(shape, (x, z) => sample(x, z, reliefOf(x, z)).height).filter(([x, z]) => !params.world || mine.has(Math.round(x / S) + ',' + Math.round(z / S)));
@@ -771,17 +847,26 @@ function roadGates(params, c, groundAt, rivers = null) {
 	out once for the whole continent, so every tile has the same of it.
 		THE WAY		the two tiles with towns furthest apart its ends, and between them as many as RAIL.stops more of those with two towns, in
 					order along it, each one's middle a place on the way (moved on to the land), and between each two the cheapest way over the
-					relief's grid (A*): by how long it is, how much it climbs (RAIL.climb), how high it goes past RAIL.highFrom (RAIL.high: by
+					relief's grid (A*): by how long it is, how much it climbs (RAIL.climb, times how much steeper than the grade it is, to the
+					RAIL.steepPow, RAIL.steep times at the most: round the hills, not up them), along a river (RAIL.riverCost times: beside it,
+					over it only straight across), how high it goes past RAIL.highFrom (RAIL.high: by
 					the valleys and the passes), and dearer along the coast (lower than RAIL.coast). Not over the sea or a lake
-		THE LINE	that way rounded off (Chaikin, RAIL.round times) and a point every RAIL.step, each at the height of the land, then held to
-					RAIL.grade at the most from one to the next: evened out, and cut down or built up where it must be (RAIL.passes of each)
-		WHAT IT IS ON	the ground (laid on it, footpaths.js: a rail's cutting or bank), a TUNNEL where the land stands over it by RAIL.bore or
-					more for RAIL.least or more (straight from portal to portal), and a BRIDGE (stone arches) where it stands over the land by
-					RAIL.over or more, or over a river
+		THE LINE	that way evened out (RAIL.ease times) and rounded off (Chaikin, RAIL.round times) and a point every RAIL.step, each at the height of the land, then held to
+					RAIL.grade at the most from one to the next (params.railGrade): a little evened out (RAIL.passes, keeping RAIL.hold of the
+					land's each time, so it goes with the hills) and cut down or built up where it must be; and all of it on a bed RAIL.mound
+					over the land
+		WHAT IT IS ON	a TUNNEL where it runs on under the land, deeper than RAIL.cut all the way and RAIL.bore somewhere, for RAIL.least or
+					more (along the line, under the mountain all the way: its portals where the cutting to it is RAIL.cut deep); a BRIDGE
+					(stone arches) over the water (a river, a lake, an inlet: land under RAIL.wet) or over a gorge (the line more than
+					RAIL.fill over the land all the way across it and RAIL.gorge somewhere: its ends where the land comes up to within
+					RAIL.fill of it). Each only under a ridge or over a gorge, the land up again on the far side (its ends within RAIL.sided
+					of how deep it is of each other's height): not down the side of a valley, where the line goes down on the land. And the
+					ground (laid on it, footpaths.js), the rest: there the line goes with the land, no more than RAIL.fill over it on its
+					bank nor RAIL.cut down into it, evened out (RAIL.even times) within that, steeper than the grade where it must be
 	Gives { points: Float32Array, RAIL_FLOATS each: x, y (over the sea), z, what it is on (0 the ground, 1 a tunnel, 2 a bridge), length }, or
 	null (no line: fewer than two tiles with towns, or no way between them)
 */
-export const RAIL = { cell: 64, climb: 8, high: 0.01, highFrom: 400, coast: 80, coastCost: 3, dry: 14, greed: 1.25, round: 3, step: 16, grade: 0.04, passes: 12, hold: 0.5, bore: 34, least: 160, over: 30, river: 12, stops: 2, half: 4, tunnel: { half: 4.5, height: 12 } };
+export const RAIL = { cell: 64, climb: 60, high: 0.01, highFrom: 400, coast: 80, coastCost: 3, riverCost: 6, steep: 400, steepPow: 2, dry: 14, greed: 1.25, ease: 4, round: 3, step: 16, grade: 0.12, passes: 10, hold: 0.9, mound: 4, bore: 34, least: 160, cut: 20, fill: 10, even: 60, gorge: 25, sided: 0.6, wet: 2, river: 12, stops: 2, half: 4, tunnel: { half: 4.5, height: 12 } };
 export const RAIL_FLOATS = 4;
 function mainLine(params, c, shape, groundAt) {
 	if (!params.world) return null;
@@ -793,7 +878,7 @@ function mainLine(params, c, shape, groundAt) {
 	// (the land's height at a point of the grid, worked out the first time it is wanted)
 	const known = new Float32Array(cols * rows).fill(NaN);
 	const groundOf = (i) => { let v = known[i]; if (v !== v) { const [x, z] = at(i); v = known[i] = groundAt(x, z); } return v; };
-	const dry = (i) => height[i] > 0 && groundOf(i) > RAIL.dry;
+	const dry = (i) => height[i] > 0 && groundOf(i) > RAIL.dry && !(shape.lake && shape.lake[i] != NO_LAKE), grade = params.railGrade ?? RAIL.grade;
 	// THE WAY: its ends the two town tiles furthest apart, the rest in order along between them
 	let ends = [stops[0], stops[1]], far = -1;
 	for (const a of stops) for (const b of stops) { const d = Math.hypot(a[0] - b[0], a[1] - b[1]); if (d > far) { far = d; ends = [a, b]; } }
@@ -815,6 +900,9 @@ function mainLine(params, c, shape, groundAt) {
 	}).filter((i) => i >= 0);
 	if (places.length < 2) return null;
 	const n = cols * rows, cost = new Float64Array(n), from = new Int32Array(n);
+	// (where a river runs: dear to go along, so the line keeps beside it and goes over it straight across)
+	const river = new Uint8Array(n);
+	if (shape.rivers) for (let o = 0; o < shape.rivers.points.length; o += RIVER_FLOATS) river[cellOf(shape.rivers.points[o], shape.rivers.points[o + 1])] = 1;
 	const way = (s, goal) => {
 		cost.fill(Infinity); from.fill(-1);
 		cost[s] = 0;
@@ -833,7 +921,7 @@ function mainLine(params, c, shape, groundAt) {
 				const a = rr * cols + cc;
 				if (!dry(a)) continue;
 				const run = cell * Math.hypot(dc, dr), ha = groundOf(a), rise = Math.abs(ha - groundOf(k));
-				const g = cost[k] + run * (1 + RAIL.high * Math.max(ha - RAIL.highFrom, 0)) * (ha < RAIL.coast ? RAIL.coastCost : 1) + rise * RAIL.climb * Math.min(rise / run / RAIL.grade, 4);
+				const g = cost[k] + run * (1 + RAIL.high * Math.max(ha - RAIL.highFrom, 0)) * (ha < RAIL.coast ? RAIL.coastCost : 1) * (river[a] ? RAIL.riverCost : 1) + rise * RAIL.climb * Math.min(Math.pow(rise / run / grade, RAIL.steepPow), RAIL.steep);
 				if (g < cost[a]) { cost[a] = g; from[a] = k; const [x, z] = at(a); push([g + Math.hypot(x - gx, z - gz) * RAIL.greed, a]); }
 			}
 		}
@@ -844,9 +932,17 @@ function mainLine(params, c, shape, groundAt) {
 	};
 	let cells = [places[0]];
 	for (let i = 1; i < places.length; i++) { const w = way(places[i - 1], places[i]); if (w) cells.push(...w.slice(1)); }
+	// (not out to a town up a valley and back down it the same way: from where it comes back to a place it has been, on from there)
+	const seen = new Map(), kept = [];
+	for (const k of cells) {
+		if (seen.has(k)) { const back = seen.get(k); for (const q of kept.splice(back + 1)) seen.delete(q); continue; }
+		seen.set(k, kept.length); kept.push(k);
+	}
+	cells = kept;
 	if (cells.length < 4) return null;
-	// THE LINE: rounded off, a point every RAIL.step
+	// THE LINE: the grid's steps evened out (RAIL.ease times), rounded off, a point every RAIL.step
 	let pts = cells.map(at);
+	for (let pass = 0; pass < RAIL.ease; pass++) pts = pts.map((p, i) => i == 0 || i == pts.length - 1 ? p : [(pts[i - 1][0] + 2 * p[0] + pts[i + 1][0]) / 4, (pts[i - 1][1] + 2 * p[1] + pts[i + 1][1]) / 4]);
 	for (let r = 0; r < RAIL.round; r++) {
 		const next = [pts[0]];
 		for (let i = 0; i < pts.length - 1; i++) { const a = pts[i], b = pts[i + 1]; next.push([a[0] * 0.75 + b[0] * 0.25, a[1] * 0.75 + b[1] * 0.25], [a[0] * 0.25 + b[0] * 0.75, a[1] * 0.25 + b[1] * 0.75]); }
@@ -867,30 +963,48 @@ function mainLine(params, c, shape, groundAt) {
 	if (shape.rivers) for (let o = 0; o < shape.rivers.points.length; o += RIVER_FLOATS) wet.push(shape.rivers.points[o], shape.rivers.points[o + 1], shape.rivers.points[o + 3]);
 	const byRiver = even.map(([x, z]) => { for (let k = 0; k < wet.length; k += 3) if (Math.abs(wet[k] - x) < 120 && Math.abs(wet[k + 1] - z) < 120 && Math.hypot(wet[k] - x, wet[k + 1] - z) < wet[k + 2] + RAIL.river) return true; return false; });
 	// (its heights: the land's, held to the grade, evened out)
-	let y = land.slice(), most = RAIL.grade * RAIL.step;
+	let y = land.slice(), most = grade * RAIL.step;
 	for (let pass = 0; pass < RAIL.passes; pass++) {
 		y = y.map((v, i) => i == 0 || i == y.length - 1 ? v : (y[i - 1] + 2 * v + y[i + 1]) / 4 * (1 - RAIL.hold) + land[i] * RAIL.hold);
 		for (let i = 1; i < y.length; i++) y[i] = Math.min(Math.max(y[i], y[i - 1] - most), y[i - 1] + most);
 		for (let i = y.length - 2; i >= 0; i--) y[i] = Math.min(Math.max(y[i], y[i + 1] - most), y[i + 1] + most);
 	}
-	for (let i = 0; i < y.length; i++) y[i] = Math.max(y[i], 3);
-	// WHAT IT IS ON: tunnels (long enough stretches deep under the land, straight), bridges (high over it, or a river), the ground
-	const what = y.map((v, i) => land[i] - v > RAIL.bore ? 1 : byRiver[i] || v - land[i] > RAIL.over ? 2 : 0);
-	const stretch = (kind, least) => {
+	for (let i = 0; i < y.length; i++) y[i] = Math.max(y[i] + RAIL.mound, 3);
+	// WHAT IT IS ON: tunnels (long stretches on under the land, deep somewhere), bridges (over the water; over a gorge, high over it
+	//		somewhere), the ground
+	const wetHere = (i) => byRiver[i] || land[i] < RAIL.wet, under = (i) => land[i] + RAIL.mound - y[i], over = (i) => y[i] - land[i] - RAIL.mound;
+	const what = new Uint8Array(y.length);
+	// (each stretch where is() holds, and if it is one, keep() says so: then it is kind)
+	const stretches = (kind, is, keep) => {
 		for (let i = 0; i < what.length;) {
-			if (what[i] != kind) { i++; continue; }
+			if (!is(i)) { i++; continue; }
 			let j = i;
-			while (j + 1 < what.length && what[j + 1] == kind) j++;
-			if ((j - i + 1) * RAIL.step < least) for (let k = i; k <= j; k++) what[k] = 0;
-			else if (kind == 1) {
-				// (a tunnel straight, portal to portal: the land over it as it is)
-				for (let k = i + 1; k < j; k++) { const t = (k - i) / (j - i); even[k] = [even[i][0] + (even[j][0] - even[i][0]) * t, even[i][1] + (even[j][1] - even[i][1]) * t]; y[k] = y[i] + (y[j] - y[i]) * t; }
-			}
+			while (j + 1 < what.length && is(j + 1)) j++;
+			if (keep(i, j)) for (let k = i; k <= j; k++) what[k] = kind;
 			i = j + 1;
 		}
 	};
-	stretch(1, RAIL.least);
-	stretch(2, RAIL.step * 2);
+	const topOf = (i, j, f) => { let v = -Infinity; for (let k = i; k <= j; k++) v = Math.max(v, f(k)); return v; };
+	// (under a ridge or over a gorge, the land up again on the far side: its ends about as high as each other, for how deep it is. Not
+	//		down (or up) the side of a valley: there the line goes down with the land, on it)
+	const across = (i, j, deep) => Math.abs(y[j] - y[i]) < RAIL.sided * deep;
+	const onLand = (i, j) => { for (let k = i; k <= j; k++) y[k] = land[k] + RAIL.mound; return false; };
+	stretches(1, (i) => under(i) > RAIL.cut, (i, j) => { const deep = topOf(i, j, under); return (j - i + 1) * RAIL.step >= RAIL.least && deep > RAIL.bore && across(i, j, deep) || onLand(i, j); });
+	stretches(2, (i) => what[i] == 0 && over(i) > RAIL.fill, (i, j) => { const deep = topOf(i, j, over); return deep > RAIL.gorge && across(i, j, deep) || onLand(i, j); });
+	// (and the water, any of it)
+	stretches(2, (i) => what[i] == 0 && wetHere(i), () => true);
+	// (a bridge's abutments: a point more of it either end, on to the bank)
+	for (let i = 1; i < what.length - 1; i++) if (what[i] == 0 && (what[i - 1] == 2 || what[i + 1] == 2) && !(what[i - 1] == 1 || what[i + 1] == 1)) what[i] = 3;
+	for (let i = 0; i < what.length; i++) if (what[i] == 3) what[i] = 2;
+	// (on the ground, with the land: no more than RAIL.fill over it nor RAIL.cut into it, a little evened out; where it meets a bridge or
+	//		a tunnel, as they have it)
+	const free = (i) => i > 0 && i < y.length - 1 && what[i] == 0 && what[i - 1] == 0 && what[i + 1] == 0;
+	const hold = (i) => { y[i] = Math.min(Math.max(y[i], land[i] + RAIL.mound - RAIL.cut), land[i] + RAIL.mound + RAIL.fill); };
+	for (let i = 0; i < y.length; i++) if (what[i] == 0) hold(i);
+	for (let pass = 0; pass < RAIL.even; pass++) {
+		const was = y.slice();
+		for (let i = 0; i < y.length; i++) if (free(i)) { y[i] = (was[i - 1] + 2 * was[i] + was[i + 1]) / 4; hold(i); }
+	}
 	const points = new Float32Array(even.length * RAIL_FLOATS);
 	even.forEach(([x, z], i) => points.set([x, y[i], z, what[i]], i * RAIL_FLOATS));
 	let length = 0;
@@ -942,19 +1056,124 @@ function tilePeaks(params, shape) {
 	return (shape.peaks ?? []).filter(([x, z]) => Math.abs(x - ox) < half - 40 && Math.abs(z - oz) < half - 40);
 }
 
+// THE HIGHLAND LAKES (see LAKES): g the continent's grid ({ cols, rows, cell, height (changed: the lakes dug into it), outlet, seaDist,
+//		receiver, area }), ground(x, z, relief) the land there over the sea with the relief at that. Gives the water's level at each point
+function highlandLakes(params, c, g, ground) {
+	const { cols, rows, cell, height, outlet, seaDist, receiver, area } = g, n = cols * rows;
+	const level = new Float32Array(n).fill(NO_LAKE);
+	const amount = (params.lakes ?? 0.5) * 2, size = params.lakeSize ?? 1, most = LAKES.most * size * size;
+	const want = Math.round(c.key.split(' ').length * LAKES.perTile * amount);
+	if (want <= 0) return level;
+	const random = seededRandom(((params.seed ?? 0) * 48271 + [...c.key].reduce((h, ch) => (h * 33 + ch.charCodeAt(0)) >>> 0, 11)) >>> 0);
+	const xOf = (i) => c.x0 + (i % cols) * cell, zOf = (i) => c.z0 + Math.floor(i / cols) * cell;
+	// (the points that drain to each: the way up a valley)
+	const donors = Array.from({ length: n }, () => null);
+	for (let i = 0; i < n; i++) { const r = receiver[i]; if (r >= 0) (donors[r] ??= []).push(i); }
+	const near8 = (i) => { const col = i % cols, row = (i - col) / cols, out = []; for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) { if (!dr && !dc) continue; const cc = col + dc, rr = row + dr; if (cc >= 0 && rr >= 0 && cc < cols && rr < rows) out.push(rr * cols + cc); } return out; };
+	const sites = [];
+	for (let i = 0; i < n; i++) if (!outlet[i] && receiver[i] >= 0 && area[i] >= LAKES.area && height[i] > LAKES.above && seaDist[i] > LAKES.coast && Math.hypot(xOf(i), zOf(i)) > LAKES.start) sites.push(i);
+	// (in a random order: the same every time)
+	for (let k = sites.length - 1; k > 0; k--) { const j = Math.floor(random() * (k + 1)); [sites[k], sites[j]] = [sites[j], sites[k]]; }
+	const made = [], held = new Uint8Array(n);		// (held: a lake's shore, never dug into for another)
+	for (let t = 0; t < sites.length && made.length < want && t < want * 40; t++) {
+		const sill = sites[t], x = xOf(sill), z = zOf(sill), L = height[sill];
+		if (made.some((o) => Math.hypot(o.x - x, o.z - z) < LAKES.apart + o.span)) continue;
+		let falls = false;
+		for (let k = 1, r = receiver[sill]; k <= LAKES.out && r >= 0 && !outlet[r]; k++, r = receiver[r]) if (height[r] < L - LAKES.spill * k) falls = true;
+		if (falls) continue;
+		// the floor flooded: up the valley from the sill while it is less than reach over it (smaller if that is too much)
+		let reach = (LAKES.reach[0] + (LAKES.reach[1] - LAKES.reach[0]) * Math.pow(random(), 1.5)) * size, floor = null;
+		for (let tries = 0; tries < 5; tries++, reach *= 0.6) {
+			const got = [], seen = new Set([sill]);
+			for (let q = 0, list = [sill]; q < list.length && got.length <= most; q++) for (const j of donors[list[q]] ?? []) {
+				if (seen.has(j) || outlet[j] || height[j] >= L + reach || level[j] != NO_LAKE || held[j]) continue;
+				seen.add(j); list.push(j); got.push(j);
+			}
+			if (got.length <= most) { floor = got; break; }
+		}
+		if (!floor || floor.length < LAKES.least) continue;
+		const inside = new Set(floor);
+		// its shore: every point round it not in it (the sill one of them). None at the sea, none in another lake's
+		const shore = new Set();
+		for (const j of floor) for (const k of near8(j)) if (!inside.has(k)) shore.add(k);
+		if ([...shore].some((k) => outlet[k] || level[k] != NO_LAKE)) continue;
+		// (how far in from the shore each point is, in points)
+		const inFrom = new Map(), ring = [...shore];
+		for (const k of ring) inFrom.set(k, 0);
+		for (let q = 0; q < ring.length; q++) for (const j of near8(ring[q])) if (inside.has(j) && !inFrom.has(j)) { inFrom.set(j, inFrom.get(ring[q]) + 1); ring.push(j); }
+		// the water: the land at the sill as it will be made (the relief there and the rest over it, sample), and everything else to that
+		const water = ground(x, z, L), deepest = LAKES.depth[0] + (LAKES.depth[1] - LAKES.depth[0]) * random();
+		// the floor dug down under it (the relief lowered by what the land over it is too high, twice: it is near enough the same
+		//		amount), never down to the sea's level (the sea would be in it too), nor the relief under nothing
+		for (const j of floor) {
+			const bed = Math.max(water - Math.min(LAKES.shelf + LAKES.deepen * ((inFrom.get(j) ?? 1) - 1), deepest), LAKES.floor);
+			for (let pass = 0; pass < 2; pass++) { const over = ground(xOf(j), zOf(j), height[j]) - bed; if (over > 0) height[j] = Math.max(height[j] - over, 0); }
+			level[j] = water;
+		}
+		// and the shore held up over it
+		for (const k of shore) { for (let pass = 0; pass < 2; pass++) { const over = ground(xOf(k), zOf(k), height[k]) - (water + LAKES.bank); if (over < 0) height[k] -= over; } held[k] = 1; }
+		let span = 0;
+		for (const j of floor) span = Math.max(span, Math.hypot(xOf(j) - x, zOf(j) - z));
+		made.push({ x, z, span, level: water, points: floor.length });
+	}
+	level.made = made;
+	return level;
+}
+// the highland lakes' water at a world position (over the sea), from a grid of their levels ({ x0, z0, cell, cols, rows, lake }): the
+//		highest of the four points round it, NO_LAKE if none is in one (where the land is under that, it is in the lake)
+function makeLakeOf(window) {
+	if (!window?.lake) return () => NO_LAKE;
+	const { x0, z0, cell, cols, rows, lake } = window;
+	return (x, z) => {
+		const gx = (x - x0) / cell, gz = (z - z0) / cell, c = Math.floor(gx), r = Math.floor(gz);
+		if (c < 0 || r < 0 || c >= cols - 1 || r >= rows - 1) return NO_LAKE;
+		const i = r * cols + c;
+		return Math.max(lake[i], lake[i + 1], lake[i + cols], lake[i + cols + 1]);
+	};
+}
+
+// a tile's highland lakes to draw (rivers.js): a square of water between each four points of the relief's window with a lake at any of
+//		them, at the highest water of the four, each drawn by the one tile its middle is in. [x0, z0, x1, z1, water over the sea] each.
+//		(Its edges are on the points round the lake, its shore held up over the water: there the land stands over it)
+const LAKE_HALF = 1e6;
+function lakeQuadsOf(params, window) {
+	const [ox, oz] = params.center ?? [0, 0], half = params.worldSize / 2, out = [];
+	if (!window?.lake) return new Float32Array(0);
+	const { x0, z0, cell, cols, rows, lake } = window;
+	for (let r = 0; r < rows - 1; r++) for (let c = 0; c < cols - 1; c++) {
+		const i = r * cols + c, L = Math.max(lake[i], lake[i + 1], lake[i + cols], lake[i + cols + 1]);
+		if (L == NO_LAKE) continue;
+		const x = x0 + c * cell, z = z0 + r * cell, mx = x + cell / 2 - ox, mz = z + cell / 2 - oz;
+		if (mx < -half || mx >= half || mz < -half || mz >= half) continue;
+		out.push(x, z, x + cell, z + cell, L);
+	}
+	return new Float32Array(out);
+}
+
 // a tile's window of its continent's relief: the points over it and 2 more all round (for the cubic between them). Plain data: it goes to the
 //		other threads with the chunk grids
 function reliefWindow(params, shape) {
 	const [ox, oz] = params.center ?? [0, 0], half = params.worldSize / 2, cell = shape.cell;
 	const x0 = ox - half - 2 * cell, z0 = oz - half - 2 * cell, cols = Math.round(params.worldSize / cell) + 5, rows = cols;
-	const height = new Float32Array(cols * rows), area = new Float32Array(cols * rows);
+	const height = new Float32Array(cols * rows), area = new Float32Array(cols * rows), plain = new Float32Array(cols * rows), lake = new Float32Array(cols * rows).fill(NO_LAKE);
 	const c0 = Math.round((x0 - shape.x0) / cell), r0 = Math.round((z0 - shape.z0) / cell);
 	for (let row = 0; row < rows; row++) for (let col = 0; col < cols; col++) {
 		const sc = Math.min(Math.max(c0 + col, 0), shape.cols - 1), sr = Math.min(Math.max(r0 + row, 0), shape.rows - 1);
 		height[row * cols + col] = shape.height[sr * shape.cols + sc];
 		area[row * cols + col] = shape.area[sr * shape.cols + sc];
+		plain[row * cols + col] = shape.plain?.[sr * shape.cols + sc] ?? 0;
+		lake[row * cols + col] = shape.lake?.[sr * shape.cols + sc] ?? NO_LAKE;
 	}
-	return { x0, z0, cell, cols, rows, height, area };
+	return { x0, z0, cell, cols, rows, height, area, plain, lake };
+}
+// how much the land at a world position was laid level for THE PLAINS (0 to 1), bilinear between the points of the window
+function makePlainOf(window) {
+	if (!window?.plain) return () => 0;
+	const { x0, z0, cell, cols, rows, plain } = window;
+	return (x, z) => {
+		const gx = Math.min(Math.max((x - x0) / cell, 0), cols - 1.0001), gz = Math.min(Math.max((z - z0) / cell, 0), rows - 1.0001), c = Math.floor(gx), r = Math.floor(gz), fx = gx - c, fz = gz - r, i = r * cols + c;
+		return (plain[i] * (1 - fx) + plain[i + 1] * fx) * (1 - fz) + (plain[i + cols] * (1 - fx) + plain[i + cols + 1] * fx) * fz;
+	};
 }
 
 // the relief at a world position: cubic (Catmull-Rom) between the points of the window, so the ground has no creases along them
@@ -1009,8 +1228,10 @@ const RIVERS = { area: 0.25e6, width: [3.5, 0.5], depth: [0.35, 0.4], incise: 0.
 export const RIVER_FLOATS = 6;		// a point of a river: x, z, its water (over the sea), half its width, its depth, how far along its line from the head
 
 // the lines of a continent's rivers: { points: Float32Array, RIVER_FLOATS each, starts: Int32Array, where each line's points begin (and
-//		one more, the end) }. natural(x, z): the ground there, over the sea
-function riverLines(shape, receiver, natural) {
+//		one more, the end) }. natural(x, z): the ground there, over the sea; lakeOf(x, z): a highland lake's water there (THE HIGHLAND
+//		LAKES: through one a river's water is the lake's, and out of it no lower to begin with)
+function riverLines(shape, receiver, natural, lakeOf = () => NO_LAKE) {
+	const inLake = (x, z) => { const L = lakeOf(x, z); return L != NO_LAKE && natural(x, z) < L ? L : null; };
 	const { cols, x0, z0, cell, area } = shape, n = area.length, m = SHAPE.metre;
 	const nodes = [];
 	for (let i = 0; i < n; i++) if (area[i] >= RIVERS.area && receiver[i] >= 0) nodes.push(i);
@@ -1034,7 +1255,7 @@ function riverLines(shape, receiver, natural) {
 	const water = new Map(), upstream = new Map();
 	for (const i of nodes) {
 		const [x, z] = placeOf(i);
-		const w = Math.max(Math.min(natural(x, z) - RIVERS.incise * m, upstream.get(i) ?? Infinity), 0);
+		const w = inLake(x, z) ?? Math.max(Math.min(natural(x, z) - RIVERS.incise * m, upstream.get(i) ?? Infinity), 0);
 		water.set(i, w);
 		const r = receiver[i];
 		upstream.set(r, Math.min(upstream.get(r) ?? Infinity, w));
@@ -1077,7 +1298,7 @@ function riverLines(shape, receiver, natural) {
 		}
 		for (let k = 1; k < cut.length - 1; k++) { cut[k][0] = 0.25 * cut[k - 1][0] + 0.5 * cut[k][0] + 0.25 * cut[k + 1][0]; cut[k][1] = 0.25 * cut[k - 1][1] + 0.5 * cut[k][1] + 0.25 * cut[k + 1][1]; }
 		// (and its water from the ground where it is now: no higher than that cut down, nor than upstream)
-		for (let k = 0; k < cut.length; k++) cut[k][2] = Math.max(Math.min(cut[k][2], natural(cut[k][0], cut[k][1]) - RIVERS.incise * m, k > 0 ? cut[k - 1][2] : Infinity), 0);
+		for (let k = 0; k < cut.length; k++) cut[k][2] = inLake(cut[k][0], cut[k][1]) ?? Math.max(Math.min(cut[k][2], natural(cut[k][0], cut[k][1]) - RIVERS.incise * m, k > 0 ? cut[k - 1][2] : Infinity), 0);
 		starts.push(points.length / RIVER_FLOATS);
 		let along = 0;
 		cut.forEach((p, k) => {
@@ -1094,6 +1315,8 @@ function riverLines(shape, receiver, natural) {
 //		riverLines has them }. Its own arrays: they go to the other threads, and the continent's are kept
 function riverWindow(params, shape) {
 	const [ox, oz] = params.center ?? [0, 0], half = params.worldSize / 2, { points, starts } = shape.rivers;
+	// (not drawn through a highland lake, nor cut: the lake is the water there)
+	const lakeOf = makeLakeOf(shape), lakeHere = (a) => lakeOf(points[a], points[a + 1]) != NO_LAKE && points[a + 2] >= lakeOf(points[a], points[a + 1]) - 0.01;
 	const near = 2 * shape.cell + RIVERS.reach + 64;
 	const cut = [], draw = [], drawStarts = [];
 	for (let line = 0; line < starts.length - 1; line++) {
@@ -1102,10 +1325,11 @@ function riverWindow(params, shape) {
 			const a = k * RIVER_FLOATS, b = a + RIVER_FLOATS;
 			const lo = [Math.min(points[a], points[b]) - points[b + 3] - near, Math.min(points[a + 1], points[b + 1]) - points[b + 3] - near];
 			const hi = [Math.max(points[a], points[b]) + points[b + 3] + near, Math.max(points[a + 1], points[b + 1]) + points[b + 3] + near];
-			if (hi[0] >= ox - half && lo[0] <= ox + half && hi[1] >= oz - half && lo[1] <= oz + half) for (let q = 0; q < 2 * RIVER_FLOATS; q++) cut.push(points[a + q]);
+			// (not cut through a highland lake: its banks there would stand up through the water)
+			if (hi[0] >= ox - half && lo[0] <= ox + half && hi[1] >= oz - half && lo[1] <= oz + half && !(lakeHere(a) && lakeHere(b))) for (let q = 0; q < 2 * RIVER_FLOATS; q++) cut.push(points[a + q]);
 			// (drawn by the tile the middle of the stretch is in)
 			const mx = 0.5 * (points[a] + points[b]) - ox, mz = 0.5 * (points[a + 1] + points[b + 1]) - oz;
-			const mine = mx >= -half && mx < half && mz >= -half && mz < half;
+			const mine = mx >= -half && mx < half && mz >= -half && mz < half && !(lakeHere(a) && lakeHere(b));
 			if (mine && !open) { drawStarts.push(draw.length / RIVER_FLOATS); for (let q = 0; q < RIVER_FLOATS; q++) draw.push(points[a + q]); }
 			if (mine) for (let q = 0; q < RIVER_FLOATS; q++) draw.push(points[b + q]);
 			open = mine;
@@ -1258,7 +1482,7 @@ export function makeChunkBuilder(params, grids, sampler = createTerrainSampler(p
 	const cellSize = params.worldSize / cells;
 	const half = params.worldSize * 0.5;
 	const [ox, oz] = params.center ?? [0, 0];		// (a tile of the world's: world.js. Its grid round its own middle)
-	const reliefAt = makeReliefAt(relief);
+	const reliefAt = makeReliefAt(relief), plainOf = makePlainOf(relief), lakeOf = makeLakeOf(relief);
 
 	// one of the data grids at a world position, bilinear between the 4 grid points around it
 	function gridAt(grid, x, z) {
@@ -1273,14 +1497,16 @@ export function makeChunkBuilder(params, grids, sampler = createTerrainSampler(p
 	//		Returns the height above sea level, and leaves what covers the point (see coverOf) in landAtCover
 	let landAtCover = 0;
 	function landAt(x, z) {
-		const result = sample(x, z, reliefAt(x, z));
+		const result = sample(x, z, reliefAt(x, z)), laid = plainOf(x, z);
 		// (how marshy it is comes from the data grid, which knows about every lake. sample only knows the ones it hollowed out itself)
 		const marsh = gridAt(marshes, x, z);
-		landAtCover = coverOf(mountainCover(result.mountain, result.height, params), result.woodland, marsh);
+		landAtCover = coverOf(mountainCover(result.mountain * (1 - laid), result.height, params), result.woodland * (1 - PLAIN_WOODS * laid), marsh);
 		let height = result.height - (result.height < 0 ? bedFall(params, gridAt(beyondDrop, x, z)) : 0);
 		// the rivers cut into it (THE RIVERS): stony under the water
 		height = riverCut.cut(x, z, height);
 		if (riverCut.wet) landAtCover = RIVERS.cover;
+		// (and a highland lake's bed, under its water, the same: THE HIGHLAND LAKES)
+		if (height < lakeOf(x, z)) landAtCover = RIVERS.cover;
 		// a town: its own hill, and its streets cut into that (see townLayout.js). Its ground is short turf
 		if (grids.townStrength) {
 			const town = gridAt(grids.townStrength, x, z);
@@ -1406,13 +1632,13 @@ export function makeChunkBuilder(params, grids, sampler = createTerrainSampler(p
 		chunkGrids								the grids buildChunk reads, so another thread can make a builder of its own (see makeChunkBuilder)
 */
 export function generateTerrain(params) {
-	const { sample, erodedFbm, seamFade } = createTerrainSampler(params);
+	const { sample, erodedFbm, seamFade, plainsAt } = createTerrainSampler(params);
 	// the shape of the land (THE SHAPE OF THE LAND): its continent's, and this tile's window of it
-	const shape = continentShape(params, sample, createNoise((params.seed ?? 0) + 4057));
+	const shape = continentShape(params, sample, createNoise((params.seed ?? 0) + 4057), plainsAt);
 	if (params.footpaths && shape.rails === undefined) shape.rails = shape.makeRails();
 	const relief = reliefWindow(params, shape);
 	const rivers = riverWindow(params, shape), riverCut = makeRiverCutter(rivers.cut);
-	const reliefAt = makeReliefAt(relief);
+	const reliefAt = makeReliefAt(relief), plainOf = makePlainOf(relief), lakeOf = makeLakeOf(relief);
 
 	// Two resolutions. The DATA grid (heights, zones, the ridge skeleton, what the water and the grass read) is always this fine.
 	//		The MESH is built separately, a chunk at a time (see buildChunk): finer than this near the camera, coarser far away
@@ -1430,6 +1656,7 @@ export function generateTerrain(params) {
 	const covers = new Float32Array(points * points);
 	const marshes = new Float32Array(points * points);
 	const lakes = new Float32Array(points * points);
+	const highLakes = new Float32Array(points * points);		// a highland lake's water over each point (THE HIGHLAND LAKES), NO_LAKE if none
 	const rises = new Float32Array(points * points);
 	const zones = new Uint8Array(points * points);
 	const normals = new Float32Array(points * points * 3);
@@ -1438,12 +1665,16 @@ export function generateTerrain(params) {
 	for (let row = 0; row < points; row++) {
 		for (let col = 0; col < points; col++) {
 			const result = sample(xAt(col), zAt(row), reliefAt(xAt(col), zAt(row)));
-			const i = row * points + col;
+			const i = row * points + col, laid = plainOf(xAt(col), zAt(row));
 			heights[i] = result.height;		// above sea level for now
-			mountains[i] = result.mountain;
-			woodlands[i] = result.woodland;
+			// (THE PLAINS: open grassland, the forest and the rock of the range they lie in gone off them)
+			mountains[i] = result.mountain * (1 - laid);
+			woodlands[i] = result.woodland * (1 - PLAIN_WOODS * laid);
 			marshes[i] = result.marsh;
 			rises[i] = result.rise;
+			highLakes[i] = lakeOf(xAt(col), zAt(row));
+			// (under a highland lake's water: its bed, mud)
+			if (highLakes[i] > heights[i]) marshes[i] = 1;
 		}
 	}
 
@@ -1495,10 +1726,10 @@ export function generateTerrain(params) {
 	//		There it is by distance: the 40 units back from the water, fading out. And any low flat ground beyond that
 	//		which would have been beach, if it is nearer to the lake than to the sea: a lake has no surf to make sand
 	const marshWidth = 40 / cellSize;
-	const toLake = distanceTo((i) => heights[i] < 0 && !sea[i]);
+	const toLake = distanceTo((i) => (heights[i] < 0 && !sea[i]) || highLakes[i] > heights[i]);
 	const toSea = distanceTo((i) => sea[i] == 1);
 	for (let i = 0; i < points * points; i++) {
-		const lake = heights[i] < 0 && !sea[i];
+		const lake = (heights[i] < 0 && !sea[i]) || highLakes[i] > heights[i];
 		if (!sea[i]) marshes[i] = Math.max(marshes[i], clamp01(1 - toLake[i] / marshWidth));
 		if (heights[i] >= 0 && heights[i] < params.beachHeight + params.bankHeight + 1 && toLake[i] < toSea[i]) {
 			marshes[i] = Math.max(marshes[i], clamp01(1.6 - toLake[i] * cellSize / 220));
@@ -1539,7 +1770,9 @@ export function generateTerrain(params) {
 			// (and the rivers cut into it: THE RIVERS)
 			heights[i] = riverCut.cut(xAt(col), zAt(row), heights[i]);
 			covers[i] = riverCut.wet ? RIVERS.cover : coverOf(mountainCover(mountains[i], heights[i], params), woodlands[i], marshes[i]);
-			zones[i] = riverCut.wet && heights[i] >= 0 ? ZONE_RIVER : classifyZone(heights[i], covers[i], params, !sea[i]);
+			zones[i] = highLakes[i] > heights[i] ? ZONE_LAKE : riverCut.wet && heights[i] >= 0 ? ZONE_RIVER : classifyZone(heights[i], covers[i], params, !sea[i]);
+			// (a highland lake's bed: as a river's, no grass up through the water (the grass knows only the sea's level: vfc_grass.js))
+			if (zones[i] == ZONE_LAKE && heights[i] >= 0) covers[i] = RIVERS.cover;
 			heights[i] += params.seaLevel;
 		}
 	}
@@ -1608,66 +1841,72 @@ export function generateTerrain(params) {
 	*/
 	const strip = params.landingStrip ? planStrip() : null;
 	function planStrip() {
-		const site = townSites[0] ?? { x: 0, z: 0 };
 		const hAt = (x, z) => gridValue(aboveSea, x, z);
 		const zoneHere = (x, z) => { const gx = Math.round((x - ox + half) / cellSize), gz = Math.round((z - oz + half) / cellSize); return gx < 0 || gz < 0 || gx > cells || gz > cells ? ZONE_OCEAN : zones[gz * points + gx]; };
 		const dryEnough = params.beachHeight + params.bankHeight + 2;
 		const half2 = STRIP.length / 2 + 20;
 		let best = null;
-		for (let r = STRIP.reach[0]; r <= STRIP.reach[1]; r += 140) {
-			for (let a = 0; a < 32; a++) {
-				const around = a / 32 * Math.PI * 2, cx = site.x + Math.sin(around) * r, cz = site.z + Math.cos(around) * r;
-				if (Math.abs(cx - ox) > half - 800 || Math.abs(cz - oz) > half - 800) continue;
-				for (let h = 0; h < 16; h++) {
-					const ax = Math.cos(h / 16 * Math.PI), az = Math.sin(h / 16 * Math.PI);
-					let ok = true, su = 0, sh = 0, suu = 0, suh = 0, n = 0, woods = 0;
-					const samples = [];
-					for (let i = 0; i <= 12 && ok; i++) {
-						const u = (i / 12 * 2 - 1) * half2;
-						for (const v of [-STRIP.flat, 0, STRIP.flat]) {
-							const x = cx + ax * u - az * v, z = cz + az * u + ax * v;
-							const zone = zoneHere(x, z), height = hAt(x, z);
-							if ((zone != ZONE_GRASSLAND && zone != ZONE_FOREST) || height < dryEnough || townAt(x, z) > 0.02) { ok = false; break; }
-							if (zone == ZONE_FOREST) woods++;
-							samples.push([u, height]);
-							if (v == 0) { su += u; sh += height; suu += u * u; suh += u * height; n++; }
+		// (round the first town; with no place there, round the others; and with none at all, looser: any dry ground but the snow, the
+		//		strip laid level on it all the same, a little more cut and fill and a little steeper ways in)
+		const tries = [], sites = townSites.length ? townSites : [{ x: 0, z: 0 }];
+		for (const loose of [false, true]) for (const site of sites) tries.push([site, loose]);
+		for (const [site, loose] of tries) {
+			if (best) break;
+			for (let r = STRIP.reach[0]; r <= STRIP.reach[1]; r += 140) {
+				for (let a = 0; a < 32; a++) {
+					const around = a / 32 * Math.PI * 2, cx = site.x + Math.sin(around) * r, cz = site.z + Math.cos(around) * r;
+					if (Math.abs(cx - ox) > half - 800 || Math.abs(cz - oz) > half - 800) continue;
+					for (let h = 0; h < 16; h++) {
+						const ax = Math.cos(h / 16 * Math.PI), az = Math.sin(h / 16 * Math.PI);
+						let ok = true, su = 0, sh = 0, suu = 0, suh = 0, n = 0, woods = 0;
+						const samples = [];
+						for (let i = 0; i <= 12 && ok; i++) {
+							const u = (i / 12 * 2 - 1) * half2;
+							for (const v of [-STRIP.flat, 0, STRIP.flat]) {
+								const x = cx + ax * u - az * v, z = cz + az * u + ax * v;
+								const zone = zoneHere(x, z), height = hAt(x, z);
+								if ((loose ? zone == ZONE_OCEAN || zone == ZONE_LAKE || zone == ZONE_RIVER || zone == ZONE_SNOW || zone == ZONE_TOWN : zone != ZONE_GRASSLAND && zone != ZONE_FOREST) || height < dryEnough || townAt(x, z) > 0.02) { ok = false; break; }
+								if (zone == ZONE_FOREST) woods++;
+								samples.push([u, height]);
+								if (v == 0) { su += u; sh += height; suu += u * u; suh += u * height; n++; }
+							}
 						}
-					}
-					if (!ok) continue;
-					const grade = (suh - su * sh / n) / (suu - su * su / n), middle = sh / n - grade * su / n;
-					const kept = Math.max(Math.min(grade, STRIP.grade), -STRIP.grade);
-					let cut = 0;
-					for (const [u, height] of samples) cut = Math.max(cut, Math.abs(height - (middle + kept * u)));
-					if (cut >= STRIP.cut) continue;
-					// the banks: out from the flat's edge, along each side and off each end, to where each meets the land
-					const halfLength = STRIP.length / 2;
-					const starts = [];
-					for (let i = 0; i <= 12; i++) for (const side of [-1, 1]) starts.push([(i / 12 * 2 - 1) * halfLength, side * STRIP.flat, 0, side]);
-					for (const end of [-1, 1]) for (const v of [-STRIP.flat, 0, STRIP.flat]) starts.push([end * halfLength, v, end, 0]);
-					// (and out from each corner, between the two)
-					for (const end of [-1, 1]) for (const side of [-1, 1]) for (const a of [0.35, 0.79, 1.22]) starts.push([end * halfLength, side * STRIP.flat, end * Math.cos(a), side * Math.sin(a)]);
-					let meets = true, banks = 0;
-					for (const [u0, v0, du, dv] of starts) {
-						const level = middle + kept * u0;
-						let met = Infinity;
-						for (let out = 8; out <= STRIP.banks && met == Infinity; out += 8) {
-							const u = u0 + du * out, v = v0 + dv * out, x = cx + ax * u - az * v, z = cz + az * u + ax * v;
-							if (Math.abs(x - ox) > half - 50 || Math.abs(z - oz) > half - 50 || townAt(x, z) > 0.02) break;
-							if (Math.abs(hAt(x, z) - level) <= STRIP.bank * out - STRIP.round) met = out;
+						if (!ok) continue;
+						const grade = (suh - su * sh / n) / (suu - su * su / n), middle = sh / n - grade * su / n;
+						const kept = Math.max(Math.min(grade, STRIP.grade), -STRIP.grade);
+						let cut = 0;
+						for (const [u, height] of samples) cut = Math.max(cut, Math.abs(height - (middle + kept * u)));
+						if (cut >= STRIP.cut * (loose ? 1.5 : 1)) continue;
+						// the banks: out from the flat's edge, along each side and off each end, to where each meets the land
+						const halfLength = STRIP.length / 2;
+						const starts = [];
+						for (let i = 0; i <= 12; i++) for (const side of [-1, 1]) starts.push([(i / 12 * 2 - 1) * halfLength, side * STRIP.flat, 0, side]);
+						for (const end of [-1, 1]) for (const v of [-STRIP.flat, 0, STRIP.flat]) starts.push([end * halfLength, v, end, 0]);
+						// (and out from each corner, between the two)
+						for (const end of [-1, 1]) for (const side of [-1, 1]) for (const a of [0.35, 0.79, 1.22]) starts.push([end * halfLength, side * STRIP.flat, end * Math.cos(a), side * Math.sin(a)]);
+						let meets = true, banks = 0;
+						for (const [u0, v0, du, dv] of starts) {
+							const level = middle + kept * u0;
+							let met = Infinity;
+							for (let out = 8; out <= STRIP.banks && met == Infinity; out += 8) {
+								const u = u0 + du * out, v = v0 + dv * out, x = cx + ax * u - az * v, z = cz + az * u + ax * v;
+								if (Math.abs(x - ox) > half - 50 || Math.abs(z - oz) > half - 50 || townAt(x, z) > 0.02) break;
+								if (Math.abs(hAt(x, z) - level) <= STRIP.bank * out - STRIP.round) met = out;
+							}
+							if (met == Infinity) { meets = false; met = STRIP.banks; }
+							banks = Math.max(banks, met);
 						}
-						if (met == Infinity) { meets = false; met = STRIP.banks; }
-						banks = Math.max(banks, met);
-					}
 
-					// the ways in and out over each end: the ground no higher than a gentle climb from the end of the strip
-					let climb = 0;
-					for (const end of [-1, 1]) for (let out = 60; out <= STRIP.approach * 1.5; out += 60) {
-						const x = cx + ax * end * (half2 + out), z = cz + az * end * (half2 + out);
-						climb = Math.max(climb, (hAt(x, z) - (middle + kept * end * half2)) / out);
+						// the ways in and out over each end: the ground no higher than a gentle climb from the end of the strip
+						let climb = 0;
+						for (const end of [-1, 1]) for (let out = 60; out <= STRIP.approach * 1.5; out += 60) {
+							const x = cx + ax * end * (half2 + out), z = cz + az * end * (half2 + out);
+							climb = Math.max(climb, (hAt(x, z) - (middle + kept * end * half2)) / out);
+						}
+						const score = cut + 300 * Math.abs(grade - kept) + 100 * Math.abs(kept) + woods * 0.6 + r / 300 + 600 * Math.max(climb - 0.02, 0);
+						const scored = score + banks / 20 + (meets ? 0 : 1000);
+						if (climb < (loose ? 0.09 : 0.06) && (!best || scored < best.score)) best = { score: scored, x: cx, z: cz, ax, az, h0: middle, grade: kept };
 					}
-					const score = cut + 300 * Math.abs(grade - kept) + 100 * Math.abs(kept) + woods * 0.6 + r / 300 + 600 * Math.max(climb - 0.02, 0);
-					const scored = score + banks / 20 + (meets ? 0 : 1000);
-					if (climb < 0.06 && (!best || scored < best.score)) best = { score: scored, x: cx, z: cz, ax, az, h0: middle, grade: kept };
 				}
 			}
 		}
@@ -1815,7 +2054,7 @@ export function generateTerrain(params) {
 	// (all of it as plain data, so a land made off the main thread can be sent back: wrapLand makes the look ups again from it)
 	return wrapLand(params, {
 		cells, points, cellSize, heights, mountains, woodlands, covers, marshes, lakes, zones, normals, shoreDistances, ridgeCrests, chunkGrids,
-		riverLines: rivers.draw, towns: town.towns, townStrength: townGround.strength, strip, paths: footpaths?.paths ?? [], pathPlaces: footpaths?.places ?? null, fireTowers: footpaths?.towers ?? [],
+		riverLines: rivers.draw, lakeQuads: lakeQuadsOf(params, relief), towns: town.towns, townStrength: townGround.strength, strip, paths: footpaths?.paths ?? [], pathPlaces: footpaths?.places ?? null, fireTowers: footpaths?.towers ?? [],
 		tunnels: footpaths?.tunnels ?? [], farms: footpaths?.farms ?? [], stations: footpaths?.stations ?? [], railLine: shape.rails ? { id: shape.rails.id, points: shape.rails.points.slice(), length: shape.rails.length } : null,
 	}, { landAt, buildChunk, roadAt, pathsLaid });
 }
@@ -1833,6 +2072,7 @@ export function wrapLand(params, data, made = null) {
 	const builder = made?.landAt ? made : makeChunkBuilder(params, chunkGrids);
 	const { landAt, buildChunk } = builder;
 	const roadAt = made?.roadAt ?? makeRoadFlattener(chunkGrids.townRoads ?? []).nearest;
+	const lakeOf = makeLakeOf(chunkGrids.relief);
 	const rivers = makeRiverCutter(chunkGrids.rivers ?? new Float32Array(0));
 	const pathsLaid = made ? made.pathsLaid : chunkGrids.paths ? makePathFlattener(chunkGrids.paths) : null, pathClear = pathsLaid?.clear;
 	const gridValue = (grid, x, z) => {
@@ -1925,7 +2165,13 @@ export function wrapLand(params, data, made = null) {
 		rangeAt: (x, z) => gridValue(data.mountains, x, z),
 		// (the river at a place, THE RIVERS: null, or { surface: the world y of its water, depth: of the water there, distance: from its
 		//		middle, half: its half width }. In it where distance < half)
-		riverAt: (x, z) => { const r = rivers.at(x, z); return r && { surface: r.surface + params.seaLevel, depth: r.depth, distance: r.distance, half: r.half }; },
+		//		A highland lake's the same (THE HIGHLAND LAKES): its water's, lake true, distance 0 and half LAKE_HALF (in it, wherever it is)
+		riverAt: (x, z) => {
+			const L = lakeOf(x, z);
+			if (L != NO_LAKE) { const ground = landAt(x, z); if (ground < L) return { surface: L + params.seaLevel, depth: L - ground, distance: 0, half: LAKE_HALF, lake: true }; }
+			const r = rivers.at(x, z);
+			return r && { surface: r.surface + params.seaLevel, depth: r.depth, distance: r.distance, half: r.half };
+		},
 		onPath: pathsLaid ? (x, z) => pathsLaid.on(x, z) : () => false,
 		// (kept clear of trees and boulders: the towns, the landing strip and its approaches, and the footpaths and their clearings)
 		townAt: strip || pathClear ? (x, z) => Math.max(townAt(x, z), strip ? stripClear(strip, x, z) : 0, pathClear ? pathClear(x, z) : 0) : townAt };

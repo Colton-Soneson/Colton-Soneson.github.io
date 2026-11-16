@@ -981,7 +981,9 @@ function applyRecord(data, at) {
 //		needed, and the records there are already copied over on the GPU rather than sent again
 function makeRoom(more = 0) {
 	if ((trees.length + more) * TREE_FLOATS <= treeData.length) return;
-	const capacity = Math.ceil((trees.length + more) * 2);
+	// (no bigger than the GPU can bind: deviceSelection.js)
+	const most = Math.floor(Math.min(device.limits.maxStorageBufferBindingSize, device.limits.maxBufferSize) / (TREE_FLOATS * 4));
+	const capacity = Math.max(Math.min(Math.ceil((trees.length + more) * 2), most), trees.length + more);
 	const data = new Float32Array(capacity * TREE_FLOATS);
 	data.set(treeData);
 	const old = treeBuffer;

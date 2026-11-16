@@ -85,6 +85,7 @@ export const settings = {
 	anisotropicFiltering: 8,			//1 (off), 2, 4, 8 or 16: keeps pictures sharp on surfaces seen at a low angle. See textureFiltering.js
 	//-------------------TERRAIN-------------------
 	enableTerrain: true,
+	observeInspectRadius: 2000,			//metres: V held in the Observe mode shows every NPC, town, train, cart and horse within this (highlights.js)
 	worldViewDistance: 2500,			//metres: in the whole world (worldTiles), how near a tile of it has to be for it to be streamed in and drawn (its land, its forest, its towns, its people and animals). Further, it goes, and only the world tracker keeps its towns going (townEconomy.js)
 	worldTiles: true,					//the whole world (world.js): today's island the home tile of a world of 40 land tiles in continents and 30 of sea, the rest endless sea, each tile streamed in as you come near it. Off: the one island
 	terrainSeed: 11,					//which world. The same seed always makes the same islands
@@ -109,6 +110,14 @@ export const settings = {
 	terrainRockDetail: 1.0,				//how strongly the cracks and ledges the shader draws on bare rock show. 0 = lit by the mesh alone
 	terrainTownCount: 2,				//seaside towns: on the shore where the mountains come down near the sea, up a hill of their own (townLayout.js, town.js). 0 to 4
 	terrainTownSize: 1.0,				//how big each one is: 1 = about 340m along the shore and 165m up the hill
+	terrainTownDensity: 2.0,			//how many towns the other lands have (world tiles): 1 = most tiles one or two, 0 = none, 2 = two on every tile, 4 = four on every tile (world.js: TOWNS)
+	terrainPlains: 0.54,					//how flat the broad valley floors at the feet of the mountains are laid (terrainGenerator.js: THE PLAINS), 0 to 1. 0 = none
+	terrainPlainsSize: 0.7,				//how big the patches of plains are, and how far apart. 2 = twice as big
+	terrainRolling: 1.0,				//the gentle swell over the open grassland (terrainGenerator.js: THE ROLL), on top of Hill Height. 0 = none
+	terrainMassifInland: 1.0,			//how far in from the sea the big ranges of a continent stand (terrainGenerator.js: MASSIF.inland, 4000 units at 1). 0 = they may come right down to the shore
+	terrainMassifHeight: 0.45,			//how high the big ranges are raised. 0 = none, the land as its rivers wear it
+	terrainLakeSize: 1.0,				//how big the highland lakes are (terrainGenerator.js: THE HIGHLAND LAKES): how far up its valley each fills. 2 = twice as far (Lakes: how many)
+	terrainRailGrade: 0.12,				//how steep the main line may climb (terrainGenerator.js: RAIL.grade): 0.12 is 12 up for every 100 along. Steeper and it goes over more of the hills, gentler and it is cut and banked more
 	terrainLandingStrip: true,			//a landing strip by the first town: a straight, even path of packed earth for the biplane (see THE LANDING STRIP in terrainGenerator.js, plane.js)
 	terrainFootpaths: true,				//worn earth paths between the towns and the strip, over the passes, up to lookouts, through the forests, down to the lakes and the beaches (footpaths.js)
 	townEconomyPace: 1,					//how fast the towns' economy goes (townEconomy.js): its days, times this. 1: by the world's clock
@@ -116,6 +125,9 @@ export const settings = {
 	enableNPCs: true,					//the people out in the world: riders between the towns, the airmen of the landing strip, the schooner's crew and the dinghies' sailors (npcs.js)
 	//--------------------GRASS--------------------
 	enableGrass: true,
+	enableFlora: true,					//the plants: ferns, mosses, mushrooms and flowers, bushes and wild wheat (flora.js)
+	floraDensity: 1.0,					//how many of the small plants: 2 = twice as many
+	floraDrawDistance: 130,				//metres out the small plants are drawn (the bushes and the wild wheat: 220)
 	grassTotalBladeCount: 420000,	//blades drawn, shared out over the level of detail rings around the camera. Most are skipped wherever there is no grassland
 	grassTotalHARDLIMIT: 2000000,	//top of the blade count slider. Nothing is stored per blade any more, so this is only about how much the GPU can draw
 	grassDrawDistance: 900.0,		//how far from the camera the grass reaches. The rings stretch to reach it: the grass at your feet stays as thick, the far grass thins
@@ -175,13 +187,58 @@ export const settings = {
 	cloudForceShelf: false,				//stand a shelf cloud off the coast south of the start, whatever the day drew (on "auto" 1 day in 10 has one, somewhere round the edge of the world)
 	cloudCoverageBias: 0.0,				//more (+) or less (-) cloud than the weather asks for
 	cloudDensity: 1.0,					//how thick the cloud is. Thicker cloud is darker underneath and casts a heavier shadow
-	cloudLayers: 3,						//1: the low layer only, 2: and the middle layer above it, 3: and the high layer above that (cirrus, and the grey sheet of an overcast day: without it overcast is only dimmer)
+	cloudLayers: 2,						//1: the low layer only (the heaps), 2: and the high layer far above it (cirrus, and the grey sheet of an overcast day: without it overcast is only dimmer), 3: and a middle layer between them (altocumulus)
 	cloudCrispness: 0.7,				//how sharp the edge of a heaped cloud is, 0 to 1. 0 = soft all the way out, 1 = a hard white rim
 	cloudHeight: 0.0,					//lifts or lowers every layer of cloud, world units
+	cloudSizeX: 1.0,					//how big the clouds are across, east to west: the heaps, their billows and heads, and the fields of them (clouds.js: THE CLOUDS' SIZE and THE HEAPS)
+	cloudSizeZ: 2.5,					//and north to south
+	cloudSizeY: 1.0,					//how tall the clouds stand: every heap and layer this many times taller, its bottom raised half as much (at 1 the heaps stand from about 900 m up to 2.2 km tall, 4 km on a towering day, and the cirrus is about 8 km up)
 	cloudDriftSpeed: 4.0,				//how many times faster than the wind at the ground the clouds drift
 	cloudSteps: 48,						//steps along each ray through the clouds. More is smoother and costs more
 	cloudResolution: 2,					//the clouds are marched at the size of the frame divided by this: 2 (half), 3 or 4 (a quarter). They are soft, and the march is most of what they cost
-	cloudDrawDistance: 36000.0,			//how far off clouds are drawn. They fade into the haze over the last part of it
+	// THE HEAPS, their lighting and the layers above them (clouds.js, vfc_clouds.js): every number of the look, to adjust
+	cloudHeapAmount: 1.0,	//how many of the cells the weather has cloud over grow a heap (more: a closer field of them)
+	cloudPuffAmount: 1.0,	//and how many grow the small puffs, between the heaps and on their flanks
+	cloudHeapSpacing: 1.0,	//how far apart the heaps stand, and so how big they are: their cells, times the size across (1: 2.2 km)
+	cloudHeapWidth: 1.0,	//how much of its cell a heap fills
+	cloudLobes: 1.0,	//how far the lobes of a heap stick out of its round footprint
+	cloudHeapLean: 0.12,	//how far a heap leans over downwind for every unit it stands up
+	cloudBulbSize: 1.0,	//the size of the round heads a heap is made of (the cauliflower)
+	cloudBulbDepth: 0.82,	//how deep the creases between the heads cut, of the way in
+	cloudEdgeSoftness: 0.34,	//how far in from its surface a heap is thick all the way, of its height and radius: more, softer and more eaten
+	cloudBaseRagged: 260,	//how uneven the flat bottom of a heap is, world units
+	cloudWispiness: 0.55,	//how much the fine noise wears the edges of a heap
+	cloudBaseScale: 1.0,	//the bottom of the heaps, times the weather's (1: about 900 m on a fair day)
+	cloudHeapTop: 5600,	//how tall the tallest heap of a fair day stands over its bottom, world units (times Size Y)
+	cloudToweringTop: 8000,	//and of a towering day (storms, and More Towering)
+	cloudTowering: 0.0,	//more (+) or less (-) towering than the weather makes them: + stands towering cumulus on a fair day
+	cloudHeightVariety: 1.0,	//how different the heaps are in height: 0 all as tall as they can be, 1 from a fifth of that up
+	cloudSteepness: 1.0,	//how steep the sides of a heap are, and how flat its top: less, a rounder dome
+	cloudTowerTop: 18000,	//how high a cumulonimbus stands above the sea, world units
+	cloudTowerWidth: 4.5,	//and how wide, times the weather's
+	cloudDeckFrom: 0.62,	//the weather's coverage from which a deck of cloud lies under the heaps (a storm's): over 1, never
+	cloudDeckDepth: 1.6,	//how deep that deck is, times the weather's depth
+	cloudSunStrength: 1.0,	//how strongly the sun (or the moon) lights the clouds
+	cloudAmbient: 1.6,	//how strongly the sky lights them, from all round
+	cloudForwardScatter: 0.75,	//how much of the light goes straight on through (the bright rim of a cloud in front of the sun): Henyey-Greenstein g
+	cloudBackScatter: 0.25,	//and how much comes back towards the sun (a cloud brightening with the sun behind the viewer)
+	cloudBackShare: 0.4,	//how much of the scattering is the back glow
+	cloudMultiScatter: 0.7,	//how much light bouncing about inside a cloud adds (each bounce keeps this much of the last): more, a whiter, brighter cloud
+	cloudScatterDepth: 0.22,	//how much less of the cloud each bounce is dimmed by: less, light reaches deeper in
+	cloudShadowStrength: 1.0,	//how dark a cloud's own shadow is inside it
+	cloudShadowReach: 1.0,	//how far towards the sun the shadow is looked for (one heap shading the next)
+	cloudCrevices: 0.7,	//how much darker the thin edges and the creases between heads are than the body
+	cloudUndersides: 0.4,	//how much darker the bottom of a heap is
+	cloudCirrusAmount: 1.0,	//how much high cloud there is, times the weather's
+	cloudCirrusHeight: 16000,	//the bottom of the high layer above the sea, world units
+	cloudCirrusScale: 2.4,	//how big its streaks and fibres are
+	cloudMiddleAmount: 1.0,	//how much middle cloud there is (Layers 3), times the weather's
+	cloudMiddleHeight: 9500,	//the bottom of the middle layer above the sea, world units
+	cloudMiddleScale: 2.5,	//how big its heaps are
+	cloudLightSteps: 6,	//steps of the walk towards the sun from every step of a ray that lands in cloud: more, finer shadows and more cost
+	cloudSkipping: true,	//cross the clear air between the heaps in long strides (the heaps' map says how far is clear). Off: every step is taken, for comparing
+	cloudFarDetail: 3000,	//how far off the fine wear of the edges of a heap starts to go (it is finer than a pixel further off, and only grain)
+	cloudDrawDistance: 50000.0,			//how far off clouds are drawn. They fade into the haze over the last part of it
 	displayCloudCoverage: false,
 	//--------------------BIRDS--------------------
 	enableDeer: true,					//small groups of deer living in the forest, going down to the water to drink three times a day. See deer.js

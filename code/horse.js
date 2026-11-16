@@ -64,6 +64,8 @@ const TURN_BLEED = 0.35;			// of its pace lost a second for each radian a second
 const TURN_SLOWS = 0.4;				// and while it is turned at a canter (or faster) it only wants to go this much less fast
 const STEEPEST = 1.0;				// rise over run: 45 degrees
 const SWIM_DEPTH = 1.4;				// metres of water before it swims
+const DECK_STEP = 1.0;				// metres: a bridge's deck no higher than this over the land (its ends) is stepped on to; higher, only by one on it already
+const BORE_OVER = 4;				// metres: the land this much over a tunnel's floor, it is in the bore (held in by its walls)
 const SWIM_PACE = 1.5;
 const RADIUS = 0.45;				// metres round its chest and its quarters that bump into things
 export const SEAT = [0, 1.6, 0.0];	// where the rider sits (metres on the horse)
@@ -309,11 +311,23 @@ addChoice('Vehicles', { label: 'Horse', detail: 'Saddled, with saddlebags of amm
 
 // The ground (the walker's: the exact ground, worked out again every GROUND_AGAIN, the data grid's change in between)
 //-------------------------------------------------
+// (in a tunnel, its floor; on a bridge, its deck: tunnels.js. On to a deck from its ends, where the land comes up to it, or on it already:
+//		not up out of the river under it, nor over its parapet from the side, to be held on it going the wrong way)
+function floorFor(h, x, z) {
+	const floor = tunnels.floorAt(x, z, h.y ?? -Infinity);
+	if (floor === null || h.held || floor - terrain.land.groundAt(x, z) <= DECK_STEP * metre()) return floor;
+	return null;
+}
+// (the water it is in: the sea's, or a river's or a highland lake's, terrainGenerator.js)
+function waterAt(x, z) {
+	const sea = settings.waterWorldPosY, river = settings.enableRivers === false ? null : terrain.land?.riverAt?.(x, z);
+	return river && river.distance < river.half ? Math.max(river.surface, sea) : sea;
+}
 function groundUnder(h) {
 	const land = terrain.land;
 	if (!land) return 0;
-	// (in a tunnel, its floor; on a road's bridge, its deck: tunnels.js)
-	const floor = tunnels.floorAt(h.x, h.z, h.y ?? -Infinity);
+	const floor = floorFor(h, h.x, h.z);
+	h.held = floor !== null;
 	if (floor !== null) return floor;
 	const rough = land.heightAt(h.x, h.z);
 	if (!h.ground || Math.hypot(h.x - h.ground.x, h.z - h.ground.z) > GROUND_AGAIN * metre()) h.ground = { x: h.x, z: h.z, exact: land.groundAt(h.x, h.z), rough };
@@ -360,7 +374,8 @@ function stepHorse(h, dt) {
 	const step = h.speed * m * dt;
 	if (Math.abs(step) > 0 && land) {
 		const look = Math.sign(step) * 1.2 * m;
-		const under = (x, z) => tunnels.floorAt(x, z, h.y ?? -Infinity) ?? land.heightAt(x, z);
+		// (the exact ground by a bridge or a tunnel, where the land is laid for the road or the line: the data grid's is not)
+		const under = (x, z) => floorFor(h, x, z) ?? (h.held ? land.groundAt(x, z) : land.heightAt(x, z));
 		const here = under(h.x, h.z), there = under(h.x + fx * look, h.z + fz * look);
 		const fromX = h.x, fromZ = h.z;
 		if ((there - here) / Math.abs(look) > STEEPEST && h.swim < 0.5) {
@@ -368,7 +383,10 @@ function stepHorse(h, dt) {
 		} else {
 			h.x += fx * step;
 			h.z += fz * step;
-			tunnels.keepIn(h, RADIUS * m, h.y ?? 0, fromX, fromZ);
+			// (held between its parapets, or a tunnel's walls, only one on it, and only where off the side is a fall, or the mountain: where
+			//		the land is level with it, at its ends, it steps off as it likes)
+			const drop = (h.y ?? 0) - land.groundAt(h.x, h.z);
+			if (h.held && (drop > DECK_STEP * m || drop < -BORE_OVER * m)) tunnels.keepIn(h, RADIUS * m, h.y ?? 0, fromX, fromZ);
 		}
 	}
 	// out of the trunks and the boulders round its chest and its quarters
@@ -395,14 +413,14 @@ function stepHorse(h, dt) {
 	h.z = clamp(h.z, lo, hi);
 
 	// on the ground, tipped to its slope, or swimming
-	const ground = groundUnder(h);
-	const depth = (settings.waterWorldPosY - ground) / m;
+	const ground = groundUnder(h), water = h.held ? settings.waterWorldPosY : waterAt(h.x, h.z);
+	const depth = (water - ground) / m;
 	h.swim += clamp((depth > SWIM_DEPTH ? 1 : 0) - h.swim, -dt * 2, dt * 2);
-	const floating = settings.waterWorldPosY - (SWIM_DEPTH - 0.1) * m;
+	const floating = water - (SWIM_DEPTH - 0.1) * m;
 	h.y = h.swim > 0.5 ? Math.max(ground, floating) : ground;
 	if (land) {
 		const look = 0.9 * m;
-		const under = (x, z) => tunnels.floorAt(x, z, h.y) ?? land.heightAt(x, z);
+		const under = (x, z) => floorFor(h, x, z) ?? land.heightAt(x, z);
 		const ahead = under(h.x + fx * look, h.z + fz * look), behind = under(h.x - fx * look, h.z - fz * look);
 		const slope = h.swim > 0.5 ? 0 : clamp(Math.atan2(ahead - behind, 2 * look), -0.5, 0.5);
 		h.slope += (slope - h.slope) * Math.min(dt * 5, 1);

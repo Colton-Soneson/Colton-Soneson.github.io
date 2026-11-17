@@ -185,41 +185,41 @@ export const settings = {
 	enableLightning: true,				//lightning in the storms that have it (see lightning.js). On "auto" which storms do is drawn by lot, more of them in summer
 	lightningRate: 1.0,					//how often it strikes. 1 = every few seconds
 	cloudForceShelf: false,				//stand a shelf cloud off the coast south of the start, whatever the day drew (on "auto" 1 day in 10 has one, somewhere round the edge of the world)
-	cloudCoverageBias: 0.0,				//more (+) or less (-) cloud than the weather asks for
-	cloudDensity: 1.0,					//how thick the cloud is. Thicker cloud is darker underneath and casts a heavier shadow
-	cloudLayers: 2,						//1: the low layer only (the heaps), 2: and the high layer far above it (cirrus, and the grey sheet of an overcast day: without it overcast is only dimmer), 3: and a middle layer between them (altocumulus)
-	cloudCrispness: 0.7,				//how sharp the edge of a heaped cloud is, 0 to 1. 0 = soft all the way out, 1 = a hard white rim
-	cloudHeight: 0.0,					//lifts or lowers every layer of cloud, world units
-	cloudSizeX: 1.0,					//how big the clouds are across, east to west: the heaps, their billows and heads, and the fields of them (clouds.js: THE CLOUDS' SIZE and THE HEAPS)
-	cloudSizeZ: 2.5,					//and north to south
-	cloudSizeY: 1.0,					//how tall the clouds stand: every heap and layer this many times taller, its bottom raised half as much (at 1 the heaps stand from about 900 m up to 2.2 km tall, 4 km on a towering day, and the cirrus is about 8 km up)
-	cloudDriftSpeed: 4.0,				//how many times faster than the wind at the ground the clouds drift
-	cloudSteps: 48,						//steps along each ray through the clouds. More is smoother and costs more
+	cloudCoverageBias: 0.32,				//more (+) or less (-) cloud than the weather asks for
+	cloudDensity: 0.65,					//how thick the cloud is. Thicker cloud is darker underneath and casts a heavier shadow
+	cloudLayers: 1,						//1: the low layer only (the heaps), 2: and the high layer far above it (cirrus, and the grey sheet of an overcast day: without it overcast is only dimmer), 3: and a middle layer between them (altocumulus)
+	cloudCrispness: 0.17,				//how sharp the edge of a heaped cloud is, 0 to 1. 0 = soft all the way out, 1 = a hard white rim
+	cloudHeight: 100,					//lifts or lowers every layer of cloud, world units
+	cloudSizeX: 1.5,					//how big the clouds are across, east to west: the heaps, their billows and heads, and the fields of them (clouds.js: THE CLOUDS' SIZE and THE HEAPS)
+	cloudSizeZ: 1.0,					//and north to south
+	cloudSizeY: 0.8,					//how tall the clouds stand: every heap and layer this many times taller, its bottom raised half as much (at 1 the heaps stand from about 900 m up to 2.2 km tall, 4 km on a towering day, and the cirrus is about 8 km up)
+	cloudDriftSpeed: 6.5,				//how many times faster than the wind at the ground the clouds drift
+	cloudSteps: 53,						//steps along each ray through the clouds. More is smoother and costs more
 	cloudResolution: 0,					//the clouds are marched at the size of the frame divided by this: 1 (full), 2 (half), 3 or 4 (a quarter). 0: dynamic, by how near the cloud is (see the next two). The march is most of what they cost
 	cloudFullResWithin: 1200,			//dynamic: cloud nearer than this (metres) is marched at the frame's full size, twice as far at half, four times as far at a quarter, and so on down to the next
 	cloudCoarsest: 8,					//dynamic: the coarsest the furthest cloud is marched at, 4 (a quarter of the frame's size) or 8 (an eighth)
 	// THE HEAPS, their lighting and the layers above them (clouds.js, vfc_clouds.js): every number of the look, to adjust
-	cloudHeapAmount: 1.0,	//how many of the cells the weather has cloud over grow a heap (more: a closer field of them)
-	cloudPuffAmount: 1.0,	//and how many grow the small puffs, between the heaps and on their flanks
-	cloudHeapSpacing: 1.0,	//how far apart the heaps stand, and so how big they are: their cells, times the size across (1: 2.2 km)
-	cloudHeapWidth: 1.0,	//how much of its cell a heap fills
-	cloudLobes: 1.0,	//how far the lobes of a heap stick out of its round footprint
-	cloudHeapLean: 0.12,	//how far a heap leans over downwind for every unit it stands up
-	cloudBulbSize: 1.0,	//the size of the round heads a heap is made of (the cauliflower)
+	cloudHeapAmount: 0.3,	//how many of the cells the weather has cloud over grow a heap (more: a closer field of them)
+	cloudPuffAmount: 0.45,	//and how many grow the small puffs, between the heaps and on their flanks
+	cloudHeapSpacing: 3,	//how far apart the heaps stand, and so how big they are: their cells, times the size across (1: 2.2 km)
+	cloudHeapWidth: 1.5,	//how much of its cell a heap fills
+	cloudLobes: 1.55,	//how far the lobes of a heap stick out of its round footprint
+	cloudHeapLean: 0.46,	//how far a heap leans over downwind for every unit it stands up
+	cloudBulbSize: 2.8,	//the size of the round heads a heap is made of (the cauliflower)
 	cloudBulbDepth: 0.82,	//how deep the creases between the heads cut, of the way in
-	cloudEdgeSoftness: 0.34,	//how far in from its surface a heap is thick all the way, of its height and radius: more, softer and more eaten
-	cloudBaseRagged: 260,	//how uneven the flat bottom of a heap is, world units
-	cloudWispiness: 0.55,	//how much the fine noise wears the edges of a heap
-	cloudBaseScale: 1.0,	//the bottom of the heaps, times the weather's (1: about 900 m on a fair day)
-	cloudHeapTop: 5600,	//how tall the tallest heap of a fair day stands over its bottom, world units (times Size Y)
-	cloudToweringTop: 8000,	//and of a towering day (storms, and More Towering)
-	cloudTowering: 0.0,	//more (+) or less (-) towering than the weather makes them: + stands towering cumulus on a fair day
-	cloudHeightVariety: 1.0,	//how different the heaps are in height: 0 all as tall as they can be, 1 from a fifth of that up
-	cloudSteepness: 1.0,	//how steep the sides of a heap are, and how flat its top: less, a rounder dome
-	cloudTowerTop: 18000,	//how high a cumulonimbus stands above the sea, world units
-	cloudTowerWidth: 4.5,	//and how wide, times the weather's
+	cloudEdgeSoftness: 0.86,	//how far in from its surface a heap is thick all the way, of its height and radius: more, softer and more eaten
+	cloudBaseRagged: 320,	//how uneven the flat bottom of a heap is, world units
+	cloudWispiness: 0.36,	//how much the fine noise wears the edges of a heap
+	cloudBaseScale: 1.5,	//the bottom of the heaps, times the weather's (1: about 900 m on a fair day)
+	cloudHeapTop: 5800,	//how tall the tallest heap of a fair day stands over its bottom, world units (times Size Y)
+	cloudToweringTop: 19600,	//and of a towering day (storms, and More Towering)
+	cloudTowering: 0.28,	//more (+) or less (-) towering than the weather makes them: + stands towering cumulus on a fair day
+	cloudHeightVariety: 0.83,	//how different the heaps are in height: 0 all as tall as they can be, 1 from a fifth of that up
+	cloudSteepness: 1.65,	//how steep the sides of a heap are, and how flat its top: less, a rounder dome
+	cloudTowerTop: 13250,	//how high a cumulonimbus stands above the sea, world units
+	cloudTowerWidth: 5.2,	//and how wide, times the weather's
 	cloudDeckFrom: 0.62,	//the weather's coverage from which a deck of cloud lies under the heaps (a storm's): over 1, never
-	cloudDeckDepth: 1.6,	//how deep that deck is, times the weather's depth
+	cloudDeckDepth: 2,	//how deep that deck is, times the weather's depth
 	cloudSunStrength: 1.0,	//how strongly the sun (or the moon) lights the clouds
 	cloudAmbient: 1.6,	//how strongly the sky lights them, from all round
 	cloudForwardScatter: 0.75,	//how much of the light goes straight on through (the bright rim of a cloud in front of the sun): Henyey-Greenstein g
@@ -231,16 +231,16 @@ export const settings = {
 	cloudShadowReach: 1.0,	//how far towards the sun the shadow is looked for (one heap shading the next)
 	cloudCrevices: 0.7,	//how much darker the thin edges and the creases between heads are than the body
 	cloudUndersides: 0.4,	//how much darker the bottom of a heap is
-	cloudCirrusAmount: 1.0,	//how much high cloud there is, times the weather's
+	cloudCirrusAmount: 1.45,	//how much high cloud there is, times the weather's
 	cloudCirrusHeight: 16000,	//the bottom of the high layer above the sea, world units
 	cloudCirrusScale: 2.4,	//how big its streaks and fibres are
-	cloudMiddleAmount: 1.0,	//how much middle cloud there is (Layers 3), times the weather's
+	cloudMiddleAmount: 1,	//how much middle cloud there is (Layers 3), times the weather's
 	cloudMiddleHeight: 9500,	//the bottom of the middle layer above the sea, world units
 	cloudMiddleScale: 2.5,	//how big its heaps are
 	cloudLightSteps: 6,	//steps of the walk towards the sun from every step of a ray that lands in cloud: more, finer shadows and more cost
 	cloudSkipping: true,	//cross the clear air between the heaps in long strides (the heaps' map says how far is clear). Off: every step is taken, for comparing
 	cloudFarDetail: 3000,	//how far off the fine wear of the edges of a heap starts to go (it is finer than a pixel further off, and only grain)
-	cloudDrawDistance: 50000.0,			//how far off clouds are drawn. They fade into the haze over the last part of it
+	cloudDrawDistance: 80000.0,			//how far off clouds are drawn. They fade into the haze over the last part of it
 	displayCloudCoverage: false,
 	//--------------------BIRDS--------------------
 	enableDeer: true,					//small groups of deer living in the forest, going down to the water to drink three times a day. See deer.js

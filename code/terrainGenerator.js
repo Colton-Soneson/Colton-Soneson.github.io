@@ -207,7 +207,7 @@ function boxBlur(source, points, radius) {
 //						  marsh: 0 to 1, how close to a lake,
 //						  inland: how far from the sea, 0 at the shore }
 const coreGrids = new Map();		// the world's land tiles -> the distances CORE is read from (coreAt)
-const homeOffsets = new Map();		// seed -> the window on to the noise findHomeOffset found for it (every tile of a world wants the same)
+const homeOffsets = new Map();		// the land's settings (landKey) -> the window on to the noise findHomeOffset found for it (every tile of a world wants the same)
 export function createTerrainSampler(params) {
 	const noise = createNoise(params.seed);
 
@@ -501,7 +501,7 @@ export function createTerrainSampler(params) {
 	// Looks through windows on to the noise until it finds one where the start of the world makes sense:
 	//		the origin (where the camera starts off looking) is on the shore, there is sea just south of it for the camera to sit over, and land to the north
 	function findHomeOffset() {
-		const known = homeOffsets.get(params.seed);
+		const key = landKey(params), known = homeOffsets.get(key);
 		if (known) { offsetX = known[0]; offsetZ = known[1]; return; }
 		const random = seededRandom(params.seed ^ 0x9E3779B9);
 		let best = [0, 0], bestScore = -Infinity;
@@ -517,7 +517,7 @@ export function createTerrainSampler(params) {
 			if (atOrigin > 1.5 && atOrigin < 8 && south < -3 && farSouth < -10 && north > 12) { best = [offsetX, offsetZ]; break; }
 		}
 		offsetX = best[0]; offsetZ = best[1];
-		homeOffsets.set(params.seed, best);
+		homeOffsets.set(key, best);
 	}
 	findHomeOffset();
 
@@ -612,10 +612,19 @@ function continentOf(params, cx, cz) {
 }
 
 // the relief of the continent a tile is in (see THE CONTINENT): { x0, z0, cell, cols, rows, height (world units over the land under it), area (square metres drained) }
+// a continent's shape is kept (shapes) by every setting the land is made from: all of a tile's params but its own (TILE_OWN), and the
+//		world's towns (its railway runs between them). (A setting left out of it kept the shape and the line made before it was changed:
+//		a joiner, making them fresh, laid a different main line from the host's)
+const TILE_OWN = new Set(['center', 'tile', 'townCount', 'landingStrip', 'footpaths']);
+function landKey(params) {
+	const settings = Object.keys(params).filter((k) => !TILE_OWN.has(k) && ['number', 'string', 'boolean'].includes(typeof params[k])).sort().map((k) => k + '=' + params[k]);
+	return settings.join('|') + '|towns=' + JSON.stringify(params.world?.towns ?? null);
+}
+const shapeKey = (params, c) => landKey(params) + '|' + c.key;
 function continentShape(params, sample, noise, plainsAt = null) {
 	const [cx, cz] = params.center ?? [0, 0];
 	const c = continentOf(params, cx, cz);
-	const key = [params.seed, params.mountainHeight, params.hillHeight ?? 1, params.worldSize, params.plains ?? PLAINS.amount, params.plainsSize ?? 1, params.massifInland ?? 1, params.massifHeight ?? 1, params.railGrade ?? RAIL.grade, params.lakes ?? 0.5, params.lakeSize ?? 1, c.key].join('|');		// (and the land's other settings, through sample: the cache is let go with the land)
+	const key = shapeKey(params, c);
 	const known = shapes.get(key);
 	if (known) return known;
 	const cell = SHAPE.cell, m = SHAPE.metre;

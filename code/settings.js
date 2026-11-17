@@ -195,7 +195,9 @@ export const settings = {
 	cloudSizeY: 1.0,					//how tall the clouds stand: every heap and layer this many times taller, its bottom raised half as much (at 1 the heaps stand from about 900 m up to 2.2 km tall, 4 km on a towering day, and the cirrus is about 8 km up)
 	cloudDriftSpeed: 4.0,				//how many times faster than the wind at the ground the clouds drift
 	cloudSteps: 48,						//steps along each ray through the clouds. More is smoother and costs more
-	cloudResolution: 2,					//the clouds are marched at the size of the frame divided by this: 2 (half), 3 or 4 (a quarter). They are soft, and the march is most of what they cost
+	cloudResolution: 0,					//the clouds are marched at the size of the frame divided by this: 1 (full), 2 (half), 3 or 4 (a quarter). 0: dynamic, by how near the cloud is (see the next two). The march is most of what they cost
+	cloudFullResWithin: 1200,			//dynamic: cloud nearer than this (metres) is marched at the frame's full size, twice as far at half, four times as far at a quarter, and so on down to the next
+	cloudCoarsest: 8,					//dynamic: the coarsest the furthest cloud is marched at, 4 (a quarter of the frame's size) or 8 (an eighth)
 	// THE HEAPS, their lighting and the layers above them (clouds.js, vfc_clouds.js): every number of the look, to adjust
 	cloudHeapAmount: 1.0,	//how many of the cells the weather has cloud over grow a heap (more: a closer field of them)
 	cloudPuffAmount: 1.0,	//and how many grow the small puffs, between the heaps and on their flanks

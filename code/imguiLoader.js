@@ -217,6 +217,8 @@ export const imguiParams = {
     cloudDriftSpeed: settings.cloudDriftSpeed,
     cloudSteps: settings.cloudSteps,
     cloudResolution: settings.cloudResolution,
+    cloudFullResWithin: settings.cloudFullResWithin,
+    cloudCoarsest: settings.cloudCoarsest,
     cloudDrawDistance: settings.cloudDrawDistance,
     cloudHeapAmount: settings.cloudHeapAmount,
     cloudPuffAmount: settings.cloudPuffAmount,
@@ -604,7 +606,9 @@ cloudFolder.add(imguiParams, 'cloudSizeY', 0.5, 6, 0.05).name('Size Y (height an
 cloudFolder.add(imguiParams, 'cloudSizeZ', 0.5, 6, 0.05).name('Size Z (north-south)');
 cloudFolder.add(imguiParams, 'cloudDriftSpeed', 0, 20, 0.5).name('Drift Speed');
 cloudFolder.add(imguiParams, 'cloudSteps', 16, 128, 1).name('Quality (steps)');
-cloudFolder.add(imguiParams, 'cloudResolution', { 'half': 2, 'third': 3, 'quarter': 4 }).name('Resolution (of the frame)');
+cloudFolder.add(imguiParams, 'cloudResolution', { 'dynamic (by distance)': 0, 'full': 1, 'half': 2, 'third': 3, 'quarter': 4 }).name('Resolution (of the frame)');
+cloudFolder.add(imguiParams, 'cloudFullResWithin', 100, 8000, 50).name('Dynamic: Full Res Within (m)');
+cloudFolder.add(imguiParams, 'cloudCoarsest', { 'quarter': 4, 'eighth': 8 }).name('Dynamic: Coarsest');
 cloudFolder.add(imguiParams, 'cloudDrawDistance', 8000, 80000, 500).name('Draw Distance');
 // (every number of the heaps' look, their light and the layers above: see the settings of the same names)
 const cloudHeapsFolder = cloudFolder.addFolder('Heaps');

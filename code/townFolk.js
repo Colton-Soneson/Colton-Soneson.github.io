@@ -16,6 +16,7 @@ import * as hunting from './hunting.js'
 import * as players from './players.js'
 import { DUMMY_MESH, HELD_LENGTH, box, tube } from './players.js'
 import { BUILDING_TYPES } from './townLayout.js'
+import * as townFloor from './townFloor.js'
 import { seededRandom } from './terrainGenerator.js'
 import { lightNow } from './lighting.js'
 import * as outfits from './outfits.js'
@@ -72,6 +73,7 @@ import {uniformBufferLights} from './rotatingCube.js'
 const ERRAND_SECONDS = [70, 140];
 const WALK = 1.25;					// metres a second
 const STRIDE = 1.4;					// metres a stride takes
+const WALK_LAID = 1.2;				// metres between the points of a walk, laid along the ground work (walkBetween)
 const REST = [4, 10];				// seconds indoors between errands, at least
 const DRAW_DISTANCE = 900;			// world units
 const MAX_DRAWN = 640;
@@ -347,10 +349,20 @@ terrain.onTiles((added, removed) => {
 let builtFor = null;
 const metre = () => settings.forestUnitsPerMetre;
 
+// the walker stands on what is drawn of the towns' ground work, not the land under it (townFloor.js)
+hunting.addFloor((x, z, highest) => townFloor.floorAt(x, z, highest));
+// (a place, on that if it is over it: the highest of it no more than LAID_REACH over where the way has it)
+const LAID_REACH = 1.5;			// metres
+function laid(p) {
+	const floor = townFloor.floorAt(p[0], p[2], p[1] + LAID_REACH * metre());
+	if (floor > -Infinity) p[1] = floor;
+	return p;
+}
+
 // a place to stand: { at: [x, y, z], node, heading }
 function doorOf(ways, b, out = 1.2, along = 0) {
 	const fx = Math.sin(b.yaw), fz = Math.cos(b.yaw), ax = Math.cos(b.yaw), az = -Math.sin(b.yaw);
-	const at = [b.x + fx * (b.depth / 2 + out) + ax * along, b.y - 0.25, b.z + fz * (b.depth / 2 + out) + az * along];
+	const at = laid([b.x + fx * (b.depth / 2 + out) + ax * along, b.y - 0.25, b.z + fz * (b.depth / 2 + out) + az * along]);
 	return { at, node: ways.nearest(at[0], at[2]), heading: b.yaw };
 }
 
@@ -480,6 +492,16 @@ function walkBetween(person, from, to) {
 		const off = j == 0 || j == raw.length - 1 ? 0 : Math.min(person.side, Math.max(width / 2 - 1.0, 0));
 		return [p[0] - dz / l * off, p[1], p[2] + dx / l * off];
 	});
+	// laid along what is drawn (townFloor.js): a point every WALK_LAID, each at the height of the street, the stairs or the plaza under it.
+	//		(Straight from one of the ways' points to the next, a person sank into the street at the head of a stair, and walked on
+	//		air at its foot)
+	for (let j = points.length - 1; j > 0; j--) {
+		const a = points[j - 1], b = points[j], n = Math.ceil(Math.hypot(b[0] - a[0], b[2] - a[2]) / (WALK_LAID * metre()));
+		const between = [];
+		for (let k = 1; k < n; k++) { const f = k / n; between.push(laid([a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f])); }
+		points.splice(j, 0, ...between);
+	}
+	for (let j = 1; j < points.length - 1; j++) laid(points[j]);
 	const along = [0];
 	for (let j = 1; j < points.length; j++) along.push(along[j - 1] + Math.hypot(points[j][0] - points[j - 1][0], points[j][1] - points[j - 1][1], points[j][2] - points[j - 1][2]));
 	return { points, along, length: along[along.length - 1] };

@@ -41,6 +41,9 @@ import { announceSpawn } from './radialMenu.js'
 		anchor, or on the ground), and it draws them on its own vehicles as it draws them (peopleHeard, follow). Their rounds go to it too,
 		for their trails and their reports (npcNet.fired). A joiner's hit on one, or on its horse, its plane or its boat, goes to the host
 		(npcNet.shot, npcNet.attack), which does the rest.
+	A CREW OF THE PLAYER'S OWN (npcShips.js: hireCrew, owned.js: hired from the sea captain): a group that is hired (group.hired). They fight
+		those of the others hostile to this player, or on the other side from it in the war (foesOfMine), with its own guns. Their rounds
+		and shells hit the others (as the player's own do, and as the player's: who 'me', how 'crew') and never a player.
 	FRIENDS IN THE WAY (the war): none of them fires with one of its own side near the line of fire, short of what it is shooting at
 		(friendInTheWay): it waits for a clear shot.
 	THE WAR (war.js: war): every one of them on one of two sides (person.side, its group's), hostile to everyone on the other: the players
@@ -103,9 +106,14 @@ export function makePerson(kind, { hat, gun = 'rifle', group = null, home = null
 	person.side = person.group.side ?? null;
 	people.push(person);
 	person.group.members.push(person);
+	if (person.group.hired) hiredIds.add(person.id);
 	return person;
 }
+// (A CREW OF THE PLAYER'S OWN, see the top: their people, by id, for their rounds)
+const hiredIds = new Set();
+export const isHired = (id) => hiredIds.has(id);
 export function removePerson(person) {
+	hiredIds.delete(person.id);
 	const at = people.indexOf(person);
 	if (at >= 0) people.splice(at, 1);
 	const k = person.group.members.indexOf(person);
@@ -143,6 +151,30 @@ export function enemiesOf(group, x, y, z) {
 }
 // who fired a bullet, as hostility goes: this player for its own, another player's id for theirs (net.js: npcNet.shot), none for theirs
 export const firedBy = (bullet) => bullet?.npc ? null : bullet?.remote ? bullet.shooter : bullet?.shooter == 'folk' ? null : bullet?.by ?? 'me';
+// who a crew of the player's own fights (see the top): each of the others hostile to this player, or on the other side from it in the war,
+//		as the targets are ({ id, kind 'npc', x, y (its chest), z, v, vehicle, sit, d }), nearest first from (x, y, z) world units
+const foeSeen = new Map();
+let foesAt = -1, foeList = [];
+export function foesOfMine(x, y, z) {
+	if (foesAt !== clock) {
+		foesAt = clock;
+		const m = metre(), mine = war.on ? war.sideOf('me') : null;
+		foeList = [];
+		for (const person of people) {
+			const p = person.place;
+			if (!person.alive || !p || person.gone || person.group.hired || person.remote) continue;
+			if (!hostileTo(person.group, 'me') && !(mine && person.side && war.enemies(person.side, mine))) continue;
+			const t = { id: person.id, kind: 'npc', x: p.x, y: p.y + (p.sit ? 0.5 : 1.2) * m, z: p.z, alive: true, vehicle: person.anchor?.vehicle ?? null, sit: p.sit ?? 0 };
+			const seen = foeSeen.get(person.id), dt = seen ? clock - seen.at : 0;
+			t.v = seen && dt > 0 ? [0, 1, 2].map((i) => seen.v[i] + (([t.x, t.y, t.z][i] - seen.p[i]) / dt - seen.v[i]) * Math.min(dt / 0.25, 1)) : seen?.v ?? [0, 0, 0];
+			if (Math.hypot(...t.v) > 100 * m) t.v = [0, 0, 0];
+			foeSeen.set(person.id, { p: [t.x, t.y, t.z], v: t.v, at: clock });
+			foeList.push(t);
+		}
+		if (foeSeen.size > foeList.length * 2 + 40) for (const [id, seen] of foeSeen) if (clock - seen.at > 3) foeSeen.delete(id);
+	}
+	return foeList.map((t) => ({ ...t, d: Math.hypot(t.x - x, t.y - y, t.z - z) })).sort((a, b) => a.d - b.d);
+}
 
 // Shot (see SHOT at the top)
 //-------------------------------------------------
@@ -160,7 +192,7 @@ export function harm(person, amount, who, how = 'shot') {
 	person.respawnIn = RESPAWN_SECONDS;
 	npcStats.killed++;
 	for (const fn of downListeners) fn(person, who, how);
-	if (who === 'me') players.addFeed(`You shot the ${person.name}`);
+	if (who === 'me') players.addFeed(how == 'crew' ? `Your crew shot the ${person.name}` : `You shot the ${person.name}`);
 }
 // (each one's hitbox: the players' dummy's, players.js, tipped as it is drawn: tilt)
 function spheresOf(person) {
@@ -185,14 +217,15 @@ export function tipped(forward, up) {
 	return { heading, tilt: [a, Math.atan2(-u[0], u[1] * Math.cos(a) + u[2] * Math.sin(a))] };
 }
 ballistics.addTarget((ax, ay, az, bx, by, bz, bullet) => {
-	// (one of theirs: in the war, the other side's people; otherwise none of them)
-	const from = bullet?.npc ? (war.on ? sideOfShooter(bullet.shooter) : null) : undefined;
+	// (one of theirs: in the war, the other side's people; otherwise none of them. A crew of the player's own: any of the others)
+	const crew = !!bullet?.npc && isHired(bullet.shooter);
+	const from = bullet?.npc && !crew ? (war.on ? sideOfShooter(bullet.shooter) : null) : undefined;
 	if (!on() || from === null) return null;
 	const m = metre(), mx = (ax + bx) / 2, mz = (az + bz) / 2, reach = Math.hypot(bx - ax, bz - az) / 2 + 2 * m;
 	let best = null;
 	for (const person of people) {
 		const p = person.place;
-		if (!person.alive || !p || (from && person.side == from) || Math.abs(p.x - mx) > reach || Math.abs(p.z - mz) > reach) continue;
+		if (!person.alive || !p || (from && person.side == from) || (crew && person.group.hired) || Math.abs(p.x - mx) > reach || Math.abs(p.z - mz) > reach) continue;
 		if (ballistics.crossSphere(ax, ay, az, bx, by, bz, p.x, p.y + 1.0 * m, p.z, 1.3 * m) === null) continue;
 		for (const [x, y, z, r, part] of spheresOf(person)) {
 			const t = ballistics.crossSphere(ax, ay, az, bx, by, bz, x, y, z, r);
@@ -202,8 +235,8 @@ ballistics.addTarget((ax, ay, az, bx, by, bz, bullet) => {
 	return best && { t: best.t, what: 'npc', hit: (velocity, bullet) => {
 		npcStats.hits++;
 		if (!bullet?.npc) players.markHit(best.part == 'head');
-		const who = bullet?.npc ? bullet.shooter : firedBy(bullet);
-		if (runsHere()) harm(best.person, HARM[best.part] * (ballistics.ROUNDS[bullet?.round]?.damage ?? 1), who);
+		const who = crew ? 'me' : bullet?.npc ? bullet.shooter : firedBy(bullet);
+		if (runsHere()) harm(best.person, HARM[best.part] * (ballistics.ROUNDS[bullet?.round]?.damage ?? 1), who, crew ? 'crew' : 'shot');
 		else npcNet.shot?.(best.person.id, best.part, bullet?.round);
 	} };
 }, () => {
@@ -376,7 +409,7 @@ export function clearLine(a, b, steps = 16) {
 
 // a round of theirs at the players: this player (alone, or the host) and, the host, the others (see THE PLAYERS at the top)
 ballistics.addTarget((ax, ay, az, bx, by, bz, bullet) => {
-	if (!bullet?.npc || !runsHere()) return null;
+	if (!bullet?.npc || !runsHere() || isHired(bullet.shooter)) return null;		// (a crew of the player's own never hits a player)
 	let best = null;
 	for (const t of targets()) {
 		if (!t.alive || t.kind != 'player') continue;

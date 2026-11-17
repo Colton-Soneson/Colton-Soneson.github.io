@@ -29,6 +29,7 @@ import * as quests from './quests.js'
 		clothes		the tailor (the clothes), the outfitter (boots, the backpacks and their pouches, the extras, the tools): each buys clothes and
 					gear back. A piece of clothing is bought in the colour chosen (clothing.js: its five)
 		bank		the banker: money put in or taken out (BANK)
+		harbour		the sea captain: a schooner of your own, and the men to crew her (owned.js: MORE FOR SALE)
 		hall		the librarian, at the library: the town's hall. Its nation, the wars, and a player's allegiance (survivalWar.js: hallHtml)
 	What a thing costs is its price (items.js, clothing.js), in dollars; what a shop pays for one is SELL of that. Money is items.js's money:
 	cents, any amount in one stack (inventory.js: pay, receive). The shops have no end of anything, and are the same for everyone, so there
@@ -63,7 +64,8 @@ export const TRADES = {
 	fisherman: { title: 'Fish', sells: ['smokedFish', 'water'], buys: FOOD },
 	innkeeper: { title: 'Inn', sells: ['beer', 'water', 'bread', 'sausage', 'cookedVenison', 'alcohol', 'bandage', 'boiledMushroom', ...SPIRITS], buys: [...FOOD, ...MEDICINE, ...SPIRITS, 'mushroom'], room: true },
 	tailor: { title: 'Tailor', sells: TAILORED, buys: [...CLOTHING, ...GEAR] },
-	outfitter: { title: 'Outfitter', sells: OUTFITTED, buys: [...CLOTHING, ...GEAR], horse: true },
+	outfitter: { title: 'Outfitter', sells: OUTFITTED, buys: [...CLOTHING, ...GEAR] },		// (and a horse of your own: owned.js)
+	'sea captain': { title: 'Harbour', sells: [], buys: [] },
 	banker: { title: 'Bank', bank: true },
 	librarian: { title: 'Town Hall', hall: true },
 };
@@ -138,6 +140,12 @@ function bankAsk(put = 0, take = 0) {
 }
 export const bankForTest = () => ({ ...bank, accounts: Object.fromEntries(accounts) });
 
+// MORE FOR SALE (owned.js: a vehicle of your own, a schooner's crew): fn(the trade's name, the person) gives rows of it, each
+//		{ id, icon (an item type, for its picture), tint, name, detail, price (cents, or null: none shown), label (its button's, or null), act() }
+const offers = [];
+export function addOffers(fn) { offers.push(fn); render(); }
+let offered = [];
+
 // THE SHOP SCREEN
 const shop = { person: null, trade: null, amount: '' };
 export const shopState = shop;
@@ -184,8 +192,9 @@ function render() {
 			const colours = it.clothing ? it.colours.map((c, k) => `<span data-act="buy" data-type="${type}" data-colour="${k}" title="${c}" style="display:inline-block; width:16px; height:16px; margin-left:4px; border-radius:3px; border:1px solid #000; background:${COLOURS[c]}; cursor:pointer;"></span>`).join('') : button('buy', 'Buy', `data-type="${type}"`);
 			buy += row(`${picture(type, it.clothing ? COLOURS[it.colours[0]] : it.tint)}<div><div>${html(it.name)}</div><div style="font-size:11px; color:#b8a888;">${html(it.detail ?? '')}</div></div>`, `<span style="margin-right:4px;">${dollars(asked(type))}</span>${colours}`);
 		}
-		if (trade.horse) buy = row(`${picture('haversack', '#6a4a2a')}<div><div>Saddled horse</div><div style="font-size:11px; color:#b8a888;">Brought round for you: its saddlebags carry the camp (a tent, its stove, its rain collector, two bedrolls)</div></div>`,
-			`<span style="margin-right:4px;">${dollars(HORSE * 100)}</span>${button('horse', 'Buy')}`) + buy;
+		offered = offers.flatMap((fn) => fn(shop.person.profession.name, shop.person) ?? []);
+		buy = offered.map((o) => row(`${picture(o.icon, o.tint)}<div><div>${html(o.name)}</div><div style="font-size:11px; color:#b8a888;">${html(o.detail ?? '')}</div></div>`,
+			`${o.price !== null && o.price !== undefined ? `<span style="margin-right:4px;">${dollars(o.price)}</span>` : ''}${o.label ? button('offer:' + o.id, o.label) : ''}`)).join('') + buy;
 		if (trade.room) buy = row(`${picture('bedroll', '#7a5a3a')}<div><div>Sleep in a room</div><div style="font-size:11px; color:#b8a888;">Eight hours go by. You wake fed and watered, rested, and with half your stress gone</div></div>`,
 			`<span style="margin-right:4px;">${dollars(ROOM * 100)}</span>${button('room', 'Sleep')}`) + buy;
 		let sell = '';
@@ -267,6 +276,7 @@ root.addEventListener('click', (e) => {
 	if (act.startsWith('sw:')) { survivalWar.hallAct(act, treasury.townNumber(shop.person.town)); render(); return; }
 	if (act == 'buy') buy(el.dataset.type, el.dataset.colour !== undefined ? Number(el.dataset.colour) : null);
 	if (act == 'horse') buyHorse();
+	if (act.startsWith('offer:')) { offered.find((o) => o.id == act.slice(6))?.act?.(); render(); return; }
 	if (act == 'room') { sleepInRoom(); return; }
 	if (act == 'sell') sell(Number(el.dataset.uid));
 	if (act == 'put' || act == 'putAll') {

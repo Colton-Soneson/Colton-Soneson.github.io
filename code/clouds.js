@@ -229,26 +229,40 @@ const cellsTexture = device.createTexture({
 });
 const cellsView = cellsTexture.createView();
 
-// the march. rgb: the light the clouds send to the eye, a: how much of what is behind them shows through. At a half, a third or a
-//		quarter of the canvas's size (settings.cloudResolution: the clouds are soft, and the march is most of their cost), and made
-//		again when that or the canvas's size changes (see display.js)
-let halfSize, cloudTexture, cloudView, cloudDivisor = 0;
+// the march, in levels (see DYNAMIC RESOLUTION in vfc_clouds.js). Each: light (rgb: the light the clouds send to the eye, a: how much of
+//		what is behind them shows through) and near (how near the cloud the ray met was, world units), at the canvas's size over its
+//		divisor. settings.cloudResolution 0: dynamic, from settings.cloudCoarsest (an eighth or a quarter) up through every halving to
+//		the full size; 1, 2, 3 or 4: one level, the full size, a half, a third or a quarter. Made again when those or the canvas's size
+//		change (see display.js). The finest is what is laid over the frame (and read by the shafts of light)
+let levels = [], levelsKey = '';
+let halfSize, cloudView;
 export let cloudMarchView;	// for the shafts of light, which need to know where the sky is open (lightShafts.js)
-function makeCloudTexture() {
-	if (cloudTexture) cloudTexture.destroy();
-	cloudDivisor = Number(settings.cloudResolution) || 2;
-	halfSize = [Math.max(Math.ceil(drawn.width / cloudDivisor), 1), Math.max(Math.ceil(drawn.height / cloudDivisor), 1)];
-	cloudTexture = device.createTexture({
-		label: "cloud march",
-		size: halfSize,
-		format: 'rgba16float',
-		usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+const resolutionKey = () => `${Number(settings.cloudResolution) || 0}:${Number(settings.cloudCoarsest) || 8}`;
+// (what the coarsest level is given as its coarser one: nothing, 1 texel)
+const noLight = device.createTexture({ label: "cloud march none", size: [1, 1], format: 'rgba16float', usage: GPUTextureUsage.TEXTURE_BINDING });
+const noNear = device.createTexture({ label: "cloud march near none", size: [1, 1], format: 'r32float', usage: GPUTextureUsage.TEXTURE_BINDING });
+function makeCloudTextures() {
+	for (const L of levels) { L.light.destroy(); L.near.destroy(); L.uniforms.destroy(); }
+	levelsKey = resolutionKey();
+	const fixed = Number(settings.cloudResolution) || 0;
+	const divisors = [];
+	if (fixed >= 1) divisors.push(fixed);
+	else for (let d = Number(settings.cloudCoarsest) >= 8 ? 8 : 4; d >= 1; d /= 2) divisors.push(d);
+	levels = divisors.map((divisor) => {
+		const size = [Math.max(Math.ceil(drawn.width / divisor), 1), Math.max(Math.ceil(drawn.height / divisor), 1)];
+		const usage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING;
+		const light = device.createTexture({ label: `cloud march 1/${divisor}`, size, format: 'rgba16float', usage });
+		const near = device.createTexture({ label: `cloud march near 1/${divisor}`, size, format: 'r32float', usage });
+		const uniforms = device.createBuffer({ label: `cloud march level 1/${divisor}`, size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+		return { divisor, size, light, near, lightView: light.createView(), nearView: near.createView(), uniforms };
 	});
-	cloudView = cloudTexture.createView();
+	const finest = levels[levels.length - 1];
+	halfSize = finest.size;
+	cloudView = finest.lightView;
 	cloudMarchView = cloudView;
 }
-makeCloudTexture();
-onRenderResize(makeCloudTexture);
+makeCloudTextures();
+onRenderResize(makeCloudTextures);
 
 const cloudUniformBuffer = device.createBuffer({
   label: "cloud Uniform",
@@ -487,7 +501,10 @@ const marchBindGroupLayout = device.createBindGroupLayout({
     binding: 8,								//sky view LUT
     visibility: GPUShaderStage.FRAGMENT,
     texture: {}
-  }
+  },
+  { binding: 10, visibility: GPUShaderStage.FRAGMENT, buffer: {} },								//the level
+  { binding: 11, visibility: GPUShaderStage.FRAGMENT, texture: {} },							//the coarser level's light
+  { binding: 12, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },	//and how near its cloud was
   ]
 });
 
@@ -537,9 +554,7 @@ const marchPipeline = device.createRenderPipeline({
 	fragment: {
 		module: cloudMarchShaderModule,
 		entryPoint: "fragmentMain",
-		targets: [{
-		format: 'rgba16float'
-		}]
+		targets: [{ format: 'rgba16float' }, { format: 'r32float' }]
 	},
 	primitive: {
 		topology: 'triangle-list',
@@ -572,8 +587,8 @@ const compositePipeline = device.createRenderPipeline({
 
 // Early in the frame, before anything is drawn: see the top of the file
 export function cloudUpdate(aEncoder) {
-	if ((Number(settings.cloudResolution) || 2) !== cloudDivisor) {
-		makeCloudTexture();
+	if (resolutionKey() !== levelsKey) {
+		makeCloudTextures();
 	}
 	weatherUpdate();
 
@@ -654,27 +669,36 @@ export function cloudPass(mainpassDepthTexture) {
 	const depthView = mainpassDepthTexture.createView();
 
 	//-------------THE MARCH------------------
-	const marchPass = encoder.beginRenderPass({
-		colorAttachments: [{
-			view: cloudView,
-			loadOp: "clear",
-			clearValue: { r: 0.0, g: 0.0, b: 0.0, a: 1.0 },
-			storeOp: "store",
-		}],
-		timestampWrites: profiler.timestamps('March', 'vf_cloudMarch'),
+	// a level at a time, the coarsest first (see DYNAMIC RESOLUTION in vfc_clouds.js): each marches again only where the one before met
+	//		cloud nearer than its reach, Full Resolution Within (settings.cloudFullResWithin) times its divisor
+	const skyView = skyViewLUTtexture.createView();
+	const within = Math.max(settings.cloudFullResWithin ?? 1200, 1) * settings.forestUnitsPerMetre;
+	levels.forEach((L, k) => {
+		const coarser = k > 0 ? levels[k - 1] : null;
+		device.queue.writeBuffer(L.uniforms, 0, new Float32Array([L.size[0], L.size[1], within * L.divisor, coarser ? 1 : 0]));
+		const marchPass = encoder.beginRenderPass({
+			colorAttachments: [
+				{ view: L.lightView, loadOp: "clear", clearValue: { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }, storeOp: "store" },
+				{ view: L.nearView, loadOp: "clear", clearValue: { r: 1e9, g: 0, b: 0, a: 0 }, storeOp: "store" },
+			],
+			timestampWrites: profiler.timestamps(L.divisor == 1 ? 'March (full)' : `March (1/${L.divisor})`, 'vf_cloudMarch'),
+		});
+		marchPass.setPipeline(marchPipeline);
+		marchPass.setBindGroup(0, device.createBindGroup({
+			label: "cloud march bind group",
+			layout: marchBindGroupLayout,
+			entries: [
+				...densityResources(),
+				{ binding: 7, resource: depthView },
+				{ binding: 8, resource: skyView },
+				{ binding: 10, resource: { buffer: L.uniforms } },
+				{ binding: 11, resource: coarser ? coarser.lightView : noLight.createView() },
+				{ binding: 12, resource: coarser ? coarser.nearView : noNear.createView() },
+			],
+		}));
+		marchPass.draw(3);
+		marchPass.end();
 	});
-	marchPass.setPipeline(marchPipeline);
-	marchPass.setBindGroup(0, device.createBindGroup({
-		label: "cloud march bind group",
-		layout: marchBindGroupLayout,
-		entries: [
-			...densityResources(),
-			{ binding: 7, resource: depthView },
-			{ binding: 8, resource: skyViewLUTtexture.createView() },
-		],
-	}));
-	marchPass.draw(3);
-	marchPass.end();
 
 	//-------------OVER THE FRAME------------------
 	const compositePass = encoder.beginRenderPass({

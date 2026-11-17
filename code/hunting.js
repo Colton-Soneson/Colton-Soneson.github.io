@@ -351,12 +351,23 @@ function gather(now) {
 }
 // (what stands still has changed: built, cabins.js)
 export function regather() { gatheredAt = null; }
+// for testing: every push out of a box, while watched (an array, or null)
+let pushWatch = null;
+export function watchPushes(list) { pushWatch = list; }
+// for testing: the boxes gathered round the walker within r of (x, z): [min x, min y, min z, max x, max y, max z]
+export function boxesForTest(x, z, r) { const list = []; for (let b = 0; b < boxCount; b++) { const o = b * 6; if (boxes[o + 3] > x - r && boxes[o] < x + r && boxes[o + 5] > z - r && boxes[o + 2] < z + r) list.push([...boxes.slice(o, o + 6)].map((v) => Math.round(v * 10) / 10)); } return list; }
 // More things in the way that stand still: each one's fn(x, z, reach, add) gives the boxes within reach
 const stills = [];
 export function addStill(near) { stills.push(near); }
-// Floors over the ground (a house's: interiors.js): fn(x, z, highest) the height of the floor at (x, z), if there is one no higher than highest, or -Infinity
+// Floors over the ground (a house's: interiors.js; the towns' streets and stairs: townFloor.js): fn(x, z, highest) the height of the floor at
+//		(x, z), if there is one no higher than highest, or -Infinity
 const floors = [];
 export function addFloor(fn) { floors.push(fn); }
+function floorUnder(x, z, highest) {
+	let floor = -Infinity;
+	for (const fn of floors) floor = Math.max(floor, fn(x, z, highest));
+	return floor;
+}
 // Things in the way that move (the townsfolk): each one's fn(x, z, reach, add) gives the boxes within reach, where they are now
 const movers = [];
 export function addMovers(near) { movers.push(near); }
@@ -372,6 +383,7 @@ function pushOut(axis, moved, half, step) {
 		const o = b * 6;
 		if (boxes[o + 4] <= feet + step || boxes[o + 1] >= head) continue;	// low enough to step on, or over its head
 		if (hunter.x + half <= boxes[o] || hunter.x - half >= boxes[o + 3] || hunter.z + half <= boxes[o + 2] || hunter.z - half >= boxes[o + 5]) continue;
+		if (pushWatch) pushWatch.push({ axis, moved, from: [hunter.x, hunter.z], box: [...boxes.slice(o, o + 6)], b, still: b < stillBoxes });
 		if (axis == 0) hunter.x = moved > 0 ? boxes[o] - half - 0.001 : boxes[o + 3] + half + 0.001;
 		else hunter.z = moved > 0 ? boxes[o + 2] - half - 0.001 : boxes[o + 5] + half + 0.001;
 	}
@@ -872,7 +884,8 @@ export function updateHunter() {
 		// across, a way at a time, out of anything it walked into. On the ground, not up anything too steep (standing on something
 		//		over the ground, a bridge, the pier, it goes where that goes)
 		const fromX = hunter.x, fromZ = hunter.z, fromGround = hunter.grounded ? groundUnder(fromX, fromZ) : 0;
-		const onGround = hunter.y - fromGround < step;
+		// (standing on a floor over the land, a house's or a town's stairs, the land's slope under it is nothing to it: addFloor)
+		const onGround = hunter.y - fromGround < step && !(hunter.grounded && floorUnder(fromX, fromZ, hunter.y + step) >= hunter.y - 0.1 * metre);
 		hunter.x += (hunter.vx + knock[0]) * dt;
 		pushOut(0, hunter.vx + knock[0], half, step);
 		hunter.z += (hunter.vz + knock[1]) * dt;

@@ -343,6 +343,8 @@ function houseBoxes(h) {
 	for (let u = -hw; u <= hw + 0.01; u += step) {
 		at(u, -hd, b.footing, b.y + h.height);
 		if (!plan.doors.some((D) => Math.abs(u - D.x) < D.w / 2 + half)) at(u, hd, b.footing, b.y + h.height);
+		// (under a door its sill, up to the floor: a house up on its footings is not to be walked into under its floor)
+		else at(u, hd, b.footing, b.y + plan.floorY - 0.02);
 	}
 	for (let w = -hd + step; w <= hd - step + 0.01; w += step) { at(-hw, w, b.footing, b.y + h.height); at(hw, w, b.footing, b.y + h.height); }
 	// the walls between its rooms, with their doorways

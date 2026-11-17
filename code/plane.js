@@ -102,8 +102,9 @@ import {uniformBufferLights} from './rotatingCube.js'
 	turn less (FLOATS.drag: about 15% off its top speed; FLOATS.turn), and they are something more to hit. Floating slowly it is held level as the boats are (settings.boatSteadying:
 	boat.js's THE STEADYING), less and less as it gathers speed (STEADY_FADE).
 	SMOKE: shot about past half its HEALTH it trails smoke, more and more the worse it is, and flames too near the end (SMOKE).
-	ON THE LANDING STRIP, stopped, with the parking brake on: it is refuelled, rearmed and repaired, RELOAD_SECONDS (a ring says how
-	long).
+	ON THE LANDING STRIP (any of them: every tile's), stopped, with the parking brake on: it is refuelled, rearmed and repaired, RELOAD_SECONDS
+	(a ring says how long). In the Survival mode only repaired: the fuel and the rounds are bought at the strip's control tower
+	(controlTower.js: setStripService, refuel, rearm). An NPC's is all three, as ever.
 	Or anywhere on the ground with a SUPPLY PACK (a weapon from the spawn menu, one at a time: a horse's saddlebags give one).
 
 	THE MESH (PLANE_MESH): PLANE_TRIANGLES (no more than 4000), made with viewmodel.js's meshBuilder (part + 32 x material, the
@@ -1158,19 +1159,24 @@ const racksFull = (p) => p.bombs > 0 && p.bombWait <= 0 && !p.dropping.length &&
 // Refuelled and rearmed
 //-------------------------------------------------
 function resupply(p) {
-	p.fuel = 1;
-	p.vickers = VICKERS;
-	p.bombs = BOMBS.sets;
+	refuel(p);
+	rearm(p);
 	p.supplied++;
 	planeStats.reloads++;
 }
-// the landing strip: on it, stopped, the brake on
-function onStrip(p) {
-	const s = terrain.land?.strip;
-	if (!s) return false;
+export function refuel(p) { p.fuel = 1; }
+export function rearm(p) { p.vickers = VICKERS; p.bombs = BOMBS.sets; p.rear.pan = lewis.PAN; p.rear.spare = LEWIS_PANS; }
+// what a stop on the strip gives a plane besides its repairs (controlTower.js: the Survival mode's are bought): { fuel, arms }
+let stripService = () => ({ fuel: true, arms: true });
+export function setStripService(fn) { stripService = fn; }
+const serviceOf = (p) => p.owner == 'npc' ? { fuel: true, arms: true } : stripService(p);
+// the landing strip: on it (any tile's), stopped, the brake on. The strip it is on, or null
+export function stripUnder(p) {
 	const at = p.frame.toWorld([0, 0, 0]);
-	return stripWeight(s, at[0], at[2]) >= 1;
+	return (terrain.land?.strips ?? (terrain.land?.strip ? [terrain.land.strip] : [])).find((s) => stripWeight(s, at[0], at[2]) >= 1) ?? null;
 }
+const onStrip = (p) => !!stripUnder(p);
+export const parkedOnStrip = (p) => parked(p);
 function parked(p) { return p.wreck < 0 && p.brake && p.contacts >= 3 && Math.hypot(...p.v) < 0.4 && onStrip(p); }
 
 // The floats (see THE FLOATS at the top)
@@ -1504,7 +1510,14 @@ export function planeUpdate() {
 			if (p.wreck < 0 && struck(p)) crash(p, Math.hypot(...p.v), 'struck');
 			// the strip: parked, it is refuelled and rearmed after RELOAD_SECONDS
 			if (parked(p)) {
-				if (p.reload >= 0) { p.reload += elapsed; if (p.reload >= RELOAD_SECONDS) { resupply(p); p.health = HEALTH; p.reload = -1; help.toast('Refuelled, rearmed and repaired', 2.5); } }
+				if (p.reload >= 0) { p.reload += elapsed; if (p.reload >= RELOAD_SECONDS) {
+					const free = serviceOf(p);
+					if (free.fuel) refuel(p);
+					if (free.arms) rearm(p);
+					if (free.fuel || free.arms) { p.supplied++; planeStats.reloads++; }
+					p.health = HEALTH; p.reload = -1;
+					help.toast(free.fuel && free.arms ? 'Refuelled, rearmed and repaired' : 'Repaired: fuel and rounds are bought at the control tower', 2.5);
+				} }
 			} else p.reload = 0;
 			if (p.wreck > WRECK_SECONDS) { removePlane(p); announceSpawn('plane', null, p); continue; }
 		} else follow(p, now / 1000);
@@ -1815,5 +1828,6 @@ function showReload() {
 	const place = hunting.hunterPlace(), m = metre();
 	const p = planes.find((one) => one.reload > 0 && (mySeat(one) || Math.hypot(one.p[0] * m - place.x, one.p[2] * m - place.z) < 30 * m));
 	if (!p || !place.active) { reloadRing.hide(); return; }
-	reloadRing.show(clamp(p.reload / RELOAD_SECONDS, 0, 1), Math.ceil(RELOAD_SECONDS - p.reload), 'RELOADING', 'Refuelling and rearming the biplane');
+	const free = serviceOf(p);
+	reloadRing.show(clamp(p.reload / RELOAD_SECONDS, 0, 1), Math.ceil(RELOAD_SECONDS - p.reload), free.fuel || free.arms ? 'RELOADING' : 'REPAIRING', free.fuel || free.arms ? 'Refuelling and rearming the biplane' : 'Repairing the biplane: free on the strip');
 }

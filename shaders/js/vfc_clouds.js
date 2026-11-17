@@ -68,6 +68,14 @@ export const CLOUD_CELLS_WORKGROUP = 8;
 		steps that grow		the steps along a ray start short and lengthen with distance, so the cloud nearby is
 							walked finely however long the ray is
 
+	DYNAMIC RESOLUTION (the march's levels: clouds.js, settings.cloudResolution 0)
+		A near cloud fills a lot of the screen and shows every bulb; a far one is a few pixels and soft with haze. So the march is
+		made in levels, coarsest first (an eighth or a quarter of the frame's size), each twice as fine as the last, the finest the
+		frame's own. Each level's pixels start from the coarser level's: where it met no cloud nearer than the level's reach (LV.size.z:
+		twice as far for every halving of the size), its picture is taken up as it is (cheap); where it did, or where the pixel lies on
+		the edge of something solid with cloud behind it (the coarser pixels saw past it or into it), it is marched again, finely.
+		Each level says how near the cloud it met was (the second target: where the ray had first lost a little of the sky behind).
+
 	THE COVERAGE MAP (c_cloudCoverage)
 		A picture taken from above that sees only the clouds: for every place on the ground, how much of the sun the cloud
 		over it lets through, how much cloud there is straight up, and whether it is raining there. It is what puts the
@@ -825,6 +833,18 @@ export const vf_cloudMarch =
 
 	@group(0) @binding(7) var depthTexture: texture_depth_2d;
 	@group(0) @binding(8) var skyLUT: texture_2d<f32>;
+	// the level of the march this is (see DYNAMIC RESOLUTION at the top)
+	struct MarchLevel {
+		size : vec4f,		// xy: the size it draws at, z: how near (world units) cloud must be met to be marched again here, w: 1 if there is a coarser level to start from
+	}
+	@group(0) @binding(10) var<uniform> LV: MarchLevel;
+	@group(0) @binding(11) var coarserLight: texture_2d<f32>;	// the coarser level: what this target 0 is
+	@group(0) @binding(12) var coarserNear: texture_2d<f32>;	// and target 1: how near the cloud it met was (world units; 1e9 none)
+	struct Marched {
+		@location(0) light: vec4f,		// rgb: the light the clouds send to the eye, a: how much of what is behind them shows through
+		@location(1) near: f32,			// how far along the ray it first lost a little of what is behind
+	}
+	const SEEN: f32 = 0.98;			// (a little: what shows through dropping under this)
 
 	const PI: f32 = 3.14159265;
 	const MOST_SKIPS: i32 = 128;		// strides across the clear air between the heaps (heapGap), at most, per ray
@@ -898,9 +918,9 @@ export const vf_cloudMarch =
 	}
 
 	@fragment
-	fn fragmentMain(@builtin(position) fragCoord: vec4f) -> @location(0) vec4f {
+	fn fragmentMain(@builtin(position) fragCoord: vec4f) -> Marched {
 		//------------------THE RAY-----------------
-		let uv = fragCoord.xy / CU.screen.xy;
+		let uv = fragCoord.xy / LV.size.xy;
 		let ndc = vec2f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
 		let nearPoint = CU.invViewProjectionMatrix * vec4f(ndc, ${DEPTH_NEAR}, 1.0);
 		let farPoint = CU.invViewProjectionMatrix * vec4f(ndc, ${DEPTH_FAR}, 1.0);
@@ -910,13 +930,42 @@ export const vf_cloudMarch =
 		// how far it can go: to whatever solid thing was drawn at this pixel, if anything was
 		//		(the march is a half, a third or a quarter of the size of the frame, see cloudResolution: the depth is read at the matching place)
 		let depthSize = vec2i(textureDimensions(depthTexture));
-		let depth = textureLoad(depthTexture, min(vec2i(fragCoord.xy * vec2f(depthSize) / CU.screen.xy), depthSize - vec2i(1, 1)), 0);
+		let depth = textureLoad(depthTexture, min(vec2i(fragCoord.xy * vec2f(depthSize) / LV.size.xy), depthSize - vec2i(1, 1)), 0);
 		var solid = 1000000000.0;
 		if (!${skyTest('depth')}) {
 			let scenePoint = CU.invViewProjectionMatrix * vec4f(ndc, depth, 1.0);
 			solid = distance(scenePoint.xyz / scenePoint.w, origin);
 		}
 		let furthest = min(CU.quality.y, solid);
+
+		//------------------THE LEVEL-----------------
+		// from the coarser level (see DYNAMIC RESOLUTION at the top): the nearest cloud it met round here, and whether this pixel is on
+		//		the edge of something solid that the coarser pixels round it saw past, or into
+		if (LV.size.w > 0.5) {
+			let coarseSize = vec2i(textureDimensions(coarserNear));
+			let ratio = vec2f(depthSize) / vec2f(coarseSize);
+			let middle = vec2i(round(fragCoord.xy * vec2f(coarseSize) / LV.size.xy - vec2f(0.5, 0.5)));
+			var nearest = 1000000000.0;
+			var edge = false;
+			for (var j = -1; j <= 1; j++) {
+				for (var i = -1; i <= 1; i++) {
+					let texel = clamp(middle + vec2i(i, j), vec2i(0, 0), coarseSize - vec2i(1, 1));
+					nearest = min(nearest, textureLoad(coarserNear, texel, 0).r);
+					if (abs(i) + abs(j) <= 1) {
+						let there = textureLoad(depthTexture, min(vec2i((vec2f(texel) + vec2f(0.5, 0.5)) * ratio), depthSize - vec2i(1, 1)), 0);
+						var thereSolid = 1000000000.0;
+						if (!${skyTest('there')}) {
+							let p = CU.invViewProjectionMatrix * vec4f(ndc, there, 1.0);
+							thereSolid = distance(p.xyz / p.w, origin);
+						}
+						edge = edge || abs(thereSolid - solid) > 0.15 * min(thereSolid, solid);
+					}
+				}
+			}
+			if (nearest > LV.size.z && !(edge && nearest < 999999999.0)) {
+				return Marched(textureSampleLevel(coarserLight, clampSampler, fragCoord.xy / LV.size.xy, 0.0), nearest);
+			}
+		}
 
 		// The stretches of it that are inside the three layers. (The high layer is followed much further out than the others:
 		//		it is so high that a ray only a little above the horizon has a very long way to go to reach it, and a sheet
@@ -959,6 +1008,7 @@ export const vf_cloudMarch =
 		let ambientLow = skyLight(normalize(vec3f(direction.x, 0.08, direction.z)));
 		let grey = 1.0 - 0.75 * CU.scroll.w;
 		let jitter = pixelNoise(fragCoord.xy);
+		var seen = 1000000000.0;				// (how far along it first lost a little of what is behind: Marched.near)
 
 		// the three layers, the nearest first
 		for (var turn = 0; turn < 3; turn++) {
@@ -1083,6 +1133,9 @@ export const vf_cloudMarch =
 					let fade = exp(-density * SCATTER * stride * hazed);
 					light += through * lit * (1.0 - fade);
 					through *= fade;
+					if (through < SEEN && seen > 999999999.0) {
+						seen = travelled;
+					}
 				}
 				stepStart += stride;
 				stride *= 1.0 + growth;
@@ -1092,7 +1145,7 @@ export const vf_cloudMarch =
 			}
 		}
 
-		return vec4f(light, through);
+		return Marched(vec4f(light, through), seen);
 	}
 `;
 

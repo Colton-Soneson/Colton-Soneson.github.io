@@ -41,6 +41,10 @@ import * as ice from './ice.js'
 	Otherwise T has only what is in the hands (inventory.js: the equippables) and the map.
 	THE START: in the summer (settings.seasonStart), in the morning, the first weather of the day sunny (weather.js), and going round as ever
 	after.
+	SWITCHED IN (replenish): coming into the Survival mode from another one, the walker starts it replenished: no hunger, thirst, tiredness
+	or stress, warm and dry, its health full and nothing wrong with its body (medical.js: onReplenish). What the other modes put it
+	through (a fall, a crash, the hours flown about) is not brought in. A page that starts in it (a save loaded: settings.js, savedWorld)
+	keeps what it had.
 */
 const NEEDS = { hunger: 100 / (45 * 60), thirst: 100 / (30 * 60), tired: 100 / (60 * 60) };	// a second, before what makes them faster
 const RUNNING = 1.6;
@@ -67,7 +71,7 @@ export function sickHurt(amount) { sickHarm += amount; players.hurtQuietly(amoun
 export function onEaten(fn) { eatenListeners.push(fn); }
 export function onRoomSlept(fn) { roomListeners.push(fn); }
 export const status = { hunger: 10, thirst: 10, tired: 10, stress: 0, temperature: 0, feels: 20, wet: 0, asleep: 0 };
-export const survivalStats = { drinks: 0, eaten: 0, slept: 0, bodies: 0 };
+export const survivalStats = { drinks: 0, eaten: 0, slept: 0, bodies: 0, replenished: 0 };
 const on = () => inventory.survivalOn() && hunting.hunterPlace().active;
 export const godMode = () => !!settings.survivalGodMode && survivalNet.role() != 'joined';
 inventory.setGodMode(godMode);
@@ -173,9 +177,29 @@ export function clockText() {
 // Once a frame
 //-------------------------------------------------
 let lastTime = performance.now(), wasAlive = true, starving = 0, lastHealth = players.HEALTH, wobble = 0;
+// SWITCHED IN (see the top)
+let wasSurvival = null;
+const replenishListeners = [];
+export function onReplenish(fn) { replenishListeners.push(fn); }
+export function replenish() {
+	Object.assign(status, { hunger: 0, thirst: 0, tired: 0, stress: 0, temperature: 0, wet: 0, asleep: 0 });
+	resetModifiers();
+	hunting.effects.noRun = hunting.effects.noJump = false;
+	roomUntil = 0;
+	calmFor = 0;
+	const life = players.localLife();
+	if (life.alive && life.health < players.HEALTH) players.healSelf(players.HEALTH - life.health);
+	lastHealth = players.HEALTH;
+	for (const fn of replenishListeners) fn();
+	survivalStats.replenished++;
+}
+
 export function survivalUpdate() {
 	const now = performance.now(), dt = Math.min((now - lastTime) / 1000, 0.1);
 	lastTime = now;
+	const inSurvival = inventory.survivalOn();
+	if (wasSurvival === false && inSurvival) replenish();
+	wasSurvival = inSurvival;
 	inventory.inventoryUpdate(dt);
 	if (!on()) { nightOff(); hunting.effects.pace = 1; hunting.effects.frozen = false; outfits.setArmour('me', 0); shown(false); return; }
 	const p = hunting.hunterPlace(), life = players.localLife();
@@ -352,7 +376,9 @@ let mapChoice = null, buildChoice = null, everything = () => [];
 export function setBuildChoice(choice) { buildChoice = choice; }
 export function setMapChoice(choice) { mapChoice = choice; }
 export function setEveryEquippable(fn) { everything = fn; }
-let holdItem = null, watchChoice = null;
+let holdItem = null, watchChoice = null, garage = null;
+// what the player owns, to bring out (owned.js): fn() gives the Vehicles ring, or null with nothing owned
+export function setGarageChoice(fn) { garage = fn; }
 export function setHoldItem(fn) { holdItem = fn; }
 export function setWatchChoice(choice) { watchChoice = choice; }
 radialMenu.setRootSource((root) => {
@@ -366,6 +392,8 @@ radialMenu.setRootSource((root) => {
 	items.push({ label: 'Empty hands', detail: 'Put away what you hold', act: () => { weapons.equipWeapon('none'); return true; } });
 	if (mapChoice) items.push(mapChoice);
 	if (buildChoice) items.push(buildChoice);
+	const vehicles = garage?.();
+	if (vehicles) items.push(vehicles);
 	return { label: 'Equipped', items };
 });
 

@@ -25,6 +25,7 @@ import * as loot from './loot.js'
 import * as mining from './mining.js'
 import * as townOpinion from './townOpinion.js'
 import * as quests from './quests.js'
+import * as owned from './owned.js'
 
 /*
 	THE SAVE FILE (the Survival mode's): everything a player has done to the world and has with them, in one small file to download, and
@@ -58,7 +59,7 @@ export const saveStats = { saved: 0, bytes: 0, json: 0, loaded: 0, applied: null
 const kept = (key) => { try { return localStorage.getItem(key); } catch (e) { return null; } };
 export function collect() {
 	const stored = {};
-	for (const r of [inventory.inventoryRecord(), medical.medicalRecord(), survival.statusRecord(), shops.bankRecord(), cabins.cabinsRecord(), treasury.treasuryRecord(), townEconomy.economyRecord(),
+	for (const r of [inventory.inventoryRecord(), medical.medicalRecord(), survival.statusRecord(), shops.bankRecord(), owned.ownedRecord(), cabins.cabinsRecord(), treasury.treasuryRecord(), townEconomy.economyRecord(),
 		townOpinion.opinionRecord(), quests.questsRecord()]) stored[r.key] = r.text;
 	for (const key of ['survivalSlept', 'survivalAllegiance', 'huntName']) { const text = kept(key); if (text !== null) stored[key] = text; }
 	const p = hunting.hunterPlace();

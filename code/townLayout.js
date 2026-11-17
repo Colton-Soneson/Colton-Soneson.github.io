@@ -401,6 +401,10 @@ export function planTownGround(g, sites, seed) {
 	return { strength, height };
 }
 
+// a lane's or a stair's ends: how far in from the middle of each street it joins that it starts (world units), the street's own level out
+//		to there (link.foot and link.head: townGround.js draws it from the one to the other, townFloor.js stands on it)
+export const LINK_EDGE = 4.5;
+
 //-------------------------------THE ROADS IN THE LAND-------------------------------
 // Segments are 8 floats each: ax, az, ah (world y), bx, bz, bh, half width, kind (0 street, 1 lane, 2 stairs, 3 plaza, 4 promenade,
 //		5 bridge: a road, but not cut into the land)
@@ -787,8 +791,14 @@ function layoutTown(site, ground, strengthAt, distanceToSea, seaLevel, random, s
 					const run = Math.hypot(best[0] - a[0], best[2] - a[2]), rise = Math.abs(best[1] - a[1]);
 					const stairs = rise / Math.max(run, 1) > STAIRS_STEEPER;
 					const width = stairs ? STAIR_WIDTH : LANE_WIDTH;
-					town.links.push({ a: [...a], b: [...best], width, stairs });
-					addSegment(a, best, width, stairs ? 2 : 1);
+					// (level with each street out to its edge: a stair that started half way up its own first step left a drop
+					//		there, onto the street, of as much as a metre)
+					const f0 = Math.min(LINK_EDGE / Math.max(run, 1), 0.45), f1 = 1 - f0;
+					const foot = [a[0] + (best[0] - a[0]) * f0, a[1], a[2] + (best[2] - a[2]) * f0], head = [a[0] + (best[0] - a[0]) * f1, best[1], a[2] + (best[2] - a[2]) * f1];
+					town.links.push({ a: [...a], b: [...best], width, stairs, foot, head });
+					addSegment(a, foot, width, stairs ? 2 : 1);
+					addSegment(foot, head, width, stairs ? 2 : 1);
+					addSegment(head, best, width, stairs ? 2 : 1);
 				}
 				at += Math.max(Math.round(between(LINK_EVERY) / 8), 4);
 			}
@@ -967,7 +977,14 @@ function layoutTown(site, ground, strengthAt, distanceToSea, seaLevel, random, s
 
 	//---the walls: along every street's edges, where the land beside it is well above or below it and no house stands there
 	const nearHouse = (x, z) => placed.some((b) => Math.abs((x - b.x) * b.ax + (z - b.z) * b.az) < b.hw + 1.5 && Math.abs((x - b.x) * -b.az + (z - b.z) * b.ax) < b.hd + 1.5);
-	const edgeWalls = (points, width, parapet) => {
+	// (a lane or stairs coming in: the wall along a street is open where one meets it, as wide as it and a little more. own: the link
+	//		whose walls these are, not open for itself)
+	const linkMeets = (x, z, own) => town.links.some((l) => {
+		if (l === own) return false;
+		const ex = l.b[0] - l.a[0], ez = l.b[2] - l.a[2], s = clamp(((x - l.a[0]) * ex + (z - l.a[2]) * ez) / Math.max(ex * ex + ez * ez, 1e-6), 0, 1);
+		return Math.hypot(x - l.a[0] - ex * s, z - l.a[2] - ez * s) < l.width / 2 + 1.6;
+	});
+	const edgeWalls = (points, width, parapet, own = null) => {
 		for (const side of [1, -1]) {
 			let wall = null;
 			for (let j = 0; j < points.length; j++) {
@@ -979,7 +996,7 @@ function layoutTown(site, ground, strengthAt, distanceToSea, seaLevel, random, s
 				const beyond = ground(p[0] + ox * (width / 2 + ROAD_EDGE + 3), p[2] + oz * (width / 2 + ROAD_EDGE + 3));
 				const drop = p[1] - beyond;
 				const r = road.nearest(p[0] + ox * (width / 2 + ROAD_EDGE + 1), p[2] + oz * (width / 2 + ROAD_EDGE + 1));
-				const wanted = Math.abs(drop) > 1.6 && !nearHouse(ex, ez) && !(r && r.weight > 0.5);
+				const wanted = Math.abs(drop) > 1.6 && !nearHouse(ex, ez) && !(r && r.weight > 0.5) && !linkMeets(ex, ez, own);
 				if (wanted) {
 					// higher land beside it: the wall holds it back, up to it. Lower: the wall holds the road up, with a parapet over it
 					const top = drop < 0 ? beyond + 0.4 : p[1] + parapet, bottom = Math.min(beyond, p[1]) - 1.2;
@@ -993,8 +1010,11 @@ function layoutTown(site, ground, strengthAt, distanceToSea, seaLevel, random, s
 	for (const lane of town.lanes) edgeWalls(lane.points.slice(1, -1), lane.width, 1.0);
 	for (const link of town.links) {
 		const n = Math.max(Math.ceil(Math.hypot(link.b[0] - link.a[0], link.b[2] - link.a[2]) / 6), 2);
-		const pts = Array.from({ length: n + 1 }, (_, k) => [0, 1, 2].map((i) => link.a[i] + (link.b[i] - link.a[i]) * k / n));
-		edgeWalls(pts.slice(1, -1), link.width, 1.0);
+		// (their heights as the link's: level, up the lane or the stairs, level)
+		const f0 = Math.hypot(link.foot[0] - link.a[0], link.foot[2] - link.a[2]) / Math.max(Math.hypot(link.b[0] - link.a[0], link.b[2] - link.a[2]), 1e-6), f1 = 1 - f0;
+		const heightAt = (f) => link.a[1] + (link.b[1] - link.a[1]) * clamp((f - f0) / Math.max(f1 - f0, 1e-6), 0, 1);
+		const pts = Array.from({ length: n + 1 }, (_, k) => [link.a[0] + (link.b[0] - link.a[0]) * k / n, heightAt(k / n), link.a[2] + (link.b[2] - link.a[2]) * k / n]);
+		edgeWalls(pts.slice(1, -1), link.width, 1.0, link);
 	}
 	town.walls = town.walls.filter((w) => w.points.length >= 2);
 	// round the plaza, on its three open sides: it is built out over the slope, with a parapet
@@ -1002,16 +1022,19 @@ function layoutTown(site, ground, strengthAt, distanceToSea, seaLevel, random, s
 		const P = town.plaza;
 		const corner = (s, t) => [P.x + P.tx * s * P.long + P.nx * t * P.deep, P.z + P.tz * s * P.long + P.nz * t * P.deep];
 		const edge = [[-1, -1], [-1, 1], [1, 1], [1, -1]].map(([s, t]) => corner(s, t));
-		const points = [];
+		// (open where a lane or stairs meets it: linkMeets)
+		let points = [];
+		const done = () => { if (points.length >= 2) town.walls.push({ points }); points = []; };
 		for (let k = 0; k < 3; k++) {
 			const [ax, az] = edge[k], [bx, bz] = edge[k + 1];
 			const n = Math.ceil(Math.hypot(bx - ax, bz - az) / 4);
 			for (let j = (k == 0 ? 0 : 1); j <= n; j++) {
 				const x = ax + (bx - ax) * j / n, z = az + (bz - az) * j / n;
+				if (linkMeets(x, z, null)) { done(); continue; }
 				points.push([x, z, P.y + 1.1, Math.min(ground(x, z), P.y) - 1.2]);
 			}
 		}
-		town.walls.push({ points });
+		done();
 	}
 	//---the flowers: rose bushes in the gardens round the houses and along the lanes, tulip beds on the plaza and beside the roads
 	town.roses = [];		// [x, y, z, size, seed]

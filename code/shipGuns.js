@@ -246,7 +246,9 @@ function useStores(b, control) {
 }
 
 // THE SEATS: F at a howitzer or a nest's gun (hunting.js: onBoatSeat), and what is done in them (addRides)
-let my = null;		// { boat, kind: 'gun' or 'nest', gun or nest, local (where it is, metres on the boat), heading (the boat's, last frame) }
+let my = null;
+// the gun or the nest this player is at on boat b: { gun, nest } (-1 the other), or null (npcShips.js: a crew of the player's own leaves it to them)
+export const playerAt = (b) => my && my.boat === b ? { gun: my.gun, nest: my.nest } : null;		// { boat, kind: 'gun' or 'nest', gun or nest, local (where it is, metres on the boat), heading (the boat's, last frame) }
 hunting.onBoatSeat((b, control) => {
 	if (control.kind == 'gun') return { rides, seat: 'gun' + control.gun };
 	if (control.kind == 'nestGun') return { rides, seat: 'nest' + control.nest };
@@ -526,7 +528,9 @@ ballistics.onBurst((at, bullet) => {
 	boat.blast(at, BURST.radius, BURST.boat, bullet);
 	plane.blast(at, BURST.radius, BURST.plane, bullet);
 	// (an NPC's shell hurts the players as npcs.js says; this player's, the others and the NPCs)
-	if (bullet.npc) npcs.blastPlayers(at, BURST.radius * m);
+	// (a crew of the player's own: as the player's own shell, npcs.js)
+	const crew = bullet.npc && npcs.isHired(bullet.shooter);
+	if (bullet.npc && !crew) npcs.blastPlayers(at, BURST.radius * m);
 	else { players.blast(at, BURST.radius * m); npcs.blast(at, BURST.radius * m); }
 	if (npcs.war.on) { if (bullet.npc) npcs.blast(at, BURST.radius * m, bullet.shooter); npcs.war.blastFolk?.(at, BURST.radius * m); }
 	deer.blast(at, BURST.radius * 0.7 * m);

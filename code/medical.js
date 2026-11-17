@@ -108,6 +108,8 @@ function fell(harm) {
 	if (harm >= FALL.least) body.dizzy = clock() + DIZZY.lasts;
 }
 hunting.onFall(fell);
+// (come into the Survival mode from another: nothing wrong with the body, survival.js: SWITCHED IN)
+survival.onReplenish(() => { body = fresh(); changed(); });
 // raw meat (items.js: parasites)
 survival.onEaten((type) => {
 	const chance = ITEMS[type]?.parasites ?? 0;

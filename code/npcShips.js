@@ -60,6 +60,11 @@ import { VESSELS } from './vessels.js'
 		cannot ride to. One gun a side manned (TROOPS.guns of them) and her lookouts at their Lewis guns; she sails to lie off the other
 		town's dock as the war's do (warStation), and there lands her horsemen one by one (every TROOPS.every seconds: troops.land, at the
 		shore end of its dock), and when the last of them is off she is blown up (TROOPS.blast). Lost before then, they are lost with her.
+	YOUR OWN CREW (hireCrew: owned.js, the sea captain hires them out): on a player's own schooner, as many as were hired: a gunner on each
+		howitzer first, then a lookout in each crow's nest. The player sails her. They fight whoever is hostile to the player (npcs.js:
+		foesOfMine): her guns those on the land or the water within CHASE, as ATTACKED does (but she is not sailed at them), the nests'
+		Lewis guns those in the air. Shot dead, a man lies where he fell until she is brought out again. Gone with her. A gun the player
+		is at is left to them. Only where the people are run (alone, or the host: npcs.runsHere)
 	Metres and seconds (the people's places are world units)
 */
 const TROOPS = { guns: 2, every: 1.4, near: 220, blast: 8, gone: 6 };	// guns manned, seconds between horsemen landed, metres from her station she lands them within, the blast (metres), seconds after it she is let go
@@ -344,6 +349,7 @@ function fight(s, enemy, dt) {
 	const b = s.boat, V = b.vessel, m = metre();
 	s.looks ??= [];
 	V.guns.forEach((G, k) => {
+		if (k === s.skipGun) return;
 		const gunner = [...s.roles.entries()].find(([p, r]) => r.role == 'gun' && r.gun == k)?.[0];
 		s.reload[k] = Math.max(s.reload[k] - dt, 0);
 		if (s.reload[k] <= 0) shipGuns.npcLoad(b, k);
@@ -379,11 +385,12 @@ function fightAir(s, dt) {
 	s.nestLooks ??= [];
 	s.bursts ??= V.nests.map(() => ({ left: 0, rest: 0 }));
 	V.nests.forEach((N, k) => {
+		if (k === s.skipNest) return;
 		const man = [...s.roles.entries()].find(([p, r]) => r.role == 'nest' && r.nest == k)?.[0];
 		const B = s.bursts[k];
 		B.rest = Math.max(B.rest - dt, 0);
 		const pivot = b.frame.toWorld(N.pivot);
-		const enemy = man && npcs.enemiesOf(s.group, ...pivot).find((e) => e.d < AIR.range * m && aloft(e) && npcs.clearLine(pivot, [e.x, e.y, e.z]));
+		const enemy = man && foesOf(s, ...pivot).find((e) => e.d < AIR.range * m && aloft(e) && npcs.clearLine(pivot, [e.x, e.y, e.z]));
 		if (!enemy) { shipGuns.npcNest(b, k, { look: null, dt }); if (man) man.fighting = false; B.left = 0; return; }
 		const dir = npcs.leadDirection(pivot, enemy, R), look = b.frame.directionToLocal(dir);
 		if (B.left <= 0 && B.rest <= 0) B.left = AIR.burst[0] + Math.floor(Math.random() * (AIR.burst[1] - AIR.burst[0] + 1));
@@ -398,6 +405,9 @@ function fightAir(s, dt) {
 	});
 }
 
+// who she fights: whoever her crew's group is hostile to, or (YOUR OWN CREW) whoever is the player's
+const foesOf = (s, x, y, z) => s.hired ? npcs.foesOfMine(x, y, z) : npcs.enemiesOf(s.group, x, y, z);
+
 // what she is after: in THE WAR the nearest of the other side's houses that still stands (npcs.war.houseFor: where to aim, its middle),
 //		otherwise whoever she is hostile to on the land or the water, within CHASE
 function quarry(s, at) {
@@ -406,7 +416,7 @@ function quarry(s, at) {
 		const h = npcs.war.houseFor?.(s.war.side, at);
 		return h && { x: h.x, y: h.y, z: h.z, v: [0, 0, 0], d: Math.hypot(h.x - at[0], h.z - at[2]) };
 	}
-	return npcs.enemiesOf(s.group, at[0], at[1], at[2]).find((e) => e.d < CHASE * m && !aloft(e)) ?? null;
+	return foesOf(s, at[0], at[1], at[2]).find((e) => e.d < CHASE * m && !aloft(e)) ?? null;
 }
 
 function stepShip(s, dt) {
@@ -639,7 +649,47 @@ npcs.addVehicleGroups((id) => ships.find((s) => s.boat?.id === id)?.group ?? nul
 
 // Per frame (after npcs.js's)
 //-------------------------------------------------
+// YOUR OWN CREW (see the top)
+//-------------------------------------------------
+const hired = [];
+// the crew aboard a player's own schooner b, count of them (any before them on her let go). null if none can be (a joiner's: the host runs them)
+export function hireCrew(b, count) {
+	for (const s of hired.filter((one) => one.boat === b)) dismissCrew(s);
+	if (!b || !npcs.runsHere() || count <= 0) return null;
+	const V = VESSELS.Schooner, group = npcs.makeGroup();
+	group.hired = true;
+	const people = [], roles = new Map();
+	for (let k = 0; k < Math.min(count, V.guns.length); k++) { const p = npcs.makePerson('gunner', { hat: 'sailor', gun: 'none', group, name: 'your gunner' }); people.push(p); roles.set(p, { role: 'gun', gun: k }); }
+	const lookouts = Math.min(count - people.length, V.nests.length);
+	for (let k = 0; k < lookouts; k++) { const p = npcs.makePerson('lookout', { hat: 'sailor', gun: 'none', group, name: 'your lookout' }); p.nest = k; people.push(p); roles.set(p, { role: 'nest', nest: k }); }
+	const s = { boat: b, hired: true, people, roles, where: new Map(people.map((p) => [p, 'aboard'])), fell: new Map(), group, reload: V.guns.map(() => 0), looks: [], nestLooks: [] };
+	hired.push(s);
+	shipStats.hired = (shipStats.hired ?? 0) + people.length;
+	return s;
+}
+export function dismissCrew(s) {
+	for (const p of s.people) { npcs.removePerson(p); if (s.boat?.exists) boat.setCrew(s.boat, p.id, null); }
+	const k = hired.indexOf(s);
+	if (k >= 0) hired.splice(k, 1);
+}
+export const hiredCrews = () => hired.map((s) => ({ boat: s.boat?.id, alive: s.people.filter((p) => p.alive).length, of: s.people.length, fighting: s.people.filter((p) => p.fighting).length }));
+function stepHired(s, dt) {
+	const b = s.boat;
+	if (!b?.exists || b.destroyed >= 0) { dismissCrew(s); return; }
+	for (const [p] of [...s.roles]) if (!p.alive) s.roles.delete(p);
+	// (a gun or a nest the player is at is left to them: its man stands aside, out of sight)
+	const mine = shipGuns.playerAt(b);
+	s.skipGun = mine && mine.gun >= 0 ? mine.gun : -1;
+	s.skipNest = mine && mine.nest >= 0 ? mine.nest : -1;
+	placeCrew(s);
+	for (const [p, r] of s.roles) if ((r.role == 'gun' && r.gun === s.skipGun) || (r.role == 'nest' && r.nest === s.skipNest)) { p.place = null; p.fighting = false; boat.setCrew(b, p.id, null); }
+	const at = b.frame.toWorld([0, 0, 0]);
+	fight(s, quarry(s, at), dt);
+	fightAir(s, dt);
+}
+
 export function shipsUpdate(dt) {
+	for (const s of [...hired]) stepHired(s, dt);
 	const land = terrain.land;
 	if (!npcs.on() || !npcs.runsHere() || !settings.enableWater) {
 		if (ships.length && (!settings.enableNPCs || !npcs.runsHere())) { for (const s of [...ships]) clearShip(s); builtFor = null; }

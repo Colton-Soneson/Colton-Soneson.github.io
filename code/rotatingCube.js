@@ -98,6 +98,7 @@ import * as staff from './staff.js'
 import * as town from './town.js'
 import * as tunnels from './tunnels.js'
 import * as fireTowers from './fireTowers.js'
+import * as controlTower from './controlTower.js'
 import * as smoke from './smoke.js'
 import * as townFolk from './townFolk.js'
 import * as npcs from './npcs.js'
@@ -504,7 +505,8 @@ export function updateRotatingCubePass() {
 	profiler.cpuMark('Towns, Smoke, Townsfolk');
 	town.townUpdate();
 	tunnels.tunnelsUpdate();	//(the tunnels' lamps, for the land there is now)
-	fireTowers.fireTowersUpdate();	//(and the fire towers' stoves: the host's)			//and the seaside towns built again (their layout comes with the land), the houses that are hurt smoking
+	fireTowers.fireTowersUpdate();	//(and the fire towers' stoves: the host's)
+	controlTower.controlTowerUpdate();	//(the control tower's panel, shut when walked away from)			//and the seaside towns built again (their layout comes with the land), the houses that are hurt smoking
 	smoke.smokeUpdate();		//(the smoke, the fire and the dust drift on)
 	townFolk.townFolkUpdate();	//and their people about their day
 	profiler.cpuMark('Particles, Birds, Deer, Horde');

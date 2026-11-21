@@ -65,6 +65,7 @@ export const imguiParams = {
     // Post Effects
     enablePostEffects: settings.enablePostEffects,
     enableScreenShadows: settings.enableScreenShadows,
+    enableSunShadows: settings.enableSunShadows,
     screenShadowStrength: settings.screenShadowStrength,
     screenShadowThickness: settings.screenShadowThickness,
     screenShadowContrast: settings.screenShadowContrast,
@@ -77,6 +78,7 @@ export const imguiParams = {
     displayScreenShading: settings.displayScreenShading,
     // Display
     renderResolution: settings.renderResolution,
+    hdVegetation: settings.hdVegetation,
     dynamicResolution: settings.dynamicResolution,
     dynamicResolutionTarget: settings.dynamicResolutionTarget,
     antiAliasing: settings.antiAliasing,
@@ -219,6 +221,7 @@ export const imguiParams = {
     cloudResolution: settings.cloudResolution,
     cloudFullResWithin: settings.cloudFullResWithin,
     cloudCoarsest: settings.cloudCoarsest,
+    cloudUpdateEvery: settings.cloudUpdateEvery,
     cloudDrawDistance: settings.cloudDrawDistance,
     cloudHeapAmount: settings.cloudHeapAmount,
     cloudPuffAmount: settings.cloudPuffAmount,
@@ -387,6 +390,7 @@ const presetController = gui.add(presetState, 'preset', presetNames).name('Graph
 });
 // how many pixels the picture is drawn with: not part of the presets (see display.js)
 gui.add(imguiParams, 'renderResolution', RESOLUTIONS).name('Resolution');
+gui.add(imguiParams, 'hdVegetation').name('HD Textures and Models');	//the trees, bushes and plants at about twice the triangles, with their leaves, needles and petals drawn in detail
 // dynamic resolution: below the Resolution setting while the frame rate is under the target (see DYNAMIC RESOLUTION in display.js)
 gui.add(imguiParams, 'dynamicResolution').name('Dynamic Resolution');
 gui.add(imguiParams, 'dynamicResolutionTarget', 0, 60, 1).name('Target FPS');
@@ -469,6 +473,7 @@ moonFolder.add(imguiParams, 'moonBrightness', 0, 4, 0.05).name('Brightness');
 moonFolder.add(imguiParams, 'moonSize', 0.25, 8, 0.05).name('Size (degrees)');
 
 const shadowFolder = gui.addFolder('Shadows');
+shadowFolder.add(imguiParams, 'enableSunShadows').name('Tree and Bush Shadows');	//the sun's shadow maps round the camera (sunShadows.js)
 shadowFolder.add(imguiParams, 'shadowMapPCFKernelSize', 1, 16, 1).name('PCF Kernel Size');
 shadowFolder.add(imguiParams, 'shadowMapAcneBias', 0, 0.05, 0.0001).name('Acne Bias');
 
@@ -609,6 +614,7 @@ cloudFolder.add(imguiParams, 'cloudSteps', 16, 128, 1).name('Quality (steps)');
 cloudFolder.add(imguiParams, 'cloudResolution', { 'dynamic (by distance)': 0, 'full': 1, 'half': 2, 'third': 3, 'quarter': 4 }).name('Resolution (of the frame)');
 cloudFolder.add(imguiParams, 'cloudFullResWithin', 100, 8000, 50).name('Dynamic: Full Res Within (m)');
 cloudFolder.add(imguiParams, 'cloudCoarsest', { 'quarter': 4, 'eighth': 8 }).name('Dynamic: Coarsest');
+cloudFolder.add(imguiParams, 'cloudUpdateEvery', 1, 16, 1).name('Update Every (frames)');
 cloudFolder.add(imguiParams, 'cloudDrawDistance', 8000, 80000, 500).name('Draw Distance');
 // (every number of the heaps' look, their light and the layers above: see the settings of the same names)
 const cloudHeapsFolder = cloudFolder.addFolder('Heaps');

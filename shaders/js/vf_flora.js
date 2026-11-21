@@ -2,6 +2,8 @@ import { windShapes } from './vf_wind.js';
 import { moonShapes } from './f_moon.js';
 import { skyLookupShapes } from './vfc_atmosphere.js';
 import { floorShapes } from '../../code/floor.js';
+import { meadowShapes } from './meadowShapes.js';
+import { sunShadowShapes } from './sunShadowShapes.js';
 
 export const FLORA_RINGS = 3;			// rings of the small plants round the camera (flora.js: RINGS)
 export const FLORA_CAP = 8192;			// the most of one kind put down a frame (its share of the list)
@@ -39,7 +41,7 @@ const common = `
 		windBlow : vec4f,
 		wind : vec4f,				// x: how far a plant sways, y: small kinds, z: cells in all the rings
 		fill : vec4f,				// the share of a colony's middle with a plant on it: forest, grass, wet, beach
-		fill2 : vec4f,				// x: alpine's
+		fill2 : vec4f,				// x: alpine's, y: the stony ground's (its stones), z: 1 with HD Textures and Models (THE HD TEXTURES)
 		colony : vec4f,				// x: a colony's cell (metres), y: how far out from its point it thins (of the cell), z: how many strays, w: bare ground under this noise
 		rings : array<vec4f, ${FLORA_RINGS}>,	// side, cell size, radius, cells before this ring
 		holes : vec4f,
@@ -70,6 +72,7 @@ export const c_flora = `
 	@group(0) @binding(9) var<storage, read> townItems: array<vec4f>;
 	@group(0) @binding(10) var grassHoles: texture_2d<f32>;
 	${floorShapes(11, 12, 13)}
+	${meadowShapes}
 	@group(0) @binding(15) var<storage, read> kinds: array<vec4f>;
 	@group(0) @binding(17) var<storage, read_write> counts: array<atomic<u32>>;
 	@group(0) @binding(18) var<storage, read_write> placed: array<vec4f>;
@@ -182,8 +185,11 @@ export const c_flora = `
 
 		//------------------IN COLONIES-----------------
 		let m = UBO.alpine.z;
+		// (few on the stony ground: THE MEADOW'S LOOK, meadowShapes.js)
+		// (the stony grassland: its own ground, the stones', THE STONY GROUND: meadowShapes.js, floraKinds.js)
+		if (zone <= 1u && random(seed + 12u) < meadowLook(root, groundNormal.y).z) { zone = 5u; }
 		// (whole stretches bare: not the forest's floor, which its ferns and mosses cover all over)
-		if (zone != 0u && smoothNoise(root / (55.0 * m) + vec2f(31.7, -8.2)) < UBO.colony.w) { return; }
+		if (zone != 0u && zone != 5u && smoothNoise(root / (55.0 * m) + vec2f(31.7, -8.2)) < UBO.colony.w) { return; }
 		// the colony it is in: the nearest point of those scattered one to a cell (a bigger cell for the far ring's big ones)
 		let size = UBO.colony.x * m * select(1.0, 1.6, ring == ${FLORA_RINGS - 1}u);
 		let base = vec2i(floor(root / size));
@@ -199,7 +205,7 @@ export const c_flora = `
 		}
 		// thick at its middle, thinning out to nothing (each colony its own size), and a share of them none at all
 		let reach = size * UBO.colony.y * (0.6 + 0.8 * random(colonyId + 2u)) * select(1.0, 1.4, zone == 0u);
-		var fills = array<f32, 5>(UBO.fill.x, UBO.fill.y, UBO.fill.z, UBO.fill.w, UBO.fill2.x);
+		var fills = array<f32, 6>(UBO.fill.x, UBO.fill.y, UBO.fill.z, UBO.fill.w, UBO.fill2.x, UBO.fill2.y);
 		let thick = fills[zone] * UBO.alpine.w * (1.0 - smoothstep(0.35, 1.0, apart / reach));
 		if (random(seed + 4u) > thick) { return; }
 		let far = ring == ${FLORA_RINGS - 1}u;
@@ -213,7 +219,8 @@ export const c_flora = `
 		if (all(holeAt >= vec2i(0)) && all(holeAt < vec2i(i32(UBO.holes.z))) && textureLoad(grassHoles, holeAt, 0).r > 0.5) { return; }
 		let K2 = kinds[kind * 3u + 2u];
 		let distant = saturate(cameraDistance / UBO.grid.y);
-		let grown = mix(K2.x, K2.y, random(seed + 7u)) * m * (1.0 - smoothstep(0.82, 1.0, distant)) * (0.75 + 0.35 * (1.0 - apart / max(reach, 0.001)));
+		// (each colony its own size, the ferns of one stretch tall and of the next short, and its own plants round that)
+		let grown = mix(K2.x, K2.y, random(seed + 7u)) * mix(0.7, 1.35, random(colonyId + 9u)) * m * (1.0 - smoothstep(0.82, 1.0, distant)) * (0.75 + 0.35 * (1.0 - apart / max(reach, 0.001)));
 		let foot0 = vec3f(root.x, ground.x, root.y);
 		// (out of sight: its middle, a plant's height up, off the screen by more than its size)
 		let clip = UBO.viewProjectionMatrix * vec4f(foot0 + vec3f(0.0, grown * 0.5, 0.0), 1.0);
@@ -281,10 +288,14 @@ export const vf_flora = `
 		@location(3) color: vec3f,
 		@location(4) up: f32,
 		@location(5) distant: f32,
+		@location(6) uv: vec2f,
+		@location(7) @interpolate(flat) mat: f32,
+		@location(8) @interpolate(flat) seed: f32,
 	};
 
 	${moonShapes}
 	${windShapes}
+	${sunShadowShapes(0)}
 
 	fn terrainNormal(xz: vec2f) -> vec3f {
 		let n = vec2i(textureDimensions(terrainFields));
@@ -299,9 +310,10 @@ export const vf_flora = `
 		output.pos = vec4f(2.0, 2.0, 2.0, 1.0);
 		let K0 = kinds[kind * 3u];
 		let K1 = kinds[kind * 3u + 1u];
-		let P = vertices[v * 3u];
-		let N = vertices[v * 3u + 1u];
-		var color = vertices[v * 3u + 2u].rgb;
+		let P = vertices[v * 4u];
+		let N = vertices[v * 4u + 1u];
+		var color = vertices[v * 4u + 2u].rgb;
+		let T = vertices[v * 4u + 3u];		// xy: where on its leaf or petal it is, z: what it is (floraKinds.js: HD)
 		var p = P.xyz;
 		let flags = u32(K1.w);
 		// (out of its season a flower's head is folded away into nothing, each plant's its own day)
@@ -324,13 +336,16 @@ export const vf_flora = `
 		output.color = color;
 		output.up = P.w;
 		output.distant = distant;
+		output.uv = T.xy;
+		output.mat = T.z;
+		output.seed = tone;
 		return output;
 	}
 
 	@vertex
 	fn vertexSmall(@builtin(vertex_index) vertexIndex: u32, @builtin(instance_index) instanceIndex: u32) -> VertexOutput {
 		// (its kind from its vertex: each kind's draw starts at its own first vertex. Its own share of the list from that)
-		let kind = u32(vertices[vertexIndex * 3u + 2u].w);
+		let kind = u32(vertices[vertexIndex * 4u + 2u].w);
 		let o = (kind * ${FLORA_CAP}u + instanceIndex) * ${FLORA_INSTANCE}u;
 		let A = placed[o]; let B = placed[o + 1u]; let C = placed[o + 2u];
 		let gn = vec3f(C.x, sqrt(max(1.0 - C.x * C.x - C.y * C.y, 0.0)), C.y);
@@ -358,7 +373,68 @@ export const vf_flora = `
 		@location(3) color: vec3f,
 		@location(4) up: f32,
 		@location(5) distant: f32,
+		@location(6) uv: vec2f,
+		@location(7) @interpolate(flat) mat: f32,
+		@location(8) @interpolate(flat) seed: f32,
 	};
+
+	/*
+		THE HD TEXTURES (HD Textures and Models): what is drawn on a leaf, a petal, a frond, a blade, a mass of leaves, moss and stone,
+		from where on it the pixel is (uv) and what it is (mat, floraKinds.js: HD). A shade to multiply its color by, worked out
+		here, nothing read from a picture:
+			a leaf			its midrib, the veins off it either side out towards its tip, darker round its edge, lighter towards its tip
+			a leaflet		lighter towards its tip, with its own midrib
+			a petal			streaks out from the middle, deeper towards it, and its tip paler
+			a blade			drier and paler up towards its tip
+			a mass of leaves	small leaves all over it, each its own shade, darker in the gaps between
+			moss			fine speckle, with the odd paler tip
+			stone			speckled grain, and spots of lichen
+	*/
+	fn hdHash(p: vec2f) -> f32 {
+		return fract(sin(dot(p, vec2f(127.1, 311.7))) * 43758.5453);
+	}
+	fn hdShade(mat: f32, uv: vec2f, seed: f32) -> vec3f {
+		if (mat < 0.5) { return vec3f(1.0, 1.0, 1.0); }
+		if (mat < 1.5) {
+			let across = abs(uv.y);
+			let rib = 1.0 - 0.3 * (1.0 - smoothstep(0.0, 0.09, across));
+			let lines = abs(fract(uv.x * 5.0 - across * 1.3 + seed * 3.0) - 0.5);
+			let veins = 1.0 + 0.14 * (1.0 - smoothstep(0.0, 0.07, lines)) * step(0.1, across);
+			let edge = mix(1.0, 0.8, smoothstep(0.72, 1.0, across));
+			return vec3f(1.0, 1.0, 1.0) * rib * veins * edge * mix(0.88, 1.1, uv.x);
+		}
+		if (mat < 2.5) {
+			let tip = abs(uv.y);
+			return vec3f(1.0, 1.0, 1.0) * mix(0.85, 1.12, tip) * (1.0 - 0.18 * (1.0 - smoothstep(0.0, 0.1, abs(fract(uv.x * 7.0) - 0.5))));
+		}
+		if (mat < 3.5) {
+			let streaks = 0.86 + 0.14 * cos(uv.y * 9.0 + seed * 6.0);
+			let deep = mix(vec3f(0.72, 0.62, 0.5), vec3f(1.0, 1.0, 1.0), smoothstep(0.0, 0.45, uv.x));
+			return deep * streaks * mix(1.0, 1.12, smoothstep(0.7, 1.0, uv.x));
+		}
+		if (mat < 4.5) {
+			return mix(vec3f(0.85, 0.85, 0.85), vec3f(1.12, 1.08, 0.86), saturate(uv.x));
+		}
+		if (mat < 5.5) {
+			let g = uv * vec2f(9.0, 7.0) + vec2f(seed * 13.0, seed * 7.0);
+			let cell = floor(g);
+			let f = fract(g) - vec2f(0.5, 0.5) - (vec2f(hdHash(cell), hdHash(cell + vec2f(3.1, 1.7))) - vec2f(0.5, 0.5)) * 0.5;
+			let leafy = 1.0 - smoothstep(0.25, 0.5, length(f * vec2f(1.0, 1.6)));
+			return vec3f(1.0, 1.0, 1.0) * (0.78 + 0.4 * hdHash(cell + vec2f(7.0, 2.0))) * mix(0.68, 1.06, leafy);
+		}
+		if (mat < 6.5) {
+			let g = floor(uv * 34.0);
+			return vec3f(1.0, 1.0, 1.0) * (0.8 + 0.35 * hdHash(g)) * mix(1.0, 1.35, step(0.93, hdHash(g + vec2f(5.0, 3.0))));
+		}
+		let g = floor(uv * 26.0);
+		let lichen = step(0.9, hdHash(floor(uv * 6.0) + vec2f(seed * 10.0, 1.0)));
+		return mix(vec3f(1.0, 1.0, 1.0) * (0.84 + 0.3 * hdHash(g)), vec3f(1.25, 1.25, 0.85), lichen * 0.6);
+	}
+
+	// (into the sun's shadow maps, sunShadows.js: nothing to work out, its depth is all)
+	@fragment
+	fn fragmentShadow(input: FragInput) {
+	}
 
 	@fragment
 	fn fragmentMain(input: FragInput) -> @location(0) vec4f {
@@ -368,10 +444,12 @@ export const vf_flora = `
 		let N = normalize(mix(n, normalize(input.groundNormal), mix(0.35, 0.9, smoothstep(0.05, 0.5, input.distant))));
 		let L = normalize(Lights.sunPos.xyz);
 		let daylight = smoothstep(-0.08, 0.25, L.y);
-		let light = 0.1 + daylight * (0.34 + 0.72 * saturate(dot(N, L)));
+		let light = 0.1 + daylight * (0.34 + 0.72 * saturate(dot(N, L)) * sunShadow(input.worldPos, L));		// (THE SUN'S SHADOWS)
 		let sunTint = mix(vec3f(1.0, 1.0, 1.0), Lights.sunCol.rgb, 0.3 * (1.0 - saturate(L.y * 3.0)));
 		let amongst = 0.6 + 0.4 * input.up;
-		var color = input.color * amongst * (light * sunTint + moonLight(N));
+		var albedo = input.color;
+		if (UBO.fill2.z > 0.5) { albedo *= hdShade(input.mat, input.uv, input.seed); }
+		var color = albedo * amongst * (light * sunTint + moonLight(N));
 		if (UBO.grid.w > 0.5) {
 			let to = input.worldPos - Lights.camPos.xyz;
 			color = mix(color, fogColorAt(to), 1.0 - exp(-pow(length(to) / UBO.grid.z, 2.0)));

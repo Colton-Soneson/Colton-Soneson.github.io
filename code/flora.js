@@ -14,7 +14,9 @@ import { uniformBufferLights } from './rotatingCube.js'
 import { floorView, floorSampler, floorUniformBuffer } from './floor.js'
 import { grassHolesView, grassHolesUniform } from './computeGrass.js'
 import { vf_flora, c_flora, FLORA_RINGS, FLORA_CAP, FLORA_INSTANCE } from '../shaders/js/vf_flora.js'
-import { KINDS, SMALL, WHERE, BIG_VERTICES } from './floraKinds.js'
+import { KINDS, KINDS_HD, SMALL, WHERE, BIG_VERTICES } from './floraKinds.js'
+import { MEADOW_SCRUB, meadowShapes } from '../shaders/js/meadowShapes.js'
+import * as sunShadows from './sunShadows.js'
 import * as hunting from './hunting.js'
 import * as help from './controlsHelp.js'
 import { makeItem } from './items.js'
@@ -29,20 +31,23 @@ import * as loot from './loot.js'
 							RINGS round the camera, only those in sight, each kind into its own share of a list; then each kind drawn with
 							one indirect draw of its own vertices. Settings: floraDensity, floraDrawDistance (the last ring's reach)
 		THE BIG ONES		put down here, on BIG.cell squares round the camera out to BIG.reach (made again once it has gone BIG.again),
-							a square's own random numbers saying whether one is there and which: bushes in the forest (BIG.forest) and on
-							the grassland (BIG.grass), juniper up high, and the wild wheat in its patches of the grassland (BIG.wheat);
-							the bushes in thickets (BIG.clump: a slow noise over BIG.clump.from)
+							a square's own random numbers saying whether one is there and which: a bush of its ground's (floraKinds.js:
+							where and weight; BIG.chance, by ground: the forest, the grassland, the marsh, the beach, up high), and the
+							wild wheat in its patches of the grassland (BIG.wheat); the bushes in thickets (BIG.clump: a slow noise over
+							BIG.clump.from), and each kind in stands of its own (a slow noise of its own, BIG.stand metres across).
+							Each kind of them is drawn on its own (as many vertices as it has: a vine maple is not drawn with a
+							juniper's)
 		PUSHING THROUGH		a bush round the walker slows it (hunting.js: effects.brush, BRUSH)
 		WILD WHEAT			E at a stand of it: WHEAT_SEEDS seeds (items.js: wheatSeeds: a hoe's bed needs one, farms.js), and the stand is
 							gone until it grows back REGROW days on (this machine's: nothing to send)
 	World units (2 to the metre) for places; metres in the constants.
 */
 const RINGS = [{ radius: 22, cell: 0.6 }, { radius: 55, cell: 1.3 }, { radius: 1, cell: 2.8, far: true }];	// metres: the last reaches floraDrawDistance
-const FILL = { forest: 0.95, grass: 0.75, wet: 0.85, beach: 0.55, alpine: 0.7 };	// the share of a colony's middle with a plant on it, by its ground
+const FILL = { forest: 0.95, grass: 0.75, wet: 0.85, beach: 0.55, alpine: 0.7, stony: 0.6 };	// the share of a colony's middle with a plant on it, by its ground
 const COLONY = { cell: 5, reach: 0.8, stray: 0.1, bare: 0.3 };	// a colony's cell (metres), how far out from its point it thins (of the cell), the strays of other kinds in it, and the bare stretches between (a noise under this)
 const ALPINE = 0.42;					// of the snow line: the heights from here up are the heather's
 const SWAY = 0.5;						// how far the wind sways them
-const BIG = { cell: 6, reach: 220, again: 25, forest: 0.07, grass: 0.018, alpine: 0.06, clump: { scale: 28, from: 0.5 }, wheat: { scale: 70, from: 0.66, chance: 0.4 } };
+const BIG = { cell: 6, reach: 220, again: 25, chance: { forest: 0.07, grass: 0.018, wet: 0.05, beach: 0.025, alpine: 0.06 }, clump: { scale: 28, from: 0.5 }, stand: 40, wheat: { scale: 70, from: 0.66, chance: 0.4 } };
 const BRUSH = { pace: 0.6, reach: 0.55 };	// how fast the walker goes through a bush, and how far out from its middle it is in it (of its size)
 const WHEAT_SEEDS = [2, 4], REGROW = 2, PICK = 2.2;		// seeds from a stand, days to grow back, metres it is picked from
 export const floraStats = { big: 0, wheat: 0, bushes: 0, picked: 0, rebuilt: 0, ms: 0 };
@@ -53,17 +58,22 @@ const computeModule = device.createShaderModule({ label: 'c_flora', code: c_flor
 const uniformBuffer = device.createBuffer({ label: 'flora uniforms', size: 512, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 const linSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
 
-// the kinds and their vertices, once (vf_flora.js has how they are laid out)
-const vertexData = [], kindData = [];
-for (const [index, k] of KINDS.entries()) {
-	const first = vertexData.length / 12;
-	for (const v of k.vertices) vertexData.push(...v.p, v.sway, ...v.n, v.flag, ...v.c, index);
-	const flags = (k.flower ? 1 : 0) | (k.fern ? 2 : 0) | (k.fungus ? 4 : 0) | (k.far ? 8 : 0);
-	kindData.push(first, k.vertices.length, WHERE.indexOf(k.where), k.weight, ...(k.niche ?? [0.5, 0.5]), k.spread ?? 0.3, flags, k.size[0], k.size[1], 0, 0);
-}
+// the kinds and their vertices, once, both as they are and HD (floraKinds.js: HD; vf_flora.js has how they are laid out). The ones
+//		drawn are the HD ones while HD Textures and Models is on (settings.hdVegetation)
 const storage = (label, data, more = 0) => { const b = device.createBuffer({ label, size: Math.max(data.byteLength, 16), usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | more }); device.queue.writeBuffer(b, 0, data); return b; };
-const vertexBuffer = storage('flora vertices', new Float32Array(vertexData));
-const kindBuffer = storage('flora kinds', new Float32Array(kindData));
+const VERTEX_FLOATS = 16;
+function packKinds(kinds, label) {
+	const vertexData = [], kindData = [];
+	for (const [index, k] of kinds.entries()) {
+		const first = vertexData.length / VERTEX_FLOATS;
+		for (const v of k.vertices) vertexData.push(...v.p, v.sway, ...v.n, v.flag, ...v.c, index, ...v.uv, v.mat, 0);
+		const flags = (k.flower ? 1 : 0) | (k.fern ? 2 : 0) | (k.fungus ? 4 : 0) | (k.far ? 8 : 0);
+		kindData.push(first, k.vertices.length, WHERE.indexOf(k.where), k.weight, ...(k.niche ?? [0.5, 0.5]), k.spread ?? 0.3, flags, k.size[0], k.size[1], 0, 0);
+	}
+	return { kinds, vertices: storage('flora vertices' + label, new Float32Array(vertexData)), kindList: storage('flora kinds' + label, new Float32Array(kindData)) };
+}
+const PACKS = [packKinds(KINDS, ''), packKinds(KINDS_HD, ' HD')];
+const pack = () => PACKS[settings.hdVegetation ? 1 : 0];
 let bigBuffer = storage('flora big', new Float32Array(8)), bigCapacity = 1, bigCount = 0;
 // THE SCATTER's: each small kind's count, its share of the list of those put down, and its draw
 const zeros = new Uint32Array(SMALL.length);
@@ -75,6 +85,7 @@ const V = GPUShaderStage.VERTEX, F = GPUShaderStage.FRAGMENT, Cs = GPUShaderStag
 const renderLayout = device.createBindGroupLayout({
 	label: 'flora draw layout',
 	entries: [
+		...sunShadows.sunShadowLayoutEntries(V | F),
 		{ binding: 0, visibility: V | F, buffer: {} },
 		{ binding: 1, visibility: V | F, buffer: {} },
 		{ binding: 2, visibility: V, texture: { sampleType: 'unfilterable-float' } },
@@ -141,20 +152,63 @@ function writeUniforms(R) {
 	u.push(...wind.windUniformValues());
 	u.push(SWAY * (settings.grassWindStrength ?? 1), SMALL.length, R.cells, 0);
 	u.push(FILL.forest, FILL.grass, FILL.wet, FILL.beach);
-	u.push(FILL.alpine, 0, 0, 0);
+	u.push(FILL.alpine, FILL.stony, settings.hdVegetation ? 1 : 0, 0);
 	u.push(COLONY.cell, COLONY.reach, COLONY.stray, COLONY.bare);
 	for (let k = 0; k < FLORA_RINGS; k++) { const r = R[k] ?? { side: 1, cell: 1, radius: 0, before: R.cells }; u.push(r.side, r.cell, r.radius, r.before); }
 	u.push(...grassHolesUniform());
-	device.queue.writeBuffer(uniformBuffer, 0, new Float32Array(u));
+	lastUniforms = new Float32Array(u);
+	device.queue.writeBuffer(uniformBuffer, 0, lastUniforms);
 }
 let renderGroup = null, computeGroup = null, boundTo = [];
+/*
+	THE SUN'S SHADOWS (sunShadows.js): the bushes drawn into the two nearer of the sun's maps, as they were last drawn (their uniforms
+	the frame before's, the view the map's). The small plants cast none: under a bush or a tree, in the grass, theirs would hardly show
+*/
+let lastUniforms = null, shadowGroups = null;
+const shadowUniformBuffers = [0, 1].map((k) => device.createBuffer({ label: `flora sun shadow ${k} uniforms`, size: 512, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }));
+const shadowPipeline = device.createRenderPipeline({
+	label: 'flora bushes sun shadow',
+	layout: device.createPipelineLayout({ label: 'flora sun shadow pipeline layout', bindGroupLayouts: [renderLayout] }),
+	vertex: { module, entryPoint: 'vertexBig', buffers: [] },
+	fragment: { module, entryPoint: 'fragmentShadow', targets: [] },
+	primitive: { topology: 'triangle-list', cullMode: 'none' },
+	depthStencil: { depthWriteEnabled: true, depthCompare: 'less', format: 'depth32float', depthBias: 2, depthBiasSlopeScale: 2.0 },
+});
+sunShadows.addSunShadowCaster((pass, cascade, matrix) => {
+	if (cascade > 1 || !lastUniforms || !shadowGroups || !bigCount || settings.enableFlora === false) return;
+	const u = lastUniforms.slice();
+	u.set(matrix, 0);
+	device.queue.writeBuffer(shadowUniformBuffers[cascade], 0, u);
+	pass.setBindGroup(0, shadowGroups[cascade]);
+	pass.setPipeline(shadowPipeline);
+	for (const d of bigDraws) pass.draw(pack().kinds[d.kind].vertices.length, d.count, 0, d.first);
+});
 function groupsNow() {
-	const key = [terrain.terrainFieldsTexture, townMaskBuffers.cells, townMaskBuffers.list, townMaskBuffers.items, bigBuffer, skyViewLUTtexture, floorView];
+	const key = [terrain.terrainFieldsTexture, townMaskBuffers.cells, townMaskBuffers.list, townMaskBuffers.items, bigBuffer, skyViewLUTtexture, floorView, pack()];
 	if (!renderGroup || key.some((v, i) => v !== boundTo[i])) {
 		boundTo = key;
+		// (and the bushes' own, drawing into the sun's shadow maps: each map its uniforms, and the maps not read, sunShadows.js)
+		shadowGroups = shadowUniformBuffers.map((buffer) => device.createBindGroup({
+			label: 'flora sun shadow bind group', layout: renderLayout,
+			entries: [
+				...sunShadows.sunShadowEntries(true),
+				{ binding: 0, resource: { buffer } },
+				{ binding: 1, resource: { buffer: uniformBufferLights } },
+				{ binding: 2, resource: terrain.terrainFieldsTexture.createView() },
+				{ binding: 3, resource: skyViewLUTtexture.createView() },
+				{ binding: 4, resource: linSampler },
+				{ binding: 5, resource: wind.windTextureView },
+				{ binding: 6, resource: wind.windSampler },
+				{ binding: 14, resource: { buffer: pack().vertices } },
+				{ binding: 15, resource: { buffer: pack().kindList } },
+				{ binding: 16, resource: { buffer: bigBuffer } },
+				{ binding: 18, resource: { buffer: placedBuffer } },
+			],
+		}));
 		renderGroup = device.createBindGroup({
 			label: 'flora draw bind group', layout: renderLayout,
 			entries: [
+				...sunShadows.sunShadowEntries(),
 				{ binding: 0, resource: { buffer: uniformBuffer } },
 				{ binding: 1, resource: { buffer: uniformBufferLights } },
 				{ binding: 2, resource: terrain.terrainFieldsTexture.createView() },
@@ -162,8 +216,8 @@ function groupsNow() {
 				{ binding: 4, resource: linSampler },
 				{ binding: 5, resource: wind.windTextureView },
 				{ binding: 6, resource: wind.windSampler },
-				{ binding: 14, resource: { buffer: vertexBuffer } },
-				{ binding: 15, resource: { buffer: kindBuffer } },
+				{ binding: 14, resource: { buffer: pack().vertices } },
+				{ binding: 15, resource: { buffer: pack().kindList } },
 				{ binding: 16, resource: { buffer: bigBuffer } },
 				{ binding: 18, resource: { buffer: placedBuffer } },
 			],
@@ -176,7 +230,7 @@ function groupsNow() {
 				{ binding: 7, resource: { buffer: townMaskBuffers.cells } },
 				{ binding: 8, resource: { buffer: townMaskBuffers.list } },
 				{ binding: 9, resource: { buffer: townMaskBuffers.items } },
-				{ binding: 15, resource: { buffer: kindBuffer } },
+				{ binding: 15, resource: { buffer: pack().kindList } },
 				{ binding: 10, resource: grassHolesView() },
 				{ binding: 11, resource: floorView },
 				{ binding: 12, resource: floorSampler },
@@ -204,6 +258,29 @@ function smoothNoise(x, z, salt) {
 	return (r(i, j) * (1 - sx) + r(i + 1, j) * sx) * (1 - sz) + (r(i, j + 1) * (1 - sx) + r(i + 1, j + 1) * sx) * sz;
 }
 const kindIndex = Object.fromEntries(KINDS.map((k, i) => [k.name, i]));
+// the bushes of each ground (the wild wheat is put down its own way)
+const BUSHES = Object.fromEntries(WHERE.map((w) => [w, KINDS.filter((k) => k.big && !k.wheat && k.where == w)]));
+const SCRUB_CHANCE = 0.11;		// more bushes on the grassland where it is scrub (THE MEADOW'S LOOK): up to this many more of the squares
+const MOST_CHANCE = Math.max(...Object.values(BIG.chance), BIG.wheat.chance, BIG.chance.grass + SCRUB_CHANCE);
+// THE MEADOW'S LOOK (meadowShapes.js, the same numbers): how much of the scrub, and of the stony ground, there is at x, z. up: the ground's normal's y
+const smooth = (a, b, v) => { const t = Math.min(Math.max((v - a) / (b - a), 0), 1); return t * t * (3 - 2 * t); };
+export function meadowAt(x, z, up = 1) {
+	const m = metre();
+	const scrub = smooth(MEADOW_SCRUB.from, MEADOW_SCRUB.to, smoothNoise(x / (BIG.clump.scale * m), z / (BIG.clump.scale * m), 5) + 0.06 * (smoothNoise(x / (4 * m), z / (4 * m), 33) - 0.5));
+	const stones = 0.62 * smoothNoise(x / (24 * m), z / (24 * m), 41) + 0.38 * smoothNoise(x / (6.5 * m), z / (6.5 * m), 42) + 0.9 * (1 - smooth(0.86, 0.98, up));
+	const stony = smooth(0.7, 0.8, stones + 0.08 * (smoothNoise(x / (2.5 * m), z / (2.5 * m), 43) - 0.5));
+	return { scrub: scrub * (1 - stony), stony };
+}
+// one of a ground's bushes at x, z: each in stands of its own (a slow noise for each kind), picked by r
+function bushAt(where, x, z, r) {
+	const list = BUSHES[where], m = metre();
+	if (!list?.length) return null;
+	const weights = list.map((k) => { const n = smoothNoise(x / (BIG.stand * m), z / (BIG.stand * m), 20 + kindIndex[k.name]); return k.weight * (0.08 + n * n * n); });
+	let pick = r * weights.reduce((a, b) => a + b, 0);
+	for (let k = 0; k < list.length; k++) { if (pick < weights[k]) return list[k].name; pick -= weights[k]; }
+	return list[list.length - 1].name;
+}
+let bigDraws = [];		// { vertices, count, first }: each kind's run of the list (it is sorted by kind)
 let bigList = [], bigFor = null, bigAt = [Infinity, Infinity];
 const picked = new Map();			// a wild wheat's square ('i,j') -> the day it was picked
 const day = () => atmosphere.sunCycles;
@@ -216,17 +293,20 @@ function placeBig() {
 		if ((x - cx) ** 2 + (z - cz) ** 2 > reach * reach) continue;
 		const r = squareRandom(i, j, 3);
 		// (most squares nothing: only the ones whose number is low enough look at the land)
-		if (r > Math.max(BIG.forest, BIG.alpine, BIG.wheat.chance)) continue;
+		if (r > MOST_CHANCE) continue;
 		if (!terrain.inWorld(x, z, 4 * m)) continue;
 		const zone = land.zoneAt(x, z);
 		let name = null;
 		// (the bushes in thickets: only where their slow noise is over BIG.clump.from)
 		const thicket = smoothNoise(x / (BIG.clump.scale * m), z / (BIG.clump.scale * m), 5) > BIG.clump.from;
-		if (zone == Z.ZONE_FOREST && r < BIG.forest && thicket) name = squareRandom(i, j, 4) < 0.35 ? 'laurel' : 'huckleberry';
-		else if (zone == Z.ZONE_GRASSLAND) {
-			if (r < BIG.wheat.chance && smoothNoise(x / (BIG.wheat.scale * m), z / (BIG.wheat.scale * m), 9) > BIG.wheat.from) name = 'wild wheat';
-			else if (r < BIG.grass && thicket) name = 'salmonberry';
-		} else if (zone == Z.ZONE_MOUNTAIN && r < BIG.alpine && thicket && land.heightAt(x, z) - sea > settings.terrainSnowLine * ALPINE) name = 'juniper';
+		const where = zone == Z.ZONE_FOREST ? 'forest' : zone == Z.ZONE_GRASSLAND ? 'grass' : zone == Z.ZONE_MARSH ? 'wet' : zone == Z.ZONE_BEACH ? 'beach'
+			: zone == Z.ZONE_MOUNTAIN && land.heightAt(x, z) - sea > settings.terrainSnowLine * ALPINE ? 'alpine' : null;
+		if (where == 'grass' && r < BIG.wheat.chance && smoothNoise(x / (BIG.wheat.scale * m), z / (BIG.wheat.scale * m), 9) > BIG.wheat.from) name = 'wild wheat';
+		else if (where && thicket) {
+			// (none on the stony ground, and more of them in the scrub)
+			const look = where == 'grass' ? meadowAt(x, z, land.normalAt(x, z)[1]) : { scrub: 0, stony: 0 };
+			if (look.stony < 0.5 && r < BIG.chance[where] + (where == 'grass' ? SCRUB_CHANCE * look.scrub : 0)) name = bushAt(where, x, z, squareRandom(i, j, 4));
+		}
 		if (!name) continue;
 		if ((land.townAt?.(x, z) ?? 0) > 0.03 || land.onPath?.(x, z)) continue;
 		if (land.normalAt(x, z)[1] < 0.8) continue;
@@ -238,20 +318,35 @@ function placeBig() {
 		const K = KINDS[kindIndex[name]], size = K.size[0] + (K.size[1] - K.size[0]) * squareRandom(i, j, 5);
 		list.push({ x, y, z, kind: kindIndex[name], name, yaw: squareRandom(i, j, 6) * Math.PI * 2, size, tone: squareRandom(i, j, 7), key });
 	}
-	bigList = list;
 	bigFor = land; bigAt = [cx, cz];
+	useBig(list);
+	floraStats.rebuilt++; floraStats.ms = Math.round((performance.now() - t0) * 10) / 10;
+}
+// the list of big ones drawn (sorted by kind: each kind's run of it is a draw of its own), and the walker's
+function useBig(list) {
+	const m = metre();
+	list.sort((a, b) => a.kind - b.kind);
+	bigList = list;
+	bigDraws = [];
+	list.forEach((b, k) => { const last = bigDraws[bigDraws.length - 1]; if (last?.kind == b.kind) last.count++; else bigDraws.push({ kind: b.kind, vertices: KINDS[b.kind].vertices.length, count: 1, first: k }); });
 	const data = new Float32Array(Math.max(list.length, 1) * 8);
 	list.forEach((b, k) => data.set([b.x, b.y - 0.05 * m, b.z, b.kind, b.yaw, b.size, b.tone, 0], k * 8));
 	if (list.length > bigCapacity) { bigBuffer.destroy(); bigCapacity = Math.ceil(list.length * 1.5); bigBuffer = device.createBuffer({ label: 'flora big', size: bigCapacity * 32, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST }); }
 	device.queue.writeBuffer(bigBuffer, 0, data);
 	bigCount = list.length;
 	floraStats.big = list.length; floraStats.wheat = list.filter((b) => b.name == 'wild wheat').length; floraStats.bushes = list.length - floraStats.wheat;
-	floraStats.rebuilt++; floraStats.ms = Math.round((performance.now() - t0) * 10) / 10;
+}
+// (a test's: these plants, of any kind, put down as the big ones are, [{ name, x, z, size, yaw }], and nothing else, until null)
+let showcase = null;
+export function showcaseForTest(items) {
+	showcase = items;
+	if (!items) { bigFor = null; return; }
+	useBig(items.map((p) => ({ x: p.x, y: terrain.land.groundAt(p.x, p.z), z: p.z, kind: kindIndex[p.name], name: p.name, yaw: p.yaw ?? 0, size: p.size ?? KINDS[kindIndex[p.name]].size[1], tone: 0.5, key: 'show' })));
 }
 // (the big ones made again: a new land, gone far enough, or a tile come or gone under them)
 terrain.onTiles(() => { bigFor = null; });
 function bigNow() {
-	if (!terrain.land) return;
+	if (!terrain.land || showcase) return;
 	if (bigFor !== terrain.land || Math.hypot(settings.camPosX - bigAt[0], settings.camPosZ - bigAt[1]) > BIG.again * metre()) placeBig();
 }
 export const bigPlantsForTest = () => bigList;
@@ -323,6 +418,6 @@ export function floraPass(encoder, depthTexture) {
 	pass.setBindGroup(0, renderGroup);
 	pass.setPipeline(smallPipeline);
 	for (let k = 0; k < SMALL.length; k++) pass.drawIndirect(drawBuffer, k * 16);
-	if (bigCount) { pass.setPipeline(bigPipeline); pass.draw(BIG_VERTICES, bigCount, 0, 0); }
+	if (bigCount) { pass.setPipeline(bigPipeline); for (const d of bigDraws) pass.draw(pack().kinds[d.kind].vertices.length, d.count, 0, d.first); }
 	pass.end();
 }

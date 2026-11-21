@@ -63,15 +63,15 @@ export const TREE_SPECIES = [
 		name: "spruce", conifer: true, foliage: FOLIAGE_FROND,
 		height: 32, crownRadius: 4.0, trunkDiameter: 0.52, fullGrownAge: 90, growth: [3.0, 1.8],
 		lifespan: 220, shadeTolerance: 0.8, seedAge: 30, seedsPerYear: 0.10, seedDistance: 30, snagYears: 6,
-		crownBase: 0.40, deadBranchLinger: 0.22, pipeExponent: 2.3,
+		crownBase: 0.15, deadBranchLinger: 0.22, pipeExponent: 2.3,
 		roots: { count: 9, flare: 0.35, reach: 2.6, dip: 0.03, wave: 1.2, branchEvery: 1.1, lateral: 1.0 },		// a plate of roots: shallow, and wide
-		barkColor: [0.26, 0.19, 0.15], barkColorHigh: [0.30, 0.22, 0.17], leafColor: [0.075, 0.200, 0.110], dryColor: [0.36, 0.17, 0.07],
+		barkColor: [0.26, 0.19, 0.15], barkColorHigh: [0.30, 0.22, 0.17], leafColor: [0.095, 0.240, 0.125], dryColor: [0.36, 0.17, 0.07],
 	},
 	{
 		name: "pine", conifer: true, foliage: FOLIAGE_TUFT,
 		height: 27, crownRadius: 4.4, trunkDiameter: 0.46, fullGrownAge: 80, growth: [3.0, 1.6],
 		lifespan: 250, shadeTolerance: 0.2, seedAge: 20, seedsPerYear: 0.20, seedDistance: 40, snagYears: 8,
-		crownBase: 0.62, deadBranchLinger: 0.10, pipeExponent: 2.2,
+		crownBase: 0.45, deadBranchLinger: 0.10, pipeExponent: 2.2,
 		roots: { count: 6, flare: 0.35, reach: 1.7, dip: 0.05, wave: 1.0, branchEvery: 1.2, lateral: 0.8 },		// a tap root down, and a few laterals
 		barkColor: [0.27, 0.20, 0.16], barkColorHigh: [0.50, 0.29, 0.16], leafColor: [0.110, 0.235, 0.110], dryColor: [0.42, 0.22, 0.08],
 	},
@@ -79,7 +79,7 @@ export const TREE_SPECIES = [
 		name: "oak", conifer: false, foliage: FOLIAGE_LEAVES,
 		height: 24, crownRadius: 7.5, trunkDiameter: 0.80, fullGrownAge: 100, growth: [2.6, 1.6],
 		lifespan: 320, shadeTolerance: 0.5, seedAge: 40, seedsPerYear: 0.10, seedDistance: 12, snagYears: 5,
-		crownBase: 0.36, deadBranchLinger: 0.05, pipeExponent: 2.3,
+		crownBase: 0.30, deadBranchLinger: 0.05, pipeExponent: 2.3,
 		roots: { count: 7, flare: 0.55, reach: 2.3, dip: 0.05, wave: 1.1, branchEvery: 1.0, lateral: 1.0 },		// heart roots, buttressed
 		barkColor: [0.22, 0.18, 0.15], barkColorHigh: [0.25, 0.21, 0.17], leafColor: [0.135, 0.300, 0.085], dryColor: [0.40, 0.25, 0.09],
 	},
@@ -87,7 +87,7 @@ export const TREE_SPECIES = [
 		name: "birch", conifer: false, foliage: FOLIAGE_LEAVES,
 		height: 21, crownRadius: 3.4, trunkDiameter: 0.30, fullGrownAge: 45, growth: [3.4, 1.5],
 		lifespan: 90, shadeTolerance: 0.15, seedAge: 12, seedsPerYear: 0.30, seedDistance: 60, snagYears: 2,
-		crownBase: 0.40, deadBranchLinger: 0.04, pipeExponent: 2.4,
+		crownBase: 0.28, deadBranchLinger: 0.04, pipeExponent: 2.4,
 		roots: { count: 5, flare: 0.45, reach: 1.5, dip: 0.035, wave: 1.1, branchEvery: 0.9, lateral: 0.7 },
 		barkColor: [0.80, 0.79, 0.74], barkColorHigh: [0.86, 0.85, 0.81], leafColor: [0.235, 0.400, 0.110], dryColor: [0.50, 0.36, 0.10],
 	},
@@ -363,7 +363,7 @@ const trunkHeights = (height, count) => Array.from({ length: count + 1 }, (unuse
 */
 function growSpruce(species, random) {
 	const height = species.height * (0.9 + 0.2 * random());
-	const whorls = 28;
+	const whorls = 32;
 	const heights = trunkHeights(height, whorls);
 
 	const rules = {
@@ -373,7 +373,7 @@ function growSpruce(species, random) {
 			const out = [m('+', (random() - 0.5) * 0.02), m('F', h - heights[i]), m('/', radians(137.5) + (random() - 0.5) * 0.5)];
 			if (i < whorls - 1) {
 				const inCrown = clamp01((h / height - species.crownBase) / (1 - species.crownBase));	// 0 at the crown base, 1 at the top
-				const branches = inCrown > 0.85 ? 3 : (random() < 0.45 ? 5 : 4);
+				const branches = inCrown > 0.85 ? 4 : (random() < 0.35 ? 6 : 5);
 				for (let k = 0; k < branches; k++) {
 					const reach = branchLength(h, height, species) * (0.8 + 0.3 * random());
 					out.push(m('['), m('S', branchMarks(h, height, species)),
@@ -388,14 +388,28 @@ function growSpruce(species, random) {
 			if (left < 0.25) return [];
 			const piece = Math.min(left, 1.15);
 			const along = 1 - left / all;	// 0 where the branch leaves the trunk, 1 at its tip
-			const out = [m('F', piece), m('G', along < 0.55 ? 0.09 : -0.13), m('+', (random() - 0.5) * 0.12)];
-			// side shoots, left and right in the flat of the branch
-			if (left - piece > 0.9 && random() < 0.75) {
-				const shoot = Math.min((left - piece) * 0.5, 1.5);
-				out.push(m('['), m('S', { level: 2 }), m('+', radians(52)), m('F', shoot), m(']'));
-				out.push(m('['), m('S', { level: 2 }), m('-', radians(52)), m('F', shoot), m(']'));
+			// (it rises out of the trunk, then dips and droops more and more towards its tip, under the weight of its sprays)
+			const out = [m('F', piece), m('G', along < 0.45 ? 0.06 : -0.2), m('+', (random() - 0.5) * 0.12)];
+			// side shoots, left and right in the flat of the branch: each a little branch of its own (D)
+			if (left - piece > 0.5 && random() < 0.9) {
+				const shoot = Math.min((left - piece) * 0.6, 2.0);
+				out.push(m('['), m('S', { level: 2 }), m('+', radians(52)), m('D', shoot, 0.12), m(']'));
+				out.push(m('['), m('S', { level: 2 }), m('-', radians(52)), m('D', shoot, 0.12), m(']'));
 			}
 			out.push(m('B', left - piece, all));
+			return out;
+		},
+		// a side shoot: a few pieces, each with twigs off either side, sagging more piece by piece (the hanging sprays of a spruce)
+		D: ([left, sag]) => {
+			if (left < 0.2) return [];
+			const piece = Math.min(left, 0.6);
+			const out = [m('F', piece), m('G', -sag), m('+', (random() - 0.5) * 0.15)];
+			if (left - piece > 0.25 && random() < 0.55) {
+				const twig = Math.min((left - piece) * 0.55, 0.7);
+				out.push(m('['), m('S', { level: 3 }), m('+', radians(48)), m('F', twig), m(']'));
+				out.push(m('['), m('S', { level: 3 }), m('-', radians(48)), m('F', twig), m(']'));
+			}
+			out.push(m('D', left - piece, sag * 1.3));
 			return out;
 		},
 	};
@@ -420,7 +434,7 @@ function growPine(species, random) {
 			// a pine trunk is rarely dead straight: a slight lean, and a wander from one year to the next
 			const out = [m('+', lean + (random() - 0.5) * 0.07), m('&', (random() - 0.5) * 0.07), m('F', h - heights[i]), m('/', radians(137.5) + (random() - 0.5))];
 			const inCrown = h > species.crownBase * height;
-			const branches = inCrown ? 3 : 2;
+			const branches = inCrown ? 4 : 2;
 			for (let k = 0; k < branches && i < whorls - 1; k++) {
 				const reach = inCrown ? 1.6 + random() : branchLength(h, height, species) * (0.7 + 0.4 * random());
 				out.push(m('['), m('S', branchMarks(h, height, species, inCrown ? { crown: true, speed: 1 } : {})),
@@ -432,8 +446,12 @@ function growPine(species, random) {
 		},
 		B: ([left]) => {
 			if (left < 0.3) return [];
-			const piece = Math.min(left, 1.0);
-			return [m('F', piece), m('G', -0.06), m('+', (random() - 0.5) * 0.3), m('B', left - piece)];
+			const piece = Math.min(left, 0.8);
+			const out = [m('F', piece), m('G', -0.06), m('+', (random() - 0.5) * 0.3)];
+			// (and forks, a pine's branches being anything but straight rods)
+			if (left - piece > 0.6 && random() < 0.55) out.push(m('['), m('S', { level: 2 }), m(random() < 0.5 ? '+' : '-', radians(40 + 20 * random())), m('B', (left - piece) * 0.6), m(']'));
+			out.push(m('B', left - piece));
+			return out;
 		},
 	};
 	const nodes = interpretLSystem(deriveLSystem([m('A', 0)], rules, random));
@@ -449,7 +467,7 @@ function growPine(species, random) {
 			return Math.sqrt(x * x + y * y + z * z);
 		},
 		min: [-radius * 1.3, bottom, -radius * 1.3], max: [radius * 1.3, top, radius * 1.3],
-		points: 600, step: 0.8, influence: 5.5, kill: 1.4, inertia: 0.45, lift: 0.06,
+		points: 1200, step: 0.6, influence: 5.0, kill: 1.05, inertia: 0.45, lift: 0.06,
 	}, random);
 	return nodes;
 }
@@ -512,7 +530,7 @@ function growOak(species, random) {
 			return Math.sqrt(x * x + y * y + z * z);
 		},
 		min: [middle[0] - radius, bottom, middle[2] - radius], max: [middle[0] + radius, top, middle[2] + radius],
-		points: 950, step: 0.95, influence: 6.5, kill: 1.8, inertia: 0.35, lift: 0.04,
+		points: 1800, step: 0.7, influence: 6.0, kill: 1.3, inertia: 0.35, lift: 0.04,
 	}, random);
 	return nodes;
 }
@@ -557,7 +575,7 @@ function growBirch(species, random) {
 			return Math.sqrt(x * x + y * y + z * z);
 		},
 		min: [-radius, bottom, -radius], max: [radius, top, radius],
-		points: 520, step: 0.8, influence: 5.0, kill: 1.5, inertia: 0.5, lift: 0.12,
+		points: 1100, step: 0.6, influence: 4.5, kill: 1.1, inertia: 0.5, lift: 0.12,
 	}, random);
 
 	// the weeping twigs: every tip out at the edge of the crown gets a few more points that curl over and hang
@@ -780,7 +798,7 @@ function buildFoliage(nodes, species, height, furthest, scale, random) {
 
 		if (frond) {
 			// along the piece of branch that ends at this point, and a bit over each end so they overlap into one long spray
-			const width = (node.level == 0 ? 0.4 : node.level == 1 ? 0.95 : 0.7) * (0.85 + 0.3 * random());
+			const width = (node.level == 0 ? 0.4 : node.level == 1 ? 0.95 : node.level == 2 ? 0.7 : 0.5) * (0.85 + 0.3 * random());
 			middle = mul(add(node.p, parent.p), 0.5);
 			u = mul(edge, 0.62);
 			v = mul(anyPerpendicular(direction), width);

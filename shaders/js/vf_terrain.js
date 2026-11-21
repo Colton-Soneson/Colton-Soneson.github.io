@@ -3,6 +3,8 @@ import { skyLookupShapes } from './vfc_atmosphere.js';
 
 // a zone's color from terrainGenerator.js written out as a WGSL vec3f, so the colors only live in one place
 import { groundTextures } from './f_groundTextures.js';
+import { meadowShapes, stonyShapes, STONY_NEAR } from './meadowShapes.js';
+import { sunShadowShapes } from './sunShadowShapes.js';
 import { moonShapes } from './f_moon.js';
 import { floorShapes } from '../../code/floor.js';
 
@@ -334,6 +336,9 @@ export const vf_terrain =
 	${moonShapes}
 	${rockShapes}
 	${groundTextures}
+	${sunShadowShapes(0)}
+	${meadowShapes}
+	${stonyShapes}
 	//------------------THE LAND DATA-----------------
 	// The slope of the ground at a place, from the land data texture: normal.x and normal.z, bilinear between the 4 grid points around it
 	//		(the texture is a window on to the land round its middle, each grid point at its place in the world's grid modulo its size: see
@@ -394,7 +399,7 @@ export const vf_terrain =
 	// the material worked out here and now, for a pixel on the screen
 	fn liveMaterial(input: FragInput) -> LandMaterial {
 		let away = length(input.worldPos - Lights.camPos.xyz);
-		return landMaterial(input.worldPos, input.fragNormal, input.mountain, input.meshCell, away * UBO.pixelSize, away, floorAt(input.worldPos.xz));
+		return landMaterial(input.worldPos, input.fragNormal, input.mountain, input.meshCell, away * UBO.pixelSize, away, floorAt(input.worldPos.xz), Lights.camPos.xyz);
 	}
 
 	// Near the camera: the color, and the depth moved by the relief
@@ -480,7 +485,7 @@ export const vf_terrain =
 	fn fragmentBake(input: FragInput) -> BakeOutput {
 		// as it is seen from far off: the small shapes fade out at the size of a texel instead of a pixel, and what only shows
 		//		near the camera (the litter under the trees, the shade of the blades on the turf) is left out
-		let m = landMaterial(input.worldPos, input.fragNormal, input.mountain, input.meshCell, bake.area.w, 1.0e6, vec4f(0.0, 0.0, 0.0, 0.0));
+		let m = landMaterial(input.worldPos, input.fragNormal, input.mountain, input.meshCell, bake.area.w, 1.0e6, vec4f(0.0, 0.0, 0.0, 0.0), input.worldPos + vec3f(0.0, 1.0, 0.0));
 		var output: BakeOutput;
 		output.color = vec4f(m.albedo, m.skyShade);
 		output.shape = vec4f(m.normal.xz * 0.5 + vec2f(0.5, 0.5), m.snow, m.shine);
@@ -489,7 +494,8 @@ export const vf_terrain =
 
 	// What the ground is made of at a point: see LandMaterial. pixel: how much ground one pixel (or one texel of a bake) covers
 	//		there. away: how far it is from the camera
-	fn landMaterial(worldPos: vec3f, fragNormal: vec3f, cover: f32, meshCell: f32, pixel: f32, away: f32, rootFloor: vec4f) -> LandMaterial {
+	//		eye: where it is seen from (the stony ground's stones are traced along the line of sight)
+	fn landMaterial(worldPos: vec3f, fragNormal: vec3f, cover: f32, meshCell: f32, pixel: f32, away: f32, rootFloor: vec4f, eye: vec3f) -> LandMaterial {
 
 		let height = worldPos.y - UBO.seaLevel;	// above the sea, negative under it
 
@@ -612,12 +618,33 @@ export const vf_terrain =
 		let snow = max(mountainSnow, built);
 
 		//------------------WHAT IS HERE-----------------
-		var albedo = mix(COLOR_GRASSLAND, COLOR_HAY, 0.8 * UBO.hay) * turf.rgb;
+		// THE MEADOW'S LOOK (meadowShapes.js): its lush and its dry patches, the worn earth among the bushes of the scrub, the stony ground
+		//		(only worked out where there is grassland to see it on)
+		var look = vec3f(0.5, 0.0, 0.0);
+		if (meadow > 0.001 || forest > 0.001) {
+			look = meadowLook(worldPos.xz, groundNormal.y);
+		}
+		var grassland = meadowColor(worldPos.xz, look);
+		// (the scrub and the stony patches show as what they are close by; further off they are only a hint, not blotches)
+		let patchNear = 1.0 - 0.85 * smoothstep(25.0 * MEADOW_M, 120.0 * MEADOW_M, away);
+		let worn = look.y * (0.5 + 0.5 * noise(worldPos.xz / 3.1 + vec2f(17.0, 3.0))) * patchNear;
+		grassland = mix(grassland, mix(MEADOW_EARTH, MEADOW_LITTER, noise(worldPos.xz / 0.9 + vec2f(4.0, 1.0))), worn);
+		// the stony ground: near, its stones traced (THE STONY GROUND, CLOSE UP, meadowShapes.js); further off, their grey
+		var stones = vec4f(MEADOW_STONE * mix(0.82, 1.1, noise(worldPos.xz / 1.7 + vec2f(3.0, 9.0))), 0.0);
+		let stonesNear = (1.0 - smoothstep(${STONY_NEAR * 0.6}.0, ${STONY_NEAR}.0, away / MEADOW_M)) * step(0.01, look.z) * step(0.001, meadow + forest);
+		if (stonesNear > 0.0) {
+			let traced = stonyGround(worldPos, eye, groundNormal, look.z, i32(mix(9.0, 4.0, saturate(away / (${STONY_NEAR}.0 * MEADOW_M)))));
+			stones = vec4f(mix(stones.rgb, traced.rgb, stonesNear), traced.a * stonesNear);
+		}
+		grassland = mix(grassland, stones.rgb, look.z * mix(0.85 * patchNear, 0.97, stonesNear));
+		var albedo = mix(grassland, COLOR_HAY, 0.3 * UBO.hay * (1.0 - look.z)) * mix(turf.rgb, vec3f(1.0, 1.0, 1.0), look.z);
 		// (the forest floor: bare soil and moss over the roots and on the pits and mounds, the litter off them)
 		let bareFloor = saturate(rootFloor.g + (rootFloor.b + rootFloor.a) * 1.6);
 		// (and from further off still the forest's own shade, deep in its crowns: FOREST_FAR)
 		let forestFar = mix(COLOR_FOREST, FOREST_FAR, smoothstep(300.0, 2000.0, away));
 		albedo = mix(albedo, mix(forestFar, litter.rgb, litterNear * (1.0 - 0.8 * bareFloor)), forest);
+		// (the stony patches of the forest floor too: THE STONY GROUND)
+		albedo = mix(albedo, stones.rgb, forest * look.z * 0.92);
 		albedo = mix(albedo, mix(COLOR_EARTH * 0.72, FLOOR_MOSS, 0.6 * smoothstep(0.45, 0.75, noise(worldPos.xz * 1.7))), bareFloor * 0.6);
 		albedo = mix(albedo, rock, rocky);
 		albedo = mix(albedo, COLOR_SNOW, snow);
@@ -631,7 +658,7 @@ export const vf_terrain =
 		// the relief of whichever of the three shows here. Snow buries it, and so do the loose stone and the turf on a mountain
 		//		Snow has a relief of its own: drifts, and a fine crust
 		let snowRelief = (noise(worldPos.xz / 4.5) - 0.5) * 0.05 + (noise(worldPos.xz / 0.8) - 0.5) * 0.03 * saturate(1.6 / (pixel * 4.0) - 1.0);
-		let relief = (marble.a * rocky * (1.0 - 0.7 * scree) * (1.0 - highTurf) + sand.a * beach + litter.a * forest * litterNear * (1.0 - rocky) + turf.a * meadow) * (1.0 - snow) + snowRelief * snow
+		let relief = (marble.a * rocky * (1.0 - 0.7 * scree) * (1.0 - highTurf) + sand.a * beach + litter.a * forest * litterNear * (1.0 - rocky) + (turf.a * (1.0 - look.z) + stones.a * look.z) * meadow + stones.a * look.z * forest) * (1.0 - snow) + snowRelief * snow
 			+ rootFloor.r * (1.0 - 0.6 * snow);		// (the soil heaved over the roots)
 
 		// snow lies over the small shapes and rounds them off: it is lit by a smoother surface than the rock under it
@@ -685,6 +712,8 @@ export const vf_terrain =
 			}
 		}
 		visibility = mix(1.0, visibility / kernelCount, insideShadowMap);
+		// and the shadows of the trees and the bushes round the camera (THE SUN'S SHADOWS, sunShadows.js)
+		visibility *= sunShadow(worldPos, m.normal);
 
 		if (Lights.displayLightingMode == 1.0) {
 			return vec3f(visibility, 0.0, 0.0);

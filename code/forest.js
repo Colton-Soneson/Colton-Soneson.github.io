@@ -16,7 +16,7 @@ import { vf_forestWood } from '../shaders/js/vf_forest.js'
 import { vf_forestFoliage } from '../shaders/js/vf_forest.js'
 import { vf_forestBillboard } from '../shaders/js/vf_forest.js'
 import { vf_forestAtlas } from '../shaders/js/vf_forest.js'
-import { FOLIAGE_VERTICES } from '../shaders/js/vf_forest.js'
+import { FOLIAGE_VERTICES, FOLIAGE_VERTICES_HD } from '../shaders/js/vf_forest.js'
 import { c_forestChanges, CHANGE_WORKGROUP } from '../shaders/js/vf_forest.js'
 import { c_forestCull, CULL_WORKGROUP, LIST_WORKGROUP } from '../shaders/js/vf_forest.js'
 import { addJob, UNSEEN } from './jobs.js'
@@ -41,6 +41,7 @@ import {sunCycles} from './atmosphere.js'
 
 //GET THE LIGHT CREATION OUT OF THE MAIN
 import {uniformBufferLights} from './rotatingCube.js'
+import * as sunShadows from './sunShadows.js'
 
 /*
 	The forest on the land's forest zones. Four files make it, this one owns the result and draws it:
@@ -111,8 +112,23 @@ const TESSELLATION = [
 	{ thick: [4, 1],  thin: null },
 	{ thick: [3, 1],  thin: null },
 ];
+// and with HD Textures and Models (settings.hdVegetation): about twice the triangles in the wood near by, and the foliage 6 cards
+//		to a piece, not 3 (vf_forest.js: THE HD CARDS)
+const TESSELLATION_HD = [
+	{ thick: [16, 9], thin: [7, 4] },
+	{ thick: [9, 4],  thin: [5, 2] },
+	{ thick: [6, 2],  thin: [3, 1] },
+	{ thick: [4, 2],  thin: null },
+	{ thick: [3, 1],  thin: null },
+];
+const tessellationAt = (level) => (settings.hdVegetation ? TESSELLATION_HD : TESSELLATION)[level];
+const foliageVertices = () => settings.hdVegetation ? FOLIAGE_VERTICES_HD : FOLIAGE_VERTICES;
 // and for the foliage: the share of the pieces that is drawn, and how much bigger each one is drawn to make up for the rest
-const FOLIAGE_DETAIL = [[1.0, 1.0], [0.5, 1.4], [0.2, 2.1], [0.08, 3.2], [0.035, 4.8]];
+const FOLIAGE_DETAIL_SD = [[1.0, 1.0], [0.5, 1.4], [0.2, 2.1], [0.08, 3.2], [0.035, 4.8]];
+// (and with HD Textures and Models: more of it kept further off, so a distant crown is still leaves and needles, not a few big cards.
+//		As the setting was when the page loaded: the trees' lists of pieces are made once)
+const FOLIAGE_DETAIL_HD = [[1.0, 1.0], [0.7, 1.2], [0.4, 1.55], [0.18, 2.3], [0.08, 3.4]];
+const FOLIAGE_DETAIL = settings.hdVegetation ? FOLIAGE_DETAIL_HD : FOLIAGE_DETAIL_SD;
 // and the roots: [sides, rings] for each level of detail that draws them (THE ROOTS)
 const ROOT_TESSELLATION = [[7, 3], [4, 2]];
 
@@ -1148,10 +1164,11 @@ const atlasRows = () => Math.ceil(atlasSlots() / ATLAS_COLUMNS);
 
 // The ForestUniforms struct in vf_forest.js. With no bake given it is the frame's: the main camera, the wind blowing.
 //		bake: { viewProjectionMatrix, cameraPosition, view, halfDepth, height } is for taking a billboard picture: that camera, and the air still
-function forestUniformValues(bake) {
+// (viewProjection: drawn from somewhere other than the camera, the camera still the camera: the sun's shadow maps, sunShadows.js)
+function forestUniformValues(bake, viewProjection = null) {
 	const bufferResult = [];
 
-	const viewProjectionMatrix = bake ? bake.viewProjectionMatrix : transformations.getViewProj();
+	const viewProjectionMatrix = bake ? bake.viewProjectionMatrix : viewProjection ?? transformations.getViewProj();
 	for(let i = 0; i < 16; i++) {
 		bufferResult.push(viewProjectionMatrix[i]);
 	}
@@ -1183,7 +1200,7 @@ function forestUniformValues(bake) {
 	bufferResult.push(bake ? bake.view : 0);
 	bufferResult.push(bake ? bake.halfDepth : 0);
 	bufferResult.push(bake ? bake.height : 0);
-	bufferResult.push(0);
+	bufferResult.push(settings.hdVegetation ? 1 : 0);		//HD Textures and Models (vf_forest.js: THE HD CARDS, THE HD LEAVES)
 
 	//life
 	bufferResult.push(life ? life.fallYears : 1);
@@ -1214,6 +1231,7 @@ function forestUniformBufferUpdates() {
 const bindGroupLayout = device.createBindGroupLayout({
   label: "forest Bind Group Layout",
   entries: [
+  ...sunShadows.sunShadowLayoutEntries(GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT),
   {
     binding: 0,
     visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
@@ -1320,11 +1338,13 @@ const drawBindGroup = device.createBindGroup({
 });
 
 // uniforms, trees, visible: the frame's own, or the bake's stand ins for them (see bakeBillboards)
-function createBindGroupForest(uniforms = forestUniformBuffer, treeList = treeBuffer, visibleList = visibleBuffer) {
+// (drawing: into the sun's shadow maps, which it then must not read: sunShadows.js)
+function createBindGroupForest(uniforms = forestUniformBuffer, treeList = treeBuffer, visibleList = visibleBuffer, drawing = false) {
 	return device.createBindGroup({
 			label: "forest bind group",
 			layout: bindGroupLayout,
 			entries: [
+			...sunShadows.sunShadowEntries(drawing),
 			{
 				binding: 0,
 				resource: { buffer: uniforms }
@@ -1525,7 +1545,7 @@ function bakeBillboards() {
 			picture.draws = [
 				{ slot: slot * 3 + 0, vertices: 8 * 4 * 6, instances: stage.thick },
 				{ slot: slot * 3 + 1, vertices: 4 * 2 * 6, instances: stage.sections[0] - stage.thick },
-				{ slot: slot * 3 + 2, vertices: FOLIAGE_VERTICES, instances: stage.foliage[0] },
+				{ slot: slot * 3 + 2, vertices: foliageVertices(), instances: stage.foliage[0] },
 			];
 		});
 	});
@@ -1692,7 +1712,7 @@ let keptDraws = null, keptDrawsFor = '', framesSinceSort = 0;
 function sortTreesIntoDraws() {
 	const planes = transformations.getFrustumPlanes();
 	const camX = settings.camPosX, camY = settings.camPosY, camZ = settings.camPosZ;
-	const drawsFor = planes.flat().join() + '|' + [settings.forestDetailDistance, settings.forestMidDistance, settings.forestBillboardDistance, settings.forestDrawDistance, settings.forestThinnedRings, archetypes.length, settings.landOcclusion].join();
+	const drawsFor = planes.flat().join() + '|' + sunShadows.keepRadius() + '|' + [settings.forestDetailDistance, settings.forestMidDistance, settings.forestBillboardDistance, settings.forestDrawDistance, settings.forestThinnedRings, archetypes.length, settings.landOcclusion].join();
 	if (keptDraws && !treesMoved && drawsFor === keptDrawsFor && ++framesSinceSort < DRAWS_REFRESH) {
 		return keptDraws;
 	}
@@ -1725,14 +1745,17 @@ function sortTreesIntoDraws() {
 	forestStats.drawn = new Array(LEVELS + 1).fill(0);
 	forestStats.hiddenCells = 0;
 	const occluding = horizon.readyHorizon();
+	const keep = sunShadows.keepRadius();
 	for (const block of blocks) {
 		// a whole block behind the camera, off to one side, or too far away: none of its cells is looked at (its box holds all their
 		//		balls, so not one of them would be drawn: see THE CELLS)
-		if (planes.some((plane) => plane[0] * (plane[0] > 0 ? block.x1 : block.x0) + plane[1] * (plane[1] > 0 ? block.y1 : block.y0) + plane[2] * (plane[2] > 0 ? block.z1 : block.z0) + plane[3] < 0)) continue;
+		// (or near enough to throw a shadow into view: THE SUN'S SHADOWS, sunShadows.js: keepRadius)
+		const blockNear = Math.hypot(Math.max(block.x0 - camX, 0, camX - block.x1), Math.max(block.z0 - camZ, 0, camZ - block.z1)) < keep;
+		if (!blockNear && planes.some((plane) => plane[0] * (plane[0] > 0 ? block.x1 : block.x0) + plane[1] * (plane[1] > 0 ? block.y1 : block.y0) + plane[2] * (plane[2] > 0 ? block.z1 : block.z0) + plane[3] < 0)) continue;
 		if (Math.hypot(Math.max(block.x0 - camX, 0, camX - block.x1), Math.max(block.y0 - camY, 0, camY - block.y1), Math.max(block.z0 - camZ, 0, camZ - block.z1)) > billboardEnd) continue;
 		for (const cell of block.cells) {
 			// the whole cell behind the camera, off to one side, or too far away to draw anything of (a small tree's detail distance is up to 4x its real one)
-			if (planes.some((plane) => plane[0] * cell.x + plane[1] * cell.y + plane[2] * cell.z + plane[3] < -cell.radius)) continue;
+			if (Math.hypot(cell.x - camX, cell.z - camZ) - cell.radius > keep && planes.some((plane) => plane[0] * cell.x + plane[1] * cell.y + plane[2] * cell.z + plane[3] < -cell.radius)) continue;
 			const cellAway = Math.hypot(cell.x - camX, cell.y - camY, cell.z - camZ);
 			if (cellAway - cell.radius > billboardEnd) continue;
 			// or behind a hill (see horizon.js)
@@ -1793,12 +1816,12 @@ function sortTreesIntoDraws() {
 		const stage = archetypes[Math.floor(list / (STAGES * LEVELS))].stages[Math.floor(list / LEVELS) % STAGES];
 		visibleData.set(members, listStart);
 
-		const tessellation = TESSELLATION[level], next = Math.min(level + 1, lastLevel);
+		const tessellation = tessellationAt(level), next = Math.min(level + 1, lastLevel);
 		addDraw(draws.wood, stage.sectionStart, stage.thickAt[level], stage.thickAt[next], tessellation.thick[0], tessellation.thick[1], level, tessellation.thick[0] * tessellation.thick[1] * 6, members.length);
 		if (tessellation.thin) {
 			addDraw(draws.wood, stage.sectionStart + stage.thick, stage.sections[level] - stage.thick, stage.sections[next] - stage.thick, tessellation.thin[0], tessellation.thin[1], level, tessellation.thin[0] * tessellation.thin[1] * 6, members.length);
 		}
-		addDraw(draws.foliage, stage.foliageStart, stage.foliage[level], stage.foliage[next], 0, 0, level, FOLIAGE_VERTICES, members.length);
+		addDraw(draws.foliage, stage.foliageStart, stage.foliage[level], stage.foliage[next], 0, 0, level, foliageVertices(), members.length);
 		const rootCut = settings.forestRoots ? ROOT_TESSELLATION[level] : null;
 		if (rootCut) { const draw = addDraw(draws.wood, stage.rootStart, stage.roots[level], stage.roots[level + 1], rootCut[0], rootCut[1], level, rootCut[0] * rootCut[1] * 6, members.length); if (draw) draws.roots.push(draw); }
 
@@ -1893,12 +1916,12 @@ function drawSlots() {
 		const level = list % LEVELS;
 		if (level > lastLevel) continue;		// (a level not used: nothing falls in it)
 		const stage = archetypes[Math.floor(list / (STAGES * LEVELS))].stages[Math.floor(list / LEVELS) % STAGES];
-		const tessellation = TESSELLATION[level], next = Math.min(level + 1, lastLevel);
+		const tessellation = tessellationAt(level), next = Math.min(level + 1, lastLevel);
 		add(slots.wood, list, stage.sectionStart, stage.thickAt[level], stage.thickAt[next], tessellation.thick[0], tessellation.thick[1], level, tessellation.thick[0] * tessellation.thick[1] * 6);
 		if (tessellation.thin) {
 			add(slots.wood, list, stage.sectionStart + stage.thick, stage.sections[level] - stage.thick, stage.sections[next] - stage.thick, tessellation.thin[0], tessellation.thin[1], level, tessellation.thin[0] * tessellation.thin[1] * 6);
 		}
-		add(slots.foliage, list, stage.foliageStart, stage.foliage[level], stage.foliage[next], 0, 0, level, FOLIAGE_VERTICES);
+		add(slots.foliage, list, stage.foliageStart, stage.foliage[level], stage.foliage[next], 0, 0, level, foliageVertices());
 		const rootCut = settings.forestRoots ? ROOT_TESSELLATION[level] : null;
 		if (rootCut) { const k = add(slots.wood, list, stage.rootStart, stage.roots[level], stage.roots[level + 1], rootCut[0], rootCut[1], level, rootCut[0] * rootCut[1] * 6); if (k >= 0) slots.roots.push(k); }
 	}
@@ -1943,7 +1966,7 @@ function listsOnGPU(encoder) {
 	const planes = transformations.getFrustumPlanes();
 	// (the lists the GPU made last still right, as sortTreesIntoDraws keeps its own: the camera, the levels of detail, the trees near it and
 	//		how many there are as they were. A tree further off is caught up with every DRAWS_REFRESH frames)
-	const listsFor = planes.flat().join() + '|' + slots.key + '|' + settings.landOcclusion + '|' + trees.length;
+	const listsFor = planes.flat().join() + '|' + slots.key + '|' + settings.landOcclusion + '|' + trees.length + '|' + sunShadows.keepRadius();
 	if (listsFor === gpuListsFor && !treesMoved && ++gpuFramesSince < DRAWS_REFRESH) return slots;
 	floorDue = true;		// (the floor is drawn from them: THE FLOOR)
 	gpuListsFor = listsFor;
@@ -1964,7 +1987,7 @@ function listsOnGPU(encoder) {
 	cullValues.set(slots.ends.slice(0, 4), 28);
 	cullValues.set([slots.ends[4], slots.billboardStart, slots.billboardEnd, clock - clockBase], 32);
 	cullValues.set(occluding && table.madeAt ? [...table.madeAt, 1] : [0, 0, 0, 0], 36);
-	cullSizes.set([trees.length, slots.lists, slots.lists, slots.count]);
+	cullSizes.set([trees.length, slots.lists, Math.round(sunShadows.keepRadius()), slots.count]);
 	device.queue.writeBuffer(cullUniformBuffer, 0, cullValues);
 	encoder.clearBuffer(countsBuffer);
 	const pass = encoder.beginComputePass({ label: "forest lists", timestampWrites: profiler.timestamps('Lists', 'c_forestCull') });
@@ -2266,6 +2289,54 @@ export function rootStep(x, z) {
 export function floorMarksForTest(x, z, reach) { const out = []; marksNear(x, z, reach, (mark) => out.push({ ...mark, ...markNow(mark) })); return out; }
 export function windthrowForTest(index, direction) {	// (as fellTree, but drying out as one that died would: so it uproots)
  const height = fellTree(index, direction); const tree = trees[index]; if (height > 0 && tree) { tree.dryYears = 0.5; life.changed(index); } return height ? { height, uproots: uproots(tree) } : null; }
+/*
+	THE SUN'S SHADOWS (sunShadows.js): the trees drawn into each of the sun's shadow maps, their wood and their leaves (the gaps between
+	the leaves left out: vf_forest.js fragmentShadow), from the lists the frame before drew from (they are made later in the frame:
+	a frame behind is nothing anyone can see). Those lists hold every tree near enough to throw a shadow into view, not only the ones
+	in it (keepRadius). The billboards cast none: they are further off than the near maps reach
+*/
+let lastLists = null;
+const shadowUniforms = Array.from({ length: 3 }, (_, k) => device.createBuffer({ label: `forest sun shadow ${k} Uniform`, size: forestUniformBuffer.size, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }));
+let shadowBindGroups = null, shadowBindFor = null;
+function createShadowPipeline(label, shaderModule, fragmentEntry) {
+	return device.createRenderPipeline({
+		label, layout: forestPipelineLayout,
+		vertex: { module: shaderModule, entryPoint: "vertexMain", buffers: [] },
+		fragment: fragmentEntry ? { module: shaderModule, entryPoint: fragmentEntry, targets: [] } : undefined,
+		primitive: { topology: 'triangle-list', cullMode: 'none' },
+		depthStencil: { depthWriteEnabled: true, depthCompare: 'less', format: 'depth32float', depthBias: 2, depthBiasSlopeScale: 2.0 },
+	});
+}
+const woodShadowPipeline = createShadowPipeline("forest wood sun shadow pipeline", woodShaderModule, null);
+const foliageShadowPipeline = createShadowPipeline("forest foliage sun shadow pipeline", foliageShaderModule, 'fragmentShadow');
+sunShadows.addSunShadowCaster((pass, cascade, matrix) => {
+	if (!lastLists || !forestBindGroup || !settings.enableForest || !life || life.count == 0) return;
+	const { slots, draws } = lastLists;
+	const values = forestUniformValues(null, matrix);
+	device.queue.writeBuffer(shadowUniforms[cascade], 0, values.buffer, values.byteOffset, values.byteLength);
+	if (!shadowBindGroups || shadowBindFor !== forestBindGroup) {
+		shadowBindGroups = shadowUniforms.map((u) => createBindGroupForest(u, treeBuffer, visibleBuffer, true));
+		shadowBindFor = forestBindGroup;
+	}
+	pass.setBindGroup(0, shadowBindGroups[cascade]);
+	const drawList = (slotList, drawn) => {
+		if (slots) {
+			for (const slot of slotList) {
+				if (slots.levelOf[slot] < slots.levelFrom) continue;
+				pass.setBindGroup(1, drawBindGroup, [slot * DRAW_STRIDE]);
+				pass.drawIndirect(indirectBuffer, slot * 16);
+			}
+		} else for (const draw of drawn) {
+			pass.setBindGroup(1, drawBindGroup, [draw.slot * DRAW_STRIDE]);
+			pass.draw(draw.vertices, draw.instances, 0, 0);
+		}
+	};
+	pass.setPipeline(woodShadowPipeline);
+	drawList(slots?.wood, draws?.wood);
+	pass.setPipeline(foliageShadowPipeline);
+	drawList(slots?.foliage, draws?.foliage);
+});
+
 export function forestPass(aEncoder, mainpassDepthTexture) {
 
 	// nothing to stand on without the land
@@ -2278,6 +2349,7 @@ export function forestPass(aEncoder, mainpassDepthTexture) {
 	// (the lists made on the GPU, THE GPU'S LISTS, every draw call there could be drawn from them; or the CPU's)
 	const slots = settings.forestGpuCulling ? listsOnGPU(aEncoder) : null;
 	const draws = slots ? null : sortTreesIntoDraws();
+	lastLists = { slots, draws };
 	if (draws && draws.wood.length == 0 && draws.foliage.length == 0 && draws.billboards.length == 0) {
 		floorOff();
 		return;

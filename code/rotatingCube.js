@@ -40,6 +40,8 @@ import * as jobs from './jobs.js'
 import * as rates from './rates.js'
 import * as wind from './wind.js'
 import * as clouds from './clouds.js'
+import * as sunShadows from './sunShadows.js'
+import * as meadowPalette from './meadowPalette.js'
 import * as particles from './particles.js'
 import * as lightShafts from './lightShafts.js'
 import * as lightning from './lightning.js'
@@ -531,7 +533,9 @@ export function updateRotatingCubePass() {
 	lightning.lightningUpdate();	//a strike that is going on flickers and dies, and now and then a new one starts
 	temporalAA.cameraNow(encoder);	//(a temporal anti-aliasing: this frame's camera, and the motion cleared)
 	profiler.cpuMark('Cloud Map');
-	profiler.section('Cloud Map', () => clouds.cloudUpdate(encoder));	//the weather moves on, and the picture of the clouds from above is taken: their shadows are read from it all through the frame
+	profiler.section('Cloud Map', () => clouds.cloudUpdate(encoder));
+	profiler.section('Sun Shadows', () => sunShadows.sunShadowPass(encoder));
+	meadowPalette.meadowPaletteUpdate();	//the meadow's colors, the season's (meadowPalette.js)	//the trees and the bushes drawn from the sun's side, for everything drawn after to see if the sun reaches it (sunShadows.js)	//the weather moves on, and the picture of the clouds from above is taken: their shadows are read from it all through the frame
 
 	profiler.cpuMark('Shadow and Height Map');
 	genericUniformBufferUpdates(scene.entityModels);

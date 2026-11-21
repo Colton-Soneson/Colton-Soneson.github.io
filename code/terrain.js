@@ -1,5 +1,7 @@
 import { DEPTH_FORMAT, depthTest, DEPTH_CLEAR } from './depthMode.js'
-import {device} from './deviceSelection.js'
+import {device} from './deviceSelection.js'
+import * as sunShadows from './sunShadows.js'
+import * as meadowPalette from './meadowPalette.js'
 import {canvas} from './deviceSelection.js'
 import {canvasFormat} from './deviceSelection.js'
 
@@ -1073,6 +1075,8 @@ const bindGroupDepthLayout = device.createBindGroupLayout({
 const bindGroupVFLayout = device.createBindGroupLayout({
   label: "terrain Bind Group VF Layout",
   entries: [
+  ...sunShadows.sunShadowLayoutEntries(GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT),
+  meadowPalette.meadowPaletteLayoutEntry(GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT),
   {
     binding: 0,
     visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
@@ -1183,6 +1187,8 @@ function createVFBindGroupTerrain() {
 			label: "terrain VF bind group",
 			layout: bindGroupVFLayout,
 			entries: [
+			...sunShadows.sunShadowEntries(),
+			meadowPalette.meadowPaletteEntry(),
 			{
 				binding: 0,
 				resource: { buffer: terrainUniformBuffer }
@@ -1420,7 +1426,8 @@ let bakeCount = 0;
 //		now and then while they change, not every frame
 function currentBakeVersion() {
 	return JSON.stringify([settings.terrainRockDetail, settings.terrainRockVeins, settings.terrainGroundDetail, settings.terrainBeachHeight,
-		settings.terrainBankHeight, settings.terrainSnowLine, settings.waterWorldPosY, Math.round(weatherNow.snowCover * 25), Math.round(seasonNow.hay * 25)]);
+		settings.terrainBankHeight, settings.terrainSnowLine, settings.waterWorldPosY, Math.round(weatherNow.snowCover * 25), Math.round(seasonNow.hay * 25),
+		meadowPalette.meadowPaletteNow.season, Math.round(meadowPalette.meadowPaletteNow.toNext * 10)]);	// (and the meadow's colors, the season's: meadowPalette.js)
 }
 
 function destroyBake(chunk) {

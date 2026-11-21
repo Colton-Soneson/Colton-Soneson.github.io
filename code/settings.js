@@ -62,6 +62,7 @@ export const settings = {
 	shadowMapCenter: [0.0, 0.0, 0.0],	//where the shadow map's box is centered: on the buildings, wherever the land generation put them (placeBuildings in terrain.js). Read only
 	//-----------------POST EFFECTS----------------
 	enablePostEffects: true,			//everything in this block: effects worked out from the finished frame instead of the scene. See screenEffects.js
+	enableSunShadows: true,				//the sun's shadow maps round the camera: the trees and the bushes cast shadows on the land, the grass, the plants and each other (sunShadows.js)
 	enableScreenShadows: true,			//the sun's shadows, found in the frame's own depth (Bend Studio's method from Days Gone, see c_SSS.js)
 	screenShadowStrength: 1.0,			//1 = a shadowed pixel loses all of its sun light, 0 = none of it
 	screenShadowThickness: 0.005,		//how thick whatever casts a shadow is taken to be, as a share of the depth behind it. Bigger = heavier shadows, that start to come loose from what casts them
@@ -125,6 +126,7 @@ export const settings = {
 	enableNPCs: true,					//the people out in the world: riders between the towns, the airmen of the landing strip, the schooner's crew and the dinghies' sailors (npcs.js)
 	//--------------------GRASS--------------------
 	enableGrass: true,
+	hdVegetation: true,					//HD Textures and Models: the trees, the bushes, the flowers, ferns and mosses drawn with about twice the triangles, and their leaves, needles and petals drawn with their veins, teeth and streaks (vf_forest.js: THE HD CARDS, THE HD LEAVES; floraKinds.js: HD; vf_flora.js: THE HD TEXTURES)
 	enableFlora: true,					//the plants: ferns, mosses, mushrooms and flowers, bushes and wild wheat (flora.js)
 	floraDensity: 1.0,					//how many of the small plants: 2 = twice as many
 	floraDrawDistance: 130,				//metres out the small plants are drawn (the bushes and the wild wheat: 220)
@@ -198,6 +200,7 @@ export const settings = {
 	cloudResolution: 0,					//the clouds are marched at the size of the frame divided by this: 1 (full), 2 (half), 3 or 4 (a quarter). 0: dynamic, by how near the cloud is (see the next two). The march is most of what they cost
 	cloudFullResWithin: 1200,			//dynamic: cloud nearer than this (metres) is marched at the frame's full size, twice as far at half, four times as far at a quarter, and so on down to the next
 	cloudCoarsest: 8,					//dynamic: the coarsest the furthest cloud is marched at, 4 (a quarter of the frame's size) or 8 (an eighth)
+	cloudUpdateEvery: 3,				//every how many frames each pixel of the clouds is marched again, 1 to 16. Between, it carries over what it drew before (moved with the camera and the wind): each frame marches only one pixel in this many, spread evenly over the screen, so the clouds cost about that many times less (vfc_clouds.js: THE UPDATE RATE)
 	// THE HEAPS, their lighting and the layers above them (clouds.js, vfc_clouds.js): every number of the look, to adjust
 	cloudHeapAmount: 0.3,	//how many of the cells the weather has cloud over grow a heap (more: a closer field of them)
 	cloudPuffAmount: 0.45,	//and how many grow the small puffs, between the heaps and on their flanks

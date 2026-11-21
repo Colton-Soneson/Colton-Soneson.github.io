@@ -9,7 +9,7 @@ import * as profiler from './profiler.js'
 import { mat4, vec3 } from 'https://wgpu-matrix.org/dist/3.x/wgpu-matrix.module.js';
 
 import { settings } from './settings.js';
-import { weatherNow } from './weather.js';
+import { weatherNow, seasonNow } from './weather.js';
 
 import { c_transmittance_LUT } from '../shaders/js/vfc_atmosphere.js'
 import { c_skyView_LUT } from '../shaders/js/vfc_atmosphere.js'
@@ -302,6 +302,9 @@ const skyVFBindGroup = device.createBindGroup({
 export let sunCycles = 0;
 let sunLastTime = performance.now();
 
+const SUN_LATITUDE = 44.5 * Math.PI / 180;		// Oregon's
+const SUN_TILT = 23.44 * Math.PI / 180;			// the earth's axis
+const SUN_DISTANCE = 110.0;						// (only its direction matters: the length the sun's position has always had)
 export function sunCycle(cycleSpeed)
 {
 	settings.sunCycleAngle = (settings.sunCycleAngle || 0) + cycleSpeed;
@@ -310,10 +313,20 @@ export function sunCycle(cycleSpeed)
 	sunCycles += cycleSpeed / (Math.PI * 2);
 	settings.sunCycleCount = Math.round(sunCycles * 100) / 100;		// for the controls to show
 
-    // ellipse — wide on X, tall on Y, flat on Z
-	// HARD CODED FOR NOW
-    settings.sunPosX = Math.cos(settings.sunCycleAngle) * 110.0;
-    settings.sunPosY = (Math.sin(settings.sunCycleAngle) * 50.0) + 25.0;
+	/*
+		THE SUN'S ARC, as it goes over Oregon (SUN_LATITUDE, about 44.5 degrees north) at this time of the year. The day's angle is
+		the sun's hour angle (noon at a quarter turn, rising in the east, +x), and the season (weather.js: seasonNow) sets how far
+		north or south of the equator it is (its declination: up to the earth's tilt either way, 0 at the equinoxes, the year
+		counted from the spring's). So the midsummer sun climbs to about 69 degrees at noon and is up for over 15 hours, the
+		midwinter sun gets no higher than about 22 and is up for under 9. Its noon side is -z, as the snow line and the shading
+		of this world have always had it.
+	*/
+	const year = ((seasonNow.index ?? 1) + (seasonNow.progress ?? 0.5)) / 4;
+	const declination = SUN_TILT * Math.sin(2 * Math.PI * year);
+	const hour = settings.sunCycleAngle - Math.PI / 2;
+	settings.sunPosX = -Math.cos(declination) * Math.sin(hour) * SUN_DISTANCE;
+	settings.sunPosY = (Math.sin(SUN_LATITUDE) * Math.sin(declination) + Math.cos(SUN_LATITUDE) * Math.cos(declination) * Math.cos(hour)) * SUN_DISTANCE;
+	settings.sunPosZ = (Math.cos(SUN_LATITUDE) * Math.sin(declination) - Math.sin(SUN_LATITUDE) * Math.cos(declination) * Math.cos(hour)) * SUN_DISTANCE;
 
 	// the moon goes round the same ellipse half a turn behind, over the other side of the sky (its z is its own).
 	//		The ellipse sits high (+25), so each of them is up for more than half the time and they share the sky at dawn and dusk

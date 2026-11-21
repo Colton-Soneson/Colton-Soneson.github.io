@@ -3,6 +3,8 @@ import { windShapes } from './vf_wind.js';
 import { moonShapes } from './f_moon.js';
 import { skyLookupShapes } from './vfc_atmosphere.js';
 import { floorShapes } from '../../code/floor.js';
+import { meadowShapes } from './meadowShapes.js';
+import { sunShadowShapes } from './sunShadowShapes.js';
 
 export const GRASS_MAX_RINGS = 8;								// the most level of detail rings there can be around the camera (how many there are is a setting)
 export const GRASS_RING_SEGMENTS = [4, 3, 2, 2, 1, 1, 1, 1];	// pieces a blade is cut into along its length, ring by ring outwards. 1 = a single triangle
@@ -108,6 +110,7 @@ export const vf_grass =
 		@location(4) tone: f32,			// per blade (or per clump) random, for a bit of color variation
 		@location(5) distant: f32,		// 0 near the camera, 1 at the draw distance
 		@location(6) reed: f32,			// 1 at the edge of a lake, where the grass is reeds, 0 everywhere else
+		@location(7) look: vec2f,		// THE MEADOW'S LOOK (meadowShapes.js) where it stands: x dry, y scrub
 	};
 
 	//------------------RANDOM-----------------
@@ -131,6 +134,8 @@ export const vf_grass =
 
 	//------------------WIND-----------------
 	${windShapes}
+	${meadowShapes}
+	${sunShadowShapes(0)}
 
 	//------------------CLUMPS-----------------
 	struct Clump
@@ -290,6 +295,11 @@ export const vf_grass =
 		if (random(seed + 3u) >= grassland) {
 			return output;	// thins out towards the edge of the zone, gone outside it
 		}
+		// thin in the scrub, and gone from most of the stony ground (THE MEADOW'S LOOK, meadowShapes.js)
+		let look = meadowLook(root, groundNormal.y);
+		if (random(seed + 13u) < 0.68 * look.y + 0.88 * look.z) {
+			return output;
+		}
 		// nor under what has been built (setGrassHoles)
 		let holeAt = vec2i(floor(root - UBO.holes.xy));
 		if (all(holeAt >= vec2i(0)) && all(holeAt < vec2i(i32(UBO.holes.z))) && textureLoad(grassHoles, holeAt, 0).r > 0.5) {
@@ -314,7 +324,8 @@ export const vf_grass =
 			let flat = UBO.flats[f];
 			if (flat.z > 0.0) { pressed = min(pressed, mix(0.08, 1.0, smoothstep(flat.z * 0.7, flat.z * 1.15, distance(root, flat.xy)))); }
 		}
-		let height = UBO.blade.x * (0.55 + 0.9 * tall) * tuft * (0.5 + 0.5 * grassland) * (1.0 + 1.2 * reed) * (1.0 - smoothstep(0.7, 1.0, distant)) * pressed;	// reeds stand over twice as tall
+		let height = UBO.blade.x * (0.55 + 0.9 * tall) * tuft * (0.5 + 0.5 * grassland) * (1.0 + 1.2 * reed) * (1.0 - smoothstep(0.7, 1.0, distant)) * pressed * (1.0 - 0.4 * look.y - 0.35 * look.z)
+			* mix(0.6, 1.4, meadowNoise(root / (11.0 * MEADOW_M), 61)) * mix(1.12, 0.85, look.x);		// (stretches of it taller and shorter, taller where it is lush)	// reeds stand over twice as tall
 		// further rings have fewer blades for the same ground, so each one is wider to keep it covered
 		let width = UBO.blade.y * (0.75 + 0.5 * random(seed + 5u)) * min(pow(cellSize / UBO.rings[0].y, 0.77), 16.0);
 		// the way it leans: its own way, or out from the middle of its clump and the way the whole clump leans
@@ -357,6 +368,7 @@ export const vf_grass =
 		output.tone = mix(random(seed + 9u), random(clump.id + 4u), UBO.clumpLook.x);
 		output.distant = distant;
 		output.reed = reed;
+		output.look = look.xy;
 
 		return output;
 	}
@@ -379,22 +391,31 @@ export const vf_grass =
 		@location(4) tone: f32,
 		@location(5) distant: f32,
 		@location(6) reed: f32,
+		@location(7) look: vec2f,
 	};
 
 	@fragment
 	fn fragmentMain(input: FragInput) -> @location(0) vec4f {
 
 		// dark at the root, the terrain's grassland green part way up, lighter at the tip. So from far off a field of it matches the ground under it
-		let rootColor = COLOR_GRASSLAND * 0.45;
-		let tipColor = COLOR_GRASSLAND * vec3f(1.35, 1.25, 1.1);
+		// (the green is the meadow's here, the season's: THE MEADOW'S COLORS)
+		let meadow = meadowColor(input.worldPos.xz, vec3f(input.look, 0.0));
+		let rootColor = meadow * 0.45;
+		let tipColor = meadow * vec3f(1.35, 1.25, 1.1);
 		var albedo = mix(rootColor, tipColor, input.along);
 		// every blade (or every clump) a slightly different shade, and the odd dry one
-		let shade = 0.85 + 0.3 * input.tone;
-		let dry = mix(vec3f(1.0, 1.0, 1.0), vec3f(1.25, 1.1, 0.7), step(0.9, input.tone));
+		// (a little of each blade's own: the color of a field is in its wide, smooth patches, THE MEADOW'S LOOK, not blade by blade)
+		let shade = 0.93 + 0.14 * input.tone;
+		let dry = mix(vec3f(1.0, 1.0, 1.0), vec3f(1.18, 1.08, 0.78), step(0.94, input.tone));
 		albedo *= shade * dry;
+		// lush or dry where it stands, and browner in the scrub (THE MEADOW'S LOOK)
+		// and where it is dry, the blades go to straw up towards their tips
+		albedo = mix(albedo, vec3f(0.66, 0.58, 0.3) * (0.55 + 0.6 * input.along), smoothstep(0.45, 1.0, input.look.x) * input.along * 0.55);
+		let patchNear = 1.0 - 0.85 * smoothstep(25.0 * MEADOW_M, 120.0 * MEADOW_M, distance(input.worldPos, Lights.camPos.xyz));	// (the scrub only a hint further off: no blotches)
+		albedo = mix(albedo, vec3f(0.52, 0.42, 0.2) * (0.5 + 0.65 * input.along), 0.6 * input.look.y * patchNear);
 		// the fall and the winter: hay, paler towards the tip
 		let hay = vec3f(0.74, 0.64, 0.33);
-		albedo = mix(albedo, hay * (0.5 + 0.65 * input.along) * shade, 0.85 * UBO.clumpLook.y);
+		albedo = mix(albedo, hay * (0.5 + 0.65 * input.along) * shade, 0.35 * UBO.clumpLook.y);
 		// snow lies on the upper part of every blade
 		albedo = mix(albedo, vec3f(0.94, 0.96, 0.99), 0.85 * UBO.clumpLook.z * smoothstep(0.25, 0.8, input.along));
 		// reeds: dark and wet at the foot, straw colored towards the top
@@ -413,13 +434,14 @@ export const vf_grass =
 		let L = normalize(Lights.sunPos.xyz);
 		let daylight = smoothstep(-0.08, 0.25, L.y);
 		let diffuse = saturate(dot(N, L));
-		let light = 0.09 + daylight * (0.34 + 0.72 * diffuse);
+		let light = 0.09 + daylight * (0.34 + 0.72 * diffuse * sunShadow(input.worldPos, L));		// (THE SUN'S SHADOWS: the trees' and the bushes')
 		let sunTint = mix(vec3f(1.0, 1.0, 1.0), Lights.sunCol.rgb, 0.3 * (1.0 - saturate(L.y * 3.0)));
 		let amongst = 0.55 + 0.45 * input.along;	// darker down in amongst the other blades
 		// far off, a blade is smaller than a pixel and all that shading just reads as dark speckle. So with distance it goes over to the
 		//		color of the turf under it (grassTurf in f_groundTextures.js: the same green, in the same sort of shades), and the far
 		//		field of grass melts into the terrain
-		var farColor = mix(mix(COLOR_GRASSLAND, hay * 0.84, 0.8 * UBO.clumpLook.y) * mix(0.9, 1.1, input.tone) * mix(vec3f(1.0, 1.0, 1.0), dry, 0.5), COLOR_MARSH, input.reed);
+		var farColor = mix(mix(meadow, hay * 0.84, 0.3 * UBO.clumpLook.y) * mix(0.9, 1.1, input.tone) * mix(vec3f(1.0, 1.0, 1.0), dry, 0.5), COLOR_MARSH, input.reed);
+		farColor = mix(farColor, mix(MEADOW_EARTH, vec3f(0.5, 0.42, 0.22), 0.6), 0.2 * input.look.y * patchNear);
 		farColor = mix(farColor, vec3f(0.94, 0.96, 0.99), 0.85 * UBO.clumpLook.z);
 		let surface = mix(albedo * amongst, farColor, smoothstep(0.015, 0.14, input.distant));
 		var color = surface * (light * sunTint + moonLight(N));

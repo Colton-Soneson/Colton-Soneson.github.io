@@ -1,7 +1,9 @@
 import { FOLIAGE_LEAVES, FOLIAGE_FROND, FOLIAGE_TUFT, ROOT_LEVEL } from '../../code/treeGenerator.js';
 import { skyLookupShapes } from './vfc_atmosphere.js';
+import { sunShadowShapes } from './sunShadowShapes.js';
 
 export const FOLIAGE_VERTICES = 18;		// every piece of foliage is 3 flat cards, 2 triangles each
+export const FOLIAGE_VERTICES_HD = 36;	// and with HD Textures and Models (settings.hdVegetation): 3 more, turned and set a little apart (THE HD CARDS)
 export const BILLBOARD_VERTICES = 12;	// a billboard is 2 cards: the tree from the side and from above
 
 /*
@@ -59,7 +61,7 @@ const structs =
 		clock : vec4f,				// x: the forest's clock in years, y: wind strength, zw: wind direction
 		world : vec4f,				// x: world units in a metre, y: horizon fog distance, z: 1.0 if the atmosphere is on, w: how far the broadleaved trees have turned for the fall, 0 to 1
 		atlas : vec4f,				// the billboard pictures. x: how many to a row, y: how many rows, z: how many are side views (the views from above come after), w: ages per archetype
-		bake : vec4f,				// only while a billboard is being baked. x: the view (1.0 from the side, 2.0 from above), y: half the depth of the view, z: its height
+		bake : vec4f,				// only while a billboard is being baked. x: the view (1.0 from the side, 2.0 from above), y: half the depth of the view, z: its height. w (always): 1.0 with HD Textures and Models
 		life : vec4f,				// x: how long a dead tree takes to fall over, y: and then to go back into the ground. Years of the forest's clock. z: 1.0 while the roots are drawn (THE WINDTHROWN). w: how far the broadleaved trees have lost their leaves for the winter
 		windScroll : vec4f,			// these two are what windAt takes, see vf_wind.js
 		windBlow : vec4f,
@@ -166,6 +168,7 @@ const structs =
 
 const common =
 `
+	${sunShadowShapes(0)}
 	const PI: f32 = 3.14159265;
 	const TWIG_RADIUS: f32 = 0.012;		// metres, the same as in treeGenerator.js
 	const OFF_SCREEN: vec4f = vec4f(2.0, 2.0, 2.0, 1.0);	// a part that isnt drawn has every vertex put here, which makes triangles with no area
@@ -405,7 +408,9 @@ const common =
 	fn lit(albedo: vec3f, diffuse: f32, light: vec2f, worldPos: vec3f) -> vec3f {
 		let L = normalize(Lights.sunPos.xyz);
 		let daylight = smoothstep(-0.08, 0.25, L.y);
-		let amount = 0.09 + daylight * (0.34 * light.y + 0.72 * diffuse * light.x);
+		// (in the shadow of another tree, or of its own crown, the sun does not get to it: THE SUN'S SHADOWS, sunShadows.js)
+		let shade = sunShadow(worldPos, L);
+		let amount = 0.09 + daylight * (0.34 * light.y + 0.72 * diffuse * light.x * mix(0.35, 1.0, shade));
 		let sunTint = mix(vec3f(1.0, 1.0, 1.0), Lights.sunCol.rgb, 0.3 * (1.0 - saturate(L.y * 3.0)));
 		// (and the moon's, by how much sky the point can see: there is no telling here which way the surface faces)
 		var color = albedo * (amount * sunTint + moonGlow() * 0.2 * light.y);
@@ -462,7 +467,7 @@ const common =
 		// and looking towards the sun through the edge of a crown the leaves glow, lit from behind
 		let toCamera = normalize(Lights.camPos.xyz - worldPos);
 		let daylight = smoothstep(-0.08, 0.25, L.y);
-		let glow = pow(saturate(dot(-toCamera, L)), 5.0) * light.x * daylight;
+		let glow = pow(saturate(dot(-toCamera, L)), 5.0) * light.x * daylight * sunShadow(worldPos, L);
 		let fog = 1.0 - exp(-pow(distance(Lights.camPos.xyz, worldPos) / UBO.world.y, 2.0));
 		return color + albedo * vec3f(1.3, 1.25, 0.6) * glow * 0.45 * (1.0 - fog);
 	}
@@ -686,6 +691,14 @@ export const vf_forestWood = structs + common +
 			let bands = wrappedNoise(vec2f(input.bark.x * 4.0, input.bark.y * 5.0), 4.0) * wrappedNoise(vec2f(input.bark.x * 2.0, input.bark.y * 1.3 + 7.0), 2.0);
 			let dark = max(smoothstep(0.34, 0.44, bands), thick * (1.0 - smoothstep(0.02, 0.09, input.up)) * smoothstep(0.35, 0.6, grain));
 			albedo = mix(albedo, vec3f(0.1, 0.09, 0.08), dark * 0.9);
+		}
+		// (HD Textures and Models: the furrows broken into plates, with fine cracks between, and grey-green lichen on the old wood)
+		if (UBO.bake.w > 0.5) {
+			let plates = wrappedNoise(vec2f(input.bark.x * ridges * 2.0, input.bark.y * 5.0 + 3.0), ridges * 2.0);
+			let cracks = smoothstep(0.08, 0.0, abs(plates - 0.5));
+			albedo *= mix(1.0, (0.8 + 0.35 * plates) * (1.0 - 0.35 * cracks), thick);
+			let lichen = smoothstep(0.7, 0.8, wrappedNoise(vec2f(input.bark.x * 9.0, input.bark.y * 5.0 + input.treeRandom * 20.0), 9.0));
+			albedo = mix(albedo, albedo * vec3f(1.25, 1.4, 1.1), lichen * thick * 0.35 * (1.0 - smoothstep(0.2, 0.5, input.up)));
 		}
 		// a root: green with moss along its top, caked with the dirt where it goes into the ground
 		if (input.soil.y > 0.5) {
@@ -920,14 +933,30 @@ export const vf_forestFoliage = structs + common +
 		var middle = piece.middle.xyz - along * piece.more.z * (1.0 - grown);
 
 		//------------------WHICH CARD, WHICH CORNER-----------------
-		let card = vertexIndex / 6u;
+		// (THE HD CARDS: with HD Textures and Models each piece is drawn with 6 cards, not 3 (forest.js: FOLIAGE_VERTICES_HD). The other
+		//		3 are the first 3 again, turned 45 degrees about the piece and set a little out from it: a clump has depth however it is
+		//		seen, not 3 flat crossings; a frond gets a second, smaller layer hanging under the first)
+		var card = vertexIndex / 6u;
+		let second = card >= 3u;
+		if (second) { card -= 3u; }
 		let corner = vertexIndex % 6u;
 		let cornerX = f32(corner == 1u || corner == 4u || corner == 5u);
 		let cornerY = f32(corner == 2u || corner == 3u || corner == 5u);
 
 		var u = piece.u.xyz;
 		var v = piece.v.xyz;
-		let w = normalize(cross(u, v)) * length(v);		// the third direction, at right angles to the card
+		var w = normalize(cross(u, v)) * length(v);		// the third direction, at right angles to the card
+		if (second && kind != ${FOLIAGE_FROND}.0) {
+			let turned = (u + w * (length(u) / max(length(w), 0.0001))) * 0.7071;
+			w = (w - u * (length(w) / max(length(u), 0.0001))) * 0.7071;
+			u = turned * 0.85;
+			middle += normalize(piece.v.xyz) * length(piece.v.xyz) * size * select(-0.3, 0.3, fract(piece.more.x * 37.0) > 0.5);
+		}
+		if (second && kind == ${FOLIAGE_FROND}.0) {
+			// (a spruce's second layer hangs under the branch, the sprays a curtain from it: see the end of this frond's cards)
+			middle += vec3f(0.0, -0.45, 0.0) * length(piece.v.xyz) * size;
+			u *= 0.85;
+		}
 		if (kind == ${FOLIAGE_FROND}.0) {
 			u *= grown;			// a frond is as long as the piece of branch it is on has got
 			v *= size;
@@ -936,6 +965,9 @@ export const vf_forestFoliage = structs + common +
 				let side = f32(card) * 2.0 - 3.0;
 				v = (normalize(piece.v.xyz) * side * 0.5 + vec3f(0.0, -0.87, 0.0)) * length(v) * 0.75;
 				middle += v;
+			}
+			if (second) {
+				v = mix(v, vec3f(0.0, -length(v), 0.0), 0.7);
 			}
 		} else {
 			u *= size;
@@ -958,7 +990,7 @@ export const vf_forestFoliage = structs + common +
 		output.crownNormal = normalize(toWorldDirection(tree, local - heart));
 		output.uv = vec2f(cornerX, cornerY);
 		output.light = crownLight(crownShape(tree, archetype, age), position - tree.position.xyz);
-		output.look = vec4f(kind, piece.more.x, f32(card), piece.more.w);
+		output.look = vec4f(kind, piece.more.x, f32(vertexIndex / 6u), piece.more.w);
 		output.archetype = archetypeIndex;
 		output.dissolve = dissolveAmount(tree, detail);
 		output.dry = treeDryness(tree);
@@ -985,6 +1017,81 @@ export const vf_forestFoliage = structs + common +
 		let leaf = step(abs(lengthways), 1.0) * step(abs(across), width);
 		let rib = 1.0 - 0.22 * (1.0 - smoothstep(0.0, 0.07, abs(across)));	// the darker line of the midrib
 		return vec2f(leaf, (0.78 + 0.44 * hash21(cell + vec2f(3.3, 8.8))) * rib);
+	}
+
+	/*
+		THE HD LEAVES (HD Textures and Models): a leaf of its own species' outline (an oak's lobes, a birch's teeth), its midrib and the
+		veins off it either side, lighter at its tip and darker at its stalk and round its edge. The same cells as leafLayer
+	*/
+	fn leafLayerHD(uv: vec2f, cells: f32, seed: f32, species: f32) -> vec2f {
+		let grid = uv * cells;
+		let cell = floor(grid) + vec2f(seed, seed * 1.7);
+		let turn = hash21(cell) * 2.0 * PI;
+		let nudge = vec2f(hash21(cell + vec2f(5.2, 1.3)), hash21(cell + vec2f(9.1, 7.7))) - vec2f(0.5, 0.5);
+		let p = fract(grid) - vec2f(0.5, 0.5) - nudge * 0.36;
+		let leafSize = 0.21 + 0.12 * hash21(cell + vec2f(2.9, 4.1));
+		let lengthways = (p.x * cos(turn) + p.y * sin(turn)) / leafSize;
+		let across = (p.y * cos(turn) - p.x * sin(turn)) / leafSize;
+		var width = 0.5 * (1.0 - lengthways * lengthways) * (1.0 - 0.3 * lengthways);
+		if (species > 1.5 && species < 2.5) {
+			// oak: round lobes down each side, deep cut between them
+			width *= 0.62 + 0.5 * abs(sin((lengthways + 1.0) * PI * 2.3));
+		} else if (species > 2.5) {
+			// birch: a broad base to a point, and fine teeth all round
+			width = 0.55 * saturate(1.0 - lengthways) * smoothstep(-1.0, -0.55, lengthways) * (0.9 + 0.1 * abs(sin(lengthways * 40.0)));
+		}
+		let leaf = step(abs(lengthways), 1.0) * step(abs(across), width);
+		let rib = 1.0 - 0.28 * (1.0 - smoothstep(0.0, 0.05, abs(across)));
+		let veinLines = abs(fract((lengthways * 0.6 - abs(across) * 1.1) * 4.0) - 0.5);
+		let veins = 1.0 + 0.12 * (1.0 - smoothstep(0.0, 0.08, veinLines)) * step(0.06, abs(across));
+		let edge = mix(0.82, 1.0, smoothstep(0.0, 0.12, width - abs(across)));
+		let along = mix(0.86, 1.12, saturate(lengthways * 0.5 + 0.5));
+		return vec2f(leaf, (0.78 + 0.44 * hash21(cell + vec2f(3.3, 8.8))) * rib * veins * edge * along);
+	}
+	fn leavesHD(uv: vec2f, seed: f32, species: f32) -> vec2f {
+		let first = leafLayerHD(uv, 7.0, seed * 13.0, species);
+		let second = leafLayerHD(vec2f(uv.x * 0.8 + uv.y * 0.6, uv.y * 0.8 - uv.x * 0.6) + vec2f(0.37, 0.61), 6.0, seed * 29.0 + 3.0, species);
+		let clump = step(distance(uv, vec2f(0.5, 0.5)), 0.5 - 0.06 * hash21(floor(uv * 9.0) + vec2f(seed, 2.0)));
+		return vec2f(max(first.x, second.x) * clump, mix(second.y * 0.85, first.y, first.x));
+	}
+	/*
+		THE HD NEEDLES: a spruce frond as a real spray. Its twig down the middle, twiglets off it either side slanting towards its tip,
+		shorter the further out, and the needles combed off every twiglet in fine strokes, longest at its root: with the air showing
+		between one twiglet and the next, so a branch is seen through, layer behind layer. The needles at the ends of the twiglets,
+		and the whole of this year's growth at the frond's tip, are paler and yellower (shade over 1.05: foliageColor tints it)
+	*/
+	fn frondHD(uv: vec2f, seed: f32) -> vec2f {
+		let along = uv.x;
+		let side = abs(uv.y * 2.0 - 1.0);
+		let twig = step(side, 0.035 * (1.0 - 0.6 * along));
+		let slant = along * 8.0 - side * 1.15 + seed;
+		let row = floor(slant);
+		let f = fract(slant) - 0.5;
+		let reach = (1.0 - 0.7 * along) * (0.62 + 0.38 * hash21(vec2f(row, seed * 7.0)));
+		let outward = side / max(reach, 0.01);
+		let stem = step(abs(f), 0.045) * step(outward, 1.0);
+		let strokes = fract(side * 42.0 + row * 0.37);
+		let comb = step(abs(f), 0.26 * (1.0 - outward) + 0.05) * step(strokes, 0.5) * step(outward, 1.0);
+		let present = max(twig, max(stem, comb));
+		let tip = smoothstep(0.55, 1.0, outward) * 0.32 + smoothstep(0.84, 0.97, along) * 0.3;
+		let shade = (0.66 + 0.4 * hash21(vec2f(row, floor(side * 42.0)))) * (1.0 + tip) + select(0.0, 0.08, tip > 0.25);
+		return vec2f(present, mix(shade, 0.5, twig * (1.0 - comb)));
+	}
+	// and a pine's: long needles, two dozen to a burst, from a brown bud in its middle, lighter at their tips
+	fn tuftHD(uv: vec2f, seed: f32) -> vec2f {
+		let grid = uv * 3.0;
+		let cell = floor(grid) + vec2f(seed * 17.0, seed * 5.0);
+		let p = fract(grid) - vec2f(0.5, 0.5) - (vec2f(hash21(cell), hash21(cell + vec2f(4.4, 2.2))) - vec2f(0.5, 0.5)) * 0.2;
+		let outward = length(p);
+		let angle = atan2(p.y, p.x) / (2.0 * PI) + 0.5;
+		let ray = floor(angle * 24.0);
+		let needle = fract(angle * 24.0 + hash21(cell + vec2f(1.1, 6.6)));
+		let len = 0.47 - 0.14 * hash21(cell + vec2f(ray, 0.0));
+		let burst = step(abs(needle - 0.5), 0.22 * (1.0 - outward / len) + 0.05) * step(outward, len);
+		let bud = 1.0 - smoothstep(0.03, 0.06, outward);
+		let clump = step(distance(uv, vec2f(0.5, 0.5)), 0.5);
+		let shade = (0.7 + 0.45 * hash21(cell + vec2f(ray, 2.0))) * (0.85 + 0.4 * smoothstep(0.1, 0.45, outward / len));
+		return vec2f(max(burst, bud) * clump, mix(shade, 0.45, bud));
 	}
 
 	// broad leaves: two layers of them, the second out of step with the first, inside a round clump
@@ -1043,15 +1150,18 @@ export const vf_forestFoliage = structs + common +
 	fn foliageColor(input: FoliageInput) -> vec4f {
 		var drawn: vec2f;
 		let seed = input.look.y + input.look.z * 0.31;
+		let hd = UBO.bake.w > 0.5;
 		if (input.look.x == ${FOLIAGE_FROND}.0) {
-			drawn = frond(input.uv, seed);
+			drawn = select(frond(input.uv, seed), frondHD(input.uv, seed), hd);
 		} else if (input.look.x == ${FOLIAGE_TUFT}.0) {
-			drawn = tuft(input.uv, seed);
+			drawn = select(tuft(input.uv, seed), tuftHD(input.uv, seed), hd);
 		} else {
-			drawn = leaves(input.uv, seed);
+			drawn = select(leaves(input.uv, seed), leavesHD(input.uv, seed, archetypes[input.archetype].growth.w), hd);
 		}
 		// every clump a different shade, and the top of the crown lighter than the bottom
-		let albedo = archetypes[input.archetype].leaf.rgb * drawn.y * (0.82 + 0.36 * input.look.y) * mix(0.8, 1.12, input.look.w);
+		var albedo = archetypes[input.archetype].leaf.rgb * drawn.y * (0.82 + 0.36 * input.look.y) * mix(0.8, 1.12, input.look.w);
+		// (THE HD NEEDLES: their pale yellow-green tips and new growth)
+		albedo = mix(albedo, albedo * vec3f(1.35, 1.45, 0.8), smoothstep(1.05, 1.35, drawn.y) * select(0.0, 1.0, hd && input.look.x == ${FOLIAGE_FROND}.0));
 		return vec4f(albedo, drawn.x);
 	}
 
@@ -1062,6 +1172,14 @@ export const vf_forestFoliage = structs + common +
 			cardNormal = -cardNormal;
 		}
 		return normalize(mix(cardNormal, normalize(input.crownNormal), 0.7));
+	}
+
+	// into the sun's shadow maps (sunShadows.js): the leaves, and nothing in the gaps between them
+	@fragment
+	fn fragmentShadow(input: FoliageInput) {
+		if (foliageColor(input).a < 0.5) {
+			discard;
+		}
 	}
 
 	@fragment
@@ -1445,8 +1563,10 @@ export const c_forestCull = (H, F) => `
 		let A = archetypes[arch];
 		let reach = A.a.y * t.shape.x * 1.3;		// (all of it, full grown, standing or lying, round its foot)
 		let base = t.position.xyz;
+		// (out of view, but near enough to throw its shadow into it: kept, THE SUN'S SHADOWS, sunShadows.js: keepRadius)
+		let kept = distance(base.xz, C.camera.xz) < f32(C.sizes.z) + reach;
 		for (var p = 0u; p < 6u; p++) {
-			if (dot(C.planes[p].xyz, base) + C.planes[p].w < -reach) { return; }
+			if (!kept && dot(C.planes[p].xyz, base) + C.planes[p].w < -reach) { return; }
 		}
 		if (C.horizon.w > 0.5 && hidden(base.x, base.z, base.y + reach, reach)) { return; }
 		let detail = distance(base, C.camera.xyz) * t.more.w;

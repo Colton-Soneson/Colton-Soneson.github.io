@@ -836,13 +836,61 @@ export const vf_cloudMarch =
 	// the level of the march this is (see DYNAMIC RESOLUTION at the top)
 	struct MarchLevel {
 		size : vec4f,		// xy: the size it draws at, z: how near (world units) cloud must be met to be marched again here, w: 1 if there is a coarser level to start from
+		before : mat4x4f,	// the view projection of the frame before (THE UPDATE RATE)
+		rate : vec4f,		// x: every how many frames a pixel is marched (settings.cloudUpdateEvery), y: which of them this frame is, z: 1 if what this level drew the frame before can be carried over
+		drift : vec4f,		// xy: how far the clouds have drifted since the frame before, world units
 	}
 	@group(0) @binding(10) var<uniform> LV: MarchLevel;
 	@group(0) @binding(11) var coarserLight: texture_2d<f32>;	// the coarser level: what this target 0 is
 	@group(0) @binding(12) var coarserNear: texture_2d<f32>;	// and target 1: how near the cloud it met was (world units; 1e9 none)
+	@group(0) @binding(13) var beforeLight: texture_2d<f32>;	// what this level drew the frame before: target 0
+	@group(0) @binding(14) var beforeNear: texture_2d<f32>;		// and target 1
 	struct Marched {
 		@location(0) light: vec4f,		// rgb: the light the clouds send to the eye, a: how much of what is behind them shows through
-		@location(1) near: f32,			// how far along the ray it first lost a little of what is behind
+		@location(1) near: vec2f,		// x: how far along the ray it first lost a little of what is behind, y: how far the ray went (to the solid thing drawn there: 1e9 the sky)
+	}
+
+	/*
+		THE UPDATE RATE (settings.cloudUpdateEvery, N). A pixel is marched one frame in N: which frame by where it stands in a 4 by 4
+		block (a Bayer pattern, so the pixels marched in any one frame are spread evenly over the screen, not in rows: THE UPDATE RATE,
+		PACKED, below, for how they are marched). The rest carry
+		over what they drew the frame before: the cloud they met is looked for where the camera of that frame saw it, after the wind
+		has moved it on (LV.before, LV.drift), and the light there is taken. Not carried over (marched, whatever the frame): what
+		went off the edge of the frame before, and a pixel whose ray now ends somewhere else (a tree or a hill has come in front of
+		it, or gone): what the frame before saw down it is not what is there now
+	*/
+	struct Carried {
+		light: vec4f,
+		near: f32,
+		ok: bool,
+	}
+	const CARRY_FAR: f32 = 1000000.0;		// (how far off a ray that met no cloud is taken to have looked: a direction only)
+	fn carriedOver(origin: vec3f, direction: vec3f, pixel: vec2f, solid: f32) -> Carried {
+		var kept = Carried(vec4f(0.0, 0.0, 0.0, 1.0), 1000000000.0, false);
+		let size = vec2i(LV.size.xy);
+		var was = textureLoad(beforeNear, min(vec2i(pixel), size - vec2i(1, 1)), 0).xy;
+		var uv = vec2f(0.0, 0.0);
+		// (twice: where it is looked for depends on how far off the cloud was, and that is read where it is looked for)
+		for (var k = 0; k < 2; k++) {
+			let reach = min(select(was.x, CARRY_FAR, was.x > 999999999.0), solid);
+			let earlier = LV.before * vec4f(origin + direction * reach - vec3f(LV.drift.x, 0.0, LV.drift.y), 1.0);
+			if (earlier.w <= 0.0) {
+				return kept;
+			}
+			let ndc = earlier.xy / earlier.w;
+			uv = vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+			if (any(uv < vec2f(0.0, 0.0)) || any(uv > vec2f(1.0, 1.0))) {
+				return kept;
+			}
+			was = textureLoad(beforeNear, min(vec2i(uv * LV.size.xy), size - vec2i(1, 1)), 0).xy;
+		}
+		if (abs(was.y - solid) > 0.12 * min(was.y, solid)) {
+			return kept;
+		}
+		kept.light = textureSampleLevel(beforeLight, clampSampler, uv, 0.0);
+		kept.near = was.x;
+		kept.ok = true;
+		return kept;
 	}
 	const SEEN: f32 = 0.98;			// (a little: what shows through dropping under this)
 
@@ -850,6 +898,10 @@ export const vf_cloudMarch =
 	const MOST_SKIPS: i32 = 128;		// strides across the clear air between the heaps (heapGap), at most, per ray
 	const FAR_STRIDE: f32 = 0.006;		// a step through a heap is at least this much of how far off it is
 	const MIDDLE_LIGHT_STEPS: i32 = 3;
+	// THE WALK TOWARDS THE SUN (cloudToLight): from this far off (world units) its steps go down, to LIGHT_LOD_STEPS this much further
+	const LIGHT_LOD_FROM: f32 = 8000.0;
+	const LIGHT_LOD_OVER: f32 = 16000.0;
+	const LIGHT_LOD_STEPS: f32 = 2.0;
 	const SCATTER: f32 = 0.03;			// how much of the light a unit of cloud of density 1 scatters, per world unit
 
 	@vertex
@@ -881,8 +933,12 @@ export const vf_cloudMarch =
 	fn cloudToLight(p: vec3f) -> f32 {
 		var inTheWay = 0.0;
 		var reach = 0.0;
-		var stride = 40.0 * CU.deck.w;
-		for (var i = 0; i < i32(CU.deck.z); i++) {
+		// (far off, fewer steps, each the longer, over the same reach: the shading of a far heap is broad, and this walk is most of
+		//		what the longest rays cost, low along the layer through heap after heap. They are what the march waits for)
+		let lod = smoothstep(LIGHT_LOD_FROM, LIGHT_LOD_FROM + LIGHT_LOD_OVER, marchFar);
+		let steps = max(i32(round(mix(CU.deck.z, min(CU.deck.z, LIGHT_LOD_STEPS), lod))), 1);
+		var stride = 40.0 * CU.deck.w * (pow(1.8, CU.deck.z) - 1.0) / (pow(1.8, f32(steps)) - 1.0);
+		for (var i = 0; i < steps; i++) {
 			inTheWay += cloudDensity(p + CU.lightDirection.xyz * (reach + 0.5 * stride), false) * stride;
 			reach += stride;
 			stride *= 1.8;
@@ -917,69 +973,107 @@ export const vf_cloudMarch =
 		return vec2f(0.0, furthest);
 	}
 
-	@fragment
-	fn fragmentMain(@builtin(position) fragCoord: vec4f) -> Marched {
-		//------------------THE RAY-----------------
-		let uv = fragCoord.xy / LV.size.xy;
+	//------------------THE RAY-----------------
+	// of a pixel of this level: where it starts, which way it goes, and how far it can go: to whatever solid thing was drawn at the
+	//		pixel, if anything was (1e9: the sky). (The march is a half, a third or a quarter of the size of the frame, see cloudResolution:
+	//		the depth is read at the matching place)
+	struct Ray {
+		origin: vec3f,
+		direction: vec3f,
+		ndc: vec2f,
+		solid: f32,
+	}
+	fn rayAt(pixel: vec2f) -> Ray {
+		let uv = pixel / LV.size.xy;
 		let ndc = vec2f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
 		let nearPoint = CU.invViewProjectionMatrix * vec4f(ndc, ${DEPTH_NEAR}, 1.0);
 		let farPoint = CU.invViewProjectionMatrix * vec4f(ndc, ${DEPTH_FAR}, 1.0);
 		let origin = CU.cameraPosition.xyz;
 		let direction = normalize(farPoint.xyz / farPoint.w - nearPoint.xyz / nearPoint.w);
-
-		// how far it can go: to whatever solid thing was drawn at this pixel, if anything was
-		//		(the march is a half, a third or a quarter of the size of the frame, see cloudResolution: the depth is read at the matching place)
 		let depthSize = vec2i(textureDimensions(depthTexture));
-		let depth = textureLoad(depthTexture, min(vec2i(fragCoord.xy * vec2f(depthSize) / LV.size.xy), depthSize - vec2i(1, 1)), 0);
+		let depth = textureLoad(depthTexture, min(vec2i(pixel * vec2f(depthSize) / LV.size.xy), depthSize - vec2i(1, 1)), 0);
 		var solid = 1000000000.0;
 		if (!${skyTest('depth')}) {
 			let scenePoint = CU.invViewProjectionMatrix * vec4f(ndc, depth, 1.0);
 			solid = distance(scenePoint.xyz / scenePoint.w, origin);
 		}
-		let furthest = min(CU.quality.y, solid);
+		return Ray(origin, direction, ndc, solid);
+	}
 
-		//------------------THE LEVEL-----------------
-		// from the coarser level (see DYNAMIC RESOLUTION at the top): the nearest cloud it met round here, and whether this pixel is on
-		//		the edge of something solid that the coarser pixels round it saw past, or into
-		if (LV.size.w > 0.5) {
-			let coarseSize = vec2i(textureDimensions(coarserNear));
-			let ratio = vec2f(depthSize) / vec2f(coarseSize);
-			let middle = vec2i(round(fragCoord.xy * vec2f(coarseSize) / LV.size.xy - vec2f(0.5, 0.5)));
-			var nearest = 1000000000.0;
-			var edge = false;
-			for (var j = -1; j <= 1; j++) {
-				for (var i = -1; i <= 1; i++) {
-					let texel = clamp(middle + vec2i(i, j), vec2i(0, 0), coarseSize - vec2i(1, 1));
-					nearest = min(nearest, textureLoad(coarserNear, texel, 0).r);
-					if (abs(i) + abs(j) <= 1) {
-						let there = textureLoad(depthTexture, min(vec2i((vec2f(texel) + vec2f(0.5, 0.5)) * ratio), depthSize - vec2i(1, 1)), 0);
-						var thereSolid = 1000000000.0;
-						if (!${skyTest('there')}) {
-							let p = CU.invViewProjectionMatrix * vec4f(ndc, there, 1.0);
-							thereSolid = distance(p.xyz / p.w, origin);
-						}
-						edge = edge || abs(thereSolid - solid) > 0.15 * min(thereSolid, solid);
+	//------------------THE LEVEL-----------------
+	// from the coarser level (see DYNAMIC RESOLUTION at the top): the nearest cloud it met round here, and whether this pixel is on
+	//		the edge of something solid that the coarser pixels round it saw past, or into. ok: no cloud near enough here to be
+	//		marched at this level, and what the coarser one has is taken
+	fn fromCoarser(pixel: vec2f, ray: Ray) -> Carried {
+		var taken = Carried(vec4f(0.0, 0.0, 0.0, 1.0), 1000000000.0, false);
+		if (LV.size.w < 0.5) {
+			return taken;
+		}
+		let depthSize = vec2i(textureDimensions(depthTexture));
+		let coarseSize = vec2i(textureDimensions(coarserNear));
+		let ratio = vec2f(depthSize) / vec2f(coarseSize);
+		let middle = vec2i(round(pixel * vec2f(coarseSize) / LV.size.xy - vec2f(0.5, 0.5)));
+		var nearest = 1000000000.0;
+		var edge = false;
+		for (var j = -1; j <= 1; j++) {
+			for (var i = -1; i <= 1; i++) {
+				let texel = clamp(middle + vec2i(i, j), vec2i(0, 0), coarseSize - vec2i(1, 1));
+				nearest = min(nearest, textureLoad(coarserNear, texel, 0).r);
+				if (abs(i) + abs(j) <= 1) {
+					let there = textureLoad(depthTexture, min(vec2i((vec2f(texel) + vec2f(0.5, 0.5)) * ratio), depthSize - vec2i(1, 1)), 0);
+					var thereSolid = 1000000000.0;
+					if (!${skyTest('there')}) {
+						let p = CU.invViewProjectionMatrix * vec4f(ray.ndc, there, 1.0);
+						thereSolid = distance(p.xyz / p.w, ray.origin);
 					}
+					edge = edge || abs(thereSolid - ray.solid) > 0.15 * min(thereSolid, ray.solid);
 				}
 			}
-			if (nearest > LV.size.z && !(edge && nearest < 999999999.0)) {
-				return Marched(textureSampleLevel(coarserLight, clampSampler, fragCoord.xy / LV.size.xy, 0.0), nearest);
-			}
 		}
+		if (nearest > LV.size.z && !(edge && nearest < 999999999.0)) {
+			taken = Carried(textureSampleLevel(coarserLight, clampSampler, pixel / LV.size.xy, 0.0), nearest, true);
+		}
+		return taken;
+	}
 
-		// The stretches of it that are inside the three layers. (The high layer is followed much further out than the others:
-		//		it is so high that a ray only a little above the horizon has a very long way to go to reach it, and a sheet
-		//		that stopped half way down the sky would not be an overcast one)
+	// The stretches of a ray that are inside the three layers. (The high layer is followed much further out than the others:
+	//		it is so high that a ray only a little above the horizon has a very long way to go to reach it, and a sheet
+	//		that stopped half way down the sky would not be an overcast one)
+	fn stretchesOf(ray: Ray) -> array<vec2f, 3> {
+		let furthest = min(CU.quality.y, ray.solid);
 		var stretches = array<vec2f, 3>(
-			stretchBetween(origin, direction, cloudFloor(), cloudCeiling(), furthest),
-			stretchBetween(origin, direction, CU.middle.x, CU.middle.y, furthest),
-			stretchBetween(origin, direction, CU.high.x, CU.high.y, min(CU.highLook.z * 1.8, solid)));
+			stretchBetween(ray.origin, ray.direction, cloudFloor(), cloudCeiling(), furthest),
+			stretchBetween(ray.origin, ray.direction, CU.middle.x, CU.middle.y, furthest),
+			stretchBetween(ray.origin, ray.direction, CU.high.x, CU.high.y, min(CU.highLook.z * 1.8, ray.solid)));
 		if (CU.middle.z <= 0.0) {
 			stretches[1] = vec2f(0.0, -1.0);
 		}
 		if (CU.high.z <= 0.0) {
 			stretches[2] = vec2f(0.0, -1.0);
 		}
+		return stretches;
+	}
+	// (no cloud along it at all: nothing to march, and nothing to carry over)
+	fn noStretch(stretches: array<vec2f, 3>) -> bool {
+		return stretches[0].y <= stretches[0].x && stretches[1].y <= stretches[1].x && stretches[2].y <= stretches[2].x;
+	}
+	const CLEAR = Marched(vec4f(0.0, 0.0, 0.0, 1.0), vec2f(1000000000.0, 1000000000.0));
+
+	// the march of one pixel of the level
+	fn marchPixel(pixel: vec2f) -> Marched {
+		let ray = rayAt(pixel);
+		let origin = ray.origin;
+		let direction = ray.direction;
+		let solid = ray.solid;
+		let coarse = fromCoarser(pixel, ray);
+		if (coarse.ok) {
+			return Marched(coarse.light, vec2f(coarse.near, solid));
+		}
+		var stretches = stretchesOf(ray);
+		if (noStretch(stretches)) {
+			return Marched(vec4f(0.0, 0.0, 0.0, 1.0), vec2f(1000000000.0, solid));
+		}
+		let fragCoord = vec4f(pixel, 0.0, 1.0);
 
 		// which to walk first: whichever the ray comes to first (a layer it never comes to goes last, and is passed over)
 		var comesTo = array<f32, 3>(0.0, 0.0, 0.0);
@@ -1145,7 +1239,86 @@ export const vf_cloudMarch =
 			}
 		}
 
-		return Marched(vec4f(light, through), seen);
+		return Marched(vec4f(light, through), vec2f(seen, solid));
+	}
+
+	// every pixel of the level marched (the Update Every of 1, or nothing from the frame before to carry over)
+	@fragment
+	fn fragmentMain(@builtin(position) fragCoord: vec4f) -> Marched {
+		return marchPixel(fragCoord.xy);
+	}
+
+	/*
+		THE UPDATE RATE, PACKED. Only this frame's pixels (marchedNow's) are marched, and packed close together into a small target
+		of their own (packedMain), so that the GPU, which runs pixels in groups and waits for the slowest of a group, has whole
+		groups marching and none just waiting: spread out among the rest, every group would have one, and nothing would be saved.
+		Its pixel x, y is slot x % slots of the 4 by 4 block x / slots, y: the slot-th of the block's cells whose Bayer number is
+		this frame's (phaseStart). Then resolveMain lays them out at their places in the level, and fills the rest: from the coarser
+		level where there is no cloud near enough to march here, carried over from the frame before where it can be, and else from
+		the nearest pixel of the block marched this frame that saw as far (an edge that has just come out from behind something)
+	*/
+	fn phaseStart(p: u32) -> u32 {
+		let n = u32(LV.rate.x);
+		return (p * 16u + n - 1u) / n;
+	}
+	@fragment
+	fn packedMain(@builtin(position) fragCoord: vec4f) -> Marched {
+		var unbayer = array<u32, 16>(0u, 10u, 2u, 8u, 5u, 15u, 7u, 13u, 1u, 11u, 3u, 9u, 4u, 14u, 6u, 12u);
+		let c = vec2u(fragCoord.xy);
+		let slots = u32(LV.rate.w);
+		let p = u32(LV.rate.y);
+		let v = phaseStart(p) + c.x % slots;
+		let cell = unbayer[min(v, 15u)];
+		let pixel = vec2u(c.x / slots, c.y) * 4u + vec2u(cell % 4u, cell / 4u);
+		if (v >= phaseStart(p + 1u) || any(pixel >= vec2u(LV.size.xy))) {
+			return CLEAR;
+		}
+		return marchPixel(vec2f(pixel) + vec2f(0.5, 0.5));
+	}
+
+	@group(0) @binding(15) var packedLight: texture_2d<f32>;	// packedMain's: this frame's marched pixels
+	@group(0) @binding(16) var packedNear: texture_2d<f32>;
+	@fragment
+	fn resolveMain(@builtin(position) fragCoord: vec4f) -> Marched {
+		var bayer = array<u32, 16>(0u, 8u, 2u, 10u, 12u, 4u, 14u, 6u, 3u, 11u, 1u, 9u, 15u, 7u, 13u, 5u);
+		var unbayer = array<u32, 16>(0u, 10u, 2u, 8u, 5u, 15u, 7u, 13u, 1u, 11u, 3u, 9u, 4u, 14u, 6u, 12u);
+		let pixel = vec2u(fragCoord.xy);
+		let slots = u32(LV.rate.w);
+		let p = u32(LV.rate.y);
+		let first = phaseStart(p);
+		let last = phaseStart(p + 1u);
+		let block = pixel / 4u;
+		let v = bayer[(pixel.y & 3u) * 4u + (pixel.x & 3u)];
+		if (v >= first && v < last) {
+			let at = vec2i(vec2u(block.x * slots + v - first, block.y));
+			return Marched(textureLoad(packedLight, at, 0), textureLoad(packedNear, at, 0).xy);
+		}
+		let ray = rayAt(fragCoord.xy);
+		let coarse = fromCoarser(fragCoord.xy, ray);
+		if (coarse.ok) {
+			return Marched(coarse.light, vec2f(coarse.near, ray.solid));
+		}
+		if (noStretch(stretchesOf(ray))) {
+			return Marched(vec4f(0.0, 0.0, 0.0, 1.0), vec2f(1000000000.0, ray.solid));
+		}
+		let carried = carriedOver(ray.origin, ray.direction, fragCoord.xy, ray.solid);
+		if (carried.ok) {
+			return Marched(carried.light, vec2f(carried.near, ray.solid));
+		}
+		var best = vec2i(0, 0);
+		var bestScore = 1.0e30;
+		for (var k = first; k < last; k++) {
+			let cell = unbayer[k];
+			let there = block * 4u + vec2u(cell % 4u, cell / 4u);
+			let at = vec2i(vec2u(block.x * slots + k - first, block.y));
+			let saw = textureLoad(packedNear, at, 0).y;
+			let score = distance(vec2f(there), vec2f(pixel)) + 8.0 * abs(saw - ray.solid) / max(min(saw, ray.solid), 1.0);
+			if (score < bestScore) {
+				bestScore = score;
+				best = at;
+			}
+		}
+		return Marched(textureLoad(packedLight, best, 0), vec2f(textureLoad(packedNear, best, 0).x, ray.solid));
 	}
 `;
 

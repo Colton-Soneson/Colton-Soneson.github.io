@@ -17,6 +17,8 @@ import * as transformations from './transformations.js'
 import * as terrain from './terrain.js'
 import { FOREST_THRESHOLD } from './terrainGenerator.js'
 import * as wind from './wind.js'
+import * as sunShadows from './sunShadows.js'
+import * as meadowPalette from './meadowPalette.js'
 import { townMaskBuffers } from './townMask.js'
 import { weatherNow, seasonNow } from './weather.js'
 
@@ -187,6 +189,8 @@ function paintHoles() {
 const bindGroupVFLayout = device.createBindGroupLayout({
   label: "Grass Bind Group VF Layout",
   entries: [
+  ...sunShadows.sunShadowLayoutEntries(GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT),
+  meadowPalette.meadowPaletteLayoutEntry(GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT),
   {
     binding: 0,
     visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
@@ -257,6 +261,8 @@ function createVFBindGroupGrass() {
 			label: "Grass VF bind group",
 			layout: bindGroupVFLayout,
 			entries: [
+			...sunShadows.sunShadowEntries(),
+			meadowPalette.meadowPaletteEntry(),
 			{
 				binding: 0,
 				resource: { buffer: grassUniformBuffer }

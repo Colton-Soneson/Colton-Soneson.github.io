@@ -9,6 +9,7 @@ import { RIVER_FLOATS } from './terrainGenerator.js'
 import { vf_rivers } from '../shaders/js/vf_rivers.js'
 import { skyViewLUTtexture } from './atmosphere.js'
 import { uniformBufferLights } from './rotatingCube.js'
+import { fleckUpdate, fleckDraw } from './riverFlecks.js'
 
 /*
 	THE RIVERS' WATER: terrainGenerator.js lays the rivers out over each continent (THE RIVERS) and cuts their channels into the land;
@@ -100,7 +101,9 @@ function ribbonOf(land) {
 			const first = out.length / VERTEX_FLOATS;
 			v(e0, -1); v(e0, 1); v(e1, 1);
 			v(e0, -1); v(e1, 1); v(e1, -1);
-			stretches.push({ x: 0.5 * (e0.x + e1.x), z: 0.5 * (e0.z + e1.z), seen: Math.min(SEEN * Math.max(e0.w, e1.w), settings.camFarPlane ?? 20000) + run, first, count: 6 });
+			stretches.push({ x: 0.5 * (e0.x + e1.x), z: 0.5 * (e0.z + e1.z), seen: Math.min(SEEN * Math.max(e0.w, e1.w), settings.camFarPlane ?? 20000) + run, first, count: 6,
+				// (for the flecks on it, riverFlecks.js: its ends, and how fast it runs, as the water's shader has it)
+				flow: { a: [e0.x, e0.y, e0.z, e0.w], b: [e1.x, e1.y, e1.z, e1.w], speed: Math.min(Math.max(0.6 + 30 * fall, 0.6), 4) * settings.forestUnitsPerMetre } });
 		}
 	}
 	// (a lake's squares: still water, which way it runs nowhere)
@@ -163,6 +166,8 @@ export function riverPass(depthTexture) {
 		(performance.now() / 1000) % 3600, settings.waterHorizonFogDistance, settings.enableAtmosphere ? 1 : 0, settings.forestUnitsPerMetre,
 		P[10], P[14], screenEffects.sceneCopyReady ? 1 : 0, 0]));
 	const encoder = device.createCommandEncoder({ label: 'rivers' });
+	// (the flecks on the water moved on: riverFlecks.js)
+	fleckUpdate(encoder, drawn.flatMap((r) => r.stretches.filter((s) => s.flow).map((s) => s.flow)));
 	const pass = encoder.beginRenderPass({
 		label: 'rivers',
 		timestampWrites: profiler.timestamps('Rivers', 'vf_rivers'),
@@ -187,6 +192,7 @@ export function riverPass(depthTexture) {
 		}
 		if (from >= 0) { pass.draw(to - from, 1, from, 0); riverStats.vertices += to - from; }
 	}
+	fleckDraw(pass);
 	pass.end();
 	device.queue.submit([encoder.finish()]);
 }

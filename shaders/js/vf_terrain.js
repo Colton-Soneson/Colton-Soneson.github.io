@@ -623,6 +623,10 @@ export const vf_terrain =
 		var look = vec3f(0.5, 0.0, 0.0);
 		if (meadow > 0.001 || forest > 0.001) {
 			look = meadowLook(worldPos.xz, groundNormal.y);
+			// (and the stony ground of a river's bed and banks, its edge ragged: terrainGenerator.js THE RIVERS, carried over in what is past
+			//		the whole units of meshCell)
+			let riverStones = saturate(fract(meshCell) / 0.9) * step(1.0, meshCell);
+			look.z = max(look.z, smoothstep(0.2, 0.65, riverStones + 0.3 * (noise(worldPos.xz / 5.0 + vec2f(9.0, 2.0)) - 0.5)));
 		}
 		var grassland = meadowColor(worldPos.xz, look);
 		// (the scrub and the stony patches show as what they are close by; further off they are only a hint, not blotches)
@@ -633,7 +637,7 @@ export const vf_terrain =
 		var stones = vec4f(MEADOW_STONE * mix(0.82, 1.1, noise(worldPos.xz / 1.7 + vec2f(3.0, 9.0))), 0.0);
 		let stonesNear = (1.0 - smoothstep(${STONY_NEAR * 0.6}.0, ${STONY_NEAR}.0, away / MEADOW_M)) * step(0.01, look.z) * step(0.001, meadow + forest);
 		if (stonesNear > 0.0) {
-			let traced = stonyGround(worldPos, eye, groundNormal, look.z, i32(mix(9.0, 4.0, saturate(away / (${STONY_NEAR}.0 * MEADOW_M)))));
+			let traced = stonyGround(worldPos, eye, groundNormal, look.z, i32(mix(7.0, 3.0, saturate(away / (${STONY_NEAR}.0 * MEADOW_M)))));
 			stones = vec4f(mix(stones.rgb, traced.rgb, stonesNear), traced.a * stonesNear);
 		}
 		grassland = mix(grassland, stones.rgb, look.z * mix(0.85 * patchNear, 0.97, stonesNear));

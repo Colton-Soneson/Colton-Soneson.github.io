@@ -939,6 +939,8 @@ export const vf_forestFoliage = structs + common +
 		var card = vertexIndex / 6u;
 		let second = card >= 3u;
 		if (second) { card -= 3u; }
+		// (not drawn without HD: the sun's shadow maps draw the HD levels' lists so)
+		if (second && UBO.bake.w < 0.5) { return output; }
 		let corner = vertexIndex % 6u;
 		let cornerX = f32(corner == 1u || corner == 4u || corner == 5u);
 		let cornerY = f32(corner == 2u || corner == 3u || corner == 5u);

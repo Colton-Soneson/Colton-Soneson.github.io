@@ -79,6 +79,7 @@ export const imguiParams = {
     // Display
     renderResolution: settings.renderResolution,
     hdVegetation: settings.hdVegetation,
+    enableRiverFlecks: settings.enableRiverFlecks,
     dynamicResolution: settings.dynamicResolution,
     dynamicResolutionTarget: settings.dynamicResolutionTarget,
     antiAliasing: settings.antiAliasing,
@@ -531,7 +532,7 @@ terrainFolder.add(imguiParams, 'terrainRockDetail', 0, 3, 0.05).name('Rock Detai
 terrainFolder.add(imguiParams, 'terrainRockVeins', 0, 2, 0.05).name('Rock Veins');
 terrainFolder.add(imguiParams, 'terrainGroundDetail', 0, 2, 0.05).name('Sand, Turf and Forest Floor');
 terrainFolder.add(imguiParams, 'terrainDepthBias', 0, 4, 0.05).name('Depth Bias');
-terrainFolder.add(imguiParams, 'terrainResolution', { '256': 256, '512': 512, '1k': 1024, '2k': 2048, '4k': 4096, '8k': 8192 }).name('Mesh Detail');	//these two only change the mesh, the land stays as it is
+terrainFolder.add(imguiParams, 'terrainResolution', { '256': 256, '512': 512, '1k': 1024, '2k': 2048 }).name('Mesh Detail');	//these two only change the mesh, the land stays as it is
 terrainFolder.add(imguiParams, 'terrainDetailDistance', 0.75, 5, 0.05).name('Detail Distance');
 terrainFolder.add(imguiParams, 'terrainFarBake', { '256 (about 140MB)': 256, '128 (about 35MB)': 128, 'disabled (worked out live)': 0 }).name('Far Land Bake');	//see THE BAKE in terrain.js
 
@@ -714,6 +715,7 @@ windFolder.add(imguiParams, 'windGustSpeed', 0, 8, 0.1).name('Gust Speed (x wind
 
 const waterFolder = gui.addFolder('Water');
 waterFolder.add(imguiParams, 'enableWater').name('Enable');
+waterFolder.add(imguiParams, 'enableRiverFlecks').name('River Foam Flecks');	//bits of foam on the rivers, going round what stands in them (riverFlecks.js)
 waterFolder.add(imguiParams, 'waterWaveSteepness', 0, 1, 0.01).name('Wave Steepness');
 waterFolder.add(imguiParams, 'waterWaveLength', 1, 500).name('Wave Length');
 waterFolder.add(imguiParams, 'waterOceanWindSpeed', 0, 30).name('Wind Over The Sea');	//its own: the Wind folder's is the land's

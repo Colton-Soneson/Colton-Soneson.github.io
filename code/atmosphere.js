@@ -105,9 +105,9 @@ function updateSkyUniforms() {
 	bufferResult.push(settings.sunPosZ);
 	bufferResult.push(1);	//padding
 	
-	bufferResult.push(0);
+	bufferResult.push(settings.camPosY - settings.waterWorldPosY);		//(x: over the sea, world units: THE FAR SEA, f_sky)
 	bufferResult.push((settings.camPosY + settings.additionalAltitude) * settings.atmosphereScaleToScene);
-	bufferResult.push(0);
+	bufferResult.push(settings.waterHorizonFogDistance);		//(z: the haze's distance, as everything else fades by)
 	bufferResult.push(1);	//padding
 	
 	//the moon: which way it is and how bright, then how its disc is drawn: the angle from its middle to its edge (radians)

@@ -760,8 +760,13 @@ export function cloudPass(mainpassDepthTexture) {
 			pass(marchPipeline, L.lightView, L.nearView, null, name);
 			return;
 		}
-		// (this frame's pixels, packed: a target of its own, made again when the size or the rate changes)
+		// (this frame's pixels, packed: a target of its own, made again when the size or the rate changes. Too wide for the GPU, on a
+		//		very wide screen at a low rate: every pixel marched, as at a rate of 1)
 		const size = [Math.ceil(L.size[0] / 4) * slots, Math.ceil(L.size[1] / 4)];
+		if (size[0] > device.limits.maxTextureDimension2D) {
+			pass(marchPipeline, L.lightView, L.nearView, null, name);
+			return;
+		}
 		if (L.packed?.key !== size.join()) {
 			if (L.packed) { L.packed.light.destroy(); L.packed.near.destroy(); }
 			const usage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING;

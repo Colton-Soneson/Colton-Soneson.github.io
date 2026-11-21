@@ -796,6 +796,8 @@ function buildFoliage(nodes, species, height, furthest, scale, random) {
 			continue;	// not every twig point needs one, the clumps overlap
 		}
 
+		// (a spruce's smallest twigs have no sprays of their own: their shoot's sprays already cover them)
+		if (frond && node.level >= 3) continue;
 		if (frond) {
 			// along the piece of branch that ends at this point, and a bit over each end so they overlap into one long spray
 			const width = (node.level == 0 ? 0.4 : node.level == 1 ? 0.95 : node.level == 2 ? 0.7 : 0.5) * (0.85 + 0.3 * random());

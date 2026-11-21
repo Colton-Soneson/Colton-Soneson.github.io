@@ -162,7 +162,13 @@ export const vf_rivers =
 			color = mix(color, fogColorAt(-toEye), fog);
 		}
 		// (soft at the shore, where it is thin)
-		let alpha = select(1.0, smoothstep(0.0, 0.35 * m, through), UBO.sceneReady > 0.5);
+		var alpha = select(1.0, smoothstep(0.0, 0.35 * m, through), UBO.sceneReady > 0.5);
+		// (and at its own edge, a smooth one, a little uneven: the ribbon's, not where the bank's mesh comes up through it, which follows
+		//		the mesh's cells. The bed is cut on under the water past it for this: terrainGenerator.js THE RIVERS, shelf)
+		if (!lake) {
+			let wobble = 0.05 * (ripples(vec2f(input.river.x, input.river.y * 3.0) / (2.5 * m)) - 0.5);
+			alpha *= 1.0 - smoothstep(0.9, 1.0, abs(input.river.y) + wobble);
+		}
 		return vec4f(color, alpha);
 	}
 `;

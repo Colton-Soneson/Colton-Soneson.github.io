@@ -83,7 +83,9 @@ export { TERRAIN_ZONES, ZONE_OCEAN, ZONE_BEACH, ZONE_GRASSLAND, ZONE_FOREST, ZON
 		const y = terrain.land.heightAt(x, z);		const zone = terrain.land.zoneAt(x, z);
 */
 
-const CHUNK_CELLS = 64;				// cells along one side of a chunk. Every chunk has the same, whatever its size
+const CHUNK_CELLS = 64;				// cells along one side of a chunk. Every chunk has the same, whatever its size
+export const TERRAIN_RESOLUTION_MOST = 2048;	// the finest the mesh is let be (settings.terrainResolution), whatever asks for more: 4k and 8k cost too much GPU near the camera
+export const terrainResolutionNow = () => Math.min(settings.terrainResolution, TERRAIN_RESOLUTION_MOST);
 const ROOT_CHUNKS = 4;				// the biggest chunks, the top of the tree: this many along each side of the world
 const CHUNKS_KEPT = 640;			// how many chunks are kept before the ones not used for longest are thrown away (about 140KB each on the GPU)
 const BUILD_MILLISECONDS = 5;		// the most time one frame spends making new chunks
@@ -372,7 +374,7 @@ function addChunk(x0, z0, size, mesh, tile = 'land') {
 
 // the size of the finest chunks: CHUNK_CELLS cells of the fineness the Mesh Detail setting asks for
 function finestChunkSize() {
-	return CHUNK_CELLS * settings.terrainWorldSize / settings.terrainResolution;
+	return CHUNK_CELLS * settings.terrainWorldSize / terrainResolutionNow();
 }
 
 // how far the camera is from the nearest point of a chunk (0 inside it)

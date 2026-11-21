@@ -91,7 +91,7 @@ export const settings = {
 	worldTiles: true,					//the whole world (world.js): today's island the home tile of a world of 40 land tiles in continents and 30 of sea, the rest endless sea, each tile streamed in as you come near it. Off: the one island
 	terrainSeed: 11,					//which world. The same seed always makes the same islands
 	terrainWorldSize: 8192.0,			//width of the square of world that gets land, centered on the origin
-	terrainResolution: 4096,			//how fine the mesh is next to the camera: what the world would be across at that fineness. 256, 512, 1024 (1k), 2048, 4096 or 8192 (8k, a vertex every 1 unit). (Only these: the chunks halve in size, so anything in between draws the same as the next one down. At 256 they never halve at all, a vertex every 32 units)
+	terrainResolution: 2048,			//(at most 2048: TERRAIN_RESOLUTION_MOST in terrain.js) how fine the mesh is next to the camera: what the world would be across at that fineness. 256, 512, 1024 (1k), 2048, 4096 or 8192 (8k, a vertex every 1 unit). (Only these: the chunks halve in size, so anything in between draws the same as the next one down. At 256 they never halve at all, a vertex every 32 units)
 	terrainFarBake: 128,				//how far off land is drawn: from a picture of each chunk this many texels wide, taken once (0 = worked out live). 256 is sharper and takes four times the memory, see THE BAKE in terrain.js
 	terrainDetailDistance: 1.25,		//how far the fine mesh reaches: a chunk of land is drawn at half the fineness once it is this many times its own width away. (2.0 drew more triangles than there are pixels, and the GPU shades pixels in 2x2 blocks, so much of that shading was wasted: 1.25 looks the same and the terrain pass takes about a fifth less)
 	terrainLandScale: 4200.0,			//size of the biggest shapes in the coastline. Bigger = fewer and larger land masses
@@ -127,21 +127,22 @@ export const settings = {
 	//--------------------GRASS--------------------
 	enableGrass: true,
 	hdVegetation: true,					//HD Textures and Models: the trees, the bushes, the flowers, ferns and mosses drawn with about twice the triangles, and their leaves, needles and petals drawn with their veins, teeth and streaks (vf_forest.js: THE HD CARDS, THE HD LEAVES; floraKinds.js: HD; vf_flora.js: THE HD TEXTURES)
+	enableRiverFlecks: true,			//bits of foam carried on the rivers near the camera, going round whatever stands in the water (riverFlecks.js)
 	enableFlora: true,					//the plants: ferns, mosses, mushrooms and flowers, bushes and wild wheat (flora.js)
 	floraDensity: 1.0,					//how many of the small plants: 2 = twice as many
 	floraDrawDistance: 130,				//metres out the small plants are drawn (the bushes and the wild wheat: 220)
-	grassTotalBladeCount: 420000,	//blades drawn, shared out over the level of detail rings around the camera. Most are skipped wherever there is no grassland
+	grassTotalBladeCount: 700000,	//blades drawn, shared out over the level of detail rings around the camera. Most are skipped wherever there is no grassland
 	grassTotalHARDLIMIT: 2000000,	//top of the blade count slider. Nothing is stored per blade any more, so this is only about how much the GPU can draw
 	grassDrawDistance: 900.0,		//how far from the camera the grass reaches. The rings stretch to reach it: the grass at your feet stays as thick, the far grass thins
 	//level of detail: rings round the camera, each reaching further than the last with a coarser grid of blades (see vfc_grass.js)
 	grassLodRings: 6,				//how many rings, 1 to 8. More rings = a gentler thinning out, and more of the blades spent far away
-	grassLodNearDistance: 30.0,		//how far the first ring reaches: the grass at full thickness, every blade a curved strip
+	grassLodNearDistance: 60.0,		//how far the first ring reaches: the grass at full thickness, every blade a curved strip
 	grassLodFarBlades: 0.8,			//how many blades a ring gets next to the ring inside it. 1 = every ring the same number, 0.5 = each ring half the one before
 	//clumps: the blades grow in tufts, and take after the tuft they are in (see CLUMPS in vfc_grass.js)
-	grassClumpSize: 2.6,			//how far apart the tufts are, world units
-	grassClumpPull: 0.4,			//how far the blades are drawn in to the middle of their tuft, 0 to 1. 0 = spread evenly
-	grassClumpHeight: 0.6,			//how much a tuft is tall or short as a whole, 0 to 1
-	grassClumpFacing: 0.5,			//how much the blades of a tuft lean out from its middle together, 0 to 1. 0 = every blade its own way
+	grassClumpSize: 1.6,			//how far apart the tufts are, world units
+	grassClumpPull: 0.6,			//how far the blades are drawn in to the middle of their tuft, 0 to 1. 0 = spread evenly
+	grassClumpHeight: 0.75,			//how much a tuft is tall or short as a whole, 0 to 1
+	grassClumpFacing: 0.65,			//how much the blades of a tuft lean out from its middle together, 0 to 1. 0 = every blade its own way
 	grassClumpColor: 0.6,			//how much a tuft is one shade of green, 0 to 1
 	grassBladeHeight: 1.7,			//height of an average blade, world units
 	grassBladeWidth: 0.16,			//width of a blade at its root, in the ring nearest the camera
@@ -160,7 +161,7 @@ export const settings = {
 	forestConiferShare: 0.5,			//0 all broadleaf, 1 all conifer. The land still shifts it: conifers take the high and steep ground
 	forestMaxTrees: 150000,				//planting stops here however much forest there is left to fill, and no seed comes up while there are this many (a tile's: a continent's tile of forest planted full is about 480000)
 	forestLifeCycle: true,				//the trees grow, die, fall and seed as the days go by. Off = the forest stays as it is
-	forestYearsPerSunCycle: 150.0,		//years a tree ages in one day. Real trees take 45 (birch) to 100 (oak) years to grow up, so at 150 a tree is grown in under a day (5 minutes, see dayLengthSeconds)
+	forestYearsPerSunCycle: 1.0,		//years a tree ages in one day. Real trees take 45 (birch) to 100 (oak) years to grow up, so at 1 a forest changes slowly, as one would (at 150 a tree is grown in under a day: 5 minutes, see dayLengthSeconds)
 	forestYear: 0,						//the forest's clock. Read only
 	forestTreeCount: 0,					//trees standing, living and dead. Read only
 	forestDetailDistance: 60.0,			//closer than this a full grown tree is drawn in full: every branch, every piece of foliage
@@ -301,7 +302,7 @@ export const settings = {
 	waterOceanWindSpeed: 11.0,			//the wind over the open sea, metres per second: it blows harder there, with nothing in its way. The wind sea grows with it (JONSWAP): 5 is a gentle breeze, 11 white horses everywhere, 20 a gale. The weather adds to it as it does over the land
 	waterFetch: 300.0,					//kilometres of open water the wind has blown over. Past a few hundred the waves are as big as the wind can make them
 	waterGridSize: 1024.0,
-	waterHorizonFogDistance: 6000.0,	//distance where the water is about two thirds faded into the horizon colour
+	waterHorizonFogDistance: 14000.0,	//the haze: distance where anything (the water, the land, the trees, everything but the clouds) is about two thirds faded into the haze along the horizon
 	waterClarityDepth: 2.0,				//depth of water where the sea bed has faded to about a third, fully hidden by 2x this. 0 = opaque water
 	waterFullDepth: 20.0,				//water deeper than this gets the full open ocean waves
 	waterShallowRippleScale: 0.02,		//height of the spikey ripples that replace the waves in shallow water

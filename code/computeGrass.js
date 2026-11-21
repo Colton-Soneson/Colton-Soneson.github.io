@@ -15,6 +15,7 @@ import { GRASS_RING_SHIFT } from '../shaders/js/vfc_grass.js'
 
 import * as transformations from './transformations.js'
 import * as terrain from './terrain.js'
+import { RIVER_FLOATS } from './terrainGenerator.js'
 import { FOREST_THRESHOLD } from './terrainGenerator.js'
 import * as wind from './wind.js'
 import * as sunShadows from './sunShadows.js'
@@ -181,8 +182,30 @@ function paintHoles() {
 		const a = Math.max(Math.floor(x - hx - x0), 0), b = Math.min(Math.ceil(x + hx - x0), HOLES), c = Math.max(Math.floor(z - hz - z0), 0), d = Math.min(Math.ceil(z + hz - z0), HOLES);
 		for (let j = c; j < d; j++) holeData.fill(255, j * HOLES + a, j * HOLES + Math.max(a, b));
 	}
+	// and the rivers' water and the edge of their beds (terrainGenerator.js THE RIVERS): the land's data is too coarse to keep the grass
+	//		and the plants out of a stream a few metres wide. Each stretch a band out to RIVER_CLEAR past its water's edge
+	const lands = terrain.world ? terrain.tilesLoaded().map((t) => t.land) : [terrain.land];
+	for (const land of lands) {
+		const p = land?.riverLines?.points, starts = land?.riverLines?.starts;
+		if (!p || !starts) continue;
+		for (let l = 0; l + 1 < starts.length; l++) for (let k = starts[l]; k + 1 < starts[l + 1]; k++) {
+			const o = k * RIVER_FLOATS, q = o + RIVER_FLOATS;
+			const ax = p[o] - x0, az = p[o + 1] - z0, bx = p[q] - x0, bz = p[q + 1] - z0, r = Math.max(p[o + 3], p[q + 3]) + RIVER_CLEAR;
+			if (Math.max(ax, bx) + r < 0 || Math.min(ax, bx) - r > HOLES || Math.max(az, bz) + r < 0 || Math.min(az, bz) - r > HOLES) continue;
+			const ex = bx - ax, ez = bz - az, ll = ex * ex + ez * ez || 1;
+			for (let j = Math.max(Math.floor(Math.min(az, bz) - r), 0); j < Math.min(Math.ceil(Math.max(az, bz) + r), HOLES); j++) {
+				for (let i = Math.max(Math.floor(Math.min(ax, bx) - r), 0); i < Math.min(Math.ceil(Math.max(ax, bx) + r), HOLES); i++) {
+					const t = Math.min(Math.max(((i + 0.5 - ax) * ex + (j + 0.5 - az) * ez) / ll, 0), 1);
+					const half = p[o + 3] + (p[q + 3] - p[o + 3]) * t + RIVER_CLEAR;
+					if (Math.hypot(i + 0.5 - ax - ex * t, j + 0.5 - az - ez * t) < half) holeData[j * HOLES + i] = 255;
+				}
+			}
+		}
+	}
 	device.queue.writeTexture({ texture: holeTexture }, holeData, { bytesPerRow: HOLES }, [HOLES, HOLES]);
 }
+const RIVER_CLEAR = 1.5;		// world units past a river's water's edge kept clear of grass and plants
+terrain.onTiles(() => { holesDirty = true; });
 
 // Layouts
 //-------------------------------------------------

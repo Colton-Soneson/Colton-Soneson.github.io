@@ -1233,7 +1233,12 @@ function crestsOf(params, window, rises) {
 	A tile has the stretches near it (riverWindow): every one it is cut by, and the ones it draws (rivers.js), each drawn by the one tile
 	its middle is in. Units: world units, and the water's height over the sea
 */
-const RIVERS = { area: 0.25e6, width: [3.5, 0.5], depth: [0.35, 0.4], incise: 0.7, smooth: 2, snap: [5, 5], bank: 0.9, reach: 30, fade: 0.55, levee: 5, cover: MOUNTAIN_THRESHOLD + 0.02, bucket: 64 };
+const RIVERS = { area: 0.25e6, width: [3.5, 0.5], depth: [0.35, 0.4], incise: 0.7, smooth: 2, snap: [5, 5], bank: 0.9, reach: 30, fade: 0.55, levee: 5, cover: MOUNTAIN_THRESHOLD + 0.02, bucket: 64,
+	shelf: 4, lip: 0.1, stones: 6 };
+// (shelf: world units past the water's edge the bed goes on, just under the water, before the bank starts: wider than a cell of the mesh
+//		near the camera, so the bank never comes up through the water a cell at a time and the water's edge is its own, smooth (vf_rivers.js),
+//		not the mesh's. lip: metres under the water the bed is at the water's edge. stones: world units out from the shelf the stony
+//		ground of the bed goes on up the bank, thinning (vf_terrain.js: THE STONY GROUND, the river's))
 export const RIVER_FLOATS = 6;		// a point of a river: x, z, its water (over the sea), half its width, its depth, how far along its line from the head
 
 // the lines of a continent's rivers: { points: Float32Array, RIVER_FLOATS each, starts: Int32Array, where each line's points begin (and
@@ -1374,26 +1379,34 @@ export function makeRiverCutter(cut) {
 		on.w = cut[o + 3] + (cut[b + 3] - cut[o + 3]) * t;
 		on.dd = cut[o + 4] + (cut[b + 4] - cut[o + 4]) * t;
 	}
+	const lip = RIVERS.lip * SHAPE.metre, shelf = RIVERS.shelf;
 	const result = {
 		wet: 0,
+		stones: 0,		// (how much of the river's stony ground there is here, 0 to 1)
 		cut(x, z, natural) {
 			result.wet = 0;
+			result.stones = 0;
 			const bucket = buckets.get(Math.floor(x / B) * 100003 + Math.floor(z / B));
 			if (!bucket) return natural;
 			let lowest = Infinity, levee = -Infinity;
 			for (const o of bucket) {
 				onStretch(o, x, z);
-				if (on.d >= on.w + RIVERS.reach) continue;
+				if (on.d >= on.w + shelf + RIVERS.reach) continue;
+				result.stones = Math.max(result.stones, 1 - smoothstep(on.w + shelf, on.w + shelf + RIVERS.stones, on.d));
 				if (on.d <= on.w) {
-					// (the bed: deepest in the middle)
+					// (the bed: deepest in the middle, and just under the water at its edge)
 					const across = on.d / on.w;
-					lowest = Math.min(lowest, on.s - on.dd * (1 - across * across));
+					lowest = Math.min(lowest, on.s - lip - Math.max(on.dd - lip, 0) * (1 - across * across));
 					result.wet = 1;
+				} else if (on.d <= on.w + shelf) {
+					// (the shelf: from just under the water at its edge up to it, smoothly, out to where the bank begins)
+					lowest = Math.min(lowest, on.s - lip + 1.5 * lip * smoothstep(on.w, on.w + shelf, on.d));
 				} else {
 					// (the bank: given out over the last of the reach, so it never ends in a step up to the land)
-					const bank = Math.min(on.s + RIVERS.bank * (on.d - on.w), natural);
-					lowest = Math.min(lowest, natural + (bank - natural) * (1 - smoothstep(RIVERS.fade, 1, (on.d - on.w) / RIVERS.reach)));
-					if (on.d < on.w + RIVERS.levee) levee = Math.max(levee, on.s + 0.1 * SHAPE.metre);
+					const out = on.d - on.w - shelf;
+					const bank = Math.min(on.s + 0.5 * lip + RIVERS.bank * out, natural);
+					lowest = Math.min(lowest, natural + (bank - natural) * (1 - smoothstep(RIVERS.fade, 1, out / RIVERS.reach)));
+					if (out < RIVERS.levee) levee = Math.max(levee, on.s + 0.5 * lip + Math.min(0.1 * SHAPE.metre, RIVERS.bank * out));
 				}
 			}
 			let h = Math.min(natural, lowest);
@@ -1408,7 +1421,7 @@ export function makeRiverCutter(cut) {
 				onStretch(o, x, z);
 				if (on.d - on.w < near.edge) { near.edge = on.d - on.w; near.distance = on.d; near.half = on.w; near.surface = on.s; const across = Math.min(on.d / Math.max(on.w, 1e-6), 1); near.depth = on.dd * (1 - across * across); }
 			}
-			return near.edge < RIVERS.reach ? near : null;
+			return near.edge < RIVERS.reach + shelf ? near : null;
 		},
 	};
 	return result;
@@ -1504,7 +1517,7 @@ export function makeChunkBuilder(params, grids, sampler = createTerrainSampler(p
 	// The exact ground at any world position, the same sum the data grid was filled with. A mesh finer than the data grid gets its
 	//		extra detail from here: the noise layers go on down to a couple of units, only the ridge skeleton is limited to the grid.
 	//		Returns the height above sea level, and leaves what covers the point (see coverOf) in landAtCover
-	let landAtCover = 0;
+	let landAtCover = 0, landAtStones = 0;
 	function landAt(x, z) {
 		const result = sample(x, z, reliefAt(x, z)), laid = plainOf(x, z);
 		// (how marshy it is comes from the data grid, which knows about every lake. sample only knows the ones it hollowed out itself)
@@ -1513,9 +1526,9 @@ export function makeChunkBuilder(params, grids, sampler = createTerrainSampler(p
 		let height = result.height - (result.height < 0 ? bedFall(params, gridAt(beyondDrop, x, z)) : 0);
 		// the rivers cut into it (THE RIVERS): stony under the water
 		height = riverCut.cut(x, z, height);
-		if (riverCut.wet) landAtCover = RIVERS.cover;
+		landAtStones = riverCut.stones;
 		// (and a highland lake's bed, under its water, the same: THE HIGHLAND LAKES)
-		if (height < lakeOf(x, z)) landAtCover = RIVERS.cover;
+		if (height < lakeOf(x, z)) { landAtCover = RIVERS.cover; landAtStones = 0; }
 		// a town: its own hill, and its streets cut into that (see townLayout.js). Its ground is short turf
 		if (grids.townStrength) {
 			const town = gridAt(grids.townStrength, x, z);
@@ -1574,11 +1587,12 @@ export function makeChunkBuilder(params, grids, sampler = createTerrainSampler(p
 
 		// the heights, with a ring of 1 extra point all round so the normals at the chunk's edge have a neighbour to slope against
 		const side = cells + 3;
-		const padHeight = new Float32Array(side * side), padCover = new Float32Array(side * side);
+		const padHeight = new Float32Array(side * side), padCover = new Float32Array(side * side), padStones = new Float32Array(side * side);
 		for (let j = -1; j <= cells + 1; j++) {
 			for (let i = -1; i <= cells + 1; i++) {
 				padHeight[(j + 1) * side + (i + 1)] = landAt(x0 + i * cell, z0 + j * cell);
 				padCover[(j + 1) * side + (i + 1)] = landAtCover;
+				padStones[(j + 1) * side + (i + 1)] = landAtStones;
 			}
 		}
 
@@ -1594,7 +1608,7 @@ export function makeChunkBuilder(params, grids, sampler = createTerrainSampler(p
 				vertices[v + 1] = params.seaLevel + height;
 				vertices[v + 2] = z0 + j * cell;
 				vertices[v + 3] = padCover[p];			// the shader works the zone colors out per pixel from this and the height, so they blend smoothly
-				vertices[v + 4] = cell;					// how fine this chunk's mesh is. Where it is coarse the shader gets the slope of the ground from the land data instead
+				vertices[v + 4] = cell + 0.9 * padStones[p];	// how fine this chunk's mesh is (a whole number of units: where it is coarse the shader gets the slope of the ground from the land data instead), and in what is over, a river's stony ground (vf_terrain.js: riverStones)
 				vertices[v + 5] = nx / length;
 				vertices[v + 6] = 2 * cell / length;
 				vertices[v + 7] = nz / length;

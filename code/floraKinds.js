@@ -447,8 +447,8 @@ kind({ name: 'oregon grape', where: 'forest', weight: 1.5, niche: [0.1, 0.45], s
 });
 
 //-------------------------------THE GRASSLAND-------------------------------
-kind({ name: 'daisies', where: 'grass', weight: 3, niche: [0.3, 0.3], spread: 0.3, size: [0.75, 1.05], flower: true }, (m, r) => {
-	for (let k = 0; k < 3; k++) { const c = [Math.cos(k * 2.1) * 0.25, 0, Math.sin(k * 2.1) * 0.25], top = [c[0], 0.75 + 0.25 * r(), c[2]]; stem(m, top, 0.035, C.stem, k, c); leaf(m, k + 0.5, 0.18, 0.06, 0.1, 0.05, 1, C.leaf, [c[0], 0.25, c[2]]); head(m, top, 0.2, 11, C.white, C.yellow, 0.12, 0.5, k); }
+kind({ name: 'daisies', where: 'grass', weight: 3, niche: [0.3, 0.3], spread: 0.3, size: [0.6, 0.85], flower: true }, (m, r) => {
+	for (let k = 0; k < 3; k++) { const c = [Math.cos(k * 2.1) * 0.25, 0, Math.sin(k * 2.1) * 0.25], top = [c[0], 0.75 + 0.25 * r(), c[2]]; stem(m, top, 0.035, C.stem, k, c); leaf(m, k + 0.5, 0.18, 0.06, 0.1, 0.05, 1, C.leaf, [c[0], 0.25, c[2]]); head(m, top, 0.1, 11, C.white, C.yellow, 0.12, 0.5, k); }
 });
 kind({ name: 'buttercups', where: 'grass', weight: 3, niche: [0.7, 0.3], spread: 0.3, size: [0.8, 1.1], flower: true }, (m, r) => {
 	for (let k = 0; k < 3; k++) { const c = [Math.cos(k * 2.1) * 0.25, 0, Math.sin(k * 2.1) * 0.25], top = [c[0], 0.8 + 0.2 * r(), c[2]]; stem(m, top, 0.035, C.stem, k, c); leaf(m, k + 1, 0.2, 0.1, 0.05, 0.05, 2, C.leaf, [c[0], 0.3, c[2]]); head(m, top, 0.13, 5, C.yellow, null, 0.6, 0.3, k, true); }

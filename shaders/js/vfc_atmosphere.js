@@ -34,7 +34,9 @@ export const skyLookupShapes = `
 
 	// The colour something far off fades into: the sky, or the planet, behind it. Near the ground the world is flat and the
 	//		LUT's planet is round: just under the LUT's horizon is sea a few kilometres off, not the haze over the far sea, so down
-	//		there the fade never reads lower than just over the horizon. Higher up (the horizon dipping away is how the LUT tells
+	//		there the fade never reads lower than just over the horizon. Nor higher than the haze band over it: a far mountain fades
+	//		into the haze along the horizon, not into the very sky behind it (it would be cut off along the horizon, gone above and
+	//		still there below). Higher up (the horizon dipping away is how the LUT tells
 	//		the height: by 1.3km it starts, by 15km it is done) it goes over to the real direction, the planet seen through the
 	//		air under it, which is what makes the world fall away into a ball
 	fn fogColorAt(direction: vec3f) -> vec3f {
@@ -42,7 +44,7 @@ export const skyLookupShapes = `
 		let horizon = textureLoad(skyLUT, vec2i(0, 0), 0).a;
 		let elevation = asin(clamp(rd.y, -1.0, 1.0));
 		let high = smoothstep(0.02, 0.07, -horizon);
-		let looked = mix(max(elevation, horizon + 0.004), elevation, high);
+		let looked = mix(clamp(elevation, horizon + 0.004, horizon + 0.03), elevation, high);
 		let across = normalize(rd.xz + vec2f(0.00001, 0.0));
 		return skyColorAt(vec3f(across.x * cos(looked), sin(looked), across.y * cos(looked)));
 	}
@@ -418,6 +420,17 @@ export const f_sky =
 
 		// the sky (or the planet) in this direction, exposure tone mapped (see skyLookupShapes)
 		var skyColor = skyColorAt(rd);
+		// THE FAR SEA: under the level of the sea, past where the water is drawn (from high up its tiles end long before the
+		//		horizon), the sea, as far off as the line of sight meets it, faded into the haze as the water fades (f_water): not the
+		//		LUT's planet, with the sunset's glow under the world's surface. And no sun or moon down there
+		let overSea = Sky.cameraPosition.x;		// world units over the sea
+		let underSea = rd.y < 0.0 && overSea > 0.0;
+		if (underSea) {
+			let reach = overSea / max(-rd.y, 0.0001);
+			let fog = 1.0 - exp(-pow(reach / max(Sky.cameraPosition.z, 1.0), 2.0));
+			let water = vec3f(0.03, 0.08, 0.11) + skyColorAt(reflect(rd, vec3f(0.0, 1.0, 0.0))) * 0.22;
+			skyColor = mix(water, fogColorAt(rd), fog);
+		}
 
 		// The sun's disc: its light dimmed and reddened by the air between it and the camera, all of the air near the ground, none above it.
 		//		Gone where the planet stands in front of it
@@ -427,7 +440,7 @@ export const f_sky =
 		let eye = vec3f(0.0, PLANET_RADIUS + altitude, 0.0);
 		let b = dot(eye, rd);
 		let behindPlanet = b < 0.0 && b * b - dot(eye, eye) + PLANET_RADIUS * PLANET_RADIUS > 0.0;
-		if (fromSun < SUN_RADIUS * 1.5 && !behindPlanet) {
+		if (fromSun < SUN_RADIUS * 1.5 && !behindPlanet && !underSea) {
 			let height = min(altitude / (ATMOS_RADIUS - PLANET_RADIUS), 1.0);
 			let throughAir = textureSampleLevel(transmitLUT, skySampler, vec2f(sun.y * 0.5 + 0.5, height), 0.0).rgb;
 			let edge = fromSun / SUN_RADIUS;
@@ -442,7 +455,7 @@ export const f_sky =
 		let fromMiddle = acos(clamp(dot(rd, toMoon), -1.0, 1.0));
 		let disc = 1.0 - smoothstep(0.93 * Sky.moonLook.x, Sky.moonLook.x, fromMiddle);
 		let daylight = smoothstep(-0.08, 0.25, normalize(Sky.sunDir.xyz).y);
-		let showing = disc * saturate(Sky.moonDir.w) * mix(1.0, 0.4, daylight) * smoothstep(-0.02, 0.01, rd.y) * (1.0 - Sky.moonLook.w);
+		let showing = disc * saturate(Sky.moonDir.w) * mix(1.0, 0.4, daylight) * smoothstep(-0.02, 0.01, rd.y) * (1.0 - Sky.moonLook.w) * select(1.0, 0.0, underSea);
 		skyColor = mix(skyColor, vec3f(0.95, 0.96, 1.0), showing);
 
 		return vec4f(skyColor, 1.0);

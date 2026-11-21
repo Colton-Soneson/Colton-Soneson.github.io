@@ -276,7 +276,7 @@ function groundUnder(x, z) {
 }
 function landUnder(x, z) {
 	const land = terrain.land;
-	const cell = settings.terrainWorldSize / settings.terrainResolution;
+	const cell = settings.terrainWorldSize / terrain.terrainResolutionNow();
 	const half = settings.terrainWorldSize * 0.5;
 	if (cornersFor !== land || cornersCell !== cell || cornerHeights.size > MOST_CORNERS) {
 		cornerHeights.clear();

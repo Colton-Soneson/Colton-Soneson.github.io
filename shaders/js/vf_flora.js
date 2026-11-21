@@ -116,12 +116,14 @@ export const c_flora = `
 		let n1 = smoothNoise(at / (16.0 * m) + vec2f(13.1, 7.7));
 		let n2 = smoothNoise(at / (37.0 * m) + vec2f(-4.3, 21.9));
 		let count = u32(UBO.wind.y);
+		// (the flowers only in their meadows: spots of their own, far apart, a slow noise of their own. Elsewhere hardly one)
+		let flowerSpot = mix(0.02, 1.0, smoothstep(0.7, 0.84, smoothNoise(at / (70.0 * m) + vec2f(53.1, -17.3))));
 		var sum = 0.0;
 		for (var k = 0u; k < count; k++) {
 			let A = kinds[k * 3u]; let B = kinds[k * 3u + 1u];
 			if (u32(A.z) != zone || (far && (u32(B.w) & 8u) == 0u)) { continue; }
 			let d = distance(vec2f(n1, n2), B.xy) / B.z;
-			sum += A.w * exp(-d * d) * select(1.0, 0.15 + UBO.season.w, (u32(B.w) & 4u) != 0u);
+			sum += A.w * exp(-d * d) * select(1.0, 0.15 + UBO.season.w, (u32(B.w) & 4u) != 0u) * select(1.0, flowerSpot, (u32(B.w) & 1u) != 0u);
 		}
 		if (sum <= 0.0) { return 0xffffffffu; }
 		var choose = r * sum;
@@ -130,7 +132,7 @@ export const c_flora = `
 			let A = kinds[k * 3u]; let B = kinds[k * 3u + 1u];
 			if (u32(A.z) != zone || (far && (u32(B.w) & 8u) == 0u)) { continue; }
 			let d = distance(vec2f(n1, n2), B.xy) / B.z;
-			let w = A.w * exp(-d * d) * select(1.0, 0.15 + UBO.season.w, (u32(B.w) & 4u) != 0u);
+			let w = A.w * exp(-d * d) * select(1.0, 0.15 + UBO.season.w, (u32(B.w) & 4u) != 0u) * select(1.0, flowerSpot, (u32(B.w) & 1u) != 0u);
 			kind = k;
 			if (choose < w) { break; }
 			choose -= w;
@@ -296,6 +298,7 @@ export const vf_flora = `
 	${moonShapes}
 	${windShapes}
 	${sunShadowShapes(0)}
+	${meadowShapes}
 
 	fn terrainNormal(xz: vec2f) -> vec3f {
 		let n = vec2i(textureDimensions(terrainFields));
@@ -318,6 +321,12 @@ export const vf_flora = `
 		let flags = u32(K1.w);
 		// (out of its season a flower's head is folded away into nothing, each plant's its own day)
 		if (N.w > 0.5 && bloom > UBO.season.x) { p = vec3f(0.0, p.y, 0.0); }
+		// (a plant of the grassland, its leaves and stems in the meadow's colors where it stands, the season's: THE MEADOW'S COLORS. Its
+		//		flowers keep their own)
+		if (u32(K0.z) == 1u && N.w < 0.5) {
+			let meadow = meadowColor(foot.xz, vec3f(meadowDry(foot.xz), 0.0, 0.0));
+			color = mix(color, meadow * (0.75 + 0.5 * dot(color, vec3f(0.33, 0.33, 0.33)) / max(dot(meadow, vec3f(0.33, 0.33, 0.33)), 0.05) * 0.5), 0.75);
+		}
 		if ((flags & 2u) != 0u) { color = mix(color, vec3f(0.42, 0.26, 0.10), 0.85 * UBO.season.y); }
 		else { color = mix(color, color * vec3f(1.2, 1.0, 0.55), 0.5 * UBO.season.y); }
 		if (!isBig) { p.y *= 1.0 - 0.85 * UBO.season.z; }

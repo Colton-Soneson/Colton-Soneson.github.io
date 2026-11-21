@@ -122,12 +122,13 @@ const TESSELLATION_HD = [
 	{ thick: [3, 1],  thin: null },
 ];
 const tessellationAt = (level) => (settings.hdVegetation ? TESSELLATION_HD : TESSELLATION)[level];
-const foliageVertices = () => settings.hdVegetation ? FOLIAGE_VERTICES_HD : FOLIAGE_VERTICES;
+// (the HD cards only on the two nearest levels: further off a piece is too small on the screen for them to show, and they cost as much as the rest)
+const foliageVertices = (level = 0) => settings.hdVegetation && level == 0 ? FOLIAGE_VERTICES_HD : FOLIAGE_VERTICES;
 // and for the foliage: the share of the pieces that is drawn, and how much bigger each one is drawn to make up for the rest
 const FOLIAGE_DETAIL_SD = [[1.0, 1.0], [0.5, 1.4], [0.2, 2.1], [0.08, 3.2], [0.035, 4.8]];
 // (and with HD Textures and Models: more of it kept further off, so a distant crown is still leaves and needles, not a few big cards.
 //		As the setting was when the page loaded: the trees' lists of pieces are made once)
-const FOLIAGE_DETAIL_HD = [[1.0, 1.0], [0.7, 1.2], [0.4, 1.55], [0.18, 2.3], [0.08, 3.4]];
+const FOLIAGE_DETAIL_HD = [[1.0, 1.0], [0.6, 1.3], [0.3, 1.8], [0.12, 2.7], [0.05, 4.0]];
 const FOLIAGE_DETAIL = settings.hdVegetation ? FOLIAGE_DETAIL_HD : FOLIAGE_DETAIL_SD;
 // and the roots: [sides, rings] for each level of detail that draws them (THE ROOTS)
 const ROOT_TESSELLATION = [[7, 3], [4, 2]];
@@ -1821,7 +1822,7 @@ function sortTreesIntoDraws() {
 		if (tessellation.thin) {
 			addDraw(draws.wood, stage.sectionStart + stage.thick, stage.sections[level] - stage.thick, stage.sections[next] - stage.thick, tessellation.thin[0], tessellation.thin[1], level, tessellation.thin[0] * tessellation.thin[1] * 6, members.length);
 		}
-		addDraw(draws.foliage, stage.foliageStart, stage.foliage[level], stage.foliage[next], 0, 0, level, foliageVertices(), members.length);
+		addDraw(draws.foliage, stage.foliageStart, stage.foliage[level], stage.foliage[next], 0, 0, level, foliageVertices(level), members.length);
 		const rootCut = settings.forestRoots ? ROOT_TESSELLATION[level] : null;
 		if (rootCut) { const draw = addDraw(draws.wood, stage.rootStart, stage.roots[level], stage.roots[level + 1], rootCut[0], rootCut[1], level, rootCut[0] * rootCut[1] * 6, members.length); if (draw) draws.roots.push(draw); }
 
@@ -1921,7 +1922,7 @@ function drawSlots() {
 		if (tessellation.thin) {
 			add(slots.wood, list, stage.sectionStart + stage.thick, stage.sections[level] - stage.thick, stage.sections[next] - stage.thick, tessellation.thin[0], tessellation.thin[1], level, tessellation.thin[0] * tessellation.thin[1] * 6);
 		}
-		add(slots.foliage, list, stage.foliageStart, stage.foliage[level], stage.foliage[next], 0, 0, level, foliageVertices());
+		add(slots.foliage, list, stage.foliageStart, stage.foliage[level], stage.foliage[next], 0, 0, level, foliageVertices(level));
 		const rootCut = settings.forestRoots ? ROOT_TESSELLATION[level] : null;
 		if (rootCut) { const k = add(slots.wood, list, stage.rootStart, stage.roots[level], stage.roots[level + 1], rootCut[0], rootCut[1], level, rootCut[0] * rootCut[1] * 6); if (k >= 0) slots.roots.push(k); }
 	}
@@ -2313,6 +2314,7 @@ sunShadows.addSunShadowCaster((pass, cascade, matrix) => {
 	if (!lastLists || !forestBindGroup || !settings.enableForest || !life || life.count == 0) return;
 	const { slots, draws } = lastLists;
 	const values = forestUniformValues(null, matrix);
+	values[35] = 0;		// (bake.w: drawn as without HD Textures and Models, 3 cards and the plain pattern: the shadow of a crown is the same)
 	device.queue.writeBuffer(shadowUniforms[cascade], 0, values.buffer, values.byteOffset, values.byteLength);
 	if (!shadowBindGroups || shadowBindFor !== forestBindGroup) {
 		shadowBindGroups = shadowUniforms.map((u) => createBindGroupForest(u, treeBuffer, visibleBuffer, true));

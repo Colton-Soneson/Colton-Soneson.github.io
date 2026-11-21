@@ -33,9 +33,13 @@ export const meadowShapes = `
 		let dry = saturate(0.5 + 2.1 * (0.68 * meadowNoise(xz / (190.0 * MEADOW_M), 31) + 0.32 * meadowNoise(xz / (85.0 * MEADOW_M), 32) - 0.5));
 		let thicket = meadowNoise(xz / (28.0 * MEADOW_M), 5);
 		let scrub = smoothstep(${MEADOW_SCRUB.from}, ${MEADOW_SCRUB.to}, thicket + 0.06 * (meadowNoise(xz / (4.0 * MEADOW_M), 33) - 0.5));
-		let stones = 0.62 * meadowNoise(xz / (24.0 * MEADOW_M), 41) + 0.38 * meadowNoise(xz / (6.5 * MEADOW_M), 42) + 0.9 * (1.0 - smoothstep(0.86, 0.98, up));
+		let stones = 0.62 * meadowNoise(xz / (24.0 * MEADOW_M), 41) + 0.38 * meadowNoise(xz / (6.5 * MEADOW_M), 42) + 0.45 * (1.0 - smoothstep(0.8, 0.95, up));
 		let stony = smoothstep(0.7, 0.8, stones + 0.08 * (meadowNoise(xz / (2.5 * MEADOW_M), 43) - 0.5));
 		return vec3f(dry, scrub * (1.0 - stony), stony);
+	}
+	// how dry the meadow is at a place (meadowLook's x, alone: cheap enough for every vertex of a plant)
+	fn meadowDry(xz: vec2f) -> f32 {
+		return saturate(0.5 + 2.1 * (0.68 * meadowNoise(xz / (190.0 * MEADOW_M), 31) + 0.32 * meadowNoise(xz / (85.0 * MEADOW_M), 32) - 0.5));
 	}
 	// the grassland's green there, lush to dry (a color of the grassland's, times this)
 	fn meadowTint(look: vec3f) -> vec3f {
@@ -69,10 +73,10 @@ export const meadowShapes = `
 	relief's slope) and moves the depth, so the shadows and the ambient occlusion find it too.
 		stonyGround: rgb its color, a its height above the soil (world units)
 */
-export const STONY_NEAR = 30;		// metres: out to here the stones are traced (fading out over the last part of it); further, the flat grey
+export const STONY_NEAR = 20;		// metres: out to here the stones are traced (fading out over the last part of it); further, the flat grey
 export const stonyShapes = `
-	const STONE_CELL: f32 = 0.42;		// metres from one stone to the next
-	const STONE_TALL: f32 = 0.16;		// the tallest of them stands this far out of the soil, metres
+	const STONE_CELL: f32 = 0.7;		// metres from one stone to the next
+	const STONE_TALL: f32 = 0.22;		// the tallest of them stands this far out of the soil, metres
 	struct Stones {
 		height: f32,		// world units over the soil
 		id: vec2f,			// the stone's own random numbers

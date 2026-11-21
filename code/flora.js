@@ -17,6 +17,7 @@ import { vf_flora, c_flora, FLORA_RINGS, FLORA_CAP, FLORA_INSTANCE } from '../sh
 import { KINDS, KINDS_HD, SMALL, WHERE, BIG_VERTICES } from './floraKinds.js'
 import { MEADOW_SCRUB, meadowShapes } from '../shaders/js/meadowShapes.js'
 import * as sunShadows from './sunShadows.js'
+import * as meadowPalette from './meadowPalette.js'
 import * as hunting from './hunting.js'
 import * as help from './controlsHelp.js'
 import { makeItem } from './items.js'
@@ -43,8 +44,9 @@ import * as loot from './loot.js'
 	World units (2 to the metre) for places; metres in the constants.
 */
 const RINGS = [{ radius: 22, cell: 0.6 }, { radius: 55, cell: 1.3 }, { radius: 1, cell: 2.8, far: true }];	// metres: the last reaches floraDrawDistance
-const FILL = { forest: 0.95, grass: 0.75, wet: 0.85, beach: 0.55, alpine: 0.7, stony: 0.6 };	// the share of a colony's middle with a plant on it, by its ground
-const COLONY = { cell: 5, reach: 0.8, stray: 0.1, bare: 0.3 };	// a colony's cell (metres), how far out from its point it thins (of the cell), the strays of other kinds in it, and the bare stretches between (a noise under this)
+const FLOWER_SHARE = 0.6;	// the flowers' colonies, against the other plants of their ground (and they grow only in their own meadows: vf_flora.js pickKind)
+const FILL = { forest: 0.95, grass: 0.9, wet: 0.85, beach: 0.55, alpine: 0.7, stony: 0.6 };	// the share of a colony's middle with a plant on it, by its ground
+const COLONY = { cell: 5, reach: 0.8, stray: 0.1, bare: 0.18 };	// a colony's cell (metres), how far out from its point it thins (of the cell), the strays of other kinds in it, and the bare stretches between (a noise under this)
 const ALPINE = 0.42;					// of the snow line: the heights from here up are the heather's
 const SWAY = 0.5;						// how far the wind sways them
 const BIG = { cell: 6, reach: 220, again: 25, chance: { forest: 0.07, grass: 0.018, wet: 0.05, beach: 0.025, alpine: 0.06 }, clump: { scale: 28, from: 0.5 }, stand: 40, wheat: { scale: 70, from: 0.66, chance: 0.4 } };
@@ -68,7 +70,7 @@ function packKinds(kinds, label) {
 		const first = vertexData.length / VERTEX_FLOATS;
 		for (const v of k.vertices) vertexData.push(...v.p, v.sway, ...v.n, v.flag, ...v.c, index, ...v.uv, v.mat, 0);
 		const flags = (k.flower ? 1 : 0) | (k.fern ? 2 : 0) | (k.fungus ? 4 : 0) | (k.far ? 8 : 0);
-		kindData.push(first, k.vertices.length, WHERE.indexOf(k.where), k.weight, ...(k.niche ?? [0.5, 0.5]), k.spread ?? 0.3, flags, k.size[0], k.size[1], 0, 0);
+		kindData.push(first, k.vertices.length, WHERE.indexOf(k.where), k.weight * (k.flower && !k.big ? FLOWER_SHARE : 1), ...(k.niche ?? [0.5, 0.5]), k.spread ?? 0.3, flags, k.size[0], k.size[1], 0, 0);
 	}
 	return { kinds, vertices: storage('flora vertices' + label, new Float32Array(vertexData)), kindList: storage('flora kinds' + label, new Float32Array(kindData)) };
 }
@@ -86,6 +88,7 @@ const renderLayout = device.createBindGroupLayout({
 	label: 'flora draw layout',
 	entries: [
 		...sunShadows.sunShadowLayoutEntries(V | F),
+		meadowPalette.meadowPaletteLayoutEntry(V | F),
 		{ binding: 0, visibility: V | F, buffer: {} },
 		{ binding: 1, visibility: V | F, buffer: {} },
 		{ binding: 2, visibility: V, texture: { sampleType: 'unfilterable-float' } },
@@ -192,6 +195,7 @@ function groupsNow() {
 			label: 'flora sun shadow bind group', layout: renderLayout,
 			entries: [
 				...sunShadows.sunShadowEntries(true),
+				meadowPalette.meadowPaletteEntry(),
 				{ binding: 0, resource: { buffer } },
 				{ binding: 1, resource: { buffer: uniformBufferLights } },
 				{ binding: 2, resource: terrain.terrainFieldsTexture.createView() },
@@ -209,6 +213,7 @@ function groupsNow() {
 			label: 'flora draw bind group', layout: renderLayout,
 			entries: [
 				...sunShadows.sunShadowEntries(),
+				meadowPalette.meadowPaletteEntry(),
 				{ binding: 0, resource: { buffer: uniformBuffer } },
 				{ binding: 1, resource: { buffer: uniformBufferLights } },
 				{ binding: 2, resource: terrain.terrainFieldsTexture.createView() },
@@ -267,7 +272,7 @@ const smooth = (a, b, v) => { const t = Math.min(Math.max((v - a) / (b - a), 0),
 export function meadowAt(x, z, up = 1) {
 	const m = metre();
 	const scrub = smooth(MEADOW_SCRUB.from, MEADOW_SCRUB.to, smoothNoise(x / (BIG.clump.scale * m), z / (BIG.clump.scale * m), 5) + 0.06 * (smoothNoise(x / (4 * m), z / (4 * m), 33) - 0.5));
-	const stones = 0.62 * smoothNoise(x / (24 * m), z / (24 * m), 41) + 0.38 * smoothNoise(x / (6.5 * m), z / (6.5 * m), 42) + 0.9 * (1 - smooth(0.86, 0.98, up));
+	const stones = 0.62 * smoothNoise(x / (24 * m), z / (24 * m), 41) + 0.38 * smoothNoise(x / (6.5 * m), z / (6.5 * m), 42) + 0.45 * (1 - smooth(0.8, 0.95, up));
 	const stony = smooth(0.7, 0.8, stones + 0.08 * (smoothNoise(x / (2.5 * m), z / (2.5 * m), 43) - 0.5));
 	return { scrub: scrub * (1 - stony), stony };
 }

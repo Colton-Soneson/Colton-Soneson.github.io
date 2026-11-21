@@ -10,7 +10,7 @@ import { SUN_CASCADES, SUN_SHADOW_SIZE, SUN_SHADOW_BINDINGS, SUN_SHADOW_FLOATS }
 	nearest depth kept. The land, the grass, the plants and the trees then look themselves up in them to see if the sun gets to them.
 		following the camera	each map's square moves with the camera, in steps of whole texels of its own, so the edges of the
 								shadows hold still and do not crawl as it moves
-		the far ones less often	the middle map is drawn again every 2nd frame, the far one every 4th (EVERY), each on its own frame:
+		the far ones less often	the near and the middle maps are drawn again every 2nd frame, on alternate frames, the far one every 4th (EVERY):
 								further off a shadow moves too little in a frame to be missed
 		who casts				whatever has called addSunShadowCaster: fn(pass, cascade, matrix), drawing itself into the pass with the
 								matrix as its view projection. What it draws from can be the frame before's (the forest's lists are
@@ -20,7 +20,7 @@ import { SUN_CASCADES, SUN_SHADOW_SIZE, SUN_SHADOW_BINDINGS, SUN_SHADOW_FLOATS }
 	view or not, so one behind the camera still throws its shadow forwards (keepRadius).
 */
 export const CASCADE_METRES = [60, 250, 1000];
-const EVERY = [1, 2, 4];
+const EVERY = [2, 2, 4];
 const DEPTH = 2400;				// world units the maps' depth reaches either way from the camera's height along the sun's rays
 const AHEAD = 0.35;				// of a map's half width, how far ahead of the camera its middle is
 const KEEP_NEAR = 1.3;			// of the near map's half width: the trees kept in the forest's lists for it (keepRadius)

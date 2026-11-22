@@ -11,6 +11,7 @@ import * as plane from './plane.js'
 import * as boat from './boat.js'
 import * as town from './town.js'
 import { announceSpawn } from './radialMenu.js'
+import * as ragdolls from './ragdolls.js'
 
 /*
 	THE NPCS: people who live in the world and go about it in its vehicles, run by this machine (in a game with others, by the host:
@@ -186,7 +187,12 @@ export function harm(person, amount, who, how = 'shot') {
 	person.health -= amount;
 	person.hit = 1;
 	provoke(person.group, who);
+	// (THE RAGDOLLS, ragdolls.js: knocked about where it was hit; down, or a stagger it comes back from)
+	const hit = person.lastHit ?? null;
+	person.lastHit = null;
+	ragdolls.ragHit(person, person.place, lookOf(person), hit, person.health <= 0, !person.fighting);
 	if (person.health > 0) return;
+	person.ragDone = true;
 	person.alive = false;
 	person.down = 0;
 	person.respawnIn = RESPAWN_SECONDS;
@@ -234,6 +240,8 @@ ballistics.addTarget((ax, ay, az, bx, by, bz, bullet) => {
 	}
 	return best && { t: best.t, what: 'npc', hit: (velocity, bullet) => {
 		npcStats.hits++;
+		best.person.lastHit = { at: [ax + (bx - ax) * best.t, ay + (by - ay) * best.t, az + (bz - az) * best.t], dir: velocity ?? [bx - ax, by - ay, bz - az], part: best.part,
+			power: ballistics.ROUNDS[bullet?.round]?.damage ?? 1 };
 		if (!bullet?.npc) players.markHit(best.part == 'head');
 		const who = crew ? 'me' : bullet?.npc ? bullet.shooter : firedBy(bullet);
 		if (runsHere()) harm(best.person, HARM[best.part] * (ballistics.ROUNDS[bullet?.round]?.damage ?? 1), who, crew ? 'crew' : 'shot');
@@ -291,7 +299,10 @@ export function blast(at, radius, who = 'me') {
 		const p = person.place;
 		if (!person.alive || !p) continue;
 		const d = Math.hypot(p.x - at[0], p.y + metre() - at[1], p.z - at[2]);
-		if (d < radius) harm(person, 130 * (1 - d / radius), who, 'shell');
+		if (d < radius) {
+			person.lastHit = { at: [...at], dir: [p.x - at[0], p.y + metre() - at[1] + 0.5 * d, p.z - at[2]], part: 'chest', power: 2.5 * (1 - d / radius) + 0.5 };
+			harm(person, 130 * (1 - d / radius), who, 'shell');
+		}
 	}
 }
 
@@ -449,12 +460,18 @@ export function hurtPlayer(id, amount, how) {
 
 // Drawing them (as the townsfolk, see the top)
 //-------------------------------------------------
+// (how one is drawn: its hat, its colour, its clothes, its side's tint; a ragdoll made of it is drawn so)
+const lookOf = (person) => ({ hat: person.hat, hue: person.hue, side: war.on && person.side ? sideTint(person.side) : 0,
+	outfit: outfits.npcOutfit(war.on && person.side ? 'soldier' : person.kind, Math.round(person.hue * 1000)) });
 townFolk.addFolkSource((each) => {
 	if (!on()) return;
 	let drawn = 0;
 	for (const person of people) {
 		const p = person.place;
 		if (!p || person.gone) continue;
+		ragdolls.trackPlace(person, p);
+		if (!person.alive && !person.ragDone) { person.ragDone = true; ragdolls.ragHit(person, p, lookOf(person), null, true, !person.fighting); }
+		if (person.rag) { drawn++; continue; }
 		each({ x: p.x, y: p.y, z: p.z, heading: p.heading, tilt: p.tilt, pitch: person.fighting ? person.aim : 0, stride: person.stride, walking: person.walking, fallen: person.alive ? 0 : Math.min(person.down / 0.6, 1),
 			hit: person.hit, hue: person.hue, sit: person.alive ? p.sit ?? 0 : 0, gun: person.fighting && person.alive ? person.gun : 'none', armsDown: person.armsDown, look: person.look, hat: person.hat,
 			side: war.on && person.side ? sideTint(person.side) : 0, outfit: outfits.npcOutfit(war.on && person.side ? 'soldier' : person.kind, Math.round(person.hue * 1000)) });
@@ -471,6 +488,7 @@ export function npcUpdate() {
 	const elapsed = Math.min((nowMs - lastTime) / 1000, 0.1);
 	lastTime = nowMs;
 	clock += elapsed;
+	ragdolls.ragUpdate(elapsed);		// (THE RAGDOLLS: the NPCs' and the townsfolk's)
 	if (!on()) return 0;
 	if (runsHere() && remote.size) clearRemote();
 	if (!runsHere()) follow();
@@ -552,7 +570,8 @@ function clearRemote() { for (const p of remote.values()) removePerson(p); remot
 
 // back up again, at full health (its kind's file puts it where it comes back)
 export function revive(person) {
-	Object.assign(person, { health: HEALTH, alive: true, down: 0, gone: false, respawnIn: -1, hit: 0, fighting: false });
+	Object.assign(person, { health: HEALTH, alive: true, down: 0, gone: false, respawnIn: -1, hit: 0, fighting: false, ragDone: false, lastHit: null });
+	ragdolls.ragForget(person);
 	npcStats.respawned++;
 }
 

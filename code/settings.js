@@ -127,6 +127,7 @@ export const settings = {
 	//--------------------GRASS--------------------
 	enableGrass: true,
 	hdVegetation: true,					//HD Textures and Models: the trees, the bushes, the flowers, ferns and mosses drawn with about twice the triangles, and their leaves, needles and petals drawn with their veins, teeth and streaks (vf_forest.js: THE HD CARDS, THE HD LEAVES; floraKinds.js: HD; vf_flora.js: THE HD TEXTURES)
+	enableRagdolls: true,				//people shot go down as ragdolls, taking the hit where it landed (ragdolls.js)
 	enableRiverFlecks: true,			//bits of foam carried on the rivers near the camera, going round whatever stands in the water (riverFlecks.js)
 	enableFlora: true,					//the plants: ferns, mosses, mushrooms and flowers, bushes and wild wheat (flora.js)
 	floraDensity: 1.0,					//how many of the small plants: 2 = twice as many
@@ -136,7 +137,7 @@ export const settings = {
 	grassDrawDistance: 900.0,		//how far from the camera the grass reaches. The rings stretch to reach it: the grass at your feet stays as thick, the far grass thins
 	//level of detail: rings round the camera, each reaching further than the last with a coarser grid of blades (see vfc_grass.js)
 	grassLodRings: 6,				//how many rings, 1 to 8. More rings = a gentler thinning out, and more of the blades spent far away
-	grassLodNearDistance: 60.0,		//how far the first ring reaches: the grass at full thickness, every blade a curved strip
+	grassLodNearDistance: 120.0,		//how far the first ring reaches: the grass at full thickness, every blade a curved strip
 	grassLodFarBlades: 0.8,			//how many blades a ring gets next to the ring inside it. 1 = every ring the same number, 0.5 = each ring half the one before
 	//clumps: the blades grow in tufts, and take after the tuft they are in (see CLUMPS in vfc_grass.js)
 	grassClumpSize: 1.6,			//how far apart the tufts are, world units
@@ -161,6 +162,10 @@ export const settings = {
 	forestConiferShare: 0.5,			//0 all broadleaf, 1 all conifer. The land still shifts it: conifers take the high and steep ground
 	forestMaxTrees: 150000,				//planting stops here however much forest there is left to fill, and no seed comes up while there are this many (a tile's: a continent's tile of forest planted full is about 480000)
 	forestLifeCycle: true,				//the trees grow, die, fall and seed as the days go by. Off = the forest stays as it is
+	forestLeafDensity: 'medium',		//how many of the trees' leaf and needle cards are drawn: 'low', 'medium', 'high' or 'ultra' (all of them). Each card is bigger the fewer there are, and carries many leaves of its own (forest.js: LEAF DENSITY)
+	forestLeafSize: 1.0,
+	forestDepthFirst: true,
+	forestLeafThickness: 1.3,			//how wide the leaves and needles on the cards are drawn (they widen further off too, so thin ones do not flicker)			//the leaves' depth drawn first and then only the nearest lit (forest.js: THE DEPTH FIRST): much less work in a thick forest				//the leaf and needle cards made bigger (fuller crowns) or smaller (more air between)
 	forestYearsPerSunCycle: 1.0,		//years a tree ages in one day. Real trees take 45 (birch) to 100 (oak) years to grow up, so at 1 a forest changes slowly, as one would (at 150 a tree is grown in under a day: 5 minutes, see dayLengthSeconds)
 	forestYear: 0,						//the forest's clock. Read only
 	forestTreeCount: 0,					//trees standing, living and dead. Read only

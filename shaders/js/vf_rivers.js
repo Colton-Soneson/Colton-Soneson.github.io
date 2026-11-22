@@ -166,7 +166,8 @@ export const vf_rivers =
 		// (and at its own edge, a smooth one, a little uneven: the ribbon's, not where the bank's mesh comes up through it, which follows
 		//		the mesh's cells. The bed is cut on under the water past it for this: terrainGenerator.js THE RIVERS, shelf)
 		if (!lake) {
-			let wobble = 0.05 * (ripples(vec2f(input.river.x, input.river.y * 3.0) / (2.5 * m)) - 0.5);
+			let along = input.river.x / m;
+			let wobble = 0.32 * sin(along * 0.37 + 1.3 * sin(along * 0.11)) + 0.14 * sin(along * 1.13 + 2.0) + 0.06 * (ripples(vec2f(input.river.x, input.river.y * 3.0) / (1.5 * m)) - 0.5);
 			alpha *= 1.0 - smoothstep(0.9, 1.0, abs(input.river.y) + wobble);
 		}
 		return vec4f(color, alpha);

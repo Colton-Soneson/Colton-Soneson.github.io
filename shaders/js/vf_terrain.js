@@ -577,9 +577,10 @@ export const vf_terrain =
 		rock = mix(rock, COLOR_SCREE * mix(1.05, 0.9, crevice), scree * 0.7);
 
 		// turf: gentle ground low on a mountain is green, in patches. It thins out with height, going long before the snow starts
-		let turfLine = UBO.snowLine * (0.5 + 0.25 * noise(worldPos.xz / 240.0));
-		let highTurf = smoothstep(0.74, 0.88, groundNormal.y + 0.14 * (noise(worldPos.xz / 23.0) - 0.5)) * (1.0 - smoothstep(0.6 * turfLine, turfLine, height)) * mountain;
-		rock = mix(rock, COLOR_TURF * mix(1.1, 0.85, crevice), highTurf);
+		// (as far up as the grass grows on them: vfc_grass.js. Their faces stay rock)
+		let turfLine = UBO.snowLine * (0.78 + 0.18 * noise(worldPos.xz / 240.0));
+		let highTurf = smoothstep(0.66, 0.8, groundNormal.y + 0.14 * (noise(worldPos.xz / 23.0) - 0.5)) * (1.0 - smoothstep(0.75 * turfLine, turfLine, height)) * mountain;
+		rock = mix(rock, meadowColor(worldPos.xz, vec3f(meadowDry(worldPos.xz), 0.0, 0.0)) * vec3f(0.92, 0.95, 0.9) * mix(1.05, 0.85, crevice), highTurf);
 
 		//------------------SNOW-----------------
 		// The snow line is not a line. It wanders up and down with the weather of each slope, sits lower on the sides
@@ -621,12 +622,12 @@ export const vf_terrain =
 		// THE MEADOW'S LOOK (meadowShapes.js): its lush and its dry patches, the worn earth among the bushes of the scrub, the stony ground
 		//		(only worked out where there is grassland to see it on)
 		var look = vec3f(0.5, 0.0, 0.0);
-		if (meadow > 0.001 || forest > 0.001) {
+		// (the stony ground of a river's bed and banks, and of a lake's shore, its edge ragged: terrainGenerator.js THE RIVERS, carried over
+		//		in what is past the whole units of meshCell)
+		let waterside = saturate(fract(meshCell) / 0.9) * step(1.0, meshCell);
+		if (meadow > 0.001 || forest > 0.001 || waterside > 0.01) {
 			look = meadowLook(worldPos.xz, groundNormal.y);
-			// (and the stony ground of a river's bed and banks, its edge ragged: terrainGenerator.js THE RIVERS, carried over in what is past
-			//		the whole units of meshCell)
-			let riverStones = saturate(fract(meshCell) / 0.9) * step(1.0, meshCell);
-			look.z = max(look.z, smoothstep(0.2, 0.65, riverStones + 0.3 * (noise(worldPos.xz / 5.0 + vec2f(9.0, 2.0)) - 0.5)));
+			look.z = max(look.z, smoothstep(0.2, 0.65, waterside + 0.3 * (noise(worldPos.xz / 5.0 + vec2f(9.0, 2.0)) - 0.5)));
 		}
 		var grassland = meadowColor(worldPos.xz, look);
 		// (the scrub and the stony patches show as what they are close by; further off they are only a hint, not blotches)
@@ -635,9 +636,11 @@ export const vf_terrain =
 		grassland = mix(grassland, mix(MEADOW_EARTH, MEADOW_LITTER, noise(worldPos.xz / 0.9 + vec2f(4.0, 1.0))), worn);
 		// the stony ground: near, its stones traced (THE STONY GROUND, CLOSE UP, meadowShapes.js); further off, their grey
 		var stones = vec4f(MEADOW_STONE * mix(0.82, 1.1, noise(worldPos.xz / 1.7 + vec2f(3.0, 9.0))), 0.0);
-		let stonesNear = (1.0 - smoothstep(${STONY_NEAR * 0.6}.0, ${STONY_NEAR}.0, away / MEADOW_M)) * step(0.01, look.z) * step(0.001, meadow + forest);
+		// (from further off a stony stretch is the moss, the grass and the lichen among its stones as much as the stones: a dark green-brown)
+		stones = vec4f(mix(stones.rgb, vec3f(0.2, 0.21, 0.13) * mix(0.85, 1.15, noise(worldPos.xz / 40.0 + vec2f(7.0, 1.0))), smoothstep(40.0 * MEADOW_M, 140.0 * MEADOW_M, away)), 0.0);
+		let stonesNear = (1.0 - smoothstep(${STONY_NEAR * 0.6}.0, ${STONY_NEAR}.0, away / MEADOW_M)) * step(0.01, look.z) * step(0.001, meadow + forest + waterside);
 		if (stonesNear > 0.0) {
-			let traced = stonyGround(worldPos, eye, groundNormal, look.z, i32(mix(7.0, 3.0, saturate(away / (${STONY_NEAR}.0 * MEADOW_M)))));
+			let traced = stonyGround(worldPos, eye, groundNormal, look.z, select(select(2, 3, away < 30.0 * MEADOW_M), 7, away < 12.0 * MEADOW_M));
 			stones = vec4f(mix(stones.rgb, traced.rgb, stonesNear), traced.a * stonesNear);
 		}
 		grassland = mix(grassland, stones.rgb, look.z * mix(0.85 * patchNear, 0.97, stonesNear));
@@ -645,7 +648,7 @@ export const vf_terrain =
 		// (the forest floor: bare soil and moss over the roots and on the pits and mounds, the litter off them)
 		let bareFloor = saturate(rootFloor.g + (rootFloor.b + rootFloor.a) * 1.6);
 		// (and from further off still the forest's own shade, deep in its crowns: FOREST_FAR)
-		let forestFar = mix(COLOR_FOREST, FOREST_FAR, smoothstep(300.0, 2000.0, away));
+		let forestFar = mix(vec3f(0.15, 0.16, 0.085), vec3f(0.075, 0.09, 0.05), smoothstep(150.0, 1500.0, away)) * mix(0.88, 1.12, noise(worldPos.xz / 60.0 + vec2f(3.0, 11.0)));
 		albedo = mix(albedo, mix(forestFar, litter.rgb, litterNear * (1.0 - 0.8 * bareFloor)), forest);
 		// (the stony patches of the forest floor too: THE STONY GROUND)
 		albedo = mix(albedo, stones.rgb, forest * look.z * 0.92);
@@ -658,11 +661,14 @@ export const vf_terrain =
 		// round a lake: wet dark ground from a little above the water down, and mud under it
 		albedo = mix(albedo, COLOR_MARSH, marsh * (1.0 - smoothstep(1.5, 6.0, height)));
 		albedo = mix(albedo, COLOR_LAKEBED, marsh * smoothstep(-0.3, 2.5, -height));
+		// (a lake's stony shore, over its marsh and its mud: the stones the marsh would have hidden)
+		let shoreStones = look.z * step(0.01, waterside) * max(marsh, 1.0 - meadow - forest);
+		albedo = mix(albedo, stones.rgb, saturate(shoreStones) * 0.95);
 
 		// the relief of whichever of the three shows here. Snow buries it, and so do the loose stone and the turf on a mountain
 		//		Snow has a relief of its own: drifts, and a fine crust
 		let snowRelief = (noise(worldPos.xz / 4.5) - 0.5) * 0.05 + (noise(worldPos.xz / 0.8) - 0.5) * 0.03 * saturate(1.6 / (pixel * 4.0) - 1.0);
-		let relief = (marble.a * rocky * (1.0 - 0.7 * scree) * (1.0 - highTurf) + sand.a * beach + litter.a * forest * litterNear * (1.0 - rocky) + (turf.a * (1.0 - look.z) + stones.a * look.z) * meadow + stones.a * look.z * forest) * (1.0 - snow) + snowRelief * snow
+		let relief = (marble.a * rocky * (1.0 - 0.7 * scree) * (1.0 - highTurf) + sand.a * beach + litter.a * forest * litterNear * (1.0 - rocky) + (turf.a * (1.0 - look.z) + stones.a * look.z) * meadow + stones.a * look.z * forest + stones.a * saturate(shoreStones)) * (1.0 - snow) + snowRelief * snow
 			+ rootFloor.r * (1.0 - 0.6 * snow);		// (the soil heaved over the roots)
 
 		// snow lies over the small shapes and rounds them off: it is lit by a smoother surface than the rock under it

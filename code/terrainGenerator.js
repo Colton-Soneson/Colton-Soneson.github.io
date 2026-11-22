@@ -1527,8 +1527,14 @@ export function makeChunkBuilder(params, grids, sampler = createTerrainSampler(p
 		// the rivers cut into it (THE RIVERS): stony under the water
 		height = riverCut.cut(x, z, height);
 		landAtStones = riverCut.stones;
+		// (and round a lake's shore, from a little under its water to a little over it: a lowland lake's at the sea's level, where the marsh
+		//		round it is; a highland one's at its own (THE HIGHLAND LAKES). The stony ground of its edge: vf_terrain.js)
+		const shore = (over) => smoothstep(-1.5 * SHAPE.metre, -0.2 * SHAPE.metre, over) * (1 - smoothstep(0.5 * SHAPE.metre, 1.6 * SHAPE.metre, over));
+		if (marsh > 0.03) landAtStones = Math.max(landAtStones, shore(height) * smoothstep(0.03, 0.25, marsh));
+		const highLake = lakeOf(x, z);
+		if (highLake != NO_LAKE) landAtStones = Math.max(landAtStones, shore(height - highLake));
 		// (and a highland lake's bed, under its water, the same: THE HIGHLAND LAKES)
-		if (height < lakeOf(x, z)) { landAtCover = RIVERS.cover; landAtStones = 0; }
+		if (height < lakeOf(x, z)) landAtCover = RIVERS.cover;
 		// a town: its own hill, and its streets cut into that (see townLayout.js). Its ground is short turf
 		if (grids.townStrength) {
 			const town = gridAt(grids.townStrength, x, z);

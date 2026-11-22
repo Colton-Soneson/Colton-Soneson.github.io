@@ -64,6 +64,10 @@ const dummyShader = (clothes) =>
 	@group(0) @binding(1) var<uniform> Lights: LightsUniforms;
 	@group(0) @binding(2) var skyLUT: texture_2d<f32>;
 	@group(0) @binding(3) var skySampler: sampler;
+	// THE RAGDOLL (code/ragdolls.js, ragBuffer.js): one shot is drawn from its ragdoll's limbs, each part its own matrix (3 rows, the
+	//		translation in w) from the mesh as it was made to the world. tilt.w says which ragdoll (0: none, drawn as itself)
+	struct RagPart { r0: vec4f, r1: vec4f, r2: vec4f, }
+	@group(0) @binding(4) var<storage, read> RAGS: array<RagPart>;
 
 	struct VertexInput {
 		@location(0) shape: vec4f,		// xyz: the mesh, in metres, standing on y = 0 and facing +z. w: which part (see the top of the file)
@@ -72,7 +76,7 @@ const dummyShader = (clothes) =>
 		@location(3) state: vec4f,		// x: gone over, 0 standing to 1 flat on its back, y: hit, 1 just hit fading to 0, z: its colour (0 to 1 round the hues), w: sitting (0 to 1), astride (1 to 2)
 		@location(4) held: vec4f,		// x: how long what it holds is, the rifle it was made with 1 (0: nothing in its hands), y: 1 arms down at its sides, z: its head turned (radians, as heading), w: crouched, 0 to 1
 		@location(5) tilt: vec4f,		// x: tipped about its own x (radians: + its front down), y: rolled about its own z (radians), before it is turned to its heading,
-										//		z: in the war, 1 the other side (bright red) or 2 this one's (bright blue)
+										//		z: in the war, 1 the other side (bright red) or 2 this one's (bright blue), w: its ragdoll's number and 1 (THE RAGDOLL), 0 none
 		${clothes ? '@location(6) cloth: vec4f,		// the clothes: rgb the colour of what is drawn' : ''}
 	};
 
@@ -170,7 +174,17 @@ const dummyShader = (clothes) =>
 		// a dead one goes over on to its back, about its heels
 		let over = input.state.x * 1.5;
 		let fallen = turnX(p, -over) + vec3f(0.0, 0.12 * sin(over), 0.0);
-		let position = input.place.xyz + turnY(turnX(turnZ(fallen, input.tilt.y), input.tilt.x), input.pose.x) * input.place.w;
+		var position = input.place.xyz + turnY(turnX(turnZ(fallen, input.tilt.y), input.tilt.x), input.pose.x) * input.place.w;
+		// THE RAGDOLL: each part where its ragdoll's limb is (a hat with the head, what it held folded into the chest)
+		if (input.tilt.w > 0.5) {
+			var q = input.shape.xyz;
+			var limb = u32(part);
+			if (part >= 12) { limb = 2u; }
+			if (part == 11) { q = vec3f(0.0, 1.3, 0.0); limb = 1u; }
+			let R = RAGS[(u32(input.tilt.w + 0.5) - 1u) * 12u + limb];
+			let h = vec4f(q, 1.0);
+			position = vec3f(dot(R.r0, h), dot(R.r1, h), dot(R.r2, h));
+		}
 
 		var output: VertexOutput;
 		output.pos = DU.viewProjectionMatrix * vec4f(position, 1.0);

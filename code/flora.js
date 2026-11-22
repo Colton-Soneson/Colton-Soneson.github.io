@@ -272,7 +272,7 @@ const smooth = (a, b, v) => { const t = Math.min(Math.max((v - a) / (b - a), 0),
 export function meadowAt(x, z, up = 1) {
 	const m = metre();
 	const scrub = smooth(MEADOW_SCRUB.from, MEADOW_SCRUB.to, smoothNoise(x / (BIG.clump.scale * m), z / (BIG.clump.scale * m), 5) + 0.06 * (smoothNoise(x / (4 * m), z / (4 * m), 33) - 0.5));
-	const stones = 0.62 * smoothNoise(x / (24 * m), z / (24 * m), 41) + 0.38 * smoothNoise(x / (6.5 * m), z / (6.5 * m), 42) + 0.45 * (1 - smooth(0.8, 0.95, up));
+	const stones = 0.62 * smoothNoise(x / (24 * m), z / (24 * m), 41) + 0.38 * smoothNoise(x / (6.5 * m), z / (6.5 * m), 42) + 0.15 * (1 - smooth(0.8, 0.95, up));
 	const stony = smooth(0.7, 0.8, stones + 0.08 * (smoothNoise(x / (2.5 * m), z / (2.5 * m), 43) - 0.5));
 	return { scrub: scrub * (1 - stony), stony };
 }

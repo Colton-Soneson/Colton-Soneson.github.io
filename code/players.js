@@ -8,6 +8,7 @@ import * as profiler from './profiler.js'
 import { settings } from './settings.js';
 
 import { vf_dummy } from '../shaders/js/vf_dummy.js'
+import { ragEntry } from './ragBuffer.js'
 
 import * as transformations from './transformations.js'
 import * as terrain from './terrain.js'
@@ -556,6 +557,7 @@ export function playersPass(aEncoder, mainpassDepthTexture) {
 			{ binding: 1, resource: { buffer: uniformBufferLights } },
 			{ binding: 2, resource: skyViewLUTtexture.createView() },
 			{ binding: 3, resource: linSampler },
+			ragEntry(),
 		],
 	}));
 	pass.setVertexBuffer(0, meshBuffer);

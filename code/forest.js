@@ -130,6 +130,16 @@ const FOLIAGE_DETAIL_SD = [[1.0, 1.0], [0.5, 1.4], [0.2, 2.1], [0.08, 3.2], [0.0
 //		As the setting was when the page loaded: the trees' lists of pieces are made once)
 const FOLIAGE_DETAIL_HD = [[1.0, 1.0], [0.6, 1.3], [0.3, 1.8], [0.12, 2.7], [0.05, 4.0]];
 const FOLIAGE_DETAIL = settings.hdVegetation ? FOLIAGE_DETAIL_HD : FOLIAGE_DETAIL_SD;
+/*
+	LEAF DENSITY (settings.forestLeafDensity: 'low', 'medium', 'high' or 'ultra'): of every level's pieces of foliage, this share drawn (each
+	tree's pieces are shuffled, so any first so many are a fair sample of all of it), each that much bigger (the square root) so the crown
+	is as full. Each card carries many leaves or needles of its own (vf_forest.js: THE HD LEAVES, THE HD NEEDLES): fewer of them is the
+	same crown for less. And Leaf Card Size (settings.forestLeafSize) on top
+*/
+export const LEAF_DENSITY = { low: 0.3, medium: 0.5, high: 0.7, ultra: 1.0 };
+const leafShare = () => LEAF_DENSITY[settings.forestLeafDensity] ?? 0.5;
+const leafCount = (n) => n > 0 ? Math.max(Math.round(n * leafShare()), 1) : 0;
+const leafSize = (size) => size * Math.pow(leafShare(), -0.3) * (settings.forestLeafSize ?? 1);	// (not all the way to as full: fewer is airier, and cheaper)
 // and the roots: [sides, rings] for each level of detail that draws them (THE ROOTS)
 const ROOT_TESSELLATION = [[7, 3], [4, 2]];
 
@@ -1201,7 +1211,7 @@ function forestUniformValues(bake, viewProjection = null) {
 	bufferResult.push(bake ? bake.view : 0);
 	bufferResult.push(bake ? bake.halfDepth : 0);
 	bufferResult.push(bake ? bake.height : 0);
-	bufferResult.push(settings.hdVegetation ? 1 : 0);		//HD Textures and Models (vf_forest.js: THE HD CARDS, THE HD LEAVES)
+	bufferResult.push((settings.hdVegetation ? 1 : -1) * (1 + (settings.forestLeafThickness ?? 1.3)));		//HD Textures and Models (vf_forest.js: THE HD CARDS, THE HD LEAVES) its sign, and LEAF THICKNESS
 
 	//life
 	bufferResult.push(life ? life.fallYears : 1);
@@ -1452,6 +1462,21 @@ function createForestPipeline(label, shaderModule, bake = false) {
 
 const woodPipeline = createForestPipeline("forest wood pipeline", woodShaderModule);
 const foliagePipeline = createForestPipeline("forest foliage pipeline", foliageShaderModule);
+// THE DEPTH FIRST (vf_forest.js): the leaves' depth alone, and then lit where they are the nearest (depth equal, not written again)
+const foliageDepthPipeline = device.createRenderPipeline({
+	label: "forest foliage depth pipeline", layout: forestPipelineLayout,
+	vertex: { module: foliageShaderModule, entryPoint: "vertexMain", buffers: [] },
+	fragment: { module: foliageShaderModule, entryPoint: "fragmentDepth", targets: [{ format: canvasFormat, writeMask: 0 }] },
+	primitive: { topology: 'triangle-list', cullMode: 'none' },
+	depthStencil: { depthWriteEnabled: true, depthCompare: depthTest('less'), format: DEPTH_FORMAT },
+});
+const foliageLitPipeline = device.createRenderPipeline({
+	label: "forest foliage lit pipeline", layout: forestPipelineLayout,
+	vertex: { module: foliageShaderModule, entryPoint: "vertexMain", buffers: [] },
+	fragment: { module: foliageShaderModule, entryPoint: "fragmentMain", targets: [{ format: canvasFormat }] },
+	primitive: { topology: 'triangle-list', cullMode: 'none' },
+	depthStencil: { depthWriteEnabled: false, depthCompare: 'equal', format: DEPTH_FORMAT },
+});
 const billboardPipeline = createForestPipeline("forest billboard pipeline", billboardShaderModule);
 const woodBakePipeline = createForestPipeline("forest wood bake pipeline", woodShaderModule, true);
 const foliageBakePipeline = createForestPipeline("forest foliage bake pipeline", foliageShaderModule, true);
@@ -1713,7 +1738,7 @@ let keptDraws = null, keptDrawsFor = '', framesSinceSort = 0;
 function sortTreesIntoDraws() {
 	const planes = transformations.getFrustumPlanes();
 	const camX = settings.camPosX, camY = settings.camPosY, camZ = settings.camPosZ;
-	const drawsFor = planes.flat().join() + '|' + sunShadows.keepRadius() + '|' + [settings.forestDetailDistance, settings.forestMidDistance, settings.forestBillboardDistance, settings.forestDrawDistance, settings.forestThinnedRings, archetypes.length, settings.landOcclusion].join();
+	const drawsFor = planes.flat().join() + '|' + sunShadows.keepRadius() + '|' + [settings.forestDetailDistance, settings.forestMidDistance, settings.forestBillboardDistance, settings.forestDrawDistance, settings.forestThinnedRings, archetypes.length, settings.landOcclusion, settings.forestLeafDensity, settings.forestLeafSize].join();
 	if (keptDraws && !treesMoved && drawsFor === keptDrawsFor && ++framesSinceSort < DRAWS_REFRESH) {
 		return keptDraws;
 	}
@@ -1796,13 +1821,14 @@ function sortTreesIntoDraws() {
 	let listStart = 0, slot = 0;
 	forestStats.triangles = 0;
 	// kept: how many of the parts the next level of detail still draws. The rest shrink away over the last part of this level's distance
-	const addDraw = (into, partStart, partCount, kept, sides, rings, level, vertices, treeCount) => {
+	const addDraw = (into, partStart, partCount, kept, sides, rings, level, vertices, treeCount, leaves = false) => {
 		if (partCount <= 0 || slot >= MAX_DRAWS) return;
 		const last = level == lastLevel;
 		// fade. x to y: where it turns into the next level. z to w: where it dissolves away (into the billboard), which only the last level does
 		const fade = [ends[level] * (1 - FADE_BAND), ends[level], last ? billboardStart : 1e8, last ? ends[level] : 2e8];
+		const size = (s) => leaves ? leafSize(s) : s;
 		writeDraw(drawData, slot, listStart, partStart, partCount, sides, rings, last ? partCount : Math.min(Math.max(kept, 0), partCount),
-					FOLIAGE_DETAIL[level][1], FOLIAGE_DETAIL[Math.min(level + 1, lastLevel)][1], fade);
+					size(FOLIAGE_DETAIL[level][1]), size(FOLIAGE_DETAIL[Math.min(level + 1, lastLevel)][1]), fade);
 		const draw = { slot: slot, vertices: vertices, instances: treeCount * partCount };
 		into.push(draw);
 		forestStats.triangles += vertices / 3 * treeCount * partCount;
@@ -1822,7 +1848,7 @@ function sortTreesIntoDraws() {
 		if (tessellation.thin) {
 			addDraw(draws.wood, stage.sectionStart + stage.thick, stage.sections[level] - stage.thick, stage.sections[next] - stage.thick, tessellation.thin[0], tessellation.thin[1], level, tessellation.thin[0] * tessellation.thin[1] * 6, members.length);
 		}
-		addDraw(draws.foliage, stage.foliageStart, stage.foliage[level], stage.foliage[next], 0, 0, level, foliageVertices(level), members.length);
+		addDraw(draws.foliage, stage.foliageStart, leafCount(stage.foliage[level]), leafCount(stage.foliage[next]), 0, 0, level, foliageVertices(level), members.length, true);
 		const rootCut = settings.forestRoots ? ROOT_TESSELLATION[level] : null;
 		if (rootCut) { const draw = addDraw(draws.wood, stage.rootStart, stage.roots[level], stage.roots[level + 1], rootCut[0], rootCut[1], level, rootCut[0] * rootCut[1] * 6, members.length); if (draw) draws.roots.push(draw); }
 
@@ -1897,17 +1923,18 @@ function detailEnds() {
 
 // THE DRAW SLOTS (see the top), made again when the levels of detail or the archetypes are not what they were made for
 function drawSlots() {
-	const key = [settings.forestDetailDistance, settings.forestMidDistance, settings.forestBillboardDistance, settings.forestDrawDistance, settings.forestThinnedRings, settings.forestRoots, archetypes.length, builtArchetypeParams].join();
+	const key = [settings.forestDetailDistance, settings.forestMidDistance, settings.forestBillboardDistance, settings.forestDrawDistance, settings.forestThinnedRings, settings.forestRoots, archetypes.length, builtArchetypeParams, settings.forestLeafDensity, settings.forestLeafSize].join();
 	if (gpuSlots && gpuSlots.key === key) return gpuSlots;
 	const { lastLevel, ends, meshEnd, billboardStart, billboardEnd } = detailEnds();
 	const slots = { key, wood: [], foliage: [], billboards: [], roots: [], count: 0, lists: archetypes.length * STAGES * LEVELS, ends, billboardStart, billboardEnd, levelOf: new Uint8Array(MAX_DRAWS), levelFrom: 0 };
 	const table = new Uint32Array(MAX_DRAWS * 4);
-	const add = (into, list, partStart, partCount, kept, sides, rings, level, vertices) => {
+	const add = (into, list, partStart, partCount, kept, sides, rings, level, vertices, leaves = false) => {
 		if (partCount <= 0 || slots.count >= MAX_DRAWS - 1) return -1;
 		const last = level == lastLevel;
 		const fade = [ends[level] * (1 - FADE_BAND), ends[level], last ? billboardStart : 1e8, last ? ends[level] : 2e8];
+		const size = (s) => leaves ? leafSize(s) : s;
 		writeDraw(drawData, slots.count, 0, partStart, partCount, sides, rings, last ? partCount : Math.min(Math.max(kept, 0), partCount),
-					FOLIAGE_DETAIL[level][1], FOLIAGE_DETAIL[Math.min(level + 1, lastLevel)][1], fade);
+					size(FOLIAGE_DETAIL[level][1]), size(FOLIAGE_DETAIL[Math.min(level + 1, lastLevel)][1]), fade);
 		table.set([list, partCount, vertices, 0], slots.count * 4);
 		slots.levelOf[slots.count] = level;
 		into.push(slots.count);
@@ -1922,7 +1949,7 @@ function drawSlots() {
 		if (tessellation.thin) {
 			add(slots.wood, list, stage.sectionStart + stage.thick, stage.sections[level] - stage.thick, stage.sections[next] - stage.thick, tessellation.thin[0], tessellation.thin[1], level, tessellation.thin[0] * tessellation.thin[1] * 6);
 		}
-		add(slots.foliage, list, stage.foliageStart, stage.foliage[level], stage.foliage[next], 0, 0, level, foliageVertices(level));
+		add(slots.foliage, list, stage.foliageStart, leafCount(stage.foliage[level]), leafCount(stage.foliage[next]), 0, 0, level, foliageVertices(level), true);
 		const rootCut = settings.forestRoots ? ROOT_TESSELLATION[level] : null;
 		if (rootCut) { const k = add(slots.wood, list, stage.rootStart, stage.roots[level], stage.roots[level + 1], rootCut[0], rootCut[1], level, rootCut[0] * rootCut[1] * 6); if (k >= 0) slots.roots.push(k); }
 	}
@@ -2314,7 +2341,7 @@ sunShadows.addSunShadowCaster((pass, cascade, matrix) => {
 	if (!lastLists || !forestBindGroup || !settings.enableForest || !life || life.count == 0) return;
 	const { slots, draws } = lastLists;
 	const values = forestUniformValues(null, matrix);
-	values[35] = 0;		// (bake.w: drawn as without HD Textures and Models, 3 cards and the plain pattern: the shadow of a crown is the same)
+	values[35] = -(1 + (settings.forestLeafThickness ?? 1.3));		// (bake.w: drawn as without HD (its LEAF THICKNESS kept) Textures and Models, 3 cards and the plain pattern: the shadow of a crown is the same)
 	device.queue.writeBuffer(shadowUniforms[cascade], 0, values.buffer, values.byteOffset, values.byteLength);
 	if (!shadowBindGroups || shadowBindFor !== forestBindGroup) {
 		shadowBindGroups = shadowUniforms.map((u) => createBindGroupForest(u, treeBuffer, visibleBuffer, true));
@@ -2395,11 +2422,15 @@ export function forestPass(aEncoder, mainpassDepthTexture) {
 
 	pass = parts.next('Foliage', 'vf_forestFoliage');
 	pass.setBindGroup(0, forestBindGroup);
-	pass.setPipeline(foliagePipeline);
-	if (slots) drawEach(pass, slots.foliage);
-	else for (const draw of draws.foliage) {
-		pass.setBindGroup(1, drawBindGroup, [draw.slot * DRAW_STRIDE]);
-		pass.draw(draw.vertices, draw.instances, 0, 0);
+	// (THE DEPTH FIRST, vf_forest.js: their depth, then lit where they are in front. settings.forestDepthFirst off: lit as they come)
+	const depthFirst = settings.forestDepthFirst !== false;
+	for (const pipeline of depthFirst ? [foliageDepthPipeline, foliageLitPipeline] : [foliagePipeline]) {
+		pass.setPipeline(pipeline);
+		if (slots) drawEach(pass, slots.foliage);
+		else for (const draw of draws.foliage) {
+			pass.setBindGroup(1, drawBindGroup, [draw.slot * DRAW_STRIDE]);
+			pass.draw(draw.vertices, draw.instances, 0, 0);
+		}
 	}
 
 	pass = parts.next('Billboards', 'vf_forestBillboard');

@@ -8,6 +8,7 @@ import * as profiler from './profiler.js'
 import { settings } from './settings.js';
 
 import { vf_dummy, HAT_PART as C } from '../shaders/js/vf_dummy.js'
+import { ragEntry } from './ragBuffer.js'
 
 import * as transformations from './transformations.js'
 import * as terrain from './terrain.js'
@@ -620,7 +621,12 @@ ballistics.addTarget((ax, ay, az, bx, by, bz, bullet) => {
 		}
 	}
 	return best && { t: best.t, what: 'townsperson', remoteToo: true, hit: (velocity, bullet) => {
-		if (folkHit.take?.(best.person, bullet) || bullet?.remote) return;
+		const at = [ax + (bx - ax) * best.t, ay + (by - ay) * best.t, az + (bz - az) * best.t], up = (at[1] - best.person.place.y) / m;
+		best.person.lastHit = { at, dir: velocity ?? [bx - ax, by - ay, bz - az], part: up > 1.55 ? 'head' : up > 1.15 ? 'chest' : up > 0.85 ? 'belly' : 'leg',
+			power: ballistics.ROUNDS[bullet?.round]?.damage ?? 1 };
+		const taken = folkHit.take?.(best.person, bullet);
+		if (!best.person.dead && best.person.place) folkRagHook.hit?.(best.person);
+		if (taken || bullet?.remote) return;
 		if (best.person.flee) return;
 		townFolkStats.shot++;
 		folkShotHeard(best.person.index, folkSeconds);
@@ -669,7 +675,9 @@ export function turnFolk(index) {
 }
 export function restoreFolk() { for (const person of folk) { person.turned = false; person.fight = null; person.led = null; person.gone = false; person.dead = false; } }
 // THE WAR (war.js): killed (it does not come back until the towns are whole again), and who is
-export function killFolk(index) { const person = personOf(index); if (person) { person.dead = true; person.fight = null; person.led = null; person.place = null; } }
+export function killFolk(index) { const person = personOf(index); if (person) { if (person.place) folkRagHook.death?.(person); person.dead = true; person.fight = null; person.led = null; person.place = null; } }
+// THE RAGDOLLS (ragdolls.js sets these): told of a hit on one of them (where it went in: person.lastHit), and of one killed, before it goes
+export const folkRagHook = { hit: null, death: null };
 export function setDead(list) { const dead = new Set(list); for (const person of folk) { person.dead = dead.has(person.index); if (person.dead) person.fight = null; } }
 export function deadList() { return folk.filter((person) => person.dead).map((person) => person.index); }
 // a hit on one, for the war (war.js): take(person, bullet) true if it has seen to it (anyone's: the host sees the joiners' rounds too)
@@ -800,14 +808,14 @@ export function townFolkPass(aEncoder, mainpassDepthTexture) {
 	};
 	if (settings.enableTownFolk) for (const person of folk) {
 		const p = person.place;
-		if (!p) continue;
+		if (!p || person.rag) continue;
 		const held = HELD_LENGTH[person.fight?.gun] ?? 0;
 		const row = [p.x, p.y, p.z, metre(), p.heading, held ? person.fight.pitch : 0, p.stride, p.walking, p.lean ?? 0, person.hit, person.hue, 0, held, held ? 0 : 1, person.look, 0, 0, 0, 0, 0];
 		if (take(person.profession.hat + (held ? '+' : ''), p, row)) outfits.wear(row, outfits.npcOutfit(person.profession.name, person.index));
 	}
 	for (const source of extraFolk) source((o) => {
 		const held = HELD_LENGTH[o.gun] ?? 0;
-		const row = [o.x, o.y, o.z, metre(), o.heading, o.pitch ?? 0, o.stride ?? 0, o.walking ?? 0, o.fallen ?? 0, o.hit ?? 0, o.hue ?? 0, o.sit ?? 0, held, held ? 0 : o.armsDown ?? 1, o.look ?? 0, 0, o.tilt?.[0] ?? 0, o.tilt?.[1] ?? 0, o.side ?? 0, 0];
+		const row = [o.x, o.y, o.z, metre(), o.heading, o.pitch ?? 0, o.stride ?? 0, o.walking ?? 0, o.fallen ?? 0, o.hit ?? 0, o.hue ?? 0, o.sit ?? 0, held, held ? 0 : o.armsDown ?? 1, o.look ?? 0, 0, o.tilt?.[0] ?? 0, o.tilt?.[1] ?? 0, o.side ?? 0, o.rag ?? 0];
 		if (take(o.hat + (held ? '+' : ''), o, row)) outfits.wear(row, o.outfit);
 	});
 	if (count == 0) return;
@@ -831,6 +839,7 @@ export function townFolkPass(aEncoder, mainpassDepthTexture) {
 				{ binding: 1, resource: { buffer: uniformBufferLights } },
 				{ binding: 2, resource: skyViewLUTtexture.createView() },
 				{ binding: 3, resource: gpu.sampler },
+				ragEntry(),
 			],
 		});
 	}

@@ -134,7 +134,7 @@ function grassUniformBufferUpdates() {
 	bufferResult.push(settings.grassClumpHeight);
 	bufferResult.push(settings.grassClumpFacing);
 	bufferResult.push(settings.grassClumpColor);
-	bufferResult.push(seasonNow.hay, weatherNow.snowCover, 0);
+	bufferResult.push(seasonNow.hay, weatherNow.snowCover, settings.terrainSnowLine);
 
 	//the rings, and nothing for the ones there are not
 	for (let ring = 0; ring < GRASS_MAX_RINGS; ring++) {

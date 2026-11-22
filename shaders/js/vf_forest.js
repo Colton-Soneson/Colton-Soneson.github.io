@@ -876,7 +876,7 @@ export const vf_forestThrows =
 export const vf_forestFoliage = structs + common +
 `
 	struct FoliageOutput {
-		@builtin(position) pos: vec4f,
+		@builtin(position) @invariant pos: vec4f,		// (@invariant: the depth pre-pass and the pass after it must agree to the bit, THE DEPTH FIRST)
 		@location(0) worldPos: vec3f,
 		@location(1) cardNormal: vec3f,
 		@location(2) crownNormal: vec3f,	// the way out of the crown from here: lights the tree as one rounded shape instead of as a heap of flat cards
@@ -1005,6 +1005,12 @@ export const vf_forestFoliage = structs + common +
 	// each returns x: 1.0 where there is leaf and 0.0 where there is a gap, y: a shade for that leaf
 
 	// One layer of broad leaves. The card is cut into square cells and each cell holds one leaf: a pointed oval, turned and nudged at random
+	// LEAF THICKNESS (settings.forestLeafThickness, carried in bake.w: HD Textures and Models its sign, the thickness its size less 1):
+	//		how wide every leaf, needle and twiglet of a card is drawn, times this; and wider still further off, where one thinner than a
+	//		pixel would only flicker in and out (foliageColor sets it for the patterns)
+	var<private> leafThick: f32 = 1.0;
+	fn leafThicknessOf(w: f32) -> f32 { return select(1.0, abs(w) - 1.0, abs(w) > 0.5); }
+
 	fn leafLayer(uv: vec2f, cells: f32, seed: f32) -> vec2f {
 		let grid = uv * cells;
 		let cell = floor(grid) + vec2f(seed, seed * 1.7);
@@ -1012,7 +1018,7 @@ export const vf_forestFoliage = structs + common +
 		let nudge = vec2f(hash21(cell + vec2f(5.2, 1.3)), hash21(cell + vec2f(9.1, 7.7))) - vec2f(0.5, 0.5);
 		let p = fract(grid) - vec2f(0.5, 0.5) - nudge * 0.36;
 		// the leaf's own axes: -1 at the stalk to 1 at the tip, and across. Every leaf its own size
-		let leafSize = 0.2 + 0.12 * hash21(cell + vec2f(2.9, 4.1));
+		let leafSize = (0.2 + 0.12 * hash21(cell + vec2f(2.9, 4.1))) * min(leafThick, 1.6);
 		let lengthways = (p.x * cos(turn) + p.y * sin(turn)) / leafSize;
 		let across = (p.y * cos(turn) - p.x * sin(turn)) / leafSize;
 		let width = 0.5 * (1.0 - lengthways * lengthways) * (1.0 - 0.3 * lengthways);	// widest below the middle, a point at the tip
@@ -1031,7 +1037,7 @@ export const vf_forestFoliage = structs + common +
 		let turn = hash21(cell) * 2.0 * PI;
 		let nudge = vec2f(hash21(cell + vec2f(5.2, 1.3)), hash21(cell + vec2f(9.1, 7.7))) - vec2f(0.5, 0.5);
 		let p = fract(grid) - vec2f(0.5, 0.5) - nudge * 0.36;
-		let leafSize = 0.21 + 0.12 * hash21(cell + vec2f(2.9, 4.1));
+		let leafSize = (0.21 + 0.12 * hash21(cell + vec2f(2.9, 4.1))) * min(leafThick, 1.6);
 		let lengthways = (p.x * cos(turn) + p.y * sin(turn)) / leafSize;
 		let across = (p.y * cos(turn) - p.x * sin(turn)) / leafSize;
 		var width = 0.5 * (1.0 - lengthways * lengthways) * (1.0 - 0.3 * lengthways);
@@ -1051,8 +1057,8 @@ export const vf_forestFoliage = structs + common +
 		return vec2f(leaf, (0.78 + 0.44 * hash21(cell + vec2f(3.3, 8.8))) * rib * veins * edge * along);
 	}
 	fn leavesHD(uv: vec2f, seed: f32, species: f32) -> vec2f {
-		let first = leafLayerHD(uv, 7.0, seed * 13.0, species);
-		let second = leafLayerHD(vec2f(uv.x * 0.8 + uv.y * 0.6, uv.y * 0.8 - uv.x * 0.6) + vec2f(0.37, 0.61), 6.0, seed * 29.0 + 3.0, species);
+		let first = leafLayerHD(uv, 11.0, seed * 13.0, species);
+		let second = leafLayerHD(vec2f(uv.x * 0.8 + uv.y * 0.6, uv.y * 0.8 - uv.x * 0.6) + vec2f(0.37, 0.61), 9.0, seed * 29.0 + 3.0, species);
 		let clump = step(distance(uv, vec2f(0.5, 0.5)), 0.5 - 0.06 * hash21(floor(uv * 9.0) + vec2f(seed, 2.0)));
 		return vec2f(max(first.x, second.x) * clump, mix(second.y * 0.85, first.y, first.x));
 	}
@@ -1066,22 +1072,22 @@ export const vf_forestFoliage = structs + common +
 		let along = uv.x;
 		let side = abs(uv.y * 2.0 - 1.0);
 		let twig = step(side, 0.035 * (1.0 - 0.6 * along));
-		let slant = along * 8.0 - side * 1.15 + seed;
+		let slant = along * 12.0 - side * 1.15 + seed;
 		let row = floor(slant);
 		let f = fract(slant) - 0.5;
 		let reach = (1.0 - 0.7 * along) * (0.62 + 0.38 * hash21(vec2f(row, seed * 7.0)));
 		let outward = side / max(reach, 0.01);
 		let stem = step(abs(f), 0.045) * step(outward, 1.0);
-		let strokes = fract(side * 42.0 + row * 0.37);
-		let comb = step(abs(f), 0.26 * (1.0 - outward) + 0.05) * step(strokes, 0.5) * step(outward, 1.0);
+		let strokes = fract(side * 60.0 + row * 0.37);
+		let comb = step(abs(f), (0.26 * (1.0 - outward) + 0.05) * leafThick) * step(strokes, min(0.5 * leafThick, 0.92)) * step(outward, 1.0);
 		let present = max(twig, max(stem, comb));
 		let tip = smoothstep(0.55, 1.0, outward) * 0.32 + smoothstep(0.84, 0.97, along) * 0.3;
-		let shade = (0.66 + 0.4 * hash21(vec2f(row, floor(side * 42.0)))) * (1.0 + tip) + select(0.0, 0.08, tip > 0.25);
+		let shade = (0.66 + 0.4 * hash21(vec2f(row, floor(side * 60.0)))) * (1.0 + tip) + select(0.0, 0.08, tip > 0.25);
 		return vec2f(present, mix(shade, 0.5, twig * (1.0 - comb)));
 	}
 	// and a pine's: long needles, two dozen to a burst, from a brown bud in its middle, lighter at their tips
 	fn tuftHD(uv: vec2f, seed: f32) -> vec2f {
-		let grid = uv * 3.0;
+		let grid = uv * 4.5;
 		let cell = floor(grid) + vec2f(seed * 17.0, seed * 5.0);
 		let p = fract(grid) - vec2f(0.5, 0.5) - (vec2f(hash21(cell), hash21(cell + vec2f(4.4, 2.2))) - vec2f(0.5, 0.5)) * 0.2;
 		let outward = length(p);
@@ -1089,7 +1095,7 @@ export const vf_forestFoliage = structs + common +
 		let ray = floor(angle * 24.0);
 		let needle = fract(angle * 24.0 + hash21(cell + vec2f(1.1, 6.6)));
 		let len = 0.47 - 0.14 * hash21(cell + vec2f(ray, 0.0));
-		let burst = step(abs(needle - 0.5), 0.22 * (1.0 - outward / len) + 0.05) * step(outward, len);
+		let burst = step(abs(needle - 0.5), (0.22 * (1.0 - outward / len) + 0.05) * leafThick) * step(outward, len);
 		let bud = 1.0 - smoothstep(0.03, 0.06, outward);
 		let clump = step(distance(uv, vec2f(0.5, 0.5)), 0.5);
 		let shade = (0.7 + 0.45 * hash21(cell + vec2f(ray, 2.0))) * (0.85 + 0.4 * smoothstep(0.1, 0.45, outward / len));
@@ -1098,9 +1104,9 @@ export const vf_forestFoliage = structs + common +
 
 	// broad leaves: two layers of them, the second out of step with the first, inside a round clump
 	fn leaves(uv: vec2f, seed: f32) -> vec2f {
-		let first = leafLayer(uv, 6.0, seed * 13.0);
+		let first = leafLayer(uv, 9.0, seed * 13.0);
 		// (turned, so its cells dont line up with the first layer's)
-		let second = leafLayer(vec2f(uv.x * 0.8 + uv.y * 0.6, uv.y * 0.8 - uv.x * 0.6) + vec2f(0.37, 0.61), 5.0, seed * 29.0 + 3.0);
+		let second = leafLayer(vec2f(uv.x * 0.8 + uv.y * 0.6, uv.y * 0.8 - uv.x * 0.6) + vec2f(0.37, 0.61), 7.0, seed * 29.0 + 3.0);
 		let clump = step(distance(uv, vec2f(0.5, 0.5)), 0.5);
 		return vec2f(max(first.x, second.x) * clump, mix(second.y * 0.85, first.y, first.x));
 	}
@@ -1109,31 +1115,31 @@ export const vf_forestFoliage = structs + common +
 	fn frond(uv: vec2f, seed: f32) -> vec2f {
 		let along = uv.x;						// 0 the trunk end, 1 the tip end
 		let across = abs(uv.y * 2.0 - 1.0);		// 0 on the twig, 1 at the edge of the card
-		let shoots = fract(along * 7.0 - across * 1.5 + seed);
+		let shoots = fract(along * 10.0 - across * 1.5 + seed);
 		// the needles: fine teeth along both edges of every shoot
-		let needles = hash21(vec2f(floor(across * 26.0), floor(along * 7.0 - across * 1.5 + seed) + seed * 91.0));
-		let reach = (1.0 - 0.6 * along * along) * (0.75 + 0.25 * hash21(vec2f(floor(along * 7.0 - across * 1.5 + seed), seed)));
-		let spray = step(abs(shoots - 0.4), 0.22 + 0.16 * needles) * step(across, reach);
+		let needles = hash21(vec2f(floor(across * 36.0), floor(along * 10.0 - across * 1.5 + seed) + seed * 91.0));
+		let reach = (1.0 - 0.6 * along * along) * (0.75 + 0.25 * hash21(vec2f(floor(along * 10.0 - across * 1.5 + seed), seed)));
+		let spray = step(abs(shoots - 0.4), (0.22 + 0.16 * needles) * leafThick) * step(across, reach);
 		let twig = step(across, 0.04);
 		return vec2f(max(spray, twig), mix(0.7 + 0.5 * needles, 0.55, twig * (1.0 - spray)));
 	}
 
 	// pine needles: bursts of long needles fanning out from a point, one burst to a cell
 	fn tuft(uv: vec2f, seed: f32) -> vec2f {
-		let grid = uv * 3.0;
+		let grid = uv * 4.0;
 		let cell = floor(grid) + vec2f(seed * 17.0, seed * 5.0);
 		let p = fract(grid) - vec2f(0.5, 0.5) - (vec2f(hash21(cell), hash21(cell + vec2f(4.4, 2.2))) - vec2f(0.5, 0.5)) * 0.2;
 		let outward = length(p);
 		let angle = atan2(p.y, p.x) / (2.0 * PI) + 0.5;
 		let needle = fract(angle * 15.0 + hash21(cell + vec2f(1.1, 6.6)));
-		let burst = step(needle, 0.45) * step(outward, 0.47 - 0.12 * hash21(cell + vec2f(floor(angle * 15.0), 0.0)));
+		let burst = step(needle, min(0.45 * leafThick, 0.9)) * step(outward, 0.47 - 0.12 * hash21(cell + vec2f(floor(angle * 15.0), 0.0)));
 		let clump = step(distance(uv, vec2f(0.5, 0.5)), 0.5);
 		return vec2f(burst * clump, 0.75 + 0.45 * hash21(cell + vec2f(floor(angle * 15.0), 2.0)));
 	}
 
 	//same as vertexoutput without builtin bits
 	struct FoliageInput {
-		@builtin(position) pixel: vec4f,
+		@builtin(position) @invariant pixel: vec4f,
 		@builtin(front_facing) front: bool,
 		@location(0) worldPos: vec3f,
 		@location(1) cardNormal: vec3f,
@@ -1152,6 +1158,7 @@ export const vf_forestFoliage = structs + common +
 	fn foliageColor(input: FoliageInput) -> vec4f {
 		var drawn: vec2f;
 		let seed = input.look.y + input.look.z * 0.31;
+		leafThick = leafThicknessOf(UBO.bake.w) * (1.0 + 0.9 * smoothstep(15.0, 120.0, distance(input.worldPos, UBO.cameraPosition.xyz) / UBO.world.x));
 		let hd = UBO.bake.w > 0.5;
 		if (input.look.x == ${FOLIAGE_FROND}.0) {
 			drawn = select(frond(input.uv, seed), frondHD(input.uv, seed), hd);
@@ -1174,6 +1181,18 @@ export const vf_forestFoliage = structs + common +
 			cardNormal = -cardNormal;
 		}
 		return normalize(mix(cardNormal, normalize(input.crownNormal), 0.7));
+	}
+
+	/*
+		THE DEPTH FIRST (forest.js): the leaves drawn twice. First only their depth, a leaf where there is one and nothing in the gaps (and
+		nothing where the level of detail dissolves it), which is all the cards cost the first time; then lit, with the depth test equal,
+		so only the leaf in front at each pixel is lit, not every one of the layers of them behind it
+	*/
+	@fragment
+	fn fragmentDepth(input: FoliageInput) {
+		if (dissolved(input.pixel.xy, input.dissolve) || foliageColor(input).a < 0.5) {
+			discard;
+		}
 	}
 
 	// into the sun's shadow maps (sunShadows.js): the leaves, and nothing in the gaps between them

@@ -15,7 +15,7 @@
 
 import { seededRandom } from './terrainGenerator.js'
 import { MOUNTAIN_THRESHOLD } from './terrainGenerator.js'
-import { ZONE_OCEAN, ZONE_BEACH, ZONE_GRASSLAND, ZONE_FOREST } from './terrainGenerator.js'
+import { ZONE_OCEAN, ZONE_BEACH, ZONE_GRASSLAND, ZONE_FOREST, ZONE_LAKE } from './terrainGenerator.js'
 import { PATHS } from './footpaths.js'
 
 export const BOULDER_SHAPES = 4;			// how many different boulders there are
@@ -197,6 +197,27 @@ export function placeBoulders(land, params) {
 	scatter(Math.round(3000 * params.amount),
 		(i, x, z) => (land.zones[i] == ZONE_BEACH || land.zones[i] == ZONE_GRASSLAND) && land.covers[i] >= 0 && above(i) > bankFoot && above(i) < bankTop && fields(x * 2.9 + 40, z * 2.9 + 77) > -0.1,
 		() => (0.3 + 1.9 * Math.pow(random(), 2.4)) * metre, () => 1);
+
+	//---round the lakes
+	// big ones along a lake's edge, the ice and the waves having pushed them up there: on the shore and standing in the shallows, where the
+	//		land's grid has lake on one side and none on the other, in groups (a big one, and a few smaller round it)
+	const lakeAt = (x, z) => land.zones[pointAt(x, z)] == ZONE_LAKE;
+	const shoreline = (x, z) => {
+		let lake = 0;
+		for (let k = 0; k < 8; k++) { const a = k * Math.PI / 4, r = 1.5 * land.cellSize; if (lakeAt(x + Math.cos(a) * r, z + Math.sin(a) * r)) lake++; }
+		return lake > 0 && lake < 8;
+	};
+	for (let attempt = 0, found = 0, wanted = Math.round(900 * params.amount); attempt < wanted * 600 && found < wanted; attempt++) {
+		const x = (random() * 2 - 1) * half, z = (random() * 2 - 1) * half;
+		if (!shoreline(x, z) || land.normals[pointAt(x, z) * 3 + 1] < 0.6 || fields(x * 1.3 + 17, z * 1.3 - 61) < -0.35) continue;
+		const size = (1.2 + 4.8 * Math.pow(random(), 1.8)) * metre;
+		add(x, z, size, 0.8 + 0.5 * random());
+		found++;
+		for (let bit = 0; bit < 4 && random() < 0.7; bit++) {
+			const angle = random() * 6.2832, away = size * (0.8 + 1.2 * random());
+			add(x + Math.cos(angle) * away, z + Math.sin(angle) * away, size * (0.15 + 0.35 * random()), 1);
+		}
+	}
 
 	//---out in the sea
 	// big ones, on the bed past the edge of the shallows, where it starts to drop away. The ones in the shallower water stand

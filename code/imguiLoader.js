@@ -155,6 +155,12 @@ export const imguiParams = {
     forestConiferShare: settings.forestConiferShare,
     forestLifeCycle: settings.forestLifeCycle,
     forestYearsPerSunCycle: settings.forestYearsPerSunCycle,
+    forestLeafDensity: settings.forestLeafDensity,
+    forestLeafSize: settings.forestLeafSize,
+    forestDepthFirst: settings.forestDepthFirst,
+    forestLeafThickness: settings.forestLeafThickness,
+    forestMaxTrees: settings.forestMaxTrees,
+    forestGpuCulling: settings.forestGpuCulling,
     forestYear: settings.forestYear,
     forestTreeCount: settings.forestTreeCount,
     forestDetailDistance: settings.forestDetailDistance,
@@ -584,6 +590,15 @@ forestFolder.add(imguiParams, 'forestRoots').name('Roots');
 forestFolder.add(imguiParams, 'forestBillboardDistance', 50, 3000, 10).name('Billboard Distance');
 forestFolder.add(imguiParams, 'forestDrawDistance', 100, 12000, 50).name('Draw Distance');
 forestFolder.add(imguiParams, 'forestWindStrength', 0, 3, 0.05).name('Wind Strength');
+const forestLookFolder = forestFolder.addFolder('Leaves and Detail');	//how much of each tree is drawn, and how (forest.js: LEAF DENSITY)
+forestLookFolder.add(imguiParams, 'forestLeafDensity', ['low', 'medium', 'high', 'ultra']).name('Leaf Density');
+forestLookFolder.add(imguiParams, 'forestLeafSize', 0.6, 1.6, 0.05).name('Leaf Card Size');
+forestLookFolder.add(imguiParams, 'forestLeafThickness', 0.6, 2.0, 0.05).name('Leaf Thickness');
+forestLookFolder.add(imguiParams, 'hdVegetation').name('HD Leaves and Bark');
+forestLookFolder.add(imguiParams, 'enableSunShadows').name('Tree Shadows');
+forestLookFolder.add(imguiParams, 'forestMaxTrees', 20000, 400000, 5000).name('Max Trees');
+forestLookFolder.add(imguiParams, 'forestGpuCulling').name('GPU Culling');
+forestLookFolder.add(imguiParams, 'forestDepthFirst').name('Leaf Depth Pre-pass');
 
 const seasonFolder = gui.addFolder('Seasons');	//see weather.js
 seasonFolder.add(imguiParams, 'seasonMode', ['auto', 'spring', 'summer', 'fall', 'winter']).name('Season');

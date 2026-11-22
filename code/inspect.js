@@ -16,9 +16,15 @@ import * as rabbits from './rabbits.js'
 import { CREATURE_MESHES } from './creatureMeshes.js'
 import { ITEMS, QUALITY, dollars } from './items.js'
 import { ANATOMY, ORGAN_NAMES, KIND_NAMES, bend, angleOf, cleanRecord } from './anatomy.js'
+import { DEER_KINDS, shapeOf } from './deerKinds.js'
+import * as wildBirds from './wildBirds.js'
+import * as hawks from './birds.js'
+import * as geese from './geese.js'
+import { BIRD_KINDS, BIRD_MESHES, BIRD_FLOATS, DRAKE, HEN, TOM, TURKEY_HEN, HAWK, GOOSE } from './wildBirdShapes.js'
 
 /*
-	THE INSPECTION of a dead wild animal (a deer, a moose, a bear, a wolf or a rabbit): F at one lying there (within REACH, the eye on it), and a
+	THE INSPECTION of a dead wild animal (any kind of deer, a moose, a bear, a wolf, a rabbit, or a bird: a gull, an owl, a mallard, a loon,
+	a swan, a wild turkey, a goose or a hawk): F at one lying there (within REACH, the eye on it), and a
 	page of the journal on it. Tab, F or Esc shut it (journalUI.js). Only the wild ones: what their record says (anatomy.js recordOf, kept by
 	deer.js, beasts.js, rabbits.js), the host's (a joiner asks for it: inspect, inspected).
 		THE DRAWING	the animal standing, as it was when it was hit (a deer's head as it held it), drawn in charcoal (vf_inspect.js) in a box
@@ -31,8 +37,9 @@ import { ANATOMY, ORGAN_NAMES, KIND_NAMES, bend, angleOf, cleanRecord } from './
 					shot has none: only a snared one's comes whole)
 */
 const REACH = 2.8;			// metres from the eye, as a hatchet's (survivalTools.js)
-const PELT = { deer: 'deerHide', moose: 'mooseHide', bear: 'bearHide', wolf: 'wolfPelt', rabbit: 'rabbitPelt' };
-const MARK = { deer: 1, moose: 1.7, bear: 1.4, wolf: 0.75, rabbit: 0.3 };	// how big the marks are drawn, for how big it is
+const PELT = { deer: 'deerHide', moose: 'mooseHide', bear: 'bearHide', wolf: 'wolfPelt', rabbit: 'rabbitPelt' };	// (a bird has none)
+const MARK = { deer: 1, moose: 1.7, bear: 1.4, wolf: 0.75, rabbit: 0.3, gull: 0.3, owl: 0.3, mallard: 0.26, loon: 0.32, swan: 0.55, turkey: 0.5, goose: 0.2, hawk: 0.18 };	// how big the marks are drawn, for how big it is
+const BIRD_MESH_OF = { hawk: HAWK, goose: GOOSE };		// (the inspection's own models of these two: wildBirdShapes.js. The rest the record's species)
 const SELL = 0.5;			// of a pelt's price, the butcher pays (shops.js)
 const VIEW = [520, 380];	// page pixels
 
@@ -46,9 +53,16 @@ function inView() {
 	const b = beasts.corpseInReach(eye, look, reach);
 	if (b) return { kind: b.kind, id: b.id };
 	const r = rabbits.corpseInReach(eye, look, reach);
-	return r != null ? { kind: 'rabbit', id: r } : null;
+	if (r != null) return { kind: 'rabbit', id: r };
+	const w = wildBirds.corpseInReach(eye, look, reach);
+	if (w) return w;
+	const h = hawks.fallenHawkInReach(eye, look, reach);
+	if (h != null) return { kind: 'hawk', id: h };
+	const g = geese.fallenGooseInReach(eye, look, reach);
+	return g != null ? { kind: 'goose', id: g } : null;
 }
-const recordFor = (kind, id) => kind == 'deer' ? deer.deerRecord(id) : kind == 'rabbit' ? rabbits.rabbitRecord(id) : ANATOMY[kind] ? beasts.beastRecord(id) : null;
+const recordFor = (kind, id) => kind == 'deer' ? deer.deerRecord(id) : kind == 'rabbit' ? rabbits.rabbitRecord(id) : kind == 'hawk' ? hawks.hawkRecord(id) : kind == 'goose' ? geese.gooseRecord(id)
+	: wildBirds.ANATOMY_OF.includes(kind) ? wildBirds.birdRecord(id) : ANATOMY[kind] ? beasts.beastRecord(id) : null;
 let asked = null;			// a joiner: the one it has asked the host for
 function inspect(found) {
 	if (survivalNet.authority()) { const record = recordFor(found.kind, found.id); if (record) show(record); else help.toast('Nothing to make of it'); return; }
@@ -88,7 +102,9 @@ const menu = {
 		const organs = [...new Set(W.flatMap((one) => one.organs))];
 		const throughName = organs.filter((n) => n != 'meat').map((n) => ORGAN_NAMES[n]).join(', ') || ORGAN_NAMES.meat;
 		const other = w?.other == 'blast' ? 'A shell burst by it' : w?.other == 'maul' ? 'Wolves, or a fall' : null;
-		const title = 'Dead ' + KIND_NAMES[R.kind].toLowerCase() + (R.kind == 'deer' ? (R.buck ? ', a buck' : ', a doe') : '');
+		const D = R.kind == 'deer' ? DEER_KINDS[R.species ?? 0] : null;		// (which kind of deer: deerKinds.js)
+		const sex = R.kind == 'mallard' ? (R.species == HEN ? ', a hen' : ', a drake') : R.kind == 'turkey' ? (R.species == TURKEY_HEN ? ', a hen' : ', a tom') : '';
+		const title = 'Dead ' + (D ? D.name + ', a ' + (R.buck ? D.male : D.female) : KIND_NAMES[R.kind].toLowerCase() + sex);
 		const button = (act, label, on = false) => `<button class="jr-btn" data-act="${act}" style="${on ? 'background: rgba(43,37,32,0.18); font-weight: bold;' : ''}">${label}</button>`;
 		return `<div style="display: flex; gap: 24px; align-items: flex-start;">
 			<div>
@@ -113,7 +129,7 @@ const menu = {
 				${row('Through', throughName)}
 				${row('Came out', rounds.some((one) => one.exit) ? (rounds.length > 1 ? `${rounds.filter((one) => one.exit).length} of ${rounds.length}` : 'Yes') : 'No: it stayed in')}`}
 				<div class="jr-title" style="margin-top: 12px;">The pelt</div>
-				${R.kind == 'rabbit' ? `${row('Clean kill', R.quality.score + ' of 100')}${row('Pelt', 'None: only a snare keeps one whole')}` : `
+				${!pelt || R.kind == 'rabbit' ? `${row('Clean kill', R.quality.score + ' of 100')}${row('Pelt', R.kind == 'rabbit' ? 'None: only a snare keeps one whole' : 'None: a bird has feathers')}` : `
 				${row('Quality', `<span style="letter-spacing: 1px;">${'★'.repeat(stars)}${'☆'.repeat(5 - stars)}</span> ${QUALITY[stars].name}`)}
 				${row('Clean kill', R.quality.score + ' of 100')}
 				${row('The butcher pays', dollars(Math.floor(Math.round(pelt.price * 100) * SELL * worth)) + (worth != 1 ? ` (${worth < 1 ? '' : '+'}${Math.round((worth - 1) * 100)}%)` : ''))}`}
@@ -140,11 +156,29 @@ window.addEventListener('keydown', (e) => {
 // THE MODELS, as triangles of [x, y, z, id] (see vf_inspect.js for the ids)
 function animal(out, record, headDown) {
 	if (record.kind == 'deer') {
+		// (as vf_deer.js draws its kind: its ears, its tail, its own antlers if it has them. own made up from the record: deerKinds.js OWN)
+		const own = (record.species ?? 0) * 4 + ((record.antlers ?? record.buck) ? (record.buck ? 1 : 3) : record.buck ? 2 : 0);
 		const M = deer.DEER_MESH;
 		for (let v = 0; v < M.length; v += 4) {
 			const part = M[v + 3];
-			if (part == 6 && !record.buck) continue;		// (a buck's antlers)
-			const p = part == 1 || part == 6 ? bend([M[v], M[v + 1], M[v + 2]], headDown) : [M[v], M[v + 1], M[v + 2]];
+			const shaped = shapeOf(own, [M[v], M[v + 1], M[v + 2]], part);
+			if (!shaped) continue;
+			const p = part >= 1 && part < 2 || part > 5.5 ? bend(shaped, headDown) : shaped;
+			out.push(p[0], p[1], p[2], 1);
+		}
+		return;
+	}
+	if (!CREATURE_MESHES[record.kind]) {
+		// a bird: its mesh (wildBirdShapes.js), the wings of one shot on the ground or the water folded as vf_wildBirds.js folds them; a
+		//		hawk's and a goose's spread, as they were in the air
+		const k = BIRD_MESH_OF[record.kind] ?? record.species ?? 0, K = BIRD_KINDS[k], [first, count] = BIRD_MESHES.ranges[k], M = BIRD_MESHES.data;
+		for (let v = first; v < first + count; v++) {
+			const o = v * BIRD_FLOATS, part = Math.round(M[o + 3]);
+			let p = [M[o], M[o + 1], M[o + 2]];
+			if (part == 2 && !K.inspectOnly) {
+				const side = p[0] > 0 ? 1 : -1, s = Math.abs(M[o + 7]), pivot = [side * K.SHOULDER[0], K.SHOULDER[1], K.SHOULDER[2]];
+				p = [pivot[0] + side * 0.012 * s + K.FOLD[0] * s * K.FOLD[3], pivot[1] + (p[1] - pivot[1]) * 0.3 + K.FOLD[1] * s * K.FOLD[3], pivot[2] + (p[2] - pivot[2]) * 0.3 + K.FOLD[2] * s * K.FOLD[3]];
+			}
 			out.push(p[0], p[1], p[2], 1);
 		}
 		return;
@@ -209,7 +243,8 @@ function build() {
 }
 // the camera's first place: where the shot came from (the side it went in), a little in front and above; all of it in view
 function aimAt(record) {
-	const M = record.kind == 'deer' ? deer.DEER_MESH : CREATURE_MESHES[record.kind].data;
+	const M = [];
+	animal(M, record, 0);
 	const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
 	for (let v = 0; v < M.length; v += 4) for (let i = 0; i < 3; i++) { lo[i] = Math.min(lo[i], M[v + i]); hi[i] = Math.max(hi[i], M[v + i]); }
 	state.target = lo.map((v, i) => (v + hi[i]) / 2);

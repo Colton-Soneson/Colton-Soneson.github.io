@@ -28,7 +28,7 @@ import { ITEMS, makeItem } from './items.js'
 	same everywhere). Metres and seconds; places in world units
 */
 const TRAIN = { count: 2, cruise: 13, accel: 0.35, brake: 0.8, dwell: 30, end: 45, gap: 1.2, cars: ['trainLoco', 'trainCoach', 'trainCoach', 'trainExpress'], gunmen: [20, 30],
-	range: 150, look: 0.4, fire: [1.4, 3.2], lost: 240, draw: 2500, tell: 4, top: 0.42, land: 1.2 };
+	range: 150, look: 0.4, fire: [1.4, 3.2], lost: 240, draw: 2500, tell: 4, top: 0.62, land: 1.2 };	// (top: the rails' tops over the line: townGround.js BED)
 // what is in the express car's strongbox ([type, chance, most]), filled at each end of the line
 const VALUABLES = [['money', 1, 12000], ['money', 0.6, 8000], ['rifle', 0.3], ['revolver', 0.4], ['rifleRounds', 0.6, 40], ['coltRounds', 0.5, 30], ['antibiotics', 0.3, 2], ['bandage', 0.4, 4], ['sewingKit', 0.2]].filter(([t]) => ITEMS[t]);
 

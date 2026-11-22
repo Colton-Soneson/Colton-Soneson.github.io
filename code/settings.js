@@ -136,7 +136,7 @@ export const settings = {
 	grassTotalHARDLIMIT: 2000000,	//top of the blade count slider. Nothing is stored per blade any more, so this is only about how much the GPU can draw
 	grassDrawDistance: 900.0,		//how far from the camera the grass reaches. The rings stretch to reach it: the grass at your feet stays as thick, the far grass thins
 	//level of detail: rings round the camera, each reaching further than the last with a coarser grid of blades (see vfc_grass.js)
-	grassLodRings: 6,				//how many rings, 1 to 8. More rings = a gentler thinning out, and more of the blades spent far away
+	grassLodRings: 3,				//how many rings, 1 to 8. More rings = a gentler thinning out, and more of the blades spent far away
 	grassLodNearDistance: 120.0,		//how far the first ring reaches: the grass at full thickness, every blade a curved strip
 	grassLodFarBlades: 0.8,			//how many blades a ring gets next to the ring inside it. 1 = every ring the same number, 0.5 = each ring half the one before
 	//clumps: the blades grow in tufts, and take after the tuft they are in (see CLUMPS in vfc_grass.js)
@@ -262,7 +262,9 @@ export const settings = {
 	enableWhales: true,					//a few whales out in the deep, and the schooners after them. See whaling.js
 	enableGeese: true,					//one skein of geese, high up in a V most of the time, now and then down on a lake or a marsh. See geese.js
 	geeseCount: 7,						//how many geese in it, 0 to 12
-	geeseSize: 8.0,						//from wing tip to wing tip, world units (about two and a half times life size, or they would be specks that high up)
+	geeseSize: 8.0,
+	enableWildBirds: true,				//gulls over the beaches and the towns, owls in the forest, mallards, loons and swans on the lakes, turkeys on the forest's edges. See wildBirds.js
+	wildBirdNumbers: 1.0,				//more or fewer of them (0.25 to 3)						//from wing tip to wing tip, world units (about two and a half times life size, or they would be specks that high up)
 	enableBirds: true,					//hawks: small groups that soar over the grassland by day and roost in the forest by night. See birds.js
 	birdGroups: 3,						//how many groups, 0 to 3. Each is 1 to 5 birds
 	birdSize: 6.0,						//from wing tip to wing tip, world units (twice life size: a real one would be a speck from the ground)

@@ -158,6 +158,15 @@ const farTiles = new Map();					// key -> { key, chunkKey ('far:' and its key), 
 //		again. The chunk worker keeps their grids: dropFar)
 const farKept = new Map();
 export const farTilesLoaded = () => [...farTiles.keys()];
+// the land of a tile of the world as the map draws it (survivalMap.js): { land, near }: the tile's own if it is here (near), or its far
+//		ground (coarse, nothing on it), or null for one not made yet. The one land of old: it
+export function mapLandOf(key) {
+	if (!world) return { land, near: true };
+	const t = tiles.get(key);
+	if (t) return { land: t.key == HOME ? land : t.land, near: true };
+	const far = farTiles.get(key) ?? farKept.get(key);
+	return far ? { land: far.land, near: false } : null;
+}
 const tilesKept = () => Math.max(6, Math.ceil((2 * tileLoad() / settings.terrainWorldSize + 1) ** 2) + 2);
 const WINDOW_MOVE = 2048;					// world units
 const VOID_DEPTH = 600;						// world units under the sea: the bed of the endless sea, where there is no tile

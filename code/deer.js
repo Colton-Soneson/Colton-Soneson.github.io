@@ -18,21 +18,25 @@ import * as hearing from './hearing.js'
 //the deer fade into the horizon color, read from the sky view LUT (same as everything else)
 import {skyViewLUTtexture} from './atmosphere.js'
 import {sunCycles} from './atmosphere.js'
+import { DEER_KINDS, ELK, CARIBOU, kindOf, isMale, hasAntlers, sizeOfOwn, cutAntlers, newOwn, pickKind } from './deerKinds.js'
 import { ANATOMY, woundFrom, otherWound, cleanWound, bleedOf, recordOf, vital } from './anatomy.js'
 
 //GET THE LIGHT CREATION OUT OF THE MAIN
 import {uniformBufferLights} from './rotatingCube.js'
 
 /*
-	Deer. Small groups (settings.deerGroups, 4 to start with and up to MAX_GROUPS, of 1 to 3 each), living in the forest and going down to
-	the water to drink.
+	Deer. Small groups (settings.deerGroups, 4 to start with and up to MAX_GROUPS, of 1 to 3 each, or 4 of some kinds), living in the forest and going down to
+	the water to drink. And herds of elk and of caribou (3 to 6 each), in the forest and out on the grass (THE GROUPS).
+	SEVEN KINDS (deerKinds.js): the white-tailed deer, the mule deer, the black-tailed deer, the fallow deer, the roe deer, the elk and the
+		caribou. Each group is all of one kind.
 
 	THE DEER (DEER_MESH)
-		Under 400 triangles, in metres, life size: a body in rings (eight sided, 108), a neck (36) and a head (56), ears (8), a tail (6), four legs from hip to
-		hoof (32 each), and a buck's antlers (48). The legs walk and the head goes down to graze and to drink in the shader
-		(vf_deer.js), which only needs to know where each deer is in its stride and how far down its head is.
-		BUCKS AND DOES: more bucks (BUCKS of them), a little bigger, and only they have antlers. All of it is in own: a doe's is under 1, a buck's 1 to 2, a buck's whose
-		antlers have been cut off 2 to 3: so it goes with the deer's record to everyone, as it is.
+		In metres, a white-tailed deer's, life size: a body in rings (eight sided: deepest at the chest over the front legs), a neck and a head, ears, a tail, four legs from hip to
+		hoof, and the antlers of every kind, each a part of its own. The legs walk and the head goes down to graze and to drink in the shader
+		(vf_deer.js), which only needs to know where each deer is in its stride and how far down its head is; it makes it its kind's size,
+		with its ears, its tail, its antlers and its coat.
+		MALES AND FEMALES: each kind's share of males (deerKinds.js: bucks), a little bigger, and only they have antlers (and a caribou's
+		cows: smaller ones). All of it is in own (deerKinds.js: OWN): so it goes with the deer's record to everyone, as it is.
 
 	THE GROUPS
 		Each has a home: a stretch of forest near a marsh (the wet ground round a lake), the nearest first. The homes are
@@ -69,8 +73,8 @@ import {uniformBufferLights} from './rotatingCube.js'
 */
 
 const MAX_GROUPS = 200;
-const MAX_IN_GROUP = 3;
-const MAX_DEER = MAX_GROUPS * MAX_IN_GROUP;
+const MAX_IN_GROUP = 6;			// (the most of any kind's: deerKinds.js. A white-tailed deer's are 1 to 3)
+const MAX_DEER = MAX_GROUPS * MAX_IN_GROUP * 1.5;	// (and the elk and the caribou, groups of their own: THE GROUPS)
 const MAX_DRAWN = MAX_DEER * 2 + 3400;	// the living and the shot ones still going into the ground, and the others drawn with them (addDrawn: the horde)
 const HOME_SPACINGS = [250, 180, 120];	// world units between homes: the widest first, closer only when they do not all fit
 const REHERD_SECONDS = 0.4;		// a new number of groups is made once it has held this long (a dragged slider goes through every number)
@@ -89,9 +93,6 @@ const GROUND_AGAIN = 0.5;			// metres
 const FALL_SECONDS = 0.7, LIE_SECONDS = 6, SINK_SECONDS = 4;
 const SURVIVAL_LIE_SECONDS = 600;
 const CUTS = ['venison', 'sinew', 'deerHide', 'venison', 'venison', 'sinew', 'venison'];
-const BUCKS = 0.65, BUCK_SIZE = 1.1;
-const isBuck = (own) => own >= 1;
-const sizeOfOwn = (own) => isBuck(own) ? BUCK_SIZE : 1;
 const lieOf = (corpse) => corpse.lie ?? (settings.gameMode == 'Hunting' ? SURVIVAL_LIE_SECONDS : LIE_SECONDS);
 const SINK_DEPTH = 0.7;				// metres it goes down into the ground
 const RESPAWN_SECONDS = 120;
@@ -137,12 +138,17 @@ const ringAlong = (c, axis, w, h, n = 6) => {
 	const l = Math.hypot(...axis), d = axis.map((v) => v / l), up = [0, d[2], -d[1]];
 	return Array.from({ length: n }, (_, k) => { const a = (k + 0.5) / n * Math.PI * 2; return [c[0] + Math.cos(a) * w, c[1] + up[1] * Math.sin(a) * h, c[2] + up[2] * Math.sin(a) * h]; });
 };
+const ANTLER_RANGES = {};		// each kind's antlers in DEER_MESH: part: [first vertex, vertices]
 export const DEER_MESH = (() => {
 	const triangles = [];
-	// the body, rump to chest: its middle a little deeper at the chest, its belly drawn up behind
-	rings(triangles, [acrossZ(-0.68, 0.05, 0.96, 1.06), acrossZ(-0.58, 0.12, 0.86, 1.13), acrossZ(-0.32, 0.15, 0.84, 1.15), acrossZ(-0.02, 0.15, 0.82, 1.13), acrossZ(0.26, 0.155, 0.8, 1.15), acrossZ(0.48, 0.14, 0.84, 1.2), acrossZ(0.6, 0.085, 0.94, 1.2)], 0, true, true);
+	// the body, rump to chest: its belly drawn up behind, the barrel of its ribs deepening forward to the chest, deepest and widest over
+	//		the front legs, and the brisket rounding down in front of them below the neck
+	//		(as deep as a white-tailed deer's: the bottom of its chest about half way down its front legs, its barrel nearly as wide)
+	rings(triangles, [acrossZ(-0.68, 0.06, 0.94, 1.08), acrossZ(-0.58, 0.14, 0.8, 1.15), acrossZ(-0.32, 0.18, 0.72, 1.16), acrossZ(-0.02, 0.19, 0.68, 1.15), acrossZ(0.22, 0.2, 0.62, 1.17),
+		acrossZ(0.4, 0.2, 0.58, 1.21), acrossZ(0.53, 0.18, 0.6, 1.23), acrossZ(0.62, 0.13, 0.7, 1.22), acrossZ(0.69, 0.07, 0.82, 1.17)], 0, true, true);
 	// the neck
-	const neck = [[0, 1.1, 0.46, 0.105, 0.135], [0, 1.25, 0.56, 0.08, 0.1], [0, 1.38, 0.63, 0.062, 0.078], [0, 1.47, 0.68, 0.052, 0.066]];
+	// the neck (thick where it meets the chest)
+	const neck = [[0, 1.08, 0.47, 0.13, 0.19], [0, 1.25, 0.56, 0.095, 0.12], [0, 1.38, 0.63, 0.062, 0.078], [0, 1.47, 0.68, 0.052, 0.066]];
 	rings(triangles, neck.map(([x, y, z, w, h], k) => ringAlong([x, y, z], [0, 0.82, 0.57], w, h)), 1);
 	// the head: from behind the ears down to the muzzle, closed at both ends
 	const head = [[0, 1.5, 0.62, 0.052, 0.062], [0, 1.49, 0.7, 0.07, 0.08], [0, 1.46, 0.78, 0.054, 0.058], [0, 1.425, 0.87, 0.038, 0.04], [0, 1.4, 0.94, 0.024, 0.024]];
@@ -150,28 +156,74 @@ export const DEER_MESH = (() => {
 	// the ears (a thin leaf each, both ways), and the tail
 	for (const side of [-1, 1]) {
 		const a = [0.035 * side, 1.54, 0.67], b = [0.05 * side, 1.55, 0.62], c = [0.1 * side, 1.61, 0.655], e = [0.17 * side, 1.65, 0.625];
-		triangles.push([a, c, b, 1], [c, e, b, 1], [a, b, c, 1], [c, b, e, 1]);
+		triangles.push([a, c, b, 1.25], [c, e, b, 1.25], [a, b, c, 1.25], [c, b, e, 1.25]);		// (1.25: the ears, each kind's size: deerKinds.js)
 	}
-	tube(triangles, [0, 1.06, -0.66], [0, 0.93, -0.75], 0.045, 0.012, 3, 0);
+	tube(triangles, [0, 1.06, -0.66], [0, 0.93, -0.75], 0.045, 0.012, 3, 0.25);		// (0.25: the tail, the same)
 	// the legs: left front, right front, left hind, right hind: hip, knee, down the cannon bone, the hoof
 	[[-0.095, 0.4], [0.095, 0.4], [-0.095, -0.45], [0.095, -0.45]].forEach(([x, z], leg) => {
 		const hind = z < 0, ring = (y, w, d, off = 0) => [[x - w, y, z - d + off], [x + w, y, z - d + off], [x + w, y, z + d + off], [x - w, y, z + d + off]];
 		rings(triangles, [ring(0.9, 0.05, hind ? 0.12 : 0.085), ring(0.46, 0.028, 0.038, hind ? -0.02 : 0), ring(0.14, 0.018, 0.022, 0.01), ring(0.05, 0.022, 0.03, 0.015), ring(0, 0.025, 0.036, 0.02)], 2 + leg);
 	});
-	// a buck's antlers (part 6: only a buck has them, vf_deer.js): a beam out and up and forward from behind each ear, two tines off it
+	// the antlers, each kind's a part of its own (6 on: deerKinds.js; only those of the deer's kind drawn, and only on one with antlers,
+	//		vf_deer.js), from behind each ear. A beam through the points given, radius r0 at its foot to r1 at its tip, and tines off it
+	const beam = (points, r0, r1, part) => { for (let k = 0; k < points.length - 1; k++) tube(triangles, points[k], points[k + 1], r0 + (r1 - r0) * k / (points.length - 1), r0 + (r1 - r0) * (k + 1) / (points.length - 1), 3, part); };
+	const palm = (points, part) => { for (let k = 1; k < points.length - 1; k++) triangles.push([points[0], points[k], points[k + 1], part]); };	// (a flat fan, both ways: no culling)
 	for (const side of [-1, 1]) {
-		const foot = [0.03 * side, 1.555, 0.655], bend = [0.13 * side, 1.72, 0.6], tip = [0.1 * side, 1.86, 0.8];
-		tube(triangles, foot, bend, 0.016, 0.012, 3, 6);
-		tube(triangles, bend, tip, 0.012, 0.004, 3, 6);
-		tube(triangles, bend, [0.17 * side, 1.92, 0.58], 0.009, 0.003, 3, 6);
-		tube(triangles, [0.12 * side, 1.78, 0.68], [0.04 * side, 1.9, 0.68], 0.008, 0.003, 3, 6);
+		const s = (x, y, z) => [x * side, y, z];
+		// 6, a white-tailed deer's: the beam out and up and curving forward, the tines standing up off it
+		const bend = s(0.13, 1.72, 0.6);
+		beam([s(0.03, 1.555, 0.655), bend, s(0.1, 1.86, 0.8)], 0.016, 0.004, 6);
+		tube(triangles, bend, s(0.17, 1.92, 0.58), 0.009, 0.003, 3, 6);
+		tube(triangles, s(0.12, 1.78, 0.68), s(0.04, 1.9, 0.68), 0.008, 0.003, 3, 6);
+		tube(triangles, s(0.11, 1.76, 0.73), s(0.08, 1.88, 0.76), 0.007, 0.003, 3, 6);
+		// 7, a mule deer's and a black-tailed deer's: up and out, forked, and each fork forked again
+		const fork = s(0.14, 1.71, 0.62), front = s(0.18, 1.84, 0.7), back = s(0.22, 1.85, 0.55);
+		beam([s(0.03, 1.555, 0.655), fork], 0.016, 0.012, 7);
+		beam([fork, front], 0.012, 0.008, 7); beam([fork, back], 0.012, 0.008, 7);
+		tube(triangles, front, s(0.16, 1.96, 0.77), 0.008, 0.003, 3, 7); tube(triangles, front, s(0.23, 1.95, 0.7), 0.008, 0.003, 3, 7);
+		tube(triangles, back, s(0.25, 1.98, 0.6), 0.008, 0.003, 3, 7); tube(triangles, back, s(0.3, 1.93, 0.5), 0.008, 0.003, 3, 7);
+		tube(triangles, s(0.06, 1.61, 0.66), s(0.08, 1.66, 0.72), 0.006, 0.002, 3, 7);
+		// 8, a fallow deer's: a short round beam with a brow tine, then broad and flat, a palm with points along its back edge
+		const P0 = s(0.11, 1.71, 0.62);
+		beam([s(0.03, 1.555, 0.655), P0], 0.016, 0.013, 8);
+		tube(triangles, s(0.07, 1.63, 0.64), s(0.09, 1.66, 0.74), 0.008, 0.003, 3, 8);
+		tube(triangles, s(0.1, 1.69, 0.63), s(0.12, 1.73, 0.71), 0.007, 0.003, 3, 8);
+		palm([P0, s(0.14, 1.8, 0.64), s(0.17, 1.93, 0.6), s(0.2, 2.0, 0.52), s(0.24, 1.97, 0.43), s(0.24, 1.88, 0.42), s(0.2, 1.8, 0.5), s(0.15, 1.74, 0.56)], 8);
+		for (const [a, b] of [[[0.17, 1.93, 0.6], [0.18, 2.0, 0.63]], [[0.2, 2.0, 0.52], [0.21, 2.07, 0.5]], [[0.24, 1.97, 0.43], [0.27, 2.01, 0.38]], [[0.24, 1.88, 0.42], [0.28, 1.88, 0.36]]])
+			tube(triangles, s(...a), s(...b), 0.007, 0.002, 3, 8);
+		// 9, a roe deer's: short and nearly upright, rough at the foot, a tine forward and one back
+		beam([s(0.03, 1.555, 0.655), s(0.04, 1.68, 0.65), s(0.045, 1.8, 0.63)], 0.017, 0.004, 9);
+		tube(triangles, s(0.04, 1.67, 0.65), s(0.05, 1.72, 0.71), 0.007, 0.002, 3, 9);
+		tube(triangles, s(0.044, 1.75, 0.64), s(0.05, 1.79, 0.58), 0.006, 0.002, 3, 9);
+		// 10, an elk's: a long beam swept up and back over the shoulders, the tines standing forward and up off it, the fourth the longest
+		const E = [s(0.03, 1.555, 0.655), s(0.1, 1.66, 0.62), s(0.19, 1.84, 0.52), s(0.26, 2.02, 0.36), s(0.27, 2.17, 0.2), s(0.22, 2.25, 0.06)];
+		beam(E, 0.026, 0.006, 10);
+		for (const [at, to] of [[[0.08, 1.63, 0.63], [0.11, 1.64, 0.88]], [[0.11, 1.68, 0.61], [0.14, 1.73, 0.84]], [[0.19, 1.84, 0.52], [0.23, 2.0, 0.66]],
+			[[0.26, 2.02, 0.36], [0.31, 2.25, 0.46]], [[0.27, 2.17, 0.2], [0.29, 2.34, 0.25]]]) tube(triangles, s(...at), s(...to), 0.012, 0.004, 3, 10);
+		// 11, a caribou's: back and up and round forward in a C, a flat shovel over the face from its foot, a palm of points at its top
+		const B = [s(0.03, 1.555, 0.655), s(0.1, 1.7, 0.57), s(0.17, 1.9, 0.46), s(0.21, 2.08, 0.45), s(0.2, 2.21, 0.55), s(0.16, 2.27, 0.66)];
+		beam(B, 0.018, 0.006, 11);
+		beam([s(0.04, 1.6, 0.67), s(0.04, 1.63, 0.79)], 0.008, 0.006, 11);
+		palm([s(0.04, 1.63, 0.79), s(0.02, 1.57, 0.84), s(0.04, 1.6, 0.9), s(0.07, 1.66, 0.89), s(0.07, 1.69, 0.82)], 11);
+		tube(triangles, s(0.1, 1.7, 0.57), s(0.14, 1.79, 0.72), 0.009, 0.004, 3, 11);
+		palm([s(0.2, 2.21, 0.55), s(0.13, 2.34, 0.6), s(0.16, 2.33, 0.68), s(0.2, 2.29, 0.74), s(0.16, 2.27, 0.66)], 11);
+		tube(triangles, s(0.21, 2.08, 0.45), s(0.27, 2.16, 0.35), 0.008, 0.003, 3, 11);
 	}
+	// (the body first, then each kind's antlers together: drawn as ranges of their own, a deer's kind's only, see deerPass)
+	const keyOf = (part) => part > 5.5 ? Math.round(part) : 0;
+	triangles.sort((a, b) => keyOf(a[3]) - keyOf(b[3]));
 	const data = [];
-	for (const [a, b, c, part] of triangles) for (const p of [a, b, c]) data.push(p[0], p[1], p[2], part);
+	for (const [a, b, c, part] of triangles) {
+		const key = keyOf(part), v = data.length / 4;
+		if (key && !ANTLER_RANGES[key]) ANTLER_RANGES[key] = [v, 0];
+		if (key) ANTLER_RANGES[key][1] += 3;
+		for (const p of [a, b, c]) data.push(p[0], p[1], p[2], part);
+	}
 	return new Float32Array(data);
 })();
 const DEER_VERTICES = DEER_MESH.length / 4;
-export const DEER_TRIANGLE_COUNT = DEER_VERTICES / 3;
+const BODY_VERTICES = Math.min(...Object.values(ANTLER_RANGES).map(([first]) => first));
+export const DEER_TRIANGLE_COUNT = BODY_VERTICES / 3 + Math.max(...Object.values(ANTLER_RANGES).map(([, n]) => n)) / 3;	// (the most one deer is drawn with)
 
 export const deerStats = { deer: 0, groups: 0, day: 0, triangles: DEER_TRIANGLE_COUNT, killed: 0, corpses: 0, respawned: 0, spheres: DEER_SPHERES.length };	// for anyone who wants to show it
 
@@ -180,7 +232,8 @@ export const deerStats = { deer: 0, groups: 0, day: 0, triangles: DEER_TRIANGLE_
 const deerShaderModule = device.createShaderModule({ label: "vf_deer", code: vf_deer });
 const meshBuffer = device.createBuffer({ label: "deer mesh", size: DEER_MESH.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
 device.queue.writeBuffer(meshBuffer, 0, DEER_MESH);
-const instanceData = new Float32Array(MAX_DRAWN * DEER_FLOATS);
+const instanceData = new Float32Array(MAX_DRAWN * DEER_FLOATS), sortedData = new Float32Array(MAX_DRAWN * DEER_FLOATS);
+const antlerKey = new Uint8Array(MAX_DRAWN);		// (each drawn one's kind with antlers, or DEER_KINDS.length without: deerPass)
 const instanceBuffer = device.createBuffer({ label: "deer instances", size: instanceData.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
 const deerUniformBuffer = device.createBuffer({ label: "deer Uniform", size: 96, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 const linSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
@@ -296,9 +349,10 @@ function killDeer(deer, group, velocity) {
 	group.deer.splice(at, 1);
 	// over on to the side the shot pushed it to (its right is (cos, -sin) of its heading)
 	const side = velocity[0] * Math.cos(deer.heading) - velocity[2] * Math.sin(deer.heading) > 0 ? 1 : -1;
-	const cuts = [...(deer.own >= 1 && deer.own < 2 ? ['antlers'] : []), ...CUTS];
+	const more = DEER_KINDS[kindOf(deer.own)].more;		// (more meat on the bigger kinds, less on a roe deer: deerKinds.js)
+	const cuts = [...(hasAntlers(deer.own) ? ['antlers'] : []), ...(more < 0 ? CUTS.slice(0, CUTS.length + more) : [...CUTS, ...Array.from({ length: more }, (_, k) => k % 3 == 2 ? 'sinew' : 'venison')])];
 	const seconds = Math.max(herdSeconds - (deer.firstWound ?? herdSeconds), Number.isFinite(deer.bleed) ? deer.bleed : 0);
-	corpses.push({ deer: deer, t: 0, side: side, cuts, meat: cuts.length, record: recordOf('deer', deer.wounds ?? [otherWound('maul')], seconds, { size: deer.size ?? 1, buck: deer.own >= 1 && deer.own < 2 }) });
+	corpses.push({ deer: deer, t: 0, side: side, cuts, meat: cuts.length, record: recordOf('deer', deer.wounds ?? [otherWound('maul')], seconds, { size: deer.size ?? 1, buck: isMale(deer.own), species: kindOf(deer.own), antlers: hasAntlers(deer.own) }) });
 	group.respawns.push(herdSeconds + RESPAWN_SECONDS);
 	deerStats.killed++;
 }
@@ -352,7 +406,7 @@ function respawnDeer(group) {
 		if (walkable(x, z) && far(x, z)) place = [x, z];
 	}
 	if (!place) return false;
-	group.deer.push(newDeer(place[0], place[1]));
+	group.deer.push(newDeer(place[0], place[1], group.kind ?? 0));
 	if (group.deer.length == 1) {
 		group.state = 'wander';
 		group.target = wanderTarget(group);
@@ -362,8 +416,8 @@ function respawnDeer(group) {
 }
 
 let nextDeerId = 1;
-function newDeer(x, z) {
-	const own = Math.random() * 0.999 + (Math.random() < BUCKS ? 1 : 0);
+function newDeer(x, z, kind = 0) {
+	const own = newOwn(kind);
 	return { id: nextDeerId++, x: x, z: z, y: 0, heading: Math.random() * Math.PI * 2, stride: Math.random() * 6.28, walking: 0, headDown: 0, headWanted: 0, alertTimer: 0, own, size: sizeOfOwn(own), slope: 0, ground: null, place: null };
 }
 const between = ([low, high]) => low + (high - low) * Math.random();
@@ -379,12 +433,13 @@ export function walkable(x, z) {
 	return Math.abs(land.heightAt(x + step, z) - y) < STEEPEST * step && Math.abs(land.heightAt(x, z + step) - y) < STEEPEST * step;
 }
 
-// somewhere in the forest round a group's home
+// somewhere in the forest round a group's home (or on the grass, for the elk and the caribou)
 function wanderTarget(group) {
 	for (let attempt = 0; attempt < 10; attempt++) {
 		const angle = Math.random() * Math.PI * 2, out = WANDER * metre() * Math.sqrt(Math.random());
 		const x = group.home.x + Math.cos(angle) * out, z = group.home.z + Math.sin(angle) * out;
-		if (terrain.land.zoneAt(x, z) == terrain.ZONE_FOREST && walkable(x, z)) return [x, z];
+		const zone = terrain.land.zoneAt(x, z);
+		if ((zone == terrain.ZONE_FOREST || (group.grass && zone == terrain.ZONE_GRASSLAND)) && walkable(x, z)) return [x, z];
 	}
 	return [group.home.x, group.home.z];
 }
@@ -468,16 +523,33 @@ function* herdSteps(land, tile) {
 		}
 	}
 
-	for (const home of homes) {
-		const group = { home: { x: home.x, z: home.z }, deer: [], state: 'wander', target: null, timer: 0, trips: [], scheduledDay: -1, visits: {}, spot: null, respawns: [], tile };
-		const size = 1 + Math.floor(Math.random() * MAX_IN_GROUP);
+	// the elk and the caribou: herds of their own (a quarter as many as the deer asked for each, one at the least), in the forest or out on
+	//		the grass, away from the deer's homes and each other's
+	const herds = wanted > 0 ? Math.max(1, Math.round(wanted / 4)) : 0;
+	const open = [terrain.ZONE_GRASSLAND, terrain.ZONE_FOREST].flatMap((zone, z) => land.findSpawnPoints(zone, herds * 6 + 10, { seed: 59 + z, minSpacing: 150, maxSlope: 0.35 })).filter((spot) => walkable(spot.x, spot.z));
+	open.sort(() => Math.random() - 0.5);
+	const kinds = homes.map(() => pickKind());
+	for (const kind of [ELK, CARIBOU]) {
+		let made = 0;
+		for (const spot of open) {
+			if (made >= herds) break;
+			if (homes.some((home) => Math.hypot(home.x - spot.x, home.z - spot.z) < 150)) continue;
+			homes.push(spot); kinds.push(kind);
+			made++;
+		}
+	}
+
+	homes.forEach((home, h) => {
+		const kind = kinds[h], K = DEER_KINDS[kind];
+		const group = { home: { x: home.x, z: home.z }, kind, grass: K.grass, deer: [], state: 'wander', target: null, timer: 0, trips: [], scheduledDay: -1, visits: {}, spot: null, respawns: [], tile };
+		const size = K.group[0] + Math.floor(Math.random() * (K.group[1] - K.group[0] + 1));
 		for (let d = 0; d < size; d++) {
-			const x = home.x + (Math.random() - 0.5) * 8, z = home.z + (Math.random() - 0.5) * 8;
-			group.deer.push(newDeer(x, z));
+			const x = home.x + (Math.random() - 0.5) * 8 * K.size, z = home.z + (Math.random() - 0.5) * 8 * K.size;
+			group.deer.push(newDeer(x, z, kind));
 		}
 		group.target = wanderTarget(group);
 		groups.push(group);
-	}
+	});
 }
 
 // the exact ground under a deer, worked out again only when it has gone GROUND_AGAIN (see THE GROUND at the top)
@@ -529,8 +601,8 @@ function moveGroup(group, to, pace, elapsed) {
 	const left = walkTowards(leader, to, pace, elapsed);
 	group.deer.forEach((deer, i) => {
 		if (i == 0) return;
-		const side = i % 2 ? 1 : -1, back = (2.2 + 1.3 * i) * metre();
-		let place = [leader.x - Math.sin(leader.heading) * back + Math.cos(leader.heading) * side * 1.6 * metre(), leader.z - Math.cos(leader.heading) * back - Math.sin(leader.heading) * side * 1.6 * metre()];
+		const k = DEER_KINDS[group.kind ?? 0].size, side = i % 2 ? 1 : -1, back = (2.2 + 1.3 * i) * k * metre();
+		let place = [leader.x - Math.sin(leader.heading) * back + Math.cos(leader.heading) * side * 1.6 * k * metre(), leader.z - Math.cos(leader.heading) * back - Math.sin(leader.heading) * side * 1.6 * k * metre()];
 		if (!walkable(place[0], place[1])) place = [leader.x - Math.sin(leader.heading) * back, leader.z - Math.cos(leader.heading) * back];
 		const far = Math.hypot(place[0] - deer.x, place[1] - deer.z);
 		if (far > 0.6 * metre()) walkTowards(deer, place, pace * clamp(far / (2 * metre()), 0.3, 1.4), elapsed);
@@ -539,7 +611,7 @@ function moveGroup(group, to, pace, elapsed) {
 		for (const other of group.deer) {
 			if (other === deer) continue;
 			const ox = deer.x - other.x, oz = deer.z - other.z, apart = Math.hypot(ox, oz) || 0.01;
-			if (apart < 1.2 * metre()) { deer.x += ox / apart * elapsed * metre(); deer.z += oz / apart * elapsed * metre(); }
+			if (apart < 1.2 * k * metre()) { deer.x += ox / apart * elapsed * metre(); deer.z += oz / apart * elapsed * metre(); }
 		}
 	});
 	return left;
@@ -686,7 +758,7 @@ function advanceDeer(frameElapsed) {
 		} else if (group.state == 'drink') {
 			// all of them at the edge, side by side, facing the water, heads down
 			group.deer.forEach((deer, i) => {
-				const along = (i % 2 ? 1 : -1) * Math.ceil(i / 2) * 1.4 * m;
+				const along = (i % 2 ? 1 : -1) * Math.ceil(i / 2) * 1.4 * DEER_KINDS[group.kind ?? 0].size * m;
 				let place = [group.spot.x + Math.cos(group.spot.facing) * along, group.spot.z - Math.sin(group.spot.facing) * along];
 				if (!walkable(place[0], place[1])) place = [group.spot.x - Math.sin(group.spot.facing) * 1.6 * i * m, group.spot.z - Math.cos(group.spot.facing) * 1.6 * i * m];	// (no room along the edge: behind)
 				if (i > 0 && Math.hypot(place[0] - deer.x, place[1] - deer.z) > 0.4 * m) walkTowards(deer, place, WALK * m, elapsed);
@@ -741,6 +813,7 @@ function advanceDeer(frameElapsed) {
 	}
 	deerStats.groups = groups.length;
 	deerStats.deer = groups.reduce((sum, group) => sum + group.deer.length, 0);
+	deerStats.kinds = DEER_KINDS.map((_, k) => groups.filter((group) => (group.kind ?? 0) == k).length);	// (groups of each kind: deerKinds.js)
 	deerStats.corpses = corpses.length;
 	deerStats.day = dayClock;
 }
@@ -774,7 +847,7 @@ export function butcher(id) {
 	if (!corpse?.cuts.length) return null;
 	const kind = corpse.cuts.shift();
 	corpse.meat = corpse.cuts.length;
-	if (kind == 'antlers') corpse.deer.own += 1;
+	if (kind == 'antlers') corpse.deer.own = cutAntlers(corpse.deer.own);
 	if (corpse.meat == 0) corpse.lie = Math.max(corpse.t - FALL_SECONDS, 0);
 	deerStats.butchered = (deerStats.butchered ?? 0) + 1;
 	return kind;
@@ -809,6 +882,7 @@ export function deerPass(aEncoder, mainpassDepthTexture) {
 	const put = (x, y, z, heading, stride, headDown, walking, own, slope, roll, feral, scale = 1) => {
 		if (count >= MAX_DRAWN) return;
 		instanceData.set([x, y, z, size * scale, heading, stride, headDown, clamp(walking, 0, 1), own, slope, roll, feral], count * DEER_FLOATS);
+		antlerKey[count] = hasAntlers(own) ? kindOf(own) : DEER_KINDS.length;
 		count++;
 	};
 	if (settings.enableDeer && !hidden()) {
@@ -818,7 +892,13 @@ export function deerPass(aEncoder, mainpassDepthTexture) {
 	}
 	for (const fn of drawers) fn(put);
 	if (count == 0) return;
-	device.queue.writeBuffer(instanceBuffer, 0, instanceData, 0, count * DEER_FLOATS);
+	// (in order of their antlers' kind, those without last: the bodies drawn for all of them, then each kind's antlers for its own)
+	const starts = new Array(DEER_KINDS.length + 2).fill(0);
+	for (let i = 0; i < count; i++) starts[antlerKey[i] + 1]++;
+	for (let k = 1; k < starts.length; k++) starts[k] += starts[k - 1];
+	const next = starts.slice();
+	for (let i = 0; i < count; i++) sortedData.set(instanceData.subarray(i * DEER_FLOATS, (i + 1) * DEER_FLOATS), next[antlerKey[i]]++ * DEER_FLOATS);
+	device.queue.writeBuffer(instanceBuffer, 0, sortedData, 0, count * DEER_FLOATS);
 
 	const bufferResult = [...transformations.getViewProj()];
 	bufferResult.push(settings.camPosX, settings.camPosY, settings.camPosZ, 0);
@@ -844,6 +924,10 @@ export function deerPass(aEncoder, mainpassDepthTexture) {
 	}));
 	pass.setVertexBuffer(0, meshBuffer);
 	pass.setVertexBuffer(1, instanceBuffer);
-	pass.draw(DEER_VERTICES, count, 0, 0);
+	pass.draw(BODY_VERTICES, count, 0, 0);
+	DEER_KINDS.forEach((K, k) => {
+		const n = starts[k + 1] - starts[k], range = ANTLER_RANGES[K.antlers];
+		if (n > 0 && range) pass.draw(range[1], n, range[0], starts[k]);
+	});
 	pass.end();
 }

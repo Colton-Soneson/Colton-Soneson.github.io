@@ -154,8 +154,23 @@ export function groundWork(towns, seaLevel, strip, paths, groundAt, zoneAt, towe
 			// (the main line on the ground: its bed, a little wider than it for its ragged edges, and its rails on it)
 			const fine = [path.points[0]];
 			for (let j = 1; j < path.points.length; j++) { const a = path.points[j - 1], b = path.points[j]; for (let s = 1; s <= 4; s++) fine.push([a[0] + (b[0] - a[0]) * s / 4, 0, a[2] + (b[2] - a[2]) * s / 4]); }
-			ribbon(fine, (path.half + 0.6) * 2, MAT.BALLAST, 0.12, groundAt);
-			railsAlong(m, fine, (p) => groundAt(p[0], p[2]) + 0.12);
+			// (its bed of stone: a flat top BED.top over the highest of the ground under the rails, its shoulders sloping down to the ground at its
+			//		edges, and the rails on that top: never into the stone, whatever the ground does across the line)
+			const across = fine.map((p, j) => { const a = fine[Math.max(j - 1, 0)], c = fine[Math.min(j + 1, fine.length - 1)], l = Math.hypot(c[0] - a[0], c[2] - a[2]) || 1; return [-(c[2] - a[2]) / l, (c[0] - a[0]) / l]; });
+			const out = (j, w) => [fine[j][0] + across[j][0] * w, fine[j][2] + across[j][1] * w];
+			const tops = fine.map((p, j) => Math.max(groundAt(p[0], p[2]), groundAt(...out(j, BED.top_half)), groundAt(...out(j, -BED.top_half)), groundAt(...out(j, RAIL_GAUGE / 2)), groundAt(...out(j, -RAIL_GAUGE / 2))) + BED.height);
+			const edge = path.half + 0.6;
+			const ws = [-edge, -BED.top_half, BED.top_half, edge];
+			const row = (j) => ws.map((w) => { const [x, z] = out(j, w); return [x, Math.abs(w) > BED.top_half + 0.01 ? groundAt(x, z) + 0.04 : tops[j], z]; });
+			let along = 0;
+			for (let j = 0; j < fine.length - 1; j++) {
+				const A = row(j), B = row(j + 1), len = Math.hypot(fine[j + 1][0] - fine[j][0], fine[j + 1][2] - fine[j][2]);
+				// (its uv as the ribbon's was: along it, and across it in units from the middle)
+				for (let k = 0; k < 3; k++) m.quad(A[k], A[k + 1], B[k + 1], B[k], MAT.BALLAST, [[along, ws[k]], [along, ws[k + 1]], [along + len, ws[k + 1]], [along + len, ws[k]]], [0, 0, 0, 0]);
+				along += len;
+			}
+			const topAt = new Map(fine.map((p, j) => [p, tops[j]]));
+			railsAlong(m, fine, (p) => topAt.get(p) + BED.ties);
 			continue;
 		}
 		if (path.kind == 'road') {
@@ -181,6 +196,9 @@ export function groundWork(towns, seaLevel, strip, paths, groundAt, zoneAt, towe
 // THE MAIN LINE's rails (footpaths.js: a 'rail' path, or a tunnel's or a bridge's of it): two of iron, RAIL_GAUGE apart, along the points
 //		given, at the height floor(point) gives
 const RAIL_GAUGE = 2.87, RAIL_TOP = 0.3, RAIL_HEAD = 0.14;
+// the main line's bed (on the ground): its flat top, BED.top_half each side of the middle, BED.height over the highest ground under it,
+//		and the ties' thickness the rails stand on it by (trains.js TRAIN.top: the rails' tops over the line, BED.height + BED.ties + RAIL_TOP)
+export const BED = { top_half: 2.3, height: 0.28, ties: 0.04 };
 function railsAlong(m, P, floor) {
 	const n = P.length;
 	if (n < 2) return;

@@ -14,7 +14,8 @@ import * as terrain from './terrain.js'
 import { tileAt } from './world.js'
 import { addJob, SOON } from './jobs.js'
 import * as ballistics from './ballistics.js'
-import { birdSpheres, fallen, moveFallen } from './fallenBirds.js'
+import { birdSpheres, fallen, moveFallen, fallenInReach } from './fallenBirds.js'
+import { woundFrom, otherWound, recordOf } from './anatomy.js'
 
 //the geese fade into the horizon color, read from the sky view LUT (same as everything else)
 import {skyViewLUTtexture} from './atmosphere.js'
@@ -165,6 +166,9 @@ let lastTime = performance.now();
 let seconds = 0;
 let skeinCount = -1;		// the number of geese the skein was made for (settings.geeseCount)
 let fallenGeese = [];		// shot, on their way into the ground (fallenBirds.js)
+// THE INSPECTION (inspect.js): a dead goose the eye is on, within reach: its id, or null; and its record
+export function fallenGooseInReach(eye, look, reach) { return followed ? null : fallenInReach(fallenGeese, eye, look, reach)?.bird.id ?? null; }
+export const gooseRecord = (id) => fallenGeese.find((one) => one.bird.id === id)?.record ?? null;
 let respawns = [];			// when the next ones come (seconds)
 
 // Shot
@@ -188,7 +192,7 @@ ballistics.addTarget((ax, ay, az, bx, by, bz) => {
 		return found && { t: found.t, what: 'goose', hit: (velocity) => gooseShot.report?.(found.animal.id, velocity) };
 	}
 	const found = ballistics.crossAnimals(ax, ay, az, bx, by, bz, geese, gooseSpheres, (goose) => [goose.x, goose.y, goose.z, 0.6 * size]);
-	return found && { t: found.t, what: 'goose', hit: (velocity) => killGoose(found.animal, velocity) };
+	return found && { t: found.t, what: 'goose', hit: (velocity, bullet) => killGoose(found.animal, velocity, bullet) };
 }, () => {
 	const list = [];
 	if (!settings.enableGeese) return list;
@@ -196,11 +200,13 @@ ballistics.addTarget((ax, ay, az, bx, by, bz) => {
 	return list;
 });
 
-function killGoose(goose, velocity) {
+function killGoose(goose, velocity, bullet = null) {
 	const at = geese.indexOf(goose);
 	if (at < 0) return;
 	geese.splice(at, 1);
-	fallenGeese.push(fallen(goose, velocity));
+	// (the round's way through it, for the inspection: anatomy.js's goose, in its frame, a wingspan of 1)
+	const wound = bullet ? woundFrom('goose', bullet, [goose.x, goose.y, goose.z], goose.heading, settings.geeseSize) : otherWound('maul');
+	fallenGeese.push(fallen(goose, velocity, recordOf('goose', [wound], 0, { size: 1 })));
 	respawns.push(seconds + RESPAWN_SECONDS);
 	geeseStats.killed++;
 }

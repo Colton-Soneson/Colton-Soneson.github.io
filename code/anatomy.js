@@ -1,7 +1,11 @@
 import { ROUNDS } from './ballistics.js'
+import { BIRD_KINDS, GULL, OWL, DRAKE, LOON, SWAN, TOM, HAWK, GOOSE } from './wildBirdShapes.js'
 
 /*
-	THE ANATOMY of the wild animals (deer.js, beasts.js, rabbits.js): what is inside each, where, and what a round going through it does.
+	THE ANATOMY of the wild animals (deer.js, beasts.js, rabbits.js; and the birds: wildBirds.js, birds.js's hawks, geese.js): what is inside
+	each, where, and what a round going through it does. (Every kind of deer is the deer's, made its size: deerKinds.js. A bird's is made
+	from its hitbox, its body and its head: THE BIRDS. A hawk's and a goose's are in their own files' frames, a wingspan of 1 with the
+	body at the middle; the rest standing, in metres, as wildBirdShapes.js has them.)
 	Every place here is in metres in the animal's own frame: y up from the ground under it, z forwards to its head, x across (+x its
 	right). A deer's head and neck go down as it grazes (bent: as deerSpheres bends them).
 		BODY		its hitbox (each animal's own file takes it from here): balls [x, y, z, radius, bent]. The body, the neck and the head,
@@ -33,9 +37,10 @@ const ORDER = ['brain', 'spine', 'heart', 'lungLeft', 'lungRight', 'liver', 'gut
 // how big a round's holes are (its calibre, against a rifle's), how big each animal is against them (a rabbit's skin is small), and the
 //		round each needs to go down cleanly (its damage, ballistics.js: a shot's pellets together)
 const CALIBRE = { '7.62x54R': 1, '.303 British': 1, '.303 Vickers': 1, '.45-70': 1.6, '.45 Colt': 1.2, '7.63 Mauser': 0.8, '00 buck': 0.35, hatchet: 1.4, knife: 0.6, stone: 0.3, chop: 1.2, stab: 0.5 };
-const SIZE = { rabbit: 4, wolf: 1.5, deer: 1, bear: 0.75, moose: 0.6 };
-const NEED = { rabbit: 0.2, wolf: 0.5, deer: 0.75, bear: 1.1, moose: 1.1 };
-export const KIND_NAMES = { deer: 'Deer', moose: 'Moose', bear: 'Bear', wolf: 'Wolf', rabbit: 'Rabbit' };
+const SIZE = { rabbit: 4, wolf: 1.5, deer: 1, bear: 0.75, moose: 0.6, gull: 4, owl: 4, mallard: 4.5, loon: 3.5, swan: 2, turkey: 2.5, goose: 3, hawk: 4 };
+const NEED = { rabbit: 0.2, wolf: 0.5, deer: 0.75, bear: 1.1, moose: 1.1, gull: 0.1, owl: 0.1, mallard: 0.1, loon: 0.12, swan: 0.25, turkey: 0.2, goose: 0.15, hawk: 0.1 };
+export const KIND_NAMES = { deer: 'Deer', moose: 'Moose', bear: 'Bear', wolf: 'Wolf', rabbit: 'Rabbit', gull: 'Gull', owl: 'Owl', mallard: 'Mallard', loon: 'Loon', swan: 'Swan', turkey: 'Wild turkey', goose: 'Goose', hawk: 'Hawk' };
+export const BIRDS = ['gull', 'owl', 'mallard', 'loon', 'swan', 'turkey', 'goose', 'hawk'];
 
 // THE ANIMALS (see the top)
 const egg = (name, at, radii, bent = false) => ({ name, at, radii, bent });
@@ -44,16 +49,16 @@ const lungs = (x, y, z, radii) => [egg('lungLeft', [-x, y, z], radii), egg('lung
 export const ANATOMY = {
 	deer: {
 		// rump, middle, chest, neck, head (bent), front legs, hind legs (horde.js names these seven by their order), and the belly and the
-		//		brisket between rump, middle and chest
-		body: [[0, 0.97, -0.42, 0.2], [0, 0.98, 0, 0.21], [0, 1.0, 0.38, 0.2], [0, 1.25, 0.56, 0.1, true], [0, 1.47, 0.74, 0.11, true], [0, 0.45, 0.4, 0.14], [0, 0.45, -0.45, 0.14],
-			[0, 0.98, -0.21, 0.17], [0, 0.98, 0.19, 0.17]],
+		//		brisket between rump, middle and chest, and the deep chest down in front of the front legs
+		body: [[0, 0.95, -0.42, 0.22], [0, 0.92, 0, 0.25], [0, 0.9, 0.38, 0.27], [0, 1.25, 0.56, 0.12, true], [0, 1.47, 0.74, 0.11, true], [0, 0.4, 0.4, 0.13], [0, 0.42, -0.45, 0.14],
+			[0, 0.94, -0.21, 0.21], [0, 0.91, 0.19, 0.24], [0, 0.82, 0.52, 0.18]],
 		organs: [
 			egg('brain', [0, 1.51, 0.71], [0.035, 0.03, 0.04], true),
 			...spine([[0, 1.03, -0.62], [0, 1.07, -0.3], [0, 1.06, 0], [0, 1.08, 0.3], [0, 1.12, 0.47], [0, 1.29, 0.56], [0, 1.41, 0.62]], 0.03, 4),
-			egg('heart', [0, 0.88, 0.4], [0.05, 0.065, 0.055]),
-			...lungs(0.06, 1.0, 0.3, [0.065, 0.1, 0.14]),
-			egg('liver', [0.03, 0.93, 0.1], [0.1, 0.07, 0.06]),
-			egg('guts', [0, 0.93, -0.25], [0.13, 0.12, 0.24]),
+			egg('heart', [0, 0.78, 0.4], [0.055, 0.07, 0.06]),
+			...lungs(0.075, 0.95, 0.3, [0.08, 0.13, 0.15]),
+			egg('liver', [0.03, 0.86, 0.1], [0.12, 0.08, 0.07]),
+			egg('guts', [0, 0.88, -0.25], [0.16, 0.15, 0.25]),
 		],
 	},
 	moose: {
@@ -104,6 +109,27 @@ export const ANATOMY = {
 		],
 	},
 };
+
+// THE BIRDS: from a ball of its body and one of its head (its hitbox's: [x, y, z, radius]), the body drawn out a little before and behind
+//		(a ball each), and inside it, as in any bird: the brain in the head, the spine along the back and up the neck, the heart low in
+//		the breast, the lungs high against the back, the liver over the heart, the gut behind
+function birdAnatomy([bx, by, bz, r], [hx, hy, hz, hr]) {
+	return {
+		body: [[bx, by, bz, r], [bx, by, bz + 0.7 * r, 0.75 * r], [bx, by, bz - 0.7 * r, 0.7 * r], [hx, hy, hz, hr]],
+		organs: [
+			egg('brain', [hx, hy + 0.1 * hr, hz - 0.1 * hr], [0.42 * hr, 0.38 * hr, 0.45 * hr]),
+			...spine([[bx, by + 0.55 * r, bz - 0.85 * r], [bx, by + 0.5 * r, bz + 0.6 * r], [hx, hy - 0.3 * hr, hz - 0.7 * hr]], 0.06 * r),
+			egg('heart', [bx, by - 0.3 * r, bz + 0.45 * r], [0.2 * r, 0.24 * r, 0.22 * r]),
+			...lungs(0.28 * r, by + 0.25 * r, bz + 0.15 * r, [0.2 * r, 0.25 * r, 0.38 * r]),
+			egg('liver', [bx, by - 0.22 * r, bz + 0.05 * r], [0.42 * r, 0.22 * r, 0.3 * r]),
+			egg('guts', [bx, by - 0.2 * r, bz - 0.45 * r], [0.42 * r, 0.36 * r, 0.4 * r]),
+		],
+	};
+}
+for (const [name, k] of [['gull', GULL], ['owl', OWL], ['mallard', DRAKE], ['loon', LOON], ['swan', SWAN], ['turkey', TOM], ['goose', GOOSE], ['hawk', HAWK]]) {
+	const [body, head] = BIRD_KINDS[k].HITS;
+	ANATOMY[name] = birdAnatomy(body, head);
+}
 
 // a deer's head and neck as it holds them (headDown, 0 up to 1 grazing): a point of them bent down about the neck's foot, as deerSpheres does
 export function bend(p, headDown) {
@@ -278,7 +304,8 @@ export function cleanRecord(raw) {
 	for (const w of wounds) if (!w.organs.length) w.organs = ['meat'];
 	const q = raw.quality ?? {};
 	return { kind: raw.kind, wounds, seconds: clamp(raw.seconds, 0, 1e5), cause: ORGAN_NAMES[raw.cause] || raw.cause == 'blast' || raw.cause == 'maul' ? raw.cause : causeOf(wounds),
-		quality: { score: Math.round(clamp(q.score, 0, 100)), stars: Math.round(clamp(q.stars, 1, 5)) }, size: clamp(raw.size ?? 1, 0.5, 2), buck: !!raw.buck, snared: !!raw.snared };
+		quality: { score: Math.round(clamp(q.score, 0, 100)), stars: Math.round(clamp(q.stars, 1, 5)) }, size: clamp(raw.size ?? 1, 0.5, 2), buck: !!raw.buck, snared: !!raw.snared,
+		species: Math.round(clamp(raw.species ?? 0, 0, 15)), antlers: raw.antlers == null ? undefined : !!raw.antlers };
 }
 
 // THE WAY IT CAME IN, said: from a wound's way through the animal (its frame: +x its right, +z to its head)

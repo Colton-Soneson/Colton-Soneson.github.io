@@ -278,6 +278,8 @@ export const imguiParams = {
     deerGroups: settings.deerGroups,
     deerSize: settings.deerSize,
     enableGeese: settings.enableGeese,
+    enableWildBirds: settings.enableWildBirds,
+    wildBirdNumbers: settings.wildBirdNumbers,
     geeseCount: settings.geeseCount,
     geeseSize: settings.geeseSize,
     birdSize: settings.birdSize,
@@ -699,6 +701,9 @@ const deerFolder = animalFolder.addFolder('Deer');	//see deer.js
 deerFolder.add(imguiParams, 'enableDeer').name('Enable');
 deerFolder.add(imguiParams, 'deerGroups', 0, 200, 1).name('Groups');
 deerFolder.add(imguiParams, 'deerSize', 0.5, 3, 0.05).name('Size');
+const wildBirdFolder = animalFolder.addFolder('Gulls, Owls, Waterfowl, Turkeys');	//see wildBirds.js
+wildBirdFolder.add(imguiParams, 'enableWildBirds').name('Enable');
+wildBirdFolder.add(imguiParams, 'wildBirdNumbers', 0.25, 3, 0.25).name('How Many');
 
 const shaftFolder = gui.addFolder('Light Shafts and Underwater');	//see lightShafts.js
 shaftFolder.add(imguiParams, 'enableLightShafts').name('Light Shafts');

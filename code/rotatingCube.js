@@ -47,6 +47,7 @@ import * as lightShafts from './lightShafts.js'
 import * as lightning from './lightning.js'
 import * as birds from './birds.js'
 import * as geese from './geese.js'
+import * as wildBirds from './wildBirds.js'
 import * as deer from './deer.js'
 import * as horde from './horde.js'
 import * as cameraControls from './cameraControls.js'
@@ -516,6 +517,7 @@ export function updateRotatingCubePass() {
 	particles.particleUpdate();		//what the leaves, the spray and the rain all need to know this frame
 	birds.birdUpdate();				//the hawks fly on
 	geese.geeseUpdate();			//and the geese
+	wildBirds.wildBirdsUpdate();	//and the gulls, the owls, the waterfowl and the turkeys
 	deer.deerUpdate();				//and the deer
 	rabbits.rabbitsUpdate();		//the rabbits, and the snares they walk into
 	beasts.beastsUpdate();			//the moose, the wolves and the bears
@@ -683,6 +685,7 @@ export function updateRotatingCubePass() {
 	profiler.section('Animal Life', () => {
 		birds.birdPass(encoder, depthTexture);
 		geese.geesePass(encoder, depthTexture);
+		wildBirds.wildBirdsPass(encoder, depthTexture);
 		deer.deerPass(encoder, depthTexture);
 		players.playersPass(encoder, depthTexture);	//(and the other players, in a game with others)
 		boat.boatPass(encoder, depthTexture);		//(and the boats)

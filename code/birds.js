@@ -15,7 +15,8 @@ import * as transformations from './transformations.js'
 import * as terrain from './terrain.js'
 import { tileAt } from './world.js'
 import * as ballistics from './ballistics.js'
-import { birdSpheres, fallen, moveFallen } from './fallenBirds.js'
+import { birdSpheres, fallen, moveFallen, fallenInReach } from './fallenBirds.js'
+import { woundFrom, otherWound, recordOf } from './anatomy.js'
 import * as forest from './forest.js'
 import { lightNow } from './lighting.js'
 
@@ -208,6 +209,9 @@ let openGround = [];			// places on the grassland to go to
 let lastTime = performance.now();
 let seconds = 0;
 let fallenBirdsList = [];		// shot, on their way into the ground (fallenBirds.js)
+// THE INSPECTION (inspect.js): a dead hawk the eye is on, within reach: its id, or null; and its record
+export function fallenHawkInReach(eye, look, reach) { return followed ? null : fallenInReach(fallenBirdsList, eye, look, reach)?.bird.id ?? null; }
+export const hawkRecord = (id) => fallenBirdsList.find((one) => one.bird.id === id)?.record ?? null;
 
 // Shot
 //-------------------------------------------------
@@ -222,7 +226,7 @@ ballistics.addTarget((ax, ay, az, bx, by, bz) => {
 	}
 	const living = groups.flatMap((group) => group.birds.map((bird) => ({ bird, group })));
 	const found = ballistics.crossAnimals(ax, ay, az, bx, by, bz, living, (one) => hawkSpheres(one.bird), (one) => [one.bird.x, one.bird.y, one.bird.z, 0.6 * sizeOf(one.bird)]);
-	return found && { t: found.t, what: 'hawk', hit: (velocity) => killHawk(found.animal.bird, found.animal.group, velocity) };
+	return found && { t: found.t, what: 'hawk', hit: (velocity, bullet) => killHawk(found.animal.bird, found.animal.group, velocity, bullet) };
 }, () => {
 	const list = [];
 	if (!settings.enableBirds) return list;
@@ -231,11 +235,13 @@ ballistics.addTarget((ax, ay, az, bx, by, bz) => {
 	return list;
 });
 
-function killHawk(bird, group, velocity) {
+function killHawk(bird, group, velocity, bullet = null) {
 	const at = group.birds.indexOf(bird);
 	if (at < 0) return;
 	group.birds.splice(at, 1);
-	fallenBirdsList.push(fallen(bird, velocity));
+	// (the round's way through it, for the inspection: anatomy.js's hawk, in its frame, a wingspan of 1)
+	const wound = bullet ? woundFrom('hawk', bullet, [bird.x, bird.y, bird.z], bird.heading, sizeOf(bird)) : otherWound('maul');
+	fallenBirdsList.push(fallen(bird, velocity, recordOf('hawk', [wound], 0, { size: 1 })));
 	if (group.summoned || group.gone) { if (group.birds.length == 0) groups.splice(groups.indexOf(group), 1); }
 	else (group.respawns ??= []).push(seconds + RESPAWN_SECONDS);
 	birdStats.killed++;

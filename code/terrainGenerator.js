@@ -857,10 +857,13 @@ function roadGates(params, c, groundAt, rivers = null) {
 		THE WAY		the two tiles with towns furthest apart its ends, and between them as many as RAIL.stops more of those with two towns, in
 					order along it, each one's middle a place on the way (moved on to the land), and between each two the cheapest way over the
 					relief's grid (A*): by how long it is, how much it climbs (RAIL.climb, times how much steeper than the grade it is, to the
-					RAIL.steepPow, RAIL.steep times at the most: round the hills, not up them), along a river (RAIL.riverCost times: beside it,
+					RAIL.steepPow, RAIL.steep times at the most: round the hills, not up them), turning (it knows which way it is going: no more
+					than 45 degrees from one cell to the next, and each such turn as dear as RAIL.turn cells more of line: no hairpins, no
+					switchbacks up a hill), along a river (RAIL.riverCost times: beside it,
 					over it only straight across), how high it goes past RAIL.highFrom (RAIL.high: by
 					the valleys and the passes), and dearer along the coast (lower than RAIL.coast). Not over the sea or a lake
-		THE LINE	that way evened out (RAIL.ease times) and rounded off (Chaikin, RAIL.round times) and a point every RAIL.step, each at the height of the land, then held to
+		THE LINE	that way evened out (RAIL.ease times) and rounded off (Chaikin, RAIL.round times) and a point every RAIL.step, its bends then
+					eased out until none is tighter than RAIL.radius (a train cannot take one), each at the height of the land, then held to
 					RAIL.grade at the most from one to the next (params.railGrade): a little evened out (RAIL.passes, keeping RAIL.hold of the
 					land's each time, so it goes with the hills) and cut down or built up where it must be; and all of it on a bed RAIL.mound
 					over the land
@@ -875,8 +878,9 @@ function roadGates(params, c, groundAt, rivers = null) {
 	Gives { points: Float32Array, RAIL_FLOATS each: x, y (over the sea), z, what it is on (0 the ground, 1 a tunnel, 2 a bridge), length }, or
 	null (no line: fewer than two tiles with towns, or no way between them)
 */
-export const RAIL = { cell: 64, climb: 60, high: 0.01, highFrom: 400, coast: 80, coastCost: 3, riverCost: 6, steep: 400, steepPow: 2, dry: 14, greed: 1.25, ease: 4, round: 3, step: 16, grade: 0.12, passes: 10, hold: 0.9, mound: 4, bore: 34, least: 160, cut: 20, fill: 10, even: 60, gorge: 25, sided: 0.6, wet: 2, river: 12, stops: 2, half: 4, tunnel: { half: 4.5, height: 12 } };
+export const RAIL = { turn: 1.5, radius: 300, cell: 64, climb: 60, high: 0.01, highFrom: 400, coast: 80, coastCost: 3, riverCost: 6, steep: 400, steepPow: 2, dry: 14, greed: 1.25, ease: 4, round: 3, step: 16, grade: 0.12, passes: 10, hold: 0.9, mound: 4, bore: 34, least: 160, cut: 20, fill: 10, even: 60, gorge: 25, sided: 0.6, wet: 2, river: 12, stops: 2, half: 4, tunnel: { half: 4.5, height: 12 } };
 export const RAIL_FLOATS = 4;
+export const railBendStats = { worst: 0 };	// (the tightest bend of the last line made, 1 / its radius: for a test)
 function mainLine(params, c, shape, groundAt) {
 	if (!params.world) return null;
 	const S = params.world.size, keys = c.key.split(' '), towns = params.world.towns ?? {};
@@ -908,36 +912,42 @@ function mainLine(params, c, shape, groundAt) {
 		return best;
 	}).filter((i) => i >= 0);
 	if (places.length < 2) return null;
-	const n = cols * rows, cost = new Float64Array(n), from = new Int32Array(n);
+	const n = cols * rows, cost = new Float64Array(n * 8), from = new Int32Array(n * 8);
+	const DIRS = [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]];		// (the 8 ways, 45 degrees apart: a state is a cell and the way it was come into)
 	// (where a river runs: dear to go along, so the line keeps beside it and goes over it straight across)
 	const river = new Uint8Array(n);
 	if (shape.rivers) for (let o = 0; o < shape.rivers.points.length; o += RIVER_FLOATS) river[cellOf(shape.rivers.points[o], shape.rivers.points[o + 1])] = 1;
 	const way = (s, goal) => {
 		cost.fill(Infinity); from.fill(-1);
-		cost[s] = 0;
-		const heap = [[0, s]];
+		const heap = [];
 		const push = (item) => { heap.push(item); let i = heap.length - 1; while (i > 0) { const p = (i - 1) >> 1; if (heap[p][0] <= heap[i][0]) break; [heap[p], heap[i]] = [heap[i], heap[p]]; i = p; } };
 		const pop = () => { const top = heap[0], last = heap.pop(); if (heap.length) { heap[0] = last; let i = 0; for (;;) { const l = 2 * i + 1, r = l + 1; let m = i; if (l < heap.length && heap[l][0] < heap[m][0]) m = l; if (r < heap.length && heap[r][0] < heap[m][0]) m = r; if (m == i) break; [heap[m], heap[i]] = [heap[i], heap[m]]; i = m; } } return top; };
 		const [gx, gz] = at(goal);
+		for (let d = 0; d < 8; d++) { cost[s * 8 + d] = 0; push([0, s * 8 + d]); }
+		let reached = -1;
 		while (heap.length) {
-			const [, k] = pop();
-			if (k == goal) break;
+			const [f, state] = pop();
+			const k = state >> 3, d = state & 7;
+			if (f > cost[state] + Math.hypot(...at(k).map((v, i) => v - [gx, gz][i])) * RAIL.greed + 1e-6) continue;		// (a stale entry)
+			if (k == goal) { reached = state; break; }
 			const col = k % cols, row = (k - col) / cols;
-			for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
-				if (!dr && !dc) continue;
+			for (const turn of [-1, 0, 1]) {
+				const nd = (d + turn + 8) & 7, [dc, dr] = DIRS[nd];
 				const cc = col + dc, rr = row + dr;
 				if (cc < 1 || rr < 1 || cc >= cols - 1 || rr >= rows - 1) continue;
 				const a = rr * cols + cc;
 				if (!dry(a)) continue;
 				const run = cell * Math.hypot(dc, dr), ha = groundOf(a), rise = Math.abs(ha - groundOf(k));
-				const g = cost[k] + run * (1 + RAIL.high * Math.max(ha - RAIL.highFrom, 0)) * (ha < RAIL.coast ? RAIL.coastCost : 1) * (river[a] ? RAIL.riverCost : 1) + rise * RAIL.climb * Math.min(Math.pow(rise / run / grade, RAIL.steepPow), RAIL.steep);
-				if (g < cost[a]) { cost[a] = g; from[a] = k; const [x, z] = at(a); push([g + Math.hypot(x - gx, z - gz) * RAIL.greed, a]); }
+				const g = cost[state] + run * (1 + RAIL.high * Math.max(ha - RAIL.highFrom, 0)) * (ha < RAIL.coast ? RAIL.coastCost : 1) * (river[a] ? RAIL.riverCost : 1) + rise * RAIL.climb * Math.min(Math.pow(rise / run / grade, RAIL.steepPow), RAIL.steep)
+					+ (turn ? RAIL.turn * cell : 0);
+				const next = a * 8 + nd;
+				if (g < cost[next]) { cost[next] = g; from[next] = state; const [x, z] = at(a); push([g + Math.hypot(x - gx, z - gz) * RAIL.greed, next]); }
 			}
 		}
-		if (from[goal] < 0 && goal != s) return null;
-		const out = [goal];
-		while (out[out.length - 1] != s) out.push(from[out[out.length - 1]]);
-		return out.reverse();
+		if (reached < 0) return goal == s ? [s] : null;
+		const out = [reached];
+		while (from[out[out.length - 1]] >= 0) out.push(from[out[out.length - 1]]);
+		return out.reverse().map((state) => state >> 3);
 	};
 	let cells = [places[0]];
 	for (let i = 1; i < places.length; i++) { const w = way(places[i - 1], places[i]); if (w) cells.push(...w.slice(1)); }
@@ -966,6 +976,44 @@ function mainLine(params, c, shape, groundAt) {
 		for (; t < length; t += RAIL.step) even.push([a[0] + (b[0] - a[0]) * t / length, a[1] + (b[1] - a[1]) * t / length]);
 		carry = length - (t - RAIL.step);
 	}
+	// (its bends eased out: none tighter than RAIL.radius. Each point bent more than that from the line through its neighbours drawn half
+	//		way to the middle of them, over and over: the bend spreads out along the line until it is gentle enough. The ends stay)
+	//		(by how sharply it bends for its length, not by the angle alone: the points bunch up as they move, so a round of it, and the line
+	//		spaced out evenly again, and another round)
+	const bend = (a, p, b) => Math.abs(Math.atan2((p[0] - a[0]) * (b[1] - p[1]) - (p[1] - a[1]) * (b[0] - p[0]), (p[0] - a[0]) * (b[0] - p[0]) + (p[1] - a[1]) * (b[1] - p[1])))
+		/ Math.max((Math.hypot(p[0] - a[0], p[1] - a[1]) + Math.hypot(b[0] - p[0], b[1] - p[1])) / 2, 1e-6);
+	const respace = (line) => {
+		const out = [line[0]];
+		let left = 0;
+		for (let i = 0; i < line.length - 1; i++) {
+			const a = line[i], b = line[i + 1], length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+			let t = RAIL.step - left;
+			for (; t < length; t += RAIL.step) out.push([a[0] + (b[0] - a[0]) * t / length, a[1] + (b[1] - a[1]) * t / length]);
+			left = length - (t - RAIL.step);
+		}
+		out.push(line[line.length - 1]);
+		return out;
+	};
+	let eased = even;
+	for (let round = 0; round < 6; round++) {
+		let worst = 0;
+		for (let pass = 0; pass < 400; pass++) {
+			worst = 0;
+			for (let i = 1; i < eased.length - 1; i++) {
+				const a = eased[i - 1], p = eased[i], b = eased[i + 1], k = bend(a, p, b);
+				if (k <= 1 / RAIL.radius) continue;
+				worst = Math.max(worst, k);
+				eased[i] = [p[0] + ((a[0] + b[0]) / 2 - p[0]) * 0.5, p[1] + ((a[1] + b[1]) / 2 - p[1]) * 0.5];
+			}
+			if (worst == 0) break;
+		}
+		eased = respace(eased);
+		if (worst == 0) break;
+	}
+	even.length = 0;
+	even.push(...eased);
+	railBendStats.worst = 0;
+	for (let i = 1; i < even.length - 1; i++) { const a = even[i - 1], p = even[i], b = even[i + 1], la = Math.hypot(p[0] - a[0], p[1] - a[1]), lb = Math.hypot(b[0] - p[0], b[1] - p[1]); const t = Math.abs(Math.atan2((p[0] - a[0]) * (b[1] - p[1]) - (p[1] - a[1]) * (b[0] - p[0]), (p[0] - a[0]) * (b[0] - p[0]) + (p[1] - a[1]) * (b[1] - p[1]))); if (t > 0) railBendStats.worst = Math.max(railBendStats.worst, t / ((la + lb) / 2)); }
 	const land = even.map(([x, z]) => groundAt(x, z));
 	// (by a river: on a bridge over it, whatever its height)
 	const wet = [];

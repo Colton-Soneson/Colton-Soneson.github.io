@@ -12,7 +12,8 @@ import { settings } from './settings.js';
 	And its hitbox, for either: balls [x, y, z, radius] in the bird's own space, a wingspan of 1 heading along +z (see each
 	file's), turned to the way the bird is flying, nose up or down, and its wings left out while they are folded.
 */
-const LIE_SECONDS = 6, SINK_SECONDS = 3;
+const LIE_SECONDS = 6, SINK_SECONDS = 3, HUNTING_LIE_SECONDS = 600;	// (in the Hunting mode a good while, as a deer: to be looked over, inspect.js)
+const lieSeconds = () => settings.gameMode == 'Hunting' ? HUNTING_LIE_SECONDS : LIE_SECONDS;
 const GRAVITY = 9.81;
 
 // a bird's hitbox in the world. lift(x, y, z) moves a ball's middle for the bird's own pose first (a goose's neck going up), or null
@@ -29,15 +30,26 @@ export function birdSpheres(bird, spheres, size, nose, lift = null) {
 	return out;
 }
 
-// a bird just shot: what is kept of it while it falls. velocity: the bullet's, world units a second
-export function fallen(bird, velocity) {
+// a bird just shot: what is kept of it while it falls. velocity: the bullet's, world units a second. record: its shot's (anatomy.js:
+//		recordOf), for the inspection (inspect.js: fallenInReach)
+export function fallen(bird, velocity, record = null) {
 	const speed = Math.hypot(...velocity) || 1;
 	const push = 5 * settings.forestUnitsPerMetre / speed;
 	bird.vx = (bird.vx ?? 0) * 0.6 + velocity[0] * push;
 	bird.vy = (bird.vy ?? 0) * 0.3 + velocity[1] * push;
 	bird.vz = (bird.vz ?? 0) * 0.6 + velocity[2] * push;
 	bird.beating = 0;
-	return { bird: bird, t: 0, falling: true, down: 0, spin: (Math.random() < 0.5 ? -1 : 1) * (2 + 3 * Math.random()) };
+	return { bird: bird, t: 0, falling: true, down: 0, spin: (Math.random() < 0.5 ? -1 : 1) * (2 + 3 * Math.random()), record };
+}
+// the one of a list of fallen ones down on the ground the eye is on, looking along look, within reach: it, or null
+export function fallenInReach(list, eye, look, reach) {
+	let best = null, bestD = reach;
+	for (const one of list) {
+		if (one.falling || !one.record) continue;
+		const b = one.bird, to = [b.x - eye[0], b.y - eye[1], b.z - eye[2]], d = Math.hypot(...to);
+		if (d < bestD && (to[0] * look[0] + to[1] * look[1] + to[2] * look[2]) / (d || 1) > 0.7) { best = one; bestD = d; }
+	}
+	return best;
 }
 
 /*
@@ -69,10 +81,10 @@ export function moveFallen(list, elapsed, surfaceAt, depth) {
 			bird.bank += (1.35 * one.side - bird.bank) * Math.min(elapsed * 5, 1);
 			bird.nose += (0 - bird.nose) * Math.min(elapsed * 5, 1);
 			bird.folded += (0.6 - bird.folded) * Math.min(elapsed * 3, 1);
-			const sinking = Math.min(Math.max((one.t - one.down - LIE_SECONDS) / SINK_SECONDS, 0), 1);
+			const sinking = Math.min(Math.max((one.t - one.down - lieSeconds()) / SINK_SECONDS, 0), 1);
 			bird.y = surfaceAt(bird.x, bird.z) - depth * sinking;
 		}
 		bird.beating = 0;
 	}
-	return list.filter((one) => one.falling || one.t - one.down < LIE_SECONDS + SINK_SECONDS);
+	return list.filter((one) => one.falling || one.t - one.down < lieSeconds() + SINK_SECONDS);
 }

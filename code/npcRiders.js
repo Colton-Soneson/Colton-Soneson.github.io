@@ -45,6 +45,10 @@ import * as tunnels from './tunnels.js'
 		more at home. They do not rest at the inns.
 	A POSSE (addPosse: a farm's crops stolen, farmsteads.js): riders out of a town's inn after whoever did it, riding at them wherever they
 		are and fighting them as any rider does, for POSSE.seconds (or until they are dead), then gone.
+	THE PLAYER'S OWN (fireteams.js: addHired): horsemen hired at an inn. Each rides to its place in its fireteam's formation (the squad says
+		where: spot), at the formation's pace (quicker to catch up), and stands there while it stands; and fights whoever is hostile to the
+		player (npcs.js: foesOfMine) as any rider does. Down, back RESPAWN later on a new horse where the squad says (home: out of the
+		player's sight, near them). Never put up with the others (a new land, a war): fireteams.js keeps them
 	World units (2 to the metre) for places, metres a second for paces
 */
 const PER_TOWN = 2;
@@ -166,7 +170,7 @@ let places = [];		// the inns, or the far ends of the footpaths
 // (in a world of tiles, terrain.js: a town's own come with its tile, gone with it, and the roads made again over the towns there are)
 terrain.onTiles((added, removed) => {
 	if (builtFor !== terrain.land || npcs.war.on || !terrain.tilesHaveTowns([...added, ...removed])) return;
-	clearRiders((r) => !r.war && !r.inn.town?.buildings?.length);
+	clearRiders((r) => !r.war && !r.squad && !r.inn.town?.buildings?.length);
 	const land = terrain.land;
 	roads = buildRoads(land);
 	const inns = (land.towns ?? []).filter((t) => t.buildings?.length).map(innOf).filter(Boolean);
@@ -176,7 +180,7 @@ terrain.onTiles((added, removed) => {
 // (in a world of tiles: the continent a place is on, world.js; a rider rides to the places of its own)
 const continentAt = (x, z) => terrain.world?.tiles.get(tileAt(x, z, settings.terrainWorldSize))?.continent ?? 0;
 function makeRiders(land) {
-	clearRiders((r) => !r.war && !r.escort && !r.hunt);
+	clearRiders((r) => !r.war && !r.escort && !r.hunt && !r.squad);
 	roads = buildRoads(land);
 	const inns = (land.towns ?? []).filter((t) => t.buildings?.length).map(innOf).filter(Boolean);
 	places = inns.length > 1 ? inns : farEnds(land);
@@ -370,7 +374,7 @@ function stepRider(r, dt) {
 	// (looked round for every LOOK, each rider at its own moment; in between the one it has, where it is now)
 	if ((r.look = (r.look ?? Math.random() * LOOK) - dt) <= 0) {
 		r.look += LOOK;
-		const found = npcs.enemiesOf(p.group, h.x, h.y + 2 * m, h.z).find((e) => e.d < CHASE * m && (!npcs.war.on || onLand(e)));
+		const found = (p.group.hired ? npcs.foesOfMine(h.x, h.y + 2 * m, h.z) : npcs.enemiesOf(p.group, h.x, h.y + 2 * m, h.z)).find((e) => e.d < CHASE * m && (!npcs.war.on || onLand(e)));
 		r.enemyId = found?.id ?? null;
 		r.seen = !!found && npcs.clearLine(h.frame.toWorld([0, 2.4, 0]), [found.x, found.y, found.z]);
 	}
@@ -406,6 +410,17 @@ function stepRider(r, dt) {
 			r.wanted = Math.atan2(target.x - h.x, target.z - h.z);
 			({ ahead, turn } = steer(r, dt, 1.6));
 		}
+	} else if (r.squad) {
+		// the player's own: at its place in its fireteam's formation, at the formation's pace (faster to catch up), still while it stands
+		const [tx, tz] = r.squad.spot(r), d = Math.hypot(tx - h.x, tz - h.z), moving = r.squad.moving();
+		r.going = { x: tx, z: tz };
+		if (!(d < 2.5 * m && !moving)) {
+			r.wanted = Math.atan2(tx - h.x, tz - h.z);
+			({ ahead, turn } = steer(r, dt, d > 40 * m ? 2.3 : d > 14 * m ? 1.6 : d > 5 * m ? 1.15 : moving ? Math.max(r.squad.pace() / (TROT * pace()), 0.35) : 0.4));
+		} else {
+			// (at its place: turned the way the formation faces)
+			turn = clamp(npcs.wrap(r.squad.facing() - h.heading) * 2, -1, 1);
+		}
 	} else if (r.escort) {
 		// a cart's guard: at its place round the cart, at the cart's pace (faster to catch up), still while it stands
 		const cart = r.escort.cart, [tx, tz] = cart.guardSpot(r.escort.slot), d = Math.hypot(tx - h.x, tz - h.z);
@@ -431,8 +446,11 @@ function stepRider(r, dt) {
 			({ ahead, turn } = steer(r, dt, left < 25 * m ? 0.5 : 1));
 		}
 	}
-	// stuck: back off a while, then find its way again
-	if (ahead > 0 && Math.abs(h.speed) < 0.3) r.stuck += dt; else r.stuck = Math.max(r.stuck - dt, 0);
+	// stuck: back off a while, then find its way again. (Going nowhere, whatever its speed says: pressed against something, the horse's
+	//		pace is kept up but it does not move)
+	const moved = r.lastAt && dt > 0 ? Math.hypot(h.x - r.lastAt[0], h.z - r.lastAt[1]) / dt / m : Infinity;
+	r.lastAt = [h.x, h.z];
+	if (ahead > 0 && Math.min(Math.abs(h.speed), moved) < 0.3) r.stuck += dt; else r.stuck = Math.max(r.stuck - dt, 0);
 	if (r.stuck > STUCK) { r.stuck = 0; r.backing = 1.6; r.turnSign = Math.random() < 0.5 ? 1 : -1; riderStats.stuck++; }
 	if (r.backing > 0) {
 		r.backing -= dt;
@@ -472,6 +490,15 @@ function fallen(r, dt) {
 		p.place = { x: side[0], y: terrain.land.groundAt(side[0], side[2]), z: side[2], heading: h.heading + Math.PI / 2, sit: 0 };
 		p.anchor = null;
 	}
+	if (p.respawnIn <= 0 && p.respawnIn > -1 && r.squad) {
+		// (the player's own: back on a new horse where its squad says)
+		const me = hunting.hunterPlace();
+		if (h.exists && !h.rider && !(me.active && Math.hypot(me.x - h.x, me.z - h.z) < 30 * m)) { horse.removeHorse(h); npcs.announce('horse', null, h); }
+		r.inn = r.squad.home();
+		npcs.revive(p);
+		mountNew(r);
+		return;
+	}
 	if (p.respawnIn <= 0 && p.respawnIn > -1 && r.escort) {
 		// (a cart's guard does not come back: its cart takes on another at home)
 		const me = hunting.hunterPlace();
@@ -499,7 +526,7 @@ export function ridersUpdate(dt) {
 		return;
 	}
 	// (in THE WAR only the sides' ride: the others are put up until it is over)
-	if (npcs.war.on) { if (riders.some((r) => !r.war)) clearRiders(); builtFor = null; }
+	if (npcs.war.on) { if (riders.some((r) => !r.war && !r.squad)) clearRiders((r) => !r.war && !r.squad); builtFor = null; }
 	else if (land !== builtFor) { builtFor = land; makeRiders(land); }
 	routeBudget = OFF_ROAD.perFrame;
 	for (const r of [...riders]) stepRider(r, dt);
@@ -596,6 +623,23 @@ export function addEscort(cart, slot, inn) {
 	riderStats.riders = riders.length;
 	return r;
 }
+// THE PLAYER'S OWN (see the top): one hired (fireteams.js), its group (hired), where it starts ({ x, z, heading }), and its squad ({ spot(r):
+//		[x, z] its place, moving(), pace() metres a second, facing() radians, home(): { x, z, heading } where it comes back })
+export function addHired(group, at, squad, name = 'your horseman') {
+	const person = npcs.makePerson('rider', { hat: 'stetson', gun: 'revolver', home: at, name, group });
+	const r = { person, inn: at, horse: null, going: { x: at.x, z: at.z }, route: [], along: 0, rest: 0, wanted: at.heading, think: 0, stuck: 0, backing: 0, fire: 1, unseen: 0, turnSign: 1, squad };
+	riders.push(r);
+	mountNew(r);
+	riderStats.riders = riders.length;
+	return r;
+}
+export const hasRider = (r) => riders.includes(r);
+export function removeHired(r) { clearRiders((one) => one === r); riderStats.riders = riders.length; }
+// (the player's own put somewhere at once: left far behind, brought on)
+export function placeHired(r, x, z, heading) { if (r.horse?.exists) Object.assign(r.horse, { x, z, heading, ground: null, speed: 0 }); }
+// ACROSS COUNTRY's way for anyone (fireteams.js: a land fireteam sent somewhere): world units, or null
+export const landRouteBetween = (from, to) => landRoute(from, to);
+export const innFor = (t) => innOf(t);
 // A POSSE (see the top): count riders out of the inn (a town's: { x, z, heading, town }) after who, hostile to them
 export function addPosse(inn, k, who, count) {
 	const group = npcs.makeGroup();

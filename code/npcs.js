@@ -144,7 +144,8 @@ const hostileThisFrame = new Map();
 export function enemiesOf(group, x, y, z) {
 	let list = hostileThisFrame.get(group);
 	if (!list) {
-		const hostile = war.on && group.side ? (t) => !!t.side && war.enemies(t.side, group.side) : (t) => t.kind == 'player' && hostileTo(group, t.id);
+		// (the player's own hired men are fought by whoever is hostile to the player, as the player is)
+		const hostile = war.on && group.side ? (t) => !!t.side && war.enemies(t.side, group.side) : (t) => (t.kind == 'player' && hostileTo(group, t.id)) || (t.hired && !group.hired && hostileTo(group, 'me'));
 		list = targets().filter((t) => t.alive && hostile(t));
 		hostileThisFrame.set(group, list);
 	}
@@ -323,6 +324,12 @@ function gatherTargets() {
 			heading: Math.atan2(Math.sin(settings.camYaw), -Math.cos(settings.camYaw)), swimming: me.swimming });
 	}
 	for (const other of npcNet.others()) list.push({ ...other, kind: 'player', side: war.on ? war.sideOf(other.id) : null, y: other.y + (other.sit ? 0.5 : 1.2) * m, feet: other.y });
+	// (the player's own hired men: on the player's side; fireteams.js, npcShips.js's crew)
+	if (me.active && runsHere() && hiredIds.size) for (const person of people) {
+		const p = person.place;
+		if (!person.group.hired || !person.alive || !p || person.gone) continue;
+		list.push({ id: person.id, kind: 'npc', hired: true, x: p.x, y: p.y + (p.sit ? 0.5 : 1.2) * m, z: p.z, feet: p.y, alive: true, vehicle: person.anchor?.vehicle ?? null, sit: p.sit ?? 0, heading: p.heading, side: war.on ? war.sideOf('me') : null });
+	}
 	// (in the war: their own people, and the townsfolk)
 	if (war.on) {
 		for (const person of people) {

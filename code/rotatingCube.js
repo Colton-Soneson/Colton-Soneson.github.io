@@ -50,6 +50,7 @@ import * as geese from './geese.js'
 import * as wildBirds from './wildBirds.js'
 import * as painterly from './painterly.js'
 import * as grassThrow from './grassThrow.js'
+import * as fireteams from './fireteams.js'
 import * as deer from './deer.js'
 import * as horde from './horde.js'
 import * as cameraControls from './cameraControls.js'
@@ -475,6 +476,7 @@ export function updateRotatingCubePass() {
 	bedrolls.bedrollsUpdate();
 	campfires.campfiresUpdate();
 	survivalMap.mapUpdate();
+	fireteams.fireteamsUpdate();	//(and the player's own horsemen, and their fireteams: fireteams.js)
 	grassThrow.grassUpdate();		//(and G: a pinch of grass thrown to see the wind, grassThrow.js)
 	inventoryUI.inventoryUIUpdate();
 	journal.journalUpdate();

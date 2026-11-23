@@ -65,6 +65,9 @@ import { VESSELS } from './vessels.js'
 		foesOfMine): her guns those on the land or the water within CHASE, as ATTACKED does (but she is not sailed at them), the nests'
 		Lewis guns those in the air. Shot dead, a man lies where he fell until she is brought out again. Gone with her. A gun the player
 		is at is left to them. Only where the people are run (alone, or the host: npcs.runsHere)
+		SENT SOMEWHERE (fireteams.js: orderHired, from the map): she sails herself there by sea as the war's do (seaRoute, under her
+		engine, her sails set when the wind lets them help), whenever the player is not at her helm, and lies there when she is (her
+		way off her). The player taking her helm takes her back
 	Metres and seconds (the people's places are world units)
 */
 const TROOPS = { guns: 2, every: 1.4, near: 220, blast: 8, gone: 6 };	// guns manned, seconds between horsemen landed, metres from her station she lands them within, the blast (metres), seconds after it she is let go
@@ -672,6 +675,26 @@ export function dismissCrew(s) {
 	const k = hired.indexOf(s);
 	if (k >= 0) hired.splice(k, 1);
 }
+// SENT SOMEWHERE (see YOUR OWN CREW at the top): a player's own schooner b sent to (x, z) (world units). Her way there (world units), or null
+//		(no way there by sea, or she has no crew to sail her)
+export function orderHired(b, x, z) {
+	const s = hired.find((one) => one.boat === b);
+	if (!s || !b?.exists) return null;
+	const m = metre(), at = b.frame.toWorld([0, 0, 0]);
+	const points = seaRoute([at[0] / m, at[2] / m], [x / m, z / m]);
+	if (!points) return null;
+	s.order = { points, at: 0 };
+	if (b.anchor) boat.toggleAnchor(b);		// (her anchor up, to go)
+	return points.map(([px, pz]) => [px * m, pz * m]);
+}
+export function cancelHiredOrder(b) { const s = hired.find((one) => one.boat === b); if (s) s.order = null; }
+// her way on from where she is (world units), or null with none
+export function hiredOrderOf(b) {
+	const s = hired.find((one) => one.boat === b);
+	if (!s?.order) return null;
+	const m = metre();
+	return s.order.points.slice(s.order.at).map(([px, pz]) => [px * m, pz * m]);
+}
 export const hiredCrews = () => hired.map((s) => ({ boat: s.boat?.id, alive: s.people.filter((p) => p.alive).length, of: s.people.length, fighting: s.people.filter((p) => p.fighting).length }));
 function stepHired(s, dt) {
 	const b = s.boat;
@@ -684,6 +707,27 @@ function stepHired(s, dt) {
 	placeCrew(s);
 	for (const [p, r] of s.roles) if ((r.role == 'gun' && r.gun === s.skipGun) || (r.role == 'nest' && r.nest === s.skipNest)) { p.place = null; p.fighting = false; boat.setCrew(b, p.id, null); }
 	const at = b.frame.toWorld([0, 0, 0]);
+	// SENT SOMEWHERE (see YOUR OWN CREW at the top): sailed there, unless the player has her helm
+	const me = hunting.hunterPlace(), helmed = me.boat === b.id && me.on == 'seat';
+	if (s.order && helmed) s.order = null;
+	if (s.order) {
+		const m = metre(), P = s.order.points, d = (k) => Math.hypot(P[k][0] - at[0] / m, P[k][1] - at[2] / m);
+		for (let k = s.order.at + 1; k < Math.min(s.order.at + 8, P.length); k++) if (d(k) < d(s.order.at)) s.order.at = k;
+		if (s.order.at < P.length && d(s.order.at) < SEA_ROUTE.near) s.order.at++;
+		if (s.order.at >= P.length) {
+			s.order = null;
+			if (!b.anchor) boat.toggleAnchor(b);		// (there: her anchor down)
+		} else {
+			const next = P[Math.min(s.order.at + SEA_ROUTE.ahead, P.length - 1)];
+			const course = bearing(next[0] - at[0] / m, next[1] - at[2] / m);
+			steerFor(b, course, dt);
+			if (b.stats.aground && Math.abs(b.stats.speed) < 1) { b.p[0] += Math.sin(course) * 2 * dt; b.p[2] += Math.cos(course) * 2 * dt; }
+			const upWind = Math.abs(wrap(course - windFrom())) < NO_GO + 0.2;
+			trim(b, { furl: upWind ? b.vessel.sails.map((sail) => sail.name) : [] });
+			engine(b, dt);
+			offShoals(b, dt);
+		}
+	}
 	fight(s, quarry(s, at), dt);
 	fightAir(s, dt);
 }

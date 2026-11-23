@@ -13,6 +13,7 @@ import * as vm from './viewmodel.js'
 import { MESHES } from './itemMeshes.js'
 import * as inventory from './inventory.js'
 import * as survival from './survival.js'
+import * as fireteams from './fireteams.js'
 
 /*
 	THE MAP of the Survival mode: from T (its own place there: survival.js) or M. It is pulled out and opened in the hands (the map's
@@ -27,7 +28,11 @@ import * as survival from './survival.js'
 								found it, a dot and its name)
 		the airstrip			outlined, and named
 		the paths				dashed
-	There is nothing of where the walker is on it: it has to be read.
+	WHERE THEY ARE (drawn over it, each frame): the walker, a small filled triangle pointing the way they look; each fireteam out
+	(fireteams.js), a square with its number, and the way a team that has been sent somewhere will take, dotted. All of them the same
+	size on the paper however near it is drawn, a little bigger nearer (MARKER).
+	ORDERS: a left click on a team's square picks it (again, or anywhere else, lets it go); Space sends the team picked to where the mouse
+	is (fireteams.js: order). What happens is written under the map.
 	THE VIEW: it opens on the tile the walker is on, filling the paper as it always has. Drag it to move about the country, the wheel to come
 	nearer (ZOOM_IN) or go further out, as far as the whole world, every continent of it. It goes where it is sent smoothly (EASE: the wheel
 	about the point under the mouse), and a flung drag glides on a little (GLIDE). The paper stays as it is, the drawing moves on it: the
@@ -51,6 +56,7 @@ const CLOSER = { from: 1800, px: 2800 };	// and from which it is drawn finer (th
 const KEEP_CLOSE = 8;
 const ZOOM_IN = 4;					// the nearest: a tile this many times the paper across
 const EASE = 9, GLIDE = 5;			// a second
+const MARKER = { least: 1.7, most: 2.8 };	// WHERE THEY ARE: how big the marks are drawn, from all the way out to all the way in
 const CONTOUR = 25, INDEX = 4;		// metres, and every how many a heavy one
 const PULL = 0.55, OPEN = 0.25;		// seconds
 
@@ -378,7 +384,94 @@ function compose() {
 	ctx.drawImage(marks, 0, 0);
 	ctx.strokeStyle = ink; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
 	ringChart(ctx);
+	drawWhere(ctx);
 }
+// WHERE THEY ARE (see the top): from the world (world units) to the paper, and the marks' size there
+const onPaper = (x, z) => [(x - view.x) * view.scale + SIZE / 2, (z - view.z) * view.scale + SIZE / 2];
+function markerScale() {
+	const { least, most } = limits(), t = Math.log(view.scale / least) / Math.log(most / least);
+	return MARKER.least + (MARKER.most - MARKER.least) * Math.min(Math.max(t, 0), 1);
+}
+let shownTeams = [];		// (the squares as drawn this frame: { number, x, y, half }, for a click)
+function drawWhere(ctx) {
+	const k = markerScale();
+	ctx.save();
+	shownTeams = [];
+	const list = terrain.land ? fireteams.mapTeams() : [];
+	// the ways the teams sent somewhere will take: dark, dotted
+	for (const t of list) {
+		if (!t.route || t.route.length < 2) continue;
+		ctx.beginPath();
+		t.route.forEach(([x, z], i) => { const [px, py] = onPaper(x, z); if (i == 0) ctx.moveTo(px, py); else ctx.lineTo(px, py); });
+		ctx.setLineDash([2.5 * k, 6 * k]); ctx.lineWidth = 2.6 * k; ctx.globalAlpha = 0.85; ctx.strokeStyle = ink; ctx.stroke();
+		const [ex, ey] = onPaper(...t.route[t.route.length - 1]);
+		ctx.setLineDash([]); ctx.lineWidth = 2 * k;
+		ctx.beginPath(); ctx.moveTo(ex - 6 * k, ey - 6 * k); ctx.lineTo(ex + 6 * k, ey + 6 * k); ctx.moveTo(ex + 6 * k, ey - 6 * k); ctx.lineTo(ex - 6 * k, ey + 6 * k); ctx.stroke();
+	}
+	ctx.setLineDash([]); ctx.globalAlpha = 1;
+	// the walker: a small filled triangle, pointing the way they look (under the teams' squares, which are nudged off it)
+	let walkerAt = [-1e9, -1e9];
+	const p0 = hunting.hunterPlace();
+	if (p0.active) {
+		const [px, py] = onPaper(p0.x, p0.z), f = [Math.sin(settings.camYaw), -Math.cos(settings.camYaw)], r = [-f[1], f[0]], s = 9 * k;
+		walkerAt = [px, py];
+		ctx.beginPath();
+		ctx.moveTo(px + f[0] * s, py + f[1] * s);
+		ctx.lineTo(px - f[0] * s * 0.7 + r[0] * s * 0.65, py - f[1] * s * 0.7 + r[1] * s * 0.65);
+		ctx.lineTo(px - f[0] * s * 0.7 - r[0] * s * 0.65, py - f[1] * s * 0.7 - r[1] * s * 0.65);
+		ctx.closePath();
+		ctx.fillStyle = ink; ctx.fill();
+	}
+	// the teams: a square each, its number in it (the one picked heavier, in red chalk)
+	for (const t of list) {
+		let [px, py] = onPaper(t.x, t.z);
+		const half = 11 * k, picked = t.number === pickedTeam;
+		// (not over the walker's mark, nor over another team's square: nudged off to the side)
+		const clear = () => Math.hypot(px - walkerAt[0], py - walkerAt[1]) > half + 9 * k && shownTeams.every((o) => Math.abs(px - o.x) > half * 2 + 3 || Math.abs(py - o.y) > half * 2 + 3);
+		for (let tries = 0; tries < 8 && !clear(); tries++) px += half * 2 + 4;
+		ctx.fillStyle = 'rgba(230, 220, 196, 0.95)';
+		ctx.fillRect(px - half, py - half, half * 2, half * 2);
+		ctx.strokeStyle = picked ? '#7a2a18' : ink; ctx.lineWidth = (picked ? 3.2 : 2) * k;
+		ctx.strokeRect(px - half, py - half, half * 2, half * 2);
+		ctx.fillStyle = picked ? '#7a2a18' : ink;
+		ctx.font = `bold ${Math.round(15 * k)}px "Segoe Print", "Bradley Hand", cursive`;
+		ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+		ctx.fillText(String(t.number), px, py + 1);
+		shownTeams.push({ number: t.number, x: px, y: py, half: half + 4 });
+	}
+	ctx.restore();
+}
+// ORDERS (see the top)
+let pickedTeam = 0, mouseAt = null;
+const caption = document.createElement('div');
+caption.style.cssText = 'position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); padding: 6px 14px; border-radius: 4px; background: rgba(60, 46, 30, 0.88); color: #f0e4c8; font: 14px Georgia, serif; letter-spacing: 0.03em; pointer-events: none; white-space: nowrap;';
+function sayOnMap(text) { caption.textContent = text; }
+function captionNow() {
+	const teams = fireteams.mapTeams();
+	if (pickedTeam && !teams.some((t) => t.number === pickedTeam)) pickedTeam = 0;
+	if (pickedTeam) return `Team ${pickedTeam} picked: Space sends it to the mouse · click it again to let it go`;
+	return teams.length ? 'Left click a team\'s square to pick it' : 'Drag to move about · the wheel to come nearer';
+}
+function clickAt([sx, sy]) {
+	const hit = shownTeams.find((t) => Math.abs(sx - t.x) <= t.half && Math.abs(sy - t.y) <= t.half);
+	pickedTeam = hit && hit.number !== pickedTeam ? hit.number : 0;
+	sayOnMap(captionNow());
+	view.dirty = true;
+}
+function sendPicked() {
+	if (!pickedTeam || !mouseAt) return;
+	const x = view.x + (mouseAt[0] - SIZE / 2) / view.scale, z = view.z + (mouseAt[1] - SIZE / 2) / view.scale;
+	const r = fireteams.order(pickedTeam, x, z);
+	if (!r.ok) { sayOnMap(`Team ${pickedTeam}: ${r.why}`); return; }
+	const metres = r.route.reduce((s, p, k) => s + (k ? Math.hypot(p[0] - r.route[k - 1][0], p[1] - r.route[k - 1][1]) : 0), 0) / settings.forestUnitsPerMetre;
+	sayOnMap(`Team ${pickedTeam} sent: ${metres > 1500 ? (metres / 1000).toFixed(1) + ' km' : Math.round(metres) + ' m'} that way`);
+	view.dirty = true;
+}
+window.addEventListener('keydown', (e) => {
+	if (state.phase != 'open' || e.code != 'Space') return;
+	e.preventDefault(); e.stopPropagation();
+	if (!e.repeat) sendPicked();
+}, true);
 // a frame of it open: the view moved on, a few tiles' ink drawn, put together again if anything changed
 function mapFrame(dt) {
 	if (inksFor !== terrain.land) { inks.clear(); inksFor = terrain.land; view.dirty = true; }
@@ -408,7 +501,7 @@ function mapFrame(dt) {
 		if (w.close) break;
 	}
 	view.wanted = [];
-	if (view.dirty) { compose(); view.dirty = false; }
+	if (view.dirty || shownTeams.length || hunting.hunterPlace().active) { compose(); view.dirty = false; }
 }
 // opened: the paper and the marks drawn again, the view on the walker's tile filling the paper (as the map always opened), that tile drawn
 function prepare() {
@@ -423,13 +516,15 @@ function prepare() {
 	if (e && !e.close) drawInk(key, e, true);
 	compose();
 	view.dirty = false;
+	pickedTeam = 0;
+	sayOnMap(captionNow());
 }
 
 // THE MOUSE on it: drag to move about, the wheel to come nearer and go further out
 const toPaper = (e) => { const r = sheet.getBoundingClientRect(); return [(e.clientX - r.left) / r.width * SIZE, (e.clientY - r.top) / r.height * SIZE]; };
 sheet.addEventListener('pointerdown', (e) => {
 	if (e.button != 0) return;
-	view.drag = { at: toPaper(e), t: performance.now() };
+	view.drag = { at: toPaper(e), t: performance.now(), start: toPaper(e), moved: 0 };
 	view.anchor = null; view.vx = view.vz = 0;
 	view.toScale = view.scale;
 	sheet.setPointerCapture?.(e.pointerId);
@@ -437,17 +532,20 @@ sheet.addEventListener('pointerdown', (e) => {
 	e.preventDefault();
 });
 sheet.addEventListener('pointermove', (e) => {
+	mouseAt = toPaper(e);
 	if (!view.drag) return;
 	const at = toPaper(e), now = performance.now(), dt = Math.max((now - view.drag.t) / 1000, 1e-3);
+	view.drag.moved = Math.max(view.drag.moved, Math.hypot(at[0] - view.drag.start[0], at[1] - view.drag.start[1]));
 	const dx = (at[0] - view.drag.at[0]) / view.scale, dz = (at[1] - view.drag.at[1]) / view.scale;
 	view.x -= dx; view.z -= dz;
 	view.vx = view.vx * 0.5 + (-dx / dt) * 0.5; view.vz = view.vz * 0.5 + (-dz / dt) * 0.5;
-	view.drag = { at, t: now };
+	view.drag = { ...view.drag, at, t: now };
 	clampView();
 	view.dirty = true;
 });
 const letGo = (e) => {
 	if (!view.drag) return;
+	if (view.drag.moved < 6 && e.type == 'pointerup') { clickAt(toPaper(e)); view.vx = view.vz = 0; }
 	if (performance.now() - view.drag.t > 80) view.vx = view.vz = 0;		// (held still before letting go: no glide)
 	view.drag = null;
 	sheet.style.cursor = 'grab';
@@ -477,6 +575,7 @@ closer.textContent = '✕  Close map';
 closer.style.cssText = 'position: absolute; top: 18px; right: 22px; padding: 8px 14px; border: 1px solid #8a7452; border-radius: 4px; background: rgba(60, 46, 30, 0.92); color: #f0e4c8; font: 14px Georgia, serif; letter-spacing: 0.06em; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.5);';
 closer.addEventListener('click', () => closeMap());
 overlay.appendChild(closer);
+overlay.appendChild(caption);
 document.body.appendChild(overlay);
 
 // THE MAP IN THE HANDS (see the top)
@@ -556,3 +655,4 @@ export function viewMapForTest(x, z, scale) {
 }
 export const mapFrameForTest = (dt) => mapFrame(dt);
 export const mapViewForTest = () => view;
+export const mapSquaresForTest = () => shownTeams.map((t) => ({ ...t }));

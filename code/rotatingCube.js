@@ -48,6 +48,8 @@ import * as lightning from './lightning.js'
 import * as birds from './birds.js'
 import * as geese from './geese.js'
 import * as wildBirds from './wildBirds.js'
+import * as painterly from './painterly.js'
+import * as grassThrow from './grassThrow.js'
 import * as deer from './deer.js'
 import * as horde from './horde.js'
 import * as cameraControls from './cameraControls.js'
@@ -473,6 +475,7 @@ export function updateRotatingCubePass() {
 	bedrolls.bedrollsUpdate();
 	campfires.campfiresUpdate();
 	survivalMap.mapUpdate();
+	grassThrow.grassUpdate();		//(and G: a pinch of grass thrown to see the wind, grassThrow.js)
 	inventoryUI.inventoryUIUpdate();
 	journal.journalUpdate();
 	outfits.outfitsUpdate();
@@ -746,6 +749,7 @@ export function updateRotatingCubePass() {
 		weapons.weaponsPass();	//(the gun held, if it is not the rifle)
 		plane.gunnerPass();		//(or the Lewis gun on a biplane's ring, in the gunner's seat)
 		survivalMap.mapPass();	//(or the map, pulled out: the Survival mode)
+		grassThrow.grassHandPass();	//(and the hand throwing grass: G)
 		journal.journalPass();	//(or the journal: the inventory)
 		shipGuns.gunnerPass();	//(or in a schooner's crow's nest)
 	});
@@ -760,6 +764,8 @@ export function updateRotatingCubePass() {
 		fxaaPass(encoderDebug, context.getCurrentTexture());
 		smaaPass(encoderDebug, context.getCurrentTexture());
 	});
+	//and the Painterly filter over all of it, last (only the page's own controls go over it: painterly.js)
+	profiler.section('Painterly', () => painterly.painterlyPass(encoderDebug, context.getCurrentTexture(), depthTexture));
 
 	if(settings.displayHeightMap)
 	{

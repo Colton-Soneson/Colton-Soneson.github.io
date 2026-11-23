@@ -79,7 +79,6 @@ export const imguiParams = {
     // Display
     renderResolution: settings.renderResolution,
     hdVegetation: settings.hdVegetation,
-    enableRiverFlecks: settings.enableRiverFlecks,
     dynamicResolution: settings.dynamicResolution,
     dynamicResolutionTarget: settings.dynamicResolutionTarget,
     antiAliasing: settings.antiAliasing,
@@ -279,6 +278,8 @@ export const imguiParams = {
     deerSize: settings.deerSize,
     enableGeese: settings.enableGeese,
     enableWildBirds: settings.enableWildBirds,
+    painterly: settings.painterly,
+    painterlyBrushWidth: settings.painterlyBrushWidth,
     wildBirdNumbers: settings.wildBirdNumbers,
     geeseCount: settings.geeseCount,
     geeseSize: settings.geeseSize,
@@ -389,6 +390,9 @@ console.log("Graphics preset to start on: " + startingPreset.preset + " (" + sta
 const presetCheck = new PresetCheck(startingPreset.preset, performance.now());
 
 const presetNames = Object.fromEntries(PRESET_NAMES.map((name) => [name.replace(/\b\w/g, (c) => c.toUpperCase()), name]));	// 'Very Low': 'very low', ...
+// a filter over the whole picture: painted over in gouache (painterly.js). Not part of the presets
+gui.add(imguiParams, 'painterly').name('Painterly');
+gui.add(imguiParams, 'painterlyBrushWidth', 0.25, 4, 0.05).name('Brush Width');
 const presetController = gui.add(presetState, 'preset', presetNames).name('Graphics Preset').onChange((name) => {
 	applyPreset(name);
 	rememberDepthChoice(PRESETS[name].reversedDepth);		// (chosen by hand: its depth buffer the next time the page loads)
@@ -735,7 +739,6 @@ windFolder.add(imguiParams, 'windGustSpeed', 0, 8, 0.1).name('Gust Speed (x wind
 
 const waterFolder = gui.addFolder('Water');
 waterFolder.add(imguiParams, 'enableWater').name('Enable');
-waterFolder.add(imguiParams, 'enableRiverFlecks').name('River Foam Flecks');	//bits of foam on the rivers, going round what stands in them (riverFlecks.js)
 waterFolder.add(imguiParams, 'waterWaveSteepness', 0, 1, 0.01).name('Wave Steepness');
 waterFolder.add(imguiParams, 'waterWaveLength', 1, 500).name('Wave Length');
 waterFolder.add(imguiParams, 'waterOceanWindSpeed', 0, 30).name('Wind Over The Sea');	//its own: the Wind folder's is the land's

@@ -1272,6 +1272,11 @@ function crestsOf(params, window, rises) {
 		how wide	hydraulic geometry (Leopold and Maddock 1953): a river is as wide as about the square root of the water it carries, and
 					that goes with the land it drains: RIVERS.width[0] times (area in square kilometres) to the RIVERS.width[1], metres
 		how deep	the same way, to about the 0.4 power (RIVERS.depth)
+		POOLS AND RIFFLES	and along it, as a river's bed is: pools and riffles taking turns, about RIVERS.pools[0] to [1] times its width
+					apart (Leopold), each its own size. A pool wider (RIVERS.poolWide) and a good deal deeper (RIVERS.poolDeep), its water
+					slow; a riffle narrower and shallow, its water quick over the stones (the water's shader: vf_rivers.js). In each point's
+					pool (1 a pool's middle, -1 a riffle's). And slower, every few of them (RIVERS.reaches times its width), a broad reach:
+					wider and deeper again (RIVERS.reachWide, RIVERS.reachDeep), as a river opens out where its valley does
 		its water	the land under its middle (the noise and the relief together, as the ground is made: natural) cut down a little into it
 					(RIVERS.incise), and never higher than it is upstream: water does not run up hill, and where the land comes up in its way
 					it stands level over it. Never under the sea
@@ -1281,13 +1286,14 @@ function crestsOf(params, window, rises) {
 	A tile has the stretches near it (riverWindow): every one it is cut by, and the ones it draws (rivers.js), each drawn by the one tile
 	its middle is in. Units: world units, and the water's height over the sea
 */
-const RIVERS = { area: 0.25e6, width: [3.5, 0.5], depth: [0.35, 0.4], incise: 0.7, smooth: 2, snap: [5, 5], bank: 0.9, reach: 30, fade: 0.55, levee: 5, cover: MOUNTAIN_THRESHOLD + 0.02, bucket: 64,
+const RIVERS = { area: 0.25e6, width: [3.8, 0.5], depth: [0.4, 0.4], pools: [5, 8], poolWide: 0.45, poolDeep: 0.75, reaches: 34, reachWide: 0.6, reachDeep: 0.8, incise: 0.7, smooth: 2, snap: [5, 5], bank: 0.9, reach: 30, fade: 0.55, levee: 5, cover: MOUNTAIN_THRESHOLD + 0.02, bucket: 64,
 	shelf: 4, lip: 0.1, stones: 6 };
 // (shelf: world units past the water's edge the bed goes on, just under the water, before the bank starts: wider than a cell of the mesh
 //		near the camera, so the bank never comes up through the water a cell at a time and the water's edge is its own, smooth (vf_rivers.js),
 //		not the mesh's. lip: metres under the water the bed is at the water's edge. stones: world units out from the shelf the stony
 //		ground of the bed goes on up the bank, thinning (vf_terrain.js: THE STONY GROUND, the river's))
-export const RIVER_FLOATS = 6;		// a point of a river: x, z, its water (over the sea), half its width, its depth, how far along its line from the head
+export const RIVER_FLOATS = 7;		// a point of a river: x, z, its water (over the sea), half its width, its depth, how far along its line from the head, and
+								//		whether a pool or a riffle (POOLS AND RIFFLES: 1 a pool, -1 a riffle)
 
 // the lines of a continent's rivers: { points: Float32Array, RIVER_FLOATS each, starts: Int32Array, where each line's points begin (and
 //		one more, the end) }. natural(x, z): the ground there, over the sea; lakeOf(x, z): a highland lake's water there (THE HIGHLAND
@@ -1324,7 +1330,7 @@ function riverLines(shape, receiver, natural, lakeOf = () => NO_LAKE) {
 	}
 	const at = (i) => {
 		const [x, z] = placeOf(i), km2 = area[i] / 1e6;
-		return [x, z, water.get(i) ?? 0, 0.5 * RIVERS.width[0] * Math.pow(km2, RIVERS.width[1]) * m, RIVERS.depth[0] * Math.pow(km2, RIVERS.depth[1]) * m, 0];
+		return [x, z, water.get(i) ?? 0, 0.5 * RIVERS.width[0] * Math.pow(km2, RIVERS.width[1]) * m, RIVERS.depth[0] * Math.pow(km2, RIVERS.depth[1]) * m, 0, 0];
 	};
 	// the lines: from each head down to one laid already (its last point is that one's) or the sea
 	const taken = new Set(), points = [], starts = [];
@@ -1363,9 +1369,25 @@ function riverLines(shape, receiver, natural, lakeOf = () => NO_LAKE) {
 		for (let k = 0; k < cut.length; k++) cut[k][2] = inLake(cut[k][0], cut[k][1]) ?? Math.max(Math.min(cut[k][2], natural(cut[k][0], cut[k][1]) - RIVERS.incise * m, k > 0 ? cut[k - 1][2] : Infinity), 0);
 		starts.push(points.length / RIVER_FLOATS);
 		let along = 0;
+		cut.forEach((p, k) => { if (k > 0) along += Math.hypot(p[0] - cut[k - 1][0], p[1] - cut[k - 1][1]); p[5] = along; });
+		// (POOLS AND RIFFLES: a wave along it, a cycle every RIVERS.pools times its width, each cycle its own length and size. Not at its
+		//		ends: its head, and the last point, on the line it joins or the shore)
+		const seed = Math.round(cut[0][0] * 7.1 + cut[0][1] * 3.3);
+		const rnd = (k) => { const v = Math.sin((seed + k * 127.1) * 12.9898) * 43758.5453; return v - Math.floor(v); };
+		let reach = rnd(6), phase = rnd(0), cycle = 0, step = RIVERS.pools[0] + (RIVERS.pools[1] - RIVERS.pools[0]) * rnd(1), size = 0.55 + 0.45 * rnd(2);
 		cut.forEach((p, k) => {
-			if (k > 0) along += Math.hypot(p[0] - cut[k - 1][0], p[1] - cut[k - 1][1]);
-			p[5] = along;
+			if (k > 0) {
+				const run = Math.hypot(p[0] - cut[k - 1][0], p[1] - cut[k - 1][1]);
+				phase += run / (2 * p[3] * step);
+				reach += run / (2 * p[3] * RIVERS.reaches);
+				while (phase >= 1) { phase -= 1; cycle++; step = RIVERS.pools[0] + (RIVERS.pools[1] - RIVERS.pools[0]) * rnd(3 * cycle + 4); size = 0.55 + 0.45 * rnd(3 * cycle + 5); }
+			}
+			const ends = Math.min(k, cut.length - 1 - k, 3) / 3;
+			const pool = Math.sin(phase * Math.PI * 2) * size * ends;
+			const broad = Math.pow(Math.max(Math.sin(reach * Math.PI * 2), 0), 2) * ends;		// (a broad reach: half the time none)
+			p[3] *= (1 + RIVERS.poolWide * pool) * (1 + RIVERS.reachWide * broad);
+			p[4] *= Math.max(1 + RIVERS.poolDeep * pool * (pool > 0 ? 1.4 : 0.8), 0.25) * (1 + RIVERS.reachDeep * broad);
+			p[6] = pool;
 			points.push(...p);
 		});
 	}

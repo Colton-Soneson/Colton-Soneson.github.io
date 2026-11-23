@@ -79,6 +79,8 @@ export const settings = {
 	dynamicResolution: false,			//draw at less than renderResolution while the frame rate is under the target, back up when there is room (see DYNAMIC RESOLUTION in display.js). On in the Low and Very Low presets
 	dynamicResolutionTarget: 30,		//the frame rate dynamic resolution keeps to, 0 to 60
 	reversedDepth: true,				//the frame's depth buffer reversed-Z, 32 bit float: about as fine far off as near (no flicker in the distance). Takes effect when the page loads (see depthMode.js)
+	painterly: false,					//the whole picture painted over as a hand painted film's backgrounds (soft flat shapes, clean skies, fresh greens): a filter over the finished frame (painterly.js)
+	painterlyBrushWidth: 1.0,			//how wide its strokes are (wider near the camera, narrower far off)
 	antiAliasing: "smaa",				//smooths the stair steps along edges. From the finished frame: "smaa" (see vf_smaa.js), "fxaa" (vf_fxaa.js). With the frames before (temporalAA.js): "taa", "taa+fxaa", and FSR 3 (fsr3.js) "fsr-native", "fsr-quality", "fsr-balanced", "fsr-performance" (drawn at less, and upscaled). Or "off"
 	smaaEdgeThreshold: 0.1,				//SMAA: how much the brightness has to change between two pixels to count as an edge. Lower finds fainter edges and costs more
 	fxaaSubpixel: 0.75,					//FXAA: how much anything smaller than a pixel (a far blade of grass) is softened into what is round it. 0 = edges only
@@ -128,7 +130,6 @@ export const settings = {
 	enableGrass: true,
 	hdVegetation: true,					//HD Textures and Models: the trees, the bushes, the flowers, ferns and mosses drawn with about twice the triangles, and their leaves, needles and petals drawn with their veins, teeth and streaks (vf_forest.js: THE HD CARDS, THE HD LEAVES; floraKinds.js: HD; vf_flora.js: THE HD TEXTURES)
 	enableRagdolls: true,				//people shot go down as ragdolls, taking the hit where it landed (ragdolls.js)
-	enableRiverFlecks: true,			//bits of foam carried on the rivers near the camera, going round whatever stands in the water (riverFlecks.js)
 	enableFlora: true,					//the plants: ferns, mosses, mushrooms and flowers, bushes and wild wheat (flora.js)
 	floraDensity: 1.0,					//how many of the small plants: 2 = twice as many
 	floraDrawDistance: 130,				//metres out the small plants are drawn (the bushes and the wild wheat: 220)

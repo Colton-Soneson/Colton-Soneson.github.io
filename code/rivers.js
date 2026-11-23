@@ -6,10 +6,10 @@ import * as transformations from './transformations.js'
 import * as terrain from './terrain.js'
 import * as screenEffects from './screenEffects.js'
 import { RIVER_FLOATS } from './terrainGenerator.js'
+import { windSpeedNow, windPower } from './wind.js'
 import { vf_rivers } from '../shaders/js/vf_rivers.js'
 import { skyViewLUTtexture } from './atmosphere.js'
 import { uniformBufferLights } from './rotatingCube.js'
-import { fleckUpdate, fleckDraw } from './riverFlecks.js'
 
 /*
 	THE RIVERS' WATER: terrainGenerator.js lays the rivers out over each continent (THE RIVERS) and cuts their channels into the land;
@@ -25,7 +25,7 @@ import { fleckUpdate, fleckDraw } from './riverFlecks.js'
 const EDGE = 2.5;					// world units past the water's edge each side
 const ABOVE_SEA = 0.4;				// world units: water lower than this over the sea is the sea's
 const SEEN = 1400;					// times its half width that a stretch is drawn out to
-const VERTEX_FLOATS = 10;			// position (3), along, across, half width, fall, which way it runs (2), depth
+const VERTEX_FLOATS = 11;			// position (3), along, across, half width, fall, which way it runs (2), depth, pool (terrainGenerator.js: POOLS AND RIFFLES)
 
 export const riverStats = { tiles: 0, stretches: 0, vertices: 0 };
 
@@ -56,7 +56,7 @@ const pipeline = device.createRenderPipeline({
 				{ format: 'float32x3', offset: 0, shaderLocation: 0 },		// position
 				{ format: 'float32x4', offset: 12, shaderLocation: 1 },		// along, across, half width, fall
 				{ format: 'float32x2', offset: 28, shaderLocation: 2 },		// which way it runs
-				{ format: 'float32', offset: 36, shaderLocation: 3 },		// depth
+				{ format: 'float32x2', offset: 36, shaderLocation: 3 },		// depth, pool
 			],
 		}],
 	},
@@ -90,26 +90,24 @@ function ribbonOf(land) {
 			let tx = P(i1, 0) - P(i0, 0), tz = P(i1, 1) - P(i0, 1);
 			const tl = Math.hypot(tx, tz) || 1;
 			tx /= tl; tz /= tl;
-			return { x: P(i, 0), z: P(i, 1), y: sea + Math.max(P(i, 2), ABOVE_SEA), w: P(i, 3), d: P(i, 4), u: P(i, 5), tx, tz };
+			return { x: P(i, 0), z: P(i, 1), y: sea + Math.max(P(i, 2), ABOVE_SEA), w: P(i, 3), d: P(i, 4), u: P(i, 5), pool: P(i, 6), tx, tz };
 		};
 		for (let k = a; k < b - 1; k++) {
 			if (P(k, 2) < ABOVE_SEA && P(k + 1, 2) < ABOVE_SEA) continue;
 			const e0 = end(k), e1 = end(k + 1);
 			const run = Math.hypot(e1.x - e0.x, e1.z - e0.z);
 			const fall = run > 0 ? Math.max(P(k, 2) - P(k + 1, 2), 0) / run : 0;
-			const v = (p, side) => { const reach = p.w + EDGE; out.push(p.x - p.tz * reach * side, p.y, p.z + p.tx * reach * side, p.u, side * reach / p.w, p.w, fall, p.tx, p.tz, p.d); };
+			const v = (p, side) => { const reach = p.w + EDGE; out.push(p.x - p.tz * reach * side, p.y, p.z + p.tx * reach * side, p.u, side * reach / p.w, p.w, fall, p.tx, p.tz, p.d, p.pool); };
 			const first = out.length / VERTEX_FLOATS;
 			v(e0, -1); v(e0, 1); v(e1, 1);
 			v(e0, -1); v(e1, 1); v(e1, -1);
-			stretches.push({ x: 0.5 * (e0.x + e1.x), z: 0.5 * (e0.z + e1.z), seen: Math.min(SEEN * Math.max(e0.w, e1.w), settings.camFarPlane ?? 20000) + run, first, count: 6,
-				// (for the flecks on it, riverFlecks.js: its ends, and how fast it runs, as the water's shader has it)
-				flow: { a: [e0.x, e0.y, e0.z, e0.w], b: [e1.x, e1.y, e1.z, e1.w], speed: Math.min(Math.max(0.6 + 30 * fall, 0.6), 4) * settings.forestUnitsPerMetre } });
+			stretches.push({ x: 0.5 * (e0.x + e1.x), z: 0.5 * (e0.z + e1.z), seen: Math.min(SEEN * Math.max(e0.w, e1.w), settings.camFarPlane ?? 20000) + run, first, count: 6 });
 		}
 	}
 	// (a lake's squares: still water, which way it runs nowhere)
 	for (let q = 0; q + 5 <= (quads?.length ?? 0); q += 5) {
 		const [x0, z0, x1, z1, L] = quads.subarray(q, q + 5), y = sea + L;
-		const v = (x, z) => out.push(x, y, z, 0, 0, -1, 0, 1, 0, 0);
+		const v = (x, z) => out.push(x, y, z, 0, 0, -1, 0, 1, 0, 0, 0);
 		const first = out.length / VERTEX_FLOATS;
 		v(x0, z0); v(x1, z0); v(x1, z1);
 		v(x0, z0); v(x1, z1); v(x0, z1);
@@ -153,6 +151,8 @@ function bindGroupNow() {
 	return bindGroup;
 }
 
+const windNow = () => { const d = settings.windDirection, l = Math.hypot(d[0], d[1]) || 1, k = windPower(windSpeedNow()); return [d[0] / l * k, d[1] / l * k]; };
+
 // Per frame, after the sea
 //-------------------------------------------------
 export function riverPass(depthTexture) {
@@ -164,10 +164,10 @@ export function riverPass(depthTexture) {
 	const P = transformations.projectionMatrix;
 	device.queue.writeBuffer(uniformBuffer, 0, new Float32Array([...transformations.getViewProj(),
 		(performance.now() / 1000) % 3600, settings.waterHorizonFogDistance, settings.enableAtmosphere ? 1 : 0, settings.forestUnitsPerMetre,
-		P[10], P[14], screenEffects.sceneCopyReady ? 1 : 0, 0]));
+		P[10], P[14], screenEffects.sceneCopyReady ? 1 : 0, 0,
+		// (the wind: its direction along the ground, times how hard it blows)
+		...windNow(), 0, 0]));
 	const encoder = device.createCommandEncoder({ label: 'rivers' });
-	// (the flecks on the water moved on: riverFlecks.js)
-	fleckUpdate(encoder, drawn.flatMap((r) => r.stretches.filter((s) => s.flow).map((s) => s.flow)));
 	const pass = encoder.beginRenderPass({
 		label: 'rivers',
 		timestampWrites: profiler.timestamps('Rivers', 'vf_rivers'),
@@ -192,7 +192,6 @@ export function riverPass(depthTexture) {
 		}
 		if (from >= 0) { pass.draw(to - from, 1, from, 0); riverStats.vertices += to - from; }
 	}
-	fleckDraw(pass);
 	pass.end();
 	device.queue.submit([encoder.finish()]);
 }

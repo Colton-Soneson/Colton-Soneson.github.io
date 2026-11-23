@@ -1288,7 +1288,7 @@ function showControls() {
 			['W A S D', 'walk · Shift run'],
 			['Space', 'jump'],
 			['C', 'crouch, and again to stand'],
-			...(settings.gameMode == 'Hunting' ? [['T', 'what you have equipped, and the map'], ['Tab / I', 'inventory'], ['M', 'map'], ['E', 'search a crate, a body, a pile, a snare · at a lake: drink · at a villager: trade'], ['X', 'at a burning campfire or stove: cook meat'], ['V (held)', 'what is what: names over things and people']]
+			...(settings.gameMode == 'Hunting' ? [['T', 'what you have equipped, and the map'], ['Tab / I', 'inventory'], ['M', 'map'], ['E', 'search a crate, a body, a pile, a snare · at a lake: drink · at a villager: trade'], ['G', 'throw a pinch of grass: see which way the wind blows'], ['X', 'at a burning campfire or stove: cook meat'], ['V (held)', 'what is what: names over things and people']]
 				: [['T', 'spawn menu: vehicles and weapons'], ['E', 'by your disc: pick it up']]),
 			['F', 'at a horse: get on · at its saddlebags: fill up your ammunition · at a biplane\'s cockpit: climb in · at its wheels: floats or wheels · at a ladder: climb it'],
 			settings.gameMode == 'Hunting' ? ['Esc', 'let go of the mouse'] : ['Tab / Esc', 'let go of the mouse'],

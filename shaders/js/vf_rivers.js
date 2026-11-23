@@ -4,13 +4,17 @@ import { skyLookupShapes } from './vfc_atmosphere.js';
 	The rivers' water (rivers.js draws it, terrainGenerator.js THE RIVERS lays the rivers out and cuts their channels).
 
 	Each river is a ribbon at the height of its water, a little wider than the water so its edges are under the banks. Over it:
-		THE SURFACE		ripples, worked out in the river's own frame (how far along it, how far across) and carried down it with the water:
-						faster and rougher where it falls steeply (its fall: the drop of its water over the way along), as rapids are
+		THE SURFACE		as a pond's: ripples over the water, in the world, carried along: a lake's by the wind, a river's down the way the
+						land runs it (quicker where it falls steeply, as rapids are; quickest in the middle and slow by the banks; slow
+						through a pool: terrainGenerator.js POOLS AND RIFFLES) and a little with the wind. Two layers of them carried half
+						a cycle apart, each faded out as it starts again (as a flow map is), so they follow the water round its bends and
+						are never drawn out. A little rougher where it runs quick or thin, or past something standing in it (WAKES: the
+						frame before the water, a few metres upstream)
 		WHAT IS UNDER	the frame as it stood before the water (screenEffects.js: the bed and anything in the water), through the water:
 						the further the eye looks through it, the less of the bed and the more of the water's own color (Beer-Lambert:
 						ABSORB a metre, and the light the water sends back itself, SCATTER), a little bent by the ripples
 		THE SKY			reflected as much as the angle lets it (Schlick's Fresnel), and the sun glinting off it
-		FOAM			on the rapids, and a little at the edges
+		FOAM			on the rapids, a little in the wakes and at the edges
 	A highland lake (its half width -1) is still water: ripples from the wind drifting slowly over it, no foam
 	And faded into the horizon as everything else is, and soft at the shore where the water gets thin
 */
@@ -27,6 +31,7 @@ export const vf_rivers =
 		depthB : f32,
 		sceneReady : f32,			// 1.0 when the frame before the water was kept this frame (screenEffects.js)
 		pad : f32,
+		wind : vec4f,				// xy: the wind along the ground (its direction, times how hard it blows: about 1 for a breeze)
 	}
 	@group(0) @binding(0) var<uniform> UBO: RiverUniforms;
 
@@ -59,7 +64,7 @@ export const vf_rivers =
 		@location(0) pos: vec3f,
 		@location(1) river: vec4f,		// x: how far along it (world units from its head), y: how far across (-1 and 1 at the water's edge), z: its half width, w: its fall
 		@location(2) flow: vec2f,		// which way it runs (length 1)
-		@location(3) depth: f32,		// how deep it is in the middle (world units)
+		@location(3) depth: vec2f,		// x: how deep it is in the middle (world units), y: pool (1 a pool, -1 a riffle)
 	};
 
 	struct VertexOutput {
@@ -68,6 +73,7 @@ export const vf_rivers =
 		@location(1) river: vec4f,
 		@location(2) flow: vec2f,
 		@location(3) viewDepth: f32,	// the distance along the view, as the depth buffer's own (clip w)
+		@location(4) pool: f32,
 	};
 
 	@vertex
@@ -78,6 +84,7 @@ export const vf_rivers =
 		output.river = input.river;
 		output.flow = input.flow;
 		output.viewDepth = output.pos.w;
+		output.pool = input.depth.y;
 		return output;
 	}
 
@@ -105,34 +112,72 @@ export const vf_rivers =
 		let flow = normalize(input.flow);
 		let side = vec2f(-flow.y, flow.x);
 
-		//------------------THE SURFACE-----------------
-		// carried along at the speed of the water: a slow river about 0.6 metres a second, rapids up to 4
-		let speed = clamp(0.6 + 30.0 * fall, 0.6, 4.0) * m;
+		//------------------THE FLOW-----------------
 		let lake = input.river.z < 0.0;
-		var p = vec2f(input.river.x - speed * UBO.time, input.river.y * input.river.z) / (1.4 * m);
-		if (lake) { p = (input.worldPos.xz + vec2f(0.25, 0.1) * m * UBO.time) / (2.2 * m); }
-		let e = 0.08;
-		let h0 = ripples(p);
-		let slope = vec2f(ripples(p + vec2f(e, 0.0)) - h0, ripples(p + vec2f(0.0, e)) - h0) / e;
-		let rough = select(0.06 + 0.3 * smoothstep(0.01, 0.08, fall), 0.045, lake);
-		let g = (flow * slope.x + side * slope.y) * rough;
-		let N = normalize(vec3f(-g.x, 1.0, -g.y));
+		let across = input.river.y;
+		let pool = input.pool;
+		// a slow river about 0.6 metres a second, rapids up to 4; quickest in the middle, slow by the banks; slow in a pool, quick on a riffle
+		let speed = clamp(0.6 + 30.0 * fall, 0.6, 4.0) * (1.0 - 0.55 * min(across * across, 1.0)) * (1.0 - 0.35 * pool) * m;
+		let rapid = smoothstep(0.02, 0.1, fall);
 
 		let toEye = Lights.camPos.xyz - input.worldPos;
 		let away = length(toEye);
 		let V = toEye / away;
 
-		//------------------WHAT IS UNDER-----------------
-		// how far the eye looks through the water to what is behind it
+		//------------------WHAT IS UNDER (how thick)-----------------
 		var through = 1.0 * m;
+		if (UBO.sceneReady > 0.5) {
+			let sceneD = textureLoad(sceneDepth, vec2i(input.pos.xy), 0);
+			through = max(UBO.depthB / (sceneD + UBO.depthA) - input.viewDepth, 0.0) * away / max(input.viewDepth, 0.001);
+		}
+		let shallow = 1.0 - smoothstep(0.08 * m, 0.6 * m, through);
+
+		//------------------WAKES-----------------
+		// (anything at the surface a few metres upstream, as the frame before the water has it: there the water is thin, or gone)
+		var wake = 0.0;
+		if (UBO.sceneReady > 0.5 && !lake && abs(across) < 0.8) {
+			let size = vec2f(textureDimensions(sceneDepth));
+			for (var k = 1; k <= 4; k++) {
+				let back = f32(k) * 0.9 * m;
+				let up = input.worldPos - vec3f(flow.x, 0.0, flow.y) * back;
+				let clip = UBO.viewProjectionMatrix * vec4f(up, 1.0);
+				if (clip.w <= 0.0) { continue; }
+				let ndc = clip.xy / clip.w;
+				let px = vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5) * size;
+				if (any(px < vec2f(0.0)) || any(px >= size)) { continue; }
+				let dUp = textureLoad(sceneDepth, vec2i(px), 0);
+				let thin = UBO.depthB / (dUp + UBO.depthA) - clip.w;
+				// (something within a hand's breadth of the surface there, or standing up through it: a wake, spreading and fading behind it)
+				wake = max(wake, (1.0 - smoothstep(0.05 * m, 0.25 * m, thin)) * (1.0 - f32(k - 1) * 0.2));
+			}
+		}
+
+		//------------------THE SURFACE-----------------
+		// as a pond's: ripples over the water in the world (not the ribbon's frame: no seams where the river bends), carried along. A
+		//		lake's by the wind alone; a river's down the way the land runs it (quicker where it falls, as rapids are) and a little
+		//		with the wind. Two layers of them carried half a cycle apart, each faded out as it starts again (a flow map's way), so
+		//		they go the way the water goes wherever it turns, and are never drawn out
+		var g = vec2f(0.0);
+		let drift = (UBO.wind.xy * 0.18 + select(flow * speed / m, vec2f(0.0), lake)) * m;		// world units a second
+		let cycle = 2.4;
+		for (var i = 0; i < 2; i++) {
+			let t = fract(UBO.time / cycle + f32(i) * 0.5);
+			let w = 1.0 - abs(2.0 * t - 1.0);
+			let q = (input.worldPos.xz - drift * t * cycle + f32(i) * vec2f(17.3, 5.1) * m) / (2.2 * m);
+			let e = 0.08;
+			let h = ripples(q);
+			g += vec2f(ripples(q + vec2f(e, 0.0)) - h, ripples(q + vec2f(0.0, e)) - h) / e * w;
+		}
+		// (a lake's as still as ever; a stream's a little rougher, the more where it runs quick or thin, or past something standing in it)
+		g *= select(0.05 + 0.05 * rapid + 0.03 * shallow + 0.06 * wake, 0.045, lake);
+		let N = normalize(vec3f(-g.x, 1.0, -g.y));
+
+		//------------------WHAT IS UNDER-----------------
+		// what is behind the water, bent a little by the ripples (by more the deeper it is; not on to anything in front of the water)
 		var behind = vec3f(0.30, 0.28, 0.22) * 0.6;
 		if (UBO.sceneReady > 0.5) {
 			let size = vec2f(textureDimensions(sceneDepth));
 			let here = vec2i(input.pos.xy);
-			let d = textureLoad(sceneDepth, here, 0);
-			let further = UBO.depthB / (d + UBO.depthA) - input.viewDepth;
-			through = max(further, 0.0) * away / max(input.viewDepth, 0.001);
-			// (bent by the ripples, by more the deeper it is; not on to anything in front of the water)
 			let bent = vec2i(clamp(input.pos.xy + N.xz * 40.0 * saturate(through / (2.0 * m)), vec2f(0.0), size - vec2f(1.0)));
 			let bentDepth = textureLoad(sceneDepth, bent, 0);
 			let bentFurther = UBO.depthB / (bentDepth + UBO.depthA) - input.viewDepth;
@@ -151,9 +196,12 @@ export const vf_rivers =
 		color += Lights.sunCol.rgb * pow(saturate(dot(R, L)), 900.0) * 1.6 * daylight;
 
 		//------------------FOAM-----------------
-		let rapids = smoothstep(0.03, 0.14, fall) * smoothstep(0.45, 0.75, ripples(p * 2.3 + 11.0));
-		let edge = 0.35 * smoothstep(0.8, 1.0, abs(input.river.y)) * smoothstep(0.4, 0.7, ripples(p * 3.1 - 5.0));
-		let foam = select(saturate(rapids + edge), 0.0, lake);
+		// (carried down with the water, in the world as the ripples are)
+		let fp = (input.worldPos.xz - drift * UBO.time) / (1.4 * m);
+		let rapids = smoothstep(0.03, 0.14, fall) * smoothstep(0.5, 0.8, ripples(fp * 1.6 + 11.0));
+		let edge = 0.25 * smoothstep(0.85, 1.0, abs(across)) * smoothstep(0.45, 0.7, ripples(fp * 3.1 - 5.0)) * smoothstep(0.6, 1.5, speed / m);
+		let trail = 0.5 * wake * smoothstep(0.5, 0.75, ripples(fp * 2.2 + 23.0));
+		let foam = select(saturate(rapids + edge + trail), 0.0, lake);
 		color = mix(color, vec3f(0.85, 0.88, 0.88) * (0.25 + 0.75 * daylight), foam * 0.8);
 
 		// and the same fade into the horizon

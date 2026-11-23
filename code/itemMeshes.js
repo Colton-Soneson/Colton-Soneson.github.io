@@ -17,6 +17,9 @@ import * as vm from './viewmodel.js'
 		tentBundle	the tent rolled up round its poles, as carried
 		watchArm	the dummy's forearm along +z, the watch on top of it face up: 0 all of it, 1 the hour hand, 2 the minute, 3 the second (each
 					turned about y, from +z: twelve o'clock)
+		grassHand	the dummy's left forearm along +z and its hand, a pinch of grass in it (grassThrow.js): 0 the arm and the palm, 1 the
+					fingers and the thumb (curled round the grass; opened about the palm's front edge, x through (0, 0.085)), 2 the grass
+		grassBit	a few blades of grass, thrown (grassBitDry: dry, straw coloured): along +y from their foot
 */
 const BREAD_CRUST = 20, CRUMB = 21, SAUSAGE = 22, GREEN_GLASS = 23, CLEAR_GLASS = 24, PAPER = 25, WOOL = 26, STONE = 27, FLAME = 28, STEEL = 29,
 	BOARDS = 30, SACKING = 31, CHARCOAL = 32, LABEL = 33, HANDLE = 34, ROPE = 35, EMBERS = 36, CANVAS = 37, ASH = 38, RAW_MEAT = 39, SEARED = 40,
@@ -429,6 +432,41 @@ function campfire() {
 	return m;
 }
 
-const MAKERS = { spit, burntMeat: () => venison('burnt'), pickaxe, hoe, journal, tent, tentBundle, stove: () => stoveWithPipe(false), stoveLit: () => stoveWithPipe(true), stovePacked, collector, collectorPacked, waterSurface, compass, watchArm, smokedFish, lighter, hatchet, knife, stone, bread, sausage, venison: () => venison(false), cookedVenison: () => venison(true), flaregun, rabbitMeat: () => rabbitCut(false), cookedRabbit: () => rabbitCut(true), water: () => bottle(false), beer: () => bottle(true), map, firewood, bedroll, bedrollFlat, crate, sack, campfire, campfireFull, campfireHalf, campfireEmbers, campfireDead, campfireLaid };
+// THE PINCH OF GRASS, and the hand that throws it (see the top)
+const GRASS = 56, STRAW = 35;
+function blade(m, foot, tip, width, material, part) {
+	// (a thin tapered blade, both ways round: it is seen from either side)
+	const across = [width, 0, 0];
+	const a = [foot[0] - across[0], foot[1], foot[2]], b = [foot[0] + across[0], foot[1], foot[2]];
+	m.tri(a, b, tip, part, material); m.tri(b, a, tip, part, material);
+}
+function grassHand() {
+	const m = vm.meshBuilder();
+	// the forearm (16) and the wrist (24), the palm (12), four fingers of two pieces (64) and the thumb (32), the grass (32)
+	m.strut([0, 0, -0.24], [0, 0, -0.01], 0.036, 0.031, 8, DUMMY, 0);
+	m.ball([0, 0, 0.0], 0.027, 6, INK, 0);
+	m.section(0.015, [0.04, -0.014, 0.016], 0.085, [0.042, -0.012, 0.014], DUMMY, 0, [0, 1]);
+	for (const x of [-0.03, -0.01, 0.01, 0.03]) {
+		m.strut([x, 0.0, 0.085], [x, 0.004, 0.113], 0.0085, 0.008, 4, DUMMY, 1);
+		m.strut([x, 0.004, 0.113], [x, -0.02, 0.12], 0.008, 0.007, 4, DUMMY, 1);
+	}
+	m.strut([0.042, -0.004, 0.03], [0.05, 0.006, 0.072], 0.011, 0.009, 4, DUMMY, 1);
+	m.strut([0.05, 0.006, 0.072], [0.034, 0.004, 0.098], 0.009, 0.008, 4, DUMMY, 1);
+	// the grass, out of the top of the fist
+	const tips = [[-0.02, 0.1, 0.11], [0.0, 0.12, 0.09], [0.02, 0.095, 0.12], [-0.035, 0.08, 0.08], [0.03, 0.085, 0.085], [0.008, 0.11, 0.13], [-0.012, 0.07, 0.14], [0.018, 0.075, 0.06]];
+	tips.forEach((t, k) => blade(m, [t[0] * 0.3, 0.0, 0.1], t, 0.006, k % 3 == 2 ? STRAW : GRASS, 2));
+	return m;
+}
+function grassBit(material) {
+	return () => {
+		const m = vm.meshBuilder();
+		blade(m, [0, 0, 0], [0.006, 0.075, 0.004], 0.004, material, 0);
+		blade(m, [0.003, 0, 0.002], [-0.012, 0.06, 0.01], 0.0035, material, 0);
+		blade(m, [-0.002, 0, -0.002], [0.004, 0.05, -0.014], 0.003, material, 0);
+		return m;
+	};
+}
+
+const MAKERS = { grassHand, grassBit: grassBit(GRASS), grassBitDry: grassBit(STRAW), spit, burntMeat: () => venison('burnt'), pickaxe, hoe, journal, tent, tentBundle, stove: () => stoveWithPipe(false), stoveLit: () => stoveWithPipe(true), stovePacked, collector, collectorPacked, waterSurface, compass, watchArm, smokedFish, lighter, hatchet, knife, stone, bread, sausage, venison: () => venison(false), cookedVenison: () => venison(true), flaregun, rabbitMeat: () => rabbitCut(false), cookedRabbit: () => rabbitCut(true), water: () => bottle(false), beer: () => bottle(true), map, firewood, bedroll, bedrollFlat, crate, sack, campfire, campfireFull, campfireHalf, campfireEmbers, campfireDead, campfireLaid };
 export const MESHES = Object.fromEntries(Object.entries(MAKERS).map(([name, make]) => { const m = make(); return [name, { data: m.done(), triangles: m.count() }]; }));
 export const meshStats = Object.fromEntries(Object.entries(MESHES).map(([name, mesh]) => [name, mesh.triangles]));

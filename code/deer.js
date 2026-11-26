@@ -46,10 +46,23 @@ import {uniformBufferLights} from './rotatingCube.js'
 		to the marsh nearest where they are, drink a while at the edge, and go back up into the forest.
 		The first of a group leads. The others follow, each in its own place a little behind and to the side, keeping
 		apart from each other.
-		They keep off water and off ground too steep to walk: before each step a deer looks a little way ahead, and if
-		that is water or a cliff it tries turning a bit one way or the other until it finds ground it can walk on.
+		They keep off water and off ground too steep to walk (STEEPEST: a cliff is not walked up or down): before each step a deer looks a
+		little way ahead, and if that is water or a cliff it tries turning a bit one way or the other until it finds ground it can walk
+		on, going on round by the side it went round by last (detour: so that it does not swing from one side to the other in front of
+		a cliff). Hemmed in all round (blocked), it stands, and its group goes somewhere else; on ground too steep to stand on, it goes
+		down the slope off it.
+	THE GAITS: a walk (WALK), a trot (TROT) and a run, a gallop (RUN): each with its own stride (STRIDES) and its legs' order in it, drawn
+		by how fast it goes (walking: 0 to 1 the walk, to 2 the trot, to 3 the run: vf_deer.js). They wander at a walk, go to the water and
+		back at a trot, and run from danger, slowing to a trot as they get away.
+	THE HERD (as theHunter: Call of the Wild's): a group keeps together behind its leader. It feeds (grazing, heads down, now and then up
+		to look round) and drinks at its times, and beds down (lying) at home through the middle of the day and the small hours (REST).
+		One group running warns the others: every group within ALARM metres of it looks round, and most run too.
 
-	SPOOKED (the Survival mode): a player heard within SPOOK (hearing.js: further off running or coughing, nearer crouched or still), and the group runs off from them for FLEE seconds.
+	SPOOKED (the Survival mode): a player heard (hearing.js: as far as SENSES.hear at an ordinary walk, further off running or coughing,
+		nearer crouched or still) makes a group stop, look up and turn towards the sound (alert) for SENSES.look seconds; heard again
+		nearer than SENSES.hear (or the look done with them still heard), it runs from them. Within SENSES.near it runs at once, however
+		quietly the player comes: crouched, a player gets closer, but never that close. A gunshot (hearing.js: GUNSHOTS) heard and they run
+		at once, away from it.
 
 	THE DEER'S DAY is the world's: a round of the sun (sunCycles in atmosphere.js, settings.dayLengthSeconds long). They go to the
 		water at three times spread through each day. While the sun is stood still no day goes by, and they only wander.
@@ -81,13 +94,13 @@ const REHERD_SECONDS = 0.4;		// a new number of groups is made once it has held 
 const DEER_FLOATS = 12;				// one deer as the shader gets it: place (4), pose (4), state (4)
 const TRIPS_A_DAY = 3;
 const TRIP_SPARE = 25;				// seconds more than a trip should take, when working out whether the day is running out on them
-const WALK = 1.3, TROT = 4.0;		// metres a second: wandering, and going to and from the water
+const WALK = 1.3, TROT = 4.0, RUN = 10;		// metres a second: wandering, going to and from the water, and running from danger (THE GAITS)
+const STRIDES = [1.4, 2.2, 3.2];			// metres a stride at the walk, the trot and the run
 const WANDER = 80;					// metres round home they wander
 const NEAR_TOWN = { groups: 2, out: [250, 650] };	// groups more by each town, metres from its middle: game for its hunters (npcHunters.js)
 const DRINK_SECONDS = [12, 20];
 const GRAZE_SECONDS = [6, 18];
-const STRIDE = 1.4;					// metres a stride takes
-const STEEPEST = 1.0;				// rise over run a deer will walk up: 45 degrees
+const STEEPEST = 0.85;				// rise over run a deer will walk up or down: 40 degrees
 const STUCK_SECONDS = 6;			// going to the water and getting no nearer for this long, it tries somewhere else to drink
 const GROUND_AGAIN = 0.5;			// metres
 const FALL_SECONDS = 0.7, LIE_SECONDS = 6, SINK_SECONDS = 4;
@@ -97,7 +110,10 @@ const lieOf = (corpse) => corpse.lie ?? (settings.gameMode == 'Hunting' ? SURVIV
 const SINK_DEPTH = 0.7;				// metres it goes down into the ground
 const RESPAWN_SECONDS = 120;
 const RESPAWN_AWAY = 60;			// metres
-const SPOOK = 22, FLEE = 9;			// metres, seconds
+const SENSES = { hear: 70, alert: 1.7, near: 30, look: 2.5 };	// metres heard at a walk, alert out to that many times as far, metres they never let anyone in to; seconds looking
+const FLEE = 12, FLEE_RUN = 120;	// seconds running (at a run for the first two thirds), metres it makes for
+const ALARM = 140;					// THE HERD: metres one group running warns the others in
+const REST = [[11, 14.5], [0.5, 4.5]];	// the hours (survival.js: hoursNow) a group beds down at home
 // the hitbox, in the deer's own metres: x, y, z, radius, and whether it goes down with the head (see vf_deer.js)
 const DEER_SPHERES = ANATOMY.deer.body;
 const RUN_SECONDS = 12;			// the most a deer shot through its heart, lungs, liver or guts runs before it goes down
@@ -225,7 +241,7 @@ const DEER_VERTICES = DEER_MESH.length / 4;
 const BODY_VERTICES = Math.min(...Object.values(ANTLER_RANGES).map(([first]) => first));
 export const DEER_TRIANGLE_COUNT = BODY_VERTICES / 3 + Math.max(...Object.values(ANTLER_RANGES).map(([, n]) => n)) / 3;	// (the most one deer is drawn with)
 
-export const deerStats = { deer: 0, groups: 0, day: 0, triangles: DEER_TRIANGLE_COUNT, killed: 0, corpses: 0, respawned: 0, spheres: DEER_SPHERES.length };	// for anyone who wants to show it
+export const deerStats = { deer: 0, groups: 0, day: 0, triangles: DEER_TRIANGLE_COUNT, killed: 0, corpses: 0, respawned: 0, spheres: DEER_SPHERES.length, fled: 0, alerted: 0 };	// for anyone who wants to show it
 
 // Buffers, pipeline
 //-------------------------------------------------
@@ -339,8 +355,8 @@ function shootDeer(deer, group, velocity, wound) {
 	if (bleed == 0) { killDeer(deer, group, velocity); return; }
 	if (bleed < Infinity) { deer.bleed = bleed; deer.dieAt = Math.min(deer.dieAt ?? Infinity, herdSeconds + (deer.wounds.some(vital) ? Math.min(bleed, RUN_SECONDS) : bleed)); wounded.add(deer); }
 	// (they all run, on along the way the shot went)
-	const L = Math.hypot(velocity[0], velocity[2]) || 1, run = 45 * metre(), lead = group.deer[0];
-	group.state = 'flee'; group.timer = FLEE; group.target = [lead.x + velocity[0] / L * run, lead.z + velocity[2] / L * run];
+	const L = Math.hypot(velocity[0], velocity[2]) || 1, lead = group.deer[0];
+	flee(group, lead.x - velocity[0] / L * 10 * metre(), lead.z - velocity[2] / L * 10 * metre());
 }
 function killDeer(deer, group, velocity) {
 	const at = group.deer.indexOf(deer);
@@ -366,7 +382,7 @@ let followed = null;		// joiner: the host's deer, as they are now
 export function deerShare() {
 	const size = settings.forestUnitsPerMetre * settings.deerSize;
 	const out = [];
-	for (const group of groups) for (const deer of group.deer) out.push(deer.id, deer.x, deer.y, deer.z, deer.heading, deer.stride, deer.headDown, deer.walking, deer.own, deer.slope, 0, 1);
+	for (const group of groups) for (const deer of group.deer) out.push(deer.id, deer.x, deer.y, deer.z, deer.heading, deer.stride, deer.headDown, poseOf(deer), deer.own, deer.slope, 0, 1);
 	for (const corpse of corpses) {
 		const deer = corpse.deer;
 		out.push(deer.id, deer.x, deer.y - (corpse.sink ?? 0) * size, deer.z, deer.heading, deer.stride, deer.headDown, 0, deer.own, deer.slope, corpse.roll ?? 0, 0);
@@ -407,6 +423,7 @@ function respawnDeer(group) {
 	}
 	if (!place) return false;
 	group.deer.push(newDeer(place[0], place[1], group.kind ?? 0));
+	group.deer[group.deer.length - 1].alarm = group.alarm;
 	if (group.deer.length == 1) {
 		group.state = 'wander';
 		group.target = wanderTarget(group);
@@ -418,7 +435,7 @@ function respawnDeer(group) {
 let nextDeerId = 1;
 function newDeer(x, z, kind = 0) {
 	const own = newOwn(kind);
-	return { id: nextDeerId++, x: x, z: z, y: 0, heading: Math.random() * Math.PI * 2, stride: Math.random() * 6.28, walking: 0, headDown: 0, headWanted: 0, alertTimer: 0, own, size: sizeOfOwn(own), slope: 0, ground: null, place: null };
+	return { id: nextDeerId++, x: x, z: z, y: 0, heading: Math.random() * Math.PI * 2, stride: Math.random() * 6.28, walking: 0, lying: 0, headDown: 0, headWanted: 0, alertTimer: 0, own, size: sizeOfOwn(own), slope: 0, ground: null, place: null };
 }
 const between = ([low, high]) => low + (high - low) * Math.random();
 const metre = () => settings.forestUnitsPerMetre;
@@ -430,8 +447,19 @@ export function walkable(x, z) {
 	const y = land.heightAt(x, z);
 	if (y < settings.waterWorldPosY + 0.05) return false;
 	const step = 2 * metre();
-	return Math.abs(land.heightAt(x + step, z) - y) < STEEPEST * step && Math.abs(land.heightAt(x, z + step) - y) < STEEPEST * step;
+	return [[step, 0], [-step, 0], [0, step], [0, -step]].every(([a, b]) => Math.abs(land.heightAt(x + a, z + b) - y) < STEEPEST * step);
 }
+// THE GAITS: how a deer going at pace (world units a second) is drawn (walking: see the top), and how long its stride is (world units)
+function gaitOf(pace) {
+	const v = pace / metre();
+	return v <= WALK ? v / WALK : v <= TROT ? 1 + (v - WALK) / (TROT - WALK) : 2 + Math.min((v - TROT) / (RUN - TROT), 1);
+}
+const strideOf = (g) => (g <= 1 ? STRIDES[0] : g <= 2 ? STRIDES[0] + (STRIDES[1] - STRIDES[0]) * (g - 1) : STRIDES[1] + (STRIDES[2] - STRIDES[1]) * (g - 2)) * metre();
+// as it is drawn and sent (deerShare): its gait, or (lying down) less than 0, -1 lying flat
+const poseOf = (deer) => deer.lying > 0.01 ? -deer.lying : deer.walking;
+// the hour of the day (survival.js: hoursNow), and whether a group beds down now (REST)
+const hourNow = () => ((6 + settings.sunCycleAngle / (Math.PI * 2) * 24) % 24 + 24) % 24;
+const restTime = () => REST.some(([a, b]) => hourNow() >= a && hourNow() < b);
 
 // somewhere in the forest round a group's home (or on the grass, for the elk and the caribou)
 function wanderTarget(group) {
@@ -545,7 +573,8 @@ function* herdSteps(land, tile) {
 		const size = K.group[0] + Math.floor(Math.random() * (K.group[1] - K.group[0] + 1));
 		for (let d = 0; d < size; d++) {
 			const x = home.x + (Math.random() - 0.5) * 8 * K.size, z = home.z + (Math.random() - 0.5) * 8 * K.size;
-			group.deer.push(newDeer(x, z, kind));
+			// (not out on a slope too steep to stand on: at home with the rest)
+			group.deer.push(walkable(x, z) ? newDeer(x, z, kind) : newDeer(home.x + (Math.random() - 0.5) * 2, home.z + (Math.random() - 0.5) * 2, kind));
 		}
 		group.target = wanderTarget(group);
 		groups.push(group);
@@ -564,22 +593,57 @@ export function groundUnder(deer) {
 
 // one deer a step towards [x, z] at pace (world units a second), round water and cliffs. Returns how far off it still is
 function walkTowards(deer, to, pace, elapsed) {
-	const dx = to[0] - deer.x, dz = to[1] - deer.z, far = Math.hypot(dx, dz);
-	if (far < 0.3 * metre()) return far;
-	// looks a little way ahead, and turns aside until the ground there can be walked on
-	const want = Math.atan2(dx, dz), look = 3 * metre();
-	let heading = want;
-	for (const turn of [0, 0.5, -0.5, 1.0, -1.0, 1.6, -1.6, 2.4, -2.4]) {
-		if (walkable(deer.x + Math.sin(want + turn) * look, deer.z + Math.cos(want + turn) * look) || far < look) { heading = want + turn; break; }
+	const dx = to[0] - deer.x, dz = to[1] - deer.z, far = Math.hypot(dx, dz), m = metre();
+	if (far < 0.3 * m) return far;
+	// (held where it is a moment, after turning round and round: see below)
+	if ((deer.hold = Math.max((deer.hold ?? 0) - elapsed, 0)) > 0) { deer.blocked = (deer.blocked ?? 0) + elapsed; deer.walking += (0 - deer.walking) * Math.min(elapsed * 4, 1); return far; }
+	// looks a little way ahead (no further than where it is going), and turns aside until the ground there can be walked on: round by
+	//		the side it went round by last first (see THE GROUPS at the top)
+	const want = Math.atan2(dx, dz), look = Math.min(3 * m, Math.max(far, 0.8 * m));
+	const clear = (a) => walkable(deer.x + Math.sin(a) * look, deer.z + Math.cos(a) * look);
+	const side = deer.detour ?? 1;
+	let heading = null;
+	for (const turn of [0, 0.5, 1.0, 1.6, 2.4]) {
+		if (clear(want + turn * side)) { heading = want + turn * side; break; }
+		if (turn && clear(want - turn * side)) { heading = want - turn * side; deer.detour = -side; break; }
+	}
+	// (on ground too steep to stand on: to the nearest it can stand on, and on to it however the way ahead looks)
+	if (!walkable(deer.x, deer.z)) {
+		const e = deer.escape;
+		if (!e || Math.hypot(e[0] - deer.x, e[1] - deer.z) < 0.4 * m) {
+			deer.escape = null;
+			for (const r of [1.5, 3, 5, 8]) {
+				for (let k = 0; k < 16 && !deer.escape; k++) { const a = k / 16 * Math.PI * 2, x = deer.x + Math.sin(a) * r * m, z = deer.z + Math.cos(a) * r * m; if (walkable(x, z)) deer.escape = [x, z]; }
+				if (deer.escape) break;
+			}
+		}
+		if (deer.escape) heading = Math.atan2(deer.escape[0] - deer.x, deer.escape[1] - deer.z);
+	} else deer.escape = null;
+	if (heading === null) {
+		if (walkable(deer.x, deer.z)) {
+			// hemmed in: it stands (its group goes somewhere else: moveGroup)
+			deer.blocked = (deer.blocked ?? 0) + elapsed;
+			deer.walking += (0 - deer.walking) * Math.min(elapsed * 4, 1);
+			return far;
+		}
+		// (nowhere to stand within reach: down the slope, off it)
+		const g = 1 * m, land = terrain.land;
+		heading = Math.atan2(land.heightAt(deer.x - g, deer.z) - land.heightAt(deer.x + g, deer.z), land.heightAt(deer.x, deer.z - g) - land.heightAt(deer.x, deer.z + g));
 	}
 	let turn = heading - deer.heading;
 	turn -= Math.PI * 2 * Math.round(turn / (Math.PI * 2));
+	// (turning round and round where it is, the way there opening and shutting as it turns: hemmed in, as above)
+	deer.twist = (deer.twist ?? 0) * Math.exp(-elapsed / 2) + Math.abs(turn * Math.min(elapsed * 3, 1));
+	if (deer.twist > 4) { deer.twist = 0; deer.blocked = 2; deer.hold = 1.5; deer.walking += (0 - deer.walking) * Math.min(elapsed * 4, 1); return far; }
+	deer.blocked = 0;
 	deer.heading += turn * Math.min(elapsed * 3, 1);
 	const step = Math.min(pace * elapsed * (Math.abs(turn) > 1.6 ? 0.5 : 1), far);
 	deer.x += Math.sin(deer.heading) * step;
 	deer.z += Math.cos(deer.heading) * step;
-	deer.stride += step / (STRIDE * metre()) * Math.PI * 2;
-	deer.walking += (clamp(pace / (WALK * metre()), 0, 1.4) - deer.walking) * Math.min(elapsed * 4, 1);
+	const gait = gaitOf(pace * (Math.abs(turn) > 1.6 ? 0.5 : 1));
+	deer.stride += step / strideOf(gait) * Math.PI * 2;
+	deer.walking += (gait - deer.walking) * Math.min(elapsed * 4, 1);
+	deer.lying = Math.max(deer.lying - elapsed * 1.5, 0);
 	return far - step;
 }
 
@@ -599,26 +663,57 @@ function chooseShore(from, not) {
 function moveGroup(group, to, pace, elapsed) {
 	const leader = group.deer[0];
 	const left = walkTowards(leader, to, pace, elapsed);
+	// (the leader hemmed in a while: somewhere else, wandering or running; going to the water, its own STUCK_SECONDS see to it)
+	if ((leader.blocked ?? 0) > 1.2 && to === group.target) {
+		leader.blocked = 0;
+		if (group.state == 'flee') { const a = Math.random() * Math.PI * 2; group.target = [leader.x + Math.sin(a) * 40 * metre(), leader.z + Math.cos(a) * 40 * metre()]; }
+		else group.target = wanderTarget(group);
+	}
 	group.deer.forEach((deer, i) => {
 		if (i == 0) return;
 		const k = DEER_KINDS[group.kind ?? 0].size, side = i % 2 ? 1 : -1, back = (2.2 + 1.3 * i) * k * metre();
 		let place = [leader.x - Math.sin(leader.heading) * back + Math.cos(leader.heading) * side * 1.6 * k * metre(), leader.z - Math.cos(leader.heading) * back - Math.sin(leader.heading) * side * 1.6 * k * metre()];
 		if (!walkable(place[0], place[1])) place = [leader.x - Math.sin(leader.heading) * back, leader.z - Math.cos(leader.heading) * back];
+		// (its place behind the leader on a cliff: it waits where it is, rather than circle the leader looking for a way)
+		if (!walkable(place[0], place[1]) && walkable(deer.x, deer.z)) place = [deer.x, deer.z];
 		const far = Math.hypot(place[0] - deer.x, place[1] - deer.z);
 		if (far > 0.6 * metre()) walkTowards(deer, place, pace * clamp(far / (2 * metre()), 0.3, 1.4), elapsed);
 		else deer.walking += (0 - deer.walking) * Math.min(elapsed * 4, 1);
-		// and not on top of one another
+		// and not on top of one another (only on to ground it can stand on)
 		for (const other of group.deer) {
 			if (other === deer) continue;
 			const ox = deer.x - other.x, oz = deer.z - other.z, apart = Math.hypot(ox, oz) || 0.01;
-			if (apart < 1.2 * k * metre()) { deer.x += ox / apart * elapsed * metre(); deer.z += oz / apart * elapsed * metre(); }
+			if (apart < 1.2 * k * metre()) {
+				const nx = deer.x + ox / apart * elapsed * metre(), nz = deer.z + oz / apart * elapsed * metre();
+				if (walkable(nx, nz)) { deer.x = nx; deer.z = nz; }
+			}
 		}
 	});
 	return left;
 }
 
 function standStill(group, elapsed) {
-	for (const deer of group.deer) deer.walking += (0 - deer.walking) * Math.min(elapsed * 4, 1);
+	for (const deer of group.deer) { deer.walking += (0 - deer.walking) * Math.min(elapsed * 4, 1); deer.lying = Math.max(deer.lying - elapsed * 1.5, 0); }
+}
+// SPOOKED (see the top): the group runs, away from (x, z); and warns the others near it (THE HERD)
+function flee(group, x, z, warn = true) {
+	const lead = group.deer[0], a = Math.atan2(lead.x - x, lead.z - z), run = FLEE_RUN * metre();
+	group.state = 'flee'; group.timer = FLEE; group.target = [lead.x + Math.sin(a) * run, lead.z + Math.cos(a) * run];
+	group.from = [x, z];
+	deerStats.fled++;
+	if (!warn) return;
+	for (const other of groups) {
+		if (other === group || !other.deer.length || other.state == 'flee' || Math.hypot(other.deer[0].x - lead.x, other.deer[0].z - lead.z) > ALARM * metre()) continue;
+		// (most run with them; the rest stop and look the way they ran)
+		if (Math.random() < 0.7) flee(other, x, z, false);
+		else alert(other, lead.x, lead.z);
+	}
+}
+// looking towards a sound, heads up, a while: then running, or back to what it was doing
+function alert(group, x, z) {
+	if (group.state != 'alert') group.before = group.state == 'rest' ? 'graze' : group.state;
+	group.state = 'alert'; group.timer = SENSES.look; group.from = [x, z];
+	deerStats.alerted++;
 }
 
 // Once a frame: every group moved on
@@ -713,18 +808,45 @@ function advanceDeer(frameElapsed) {
 			group.stuckTimer = STUCK_SECONDS;
 		}
 
-		// SPOOKED (see the top)
+		// SPOOKED (see the top): a gunshot heard, a player too near, or heard
+		const lead = group.deer[0];
+		const shot = hearing.gunshotHeard(lead.x, lead.z, group.heardShot ?? 0);
+		if (shot) { group.heardShot = shot.at; if (group.state != 'flee' || Math.hypot(shot.x - group.from[0], shot.z - group.from[1]) > 20 * m) flee(group, shot.x, shot.z); }
 		if (group.state != 'flee' && hearing.survivalMode()) {
-			const L = hearing.heardBy(group.deer[0].x, group.deer[0].z, SPOOK * m);
-			if (L) {
-				const a = Math.atan2(group.deer[0].x - L.x, group.deer[0].z - L.z), run = 45 * m;
-				group.state = 'flee'; group.timer = FLEE; group.target = [group.deer[0].x + Math.sin(a) * run, group.deer[0].z + Math.cos(a) * run];
-			}
+			const close = hearing.listeners().find((L) => Math.hypot(L.x - lead.x, L.z - lead.z) < SENSES.near * m);
+			const heard = close ?? hearing.heardBy(lead.x, lead.z, SENSES.hear * m);
+			const faint = heard ? null : hearing.heardBy(lead.x, lead.z, SENSES.hear * SENSES.alert * m);
+			if (close || (heard && group.state == 'alert')) flee(group, (close ?? heard).x, (close ?? heard).z);
+			else if (heard) alert(group, heard.x, heard.z);
+			else if (faint && group.state != 'alert') alert(group, faint.x, faint.z);
 		}
+		// THE HERD: beds down at home at its times (not while going to or from the water)
+		if ((group.state == 'graze' || group.state == 'wander') && restTime() && Math.hypot(lead.x - group.home.x, lead.z - group.home.z) < WANDER * m) { group.state = 'rest'; group.timer = 0; }
 		if (group.state == 'flee') {
-			moveGroup(group, group.target, TROT * 1.5 * m, elapsed);
+			// (at a run, then a trot as it gets away)
+			moveGroup(group, group.target, (group.timer > FLEE / 3 ? RUN : TROT) * m, elapsed);
 			group.timer -= elapsed;
 			if (group.timer <= 0) { group.state = 'graze'; group.timer = between(GRAZE_SECONDS); }
+		} else if (group.state == 'alert') {
+			// still, heads up, turned towards it
+			for (const deer of group.deer) {
+				deer.walking += (0 - deer.walking) * Math.min(elapsed * 6, 1);
+				deer.lying = Math.max(deer.lying - elapsed * 2, 0);
+				let turn = Math.atan2(group.from[0] - deer.x, group.from[1] - deer.z) - deer.heading;
+				turn -= Math.PI * 2 * Math.round(turn / (Math.PI * 2));
+				deer.heading += turn * Math.min(elapsed * 2.5, 1);
+			}
+			group.timer -= elapsed;
+			// (the look done: still heard, it runs; otherwise back to it)
+			if (group.timer <= 0) {
+				const L = hearing.heardBy(lead.x, lead.z, SENSES.hear * SENSES.alert * m);
+				if (L && hearing.survivalMode()) flee(group, L.x, L.z);
+				else { group.state = group.before == 'flee' || !group.before ? 'graze' : group.before; group.timer = between(GRAZE_SECONDS); if (group.state == 'wander' && !group.target) group.target = wanderTarget(group); }
+			}
+		} else if (group.state == 'rest') {
+			// bedded down: lying, heads up now and then, until the time is over
+			for (const deer of group.deer) { deer.walking += (0 - deer.walking) * Math.min(elapsed * 4, 1); deer.lying = Math.min(deer.lying + elapsed * 0.8, 1); }
+			if (!restTime()) { group.state = 'graze'; group.timer = between(GRAZE_SECONDS); }
 		} else if (group.state == 'wander') {
 			//------------------ROUND THE FOREST-----------------
 			if (moveGroup(group, group.target, WALK * m, elapsed) < 1 * m) {
@@ -741,16 +863,26 @@ function advanceDeer(frameElapsed) {
 		} else if (group.state == 'toWater') {
 			//------------------DOWN TO THE WATER-----------------
 			const left = moveGroup(group, [group.spot.x, group.spot.z], TROT * m, elapsed);
+			// (hemmed in on the way: near enough, it drinks there; otherwise somewhere else)
+			if ((group.deer[0].blocked ?? 0) > 1.2) {
+				group.deer[0].blocked = 0;
+				// (and after the third time, it gives up the trip: back to grazing)
+				if (left < 15 * m) group.spot = { ...group.spot, x: group.deer[0].x, z: group.deer[0].z };
+				else if ((group.failed = (group.failed ?? 0) + 1) > 2) { group.failed = 0; group.state = 'graze'; group.timer = between(GRAZE_SECONDS); group.visits[day] = (group.visits[day] ?? 0) + 1; }
+				else { group.spot = chooseShore(group.deer[0], group.spot); group.nearest = Infinity; group.stuckTimer = STUCK_SECONDS; }
+			}
 			// no nearer for a while (water or a cliff in the way): somewhere else to drink
 			if (left < group.nearest - 1 * m) {
 				group.nearest = left;
 				group.stuckTimer = STUCK_SECONDS;
 			} else if ((group.stuckTimer -= elapsed) <= 0) {
+				if ((group.failed = (group.failed ?? 0) + 1) > 2) { group.failed = 0; group.state = 'graze'; group.timer = between(GRAZE_SECONDS); group.visits[day] = (group.visits[day] ?? 0) + 1; }
 				group.spot = chooseShore(group.deer[0], group.spot);
 				group.nearest = Infinity;
 				group.stuckTimer = STUCK_SECONDS;
 			}
-			if (left < 1 * m) {
+			if (left < 1 * m && group.state == 'toWater') {
+				group.failed = 0;
 				group.state = 'drink';
 				group.timer = between(DRINK_SECONDS);
 				group.visits[day] = (group.visits[day] ?? 0) + 1;
@@ -796,7 +928,7 @@ function advanceDeer(frameElapsed) {
 		// heads: down to graze (now and then up, to look round), down to drink, up to walk
 		for (const deer of group.deer) {
 			deer.alertTimer -= elapsed;
-			if (group.state == 'graze' || group.state == 'drink') {
+			if (group.state == 'graze' || group.state == 'drink' || group.state == 'rest') {
 				if (deer.alertTimer <= 0) {
 					deer.headWanted = Math.random() < (group.state == 'drink' ? 0.85 : 0.7) ? 1 : 0;
 					deer.alertTimer = 2 + 5 * Math.random();
@@ -804,7 +936,9 @@ function advanceDeer(frameElapsed) {
 			} else {
 				deer.headWanted = 0;
 			}
-			deer.headDown += ((deer.walking > 0.3 ? 0 : deer.headWanted) - deer.headDown) * Math.min(elapsed * 2.5, 1);
+			// (up looking towards a sound, and lying down only a little: it rests its head, it does not graze)
+			const wanted = group.state == 'alert' || deer.walking > 0.3 ? 0 : group.state == 'rest' ? deer.headWanted * 0.25 : deer.headWanted;
+			deer.headDown += (wanted - deer.headDown) * Math.min(elapsed * (group.state == 'alert' ? 6 : 2.5), 1);
 			deer.y = groundUnder(deer);
 			// tipped to the slope it stands on, along its heading
 			const fx = Math.sin(deer.heading) * 0.8 * m, fz = Math.cos(deer.heading) * 0.8 * m;
@@ -824,9 +958,22 @@ export function deerNear(x, z, reach, each) {
 	const list = followed ? followed.filter((one) => one.alive) : groups.flatMap((group) => group.deer);
 	for (const one of list) if (Math.abs(one.x - x) < reach && Math.abs(one.z - z) < reach) each(one.x, one.y, one.z);
 }
+// THE TRACKS (tracks.js): every deer on its feet, { id, kind, name, x, y, z, size, male, weight (kg), blood ({ left, rate (shares, and a
+//		share a second) } while it bleeds, or null) }. A joiner's, as the host sends them (no blood: their wounds are the host's)
+const WEIGHT = [[90, 60], [100, 70], [70, 50], [80, 45], [25, 22], [320, 230], [160, 110]];		// kg, a male's and a female's, of each kind (deerKinds.js's order)
+export function trackList() {
+	if (!settings.enableDeer || hidden()) return [];
+	const list = followed ? followed.filter((one) => one.alive) : groups.flatMap((group) => group.deer);
+	return list.map((d) => {
+		const k = kindOf(d.own), male = isMale(d.own), weight = Math.round(WEIGHT[k][male ? 0 : 1] * (0.88 + 0.24 * (d.own % 1)));
+		const span = Number.isFinite(d.dieAt) ? d.dieAt - (d.firstWound ?? herdSeconds) : 0;
+		const blood = span > 0 ? { left: clamp((d.dieAt - herdSeconds) / span, 0, 1), rate: 1 / span } : null;
+		return { id: 'd' + d.id, kind: 'deer', name: DEER_KINDS[k].name, x: d.x, y: d.y, z: d.z, size: d.size ?? 1, male, weight, blood };
+	});
+}
 // for testing: the groups as they are now
 export function deerGroups() {
-	return groups.map((group) => ({ state: group.state, home: group.home, spot: group.spot, visits: { ...group.visits }, trips: [...group.trips], deer: group.deer.map((deer) => ({ x: deer.x, y: deer.y, z: deer.z, heading: deer.heading, headDown: deer.headDown, walking: deer.walking })) }));
+	return groups.map((group) => ({ state: group.state, home: group.home, spot: group.spot, visits: { ...group.visits }, trips: [...group.trips], deer: group.deer.map((deer) => ({ id: deer.id, x: deer.x, y: deer.y, z: deer.z, heading: deer.heading, headDown: deer.headDown, walking: deer.walking, lying: deer.lying, blocked: deer.blocked ?? 0 })) }));
 }
 // the dead one the eye (world units) is on, looking along look, within reach (world units): its id, or null. The host's own still with
 //		meat on them (any: all that lie there); a joiner's, any the host has lying (it says whether there is any left: butcher)
@@ -881,14 +1028,14 @@ export function deerPass(aEncoder, mainpassDepthTexture) {
 	const size = settings.forestUnitsPerMetre * settings.deerSize;
 	const put = (x, y, z, heading, stride, headDown, walking, own, slope, roll, feral, scale = 1) => {
 		if (count >= MAX_DRAWN) return;
-		instanceData.set([x, y, z, size * scale, heading, stride, headDown, clamp(walking, 0, 1), own, slope, roll, feral], count * DEER_FLOATS);
+		instanceData.set([x, y, z, size * scale, heading, stride, headDown, clamp(walking, -1, 3), own, slope, roll, feral], count * DEER_FLOATS);
 		antlerKey[count] = hasAntlers(own) ? kindOf(own) : DEER_KINDS.length;
 		count++;
 	};
 	if (settings.enableDeer && !hidden()) {
 		const drawn = followed ? followed.map((one) => [one, one.roll, 0])
 			: [...groups.flatMap((group) => group.deer.map((deer) => [deer, 0, 0])), ...corpses.map((corpse) => [corpse.deer, corpse.roll ?? 0, corpse.sink ?? 0])];
-		for (const [deer, roll, sink] of drawn) put(deer.x, deer.y - sink * size, deer.z, deer.heading, deer.stride, deer.headDown, deer.walking, deer.own, deer.slope, roll, 0, deer.size ?? 1);
+		for (const [deer, roll, sink] of drawn) put(deer.x, deer.y - sink * size, deer.z, deer.heading, deer.stride, deer.headDown, followed ? deer.walking : poseOf(deer), deer.own, deer.slope, roll, 0, deer.size ?? 1);
 	}
 	for (const fn of drawers) fn(put);
 	if (count == 0) return;

@@ -3,13 +3,38 @@ import { settings } from './settings.js';
 import * as hunting from './hunting.js'
 import * as players from './players.js'
 import * as survivalNet from './survivalNet.js'
+import { onAnyShot } from './ballistics.js'
 
 /*
 	WHAT THE ANIMALS HEAR of the players (deer.js and rabbits.js are spooked by it, beasts.js tracks by it). Each player has two numbers:
 		moving	how much noise it is making, however it goes: a share of an ordinary walk (still, crouched, running), and all that is wrong with it on top
 		sick	only what is wrong with it (medical.js: a cough), never under 1: how much further than it would the beasts hear it
 	The animals live on the host, and a joiner tells it its own when they change (noise). Everyone's place is known (players.js).
+	GUNSHOTS (ballistics.js: onAnyShot, every shot fired: the players', anyone else's in the game, the NPCs'): each heard by the animals
+	within its round's LOUD (metres, times how keen the animal's ears are), for SHOT_MEMORY seconds. Thrown things and blows are not heard.
+	In every game mode but the Horde.
 */
+const LOUD = { '7.62x54R': 900, '.303 British': 850, '.303 Vickers': 850, '.45-70': 950, '.45 Colt': 550, '7.63 Mauser': 500, '00 buck': 700, '80mm': 1600, bomb: 1600 };
+const SHOT_MEMORY = 3;			// seconds
+const shots = [];				// { x, z, at (performance.now() seconds), loud }
+onAnyShot((from, round) => {
+	const loud = LOUD[round];
+	if (!loud || settings.gameMode == 'Horde') return;
+	const now = performance.now() / 1000;
+	while (shots.length && now - shots[0].at > SHOT_MEMORY) shots.shift();
+	shots.push({ x: from[0], z: from[2], at: now, loud });
+});
+// the newest shot heard at (x, z) (keen: times as far as most hear it) fired after since (performance.now() seconds): { x, z, at } or null
+export function gunshotHeard(x, z, since = 0, keen = 1) {
+	const m = settings.forestUnitsPerMetre;
+	for (let k = shots.length - 1; k >= 0; k--) {
+		const S = shots[k];
+		if (S.at <= since) break;
+		if (Math.hypot(S.x - x, S.z - z) < S.loud * keen * m) return S;
+	}
+	return null;
+}
+export const hearingClock = () => performance.now() / 1000;
 const mine = { moving: 1, sick: 1 };
 let said = { moving: 1, sick: 1 };
 const others = new Map();		// id -> { moving, sick }

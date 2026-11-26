@@ -22,6 +22,12 @@ import { ANATOMY, woundFrom, otherWound, cleanWound, bleedOf, recordOf, vital } 
 		BEARS	rare, BEAR_COUNT, each living up in the woods of the mountains (a forest place in a range proper: terrain's rangeAt, or within EDGE of the bare mountain). Territorial as a moose, high health and high damage
 	SHOT: a round's wound (anatomy.js, as the deer's): its brain or its spine, it is dead; its heart, lungs, liver or guts, it goes on (and comes for them) until its blood is gone (RUN at the most); meat only, it bleeds out slowly; and every round takes health off it too (HURT). Dead, it keeps the record of it (inspect.js).
 	Any of them a player shoots at comes for them, wherever. What a player is heard at (hearing.js: sick): further off with a cough, and it follows further.
+	AFRAID (a moose, a bear, not set on anyone): a gunshot heard (hearing.js: GUNSHOTS), or a player within SENSES.near (however quietly they
+	come: crouched, nearer than walking, never that near), and it runs off from them (FLED seconds). A player heard further off (SENSES.hear
+	at an ordinary walk), it stops and looks towards them, head up, for SENSES.look seconds; still heard then, it runs. A pack that hears a
+	gunshot, unless it is fighting, runs too. Hemmed in where it is going (blocked), one goes somewhere else.
+	THE GAITS: drawn walking, trotting or running by how fast it goes (walking: 0 to 1 the walk, to 2 the trot, to 3 the run: vf_props.js),
+	its stride longer the faster it goes.
 	A DEAD ONE lies there (LIE seconds), and is cut up a cut at a time with a hatchet or a knife (survivalTools.js: CUTS). Another comes RESPAWN days later.
 	HURT: as all NPCs' harm (npcs.hurtPlayer), and what it did to the limbs is the victim's to work out (medical.js: mauled; told by the host: mauled).
 	MULTIPLAYER, as the deer (net.js: ANIMALS): they live on the host, which sends them as records (beastShare; own says which kind), and a joiner draws those (beastFollow). A joiner's shot says so to the host (beastShot), and its cuts are asked for.
@@ -49,11 +55,24 @@ const FALL = 0.8;					// seconds
 const DRAW = 420;					// metres
 const WOLF_SINEW = 0.4;
 const RUN = 15;					// seconds at the most one shot through its heart, lungs, liver or guts goes on
+const SENSES = { hear: 60, near: 30, look: 2.5 };	// AFRAID: metres heard at a walk, metres it lets no one in to, seconds looking
+const FLED = 12;					// seconds
 
 const metre = () => settings.forestUnitsPerMetre;
 const hidden = () => settings.gameMode == 'Horde';
 const clock = () => atmosphere.sunCycles;
-export const beastStats = { moose: 0, wolf: 0, bear: 0, killed: 0, bites: 0, packKills: 0, corpses: 0 };
+// THE TRACKS (tracks.js): every one on its feet, as deer.js's trackList. (A wolf's paws, a bear's and a moose's hooves)
+const WEIGHTS = { moose: [480, 380], wolf: [48, 38], bear: [220, 150] };		// kg, a male's and a female's
+export function trackList() {
+	if (hidden()) return [];
+	return (followed ?? beasts).filter((b) => b.alive ?? true).map((b) => {
+		const male = (b.id * 7919) % 2 == 0, weight = Math.round(WEIGHTS[b.kind][male ? 0 : 1] * (0.88 + 0.24 * ((b.id * 0.618) % 1)));
+		const span = Number.isFinite(b.dieAt) ? b.dieAt - (b.firstWound ?? now) : 0;
+		const blood = span > 0 ? { left: Math.min(Math.max((b.dieAt - now) / span, 0), 1), rate: 1 / span } : null;
+		return { id: 'b' + b.id, kind: b.kind, name: b.kind, x: b.x, y: b.y, z: b.z, size: 1, male, weight, blood };
+	});
+}
+export const beastStats = { moose: 0, wolf: 0, bear: 0, killed: 0, bites: 0, packKills: 0, corpses: 0, fled: 0, alerted: 0 };
 export const beastShot = { report: null };
 
 let beasts = [], packs = [], corpses = [], respawns = [], builtFor = null, nextId = 1, now = 0;
@@ -120,7 +139,15 @@ function moveTo(b, to, pace, dt) {
 	let heading = want;
 	// (and a wolf, unless it is fighting, round whatever is off its own ground)
 	const own = b.kind == 'wolf' && b.pack?.state != 'fight', room = (x, z) => deer.walkable(x, z) && (!own || inZones(x, z, ZONES()));
-	for (const turn of [0, 0.5, -0.5, 1, -1, 1.6, -1.6, 2.4, -2.4]) if (far < look || room(b.x + Math.sin(want + turn) * look, b.z + Math.cos(want + turn) * look)) { heading = want + turn; break; }
+	// (no further ahead than where it is going; round by the side it went round by last first, so it does not swing from one to the other)
+	const near = Math.min(look, Math.max(far, 0.8 * m)), clear = (a) => room(b.x + Math.sin(a) * near, b.z + Math.cos(a) * near), side = b.detour ?? 1;
+	let found = false;
+	for (const turn of [0, 0.5, 1, 1.6, 2.4]) {
+		if (clear(want + turn * side)) { heading = want + turn * side; found = true; break; }
+		if (turn && clear(want - turn * side)) { heading = want - turn * side; b.detour = -side; found = true; break; }
+	}
+	if (!found && deer.walkable(b.x, b.z)) { b.blocked = (b.blocked ?? 0) + dt; standing(b, dt); return far; }
+	b.blocked = 0;
 	let off = heading - b.heading;
 	off -= Math.PI * 2 * Math.round(off / (Math.PI * 2));
 	b.heading += off * Math.min(dt * 4, 1);
@@ -129,8 +156,10 @@ function moveTo(b, to, pace, dt) {
 	if (own && !inZones(toX, toZ, ZONES()) && inZones(b.x, b.z, ZONES())) { standing(b, dt); return far; }
 	b.x = toX;
 	b.z = toZ;
-	b.stride += step / (1.5 * m) * Math.PI * 2;
-	b.walking += (Math.min(pace / KINDS[b.kind].walk, 1.3) - b.walking) * Math.min(dt * 4, 1);
+	// (THE GAITS: its walk, a trot half way to its run, its run)
+	const K = KINDS[b.kind], gait = pace <= K.walk ? pace / K.walk : 1 + Math.min((pace - K.walk) / (K.run - K.walk), 1) * 2;
+	b.stride += step / (1.5 * m * (1 + 0.6 * Math.max(gait - 1, 0))) * Math.PI * 2;
+	b.walking += (gait - b.walking) * Math.min(dt * 4, 1);
 	return far - step;
 }
 // towards a player, as far as arm's length off them (no further: it does not stand in them): how far off it is
@@ -168,9 +197,41 @@ const heardNow = (x, z, reach) => {
 };
 const stillThere = (id) => id != null ? hearing.listeners().find((L) => L.id === id) ?? null : null;
 
+// AFRAID (see the top): off at a run from (x, z)
+function runFrom(b, x, z, seconds = FLED) {
+	const a = Math.atan2(b.x - x, b.z - z), m = metre();
+	b.state = 'flee'; b.timer = seconds; b.target = [b.x + Math.sin(a) * 120 * m, b.z + Math.cos(a) * 120 * m];
+	beastStats.fled++;
+}
 // A LONE ONE (a moose, a bear: see the top)
 function stepLone(b, dt) {
 	const K = KINDS[b.kind], m = metre();
+	// AFRAID, unless it is set on someone
+	if (b.enemy === null) {
+		const shot = hearing.gunshotHeard(b.x, b.z, b.heardShot ?? 0);
+		if (shot) { b.heardShot = shot.at; runFrom(b, shot.x, shot.z); }
+		else if (b.state != 'flee' && hearing.survivalMode()) {
+			const close = hearing.listeners().find((L) => Math.hypot(L.x - b.x, L.z - b.z) < SENSES.near * m), heard = hearing.heardBy(b.x, b.z, SENSES.hear * m);
+			if (close || (heard && b.state == 'alert' && b.timer <= 0)) runFrom(b, (close ?? heard).x, (close ?? heard).z);
+			else if (heard && b.state != 'alert') { b.state = 'alert'; b.timer = SENSES.look; b.from = [heard.x, heard.z]; beastStats.alerted++; }
+		}
+		if (b.state == 'flee') {
+			moveTo(b, b.target, K.run, dt);
+			b.headDown += (0 - b.headDown) * Math.min(dt * 4, 1);
+			if ((b.timer -= dt) <= 0 || (b.blocked ?? 0) > 1.2) { b.state = 'rest'; b.timer = REST[0]; b.blocked = 0; }
+			return;
+		}
+		if (b.state == 'alert') {
+			// (still, head up, turned towards the sound; the look done and not heard any more, back to it)
+			standing(b, dt);
+			b.headDown += (0 - b.headDown) * Math.min(dt * 6, 1);
+			let off = Math.atan2(b.from[0] - b.x, b.from[1] - b.z) - b.heading;
+			off -= Math.PI * 2 * Math.round(off / (Math.PI * 2));
+			b.heading += off * Math.min(dt * 2.5, 1);
+			if ((b.timer -= dt) <= 0 && !hearing.heardBy(b.x, b.z, SENSES.hear * m)) { b.state = 'rest'; b.timer = REST[0]; }
+			return;
+		}
+	}
 	const L = stillThere(b.enemy) ?? heardNow(b.x, b.z, K.aggro * m);
 	if (L && Math.hypot(L.x - b.home[0], L.z - b.home[1]) < K.leash * m * L.sick || (L && b.enemy === L.id && Math.hypot(b.x - b.home[0], b.z - b.home[1]) < K.leash * 2.5 * m)) {
 		if (b.enemy === null) b.enemy = L.id;
@@ -185,7 +246,7 @@ function stepLone(b, dt) {
 		if ((b.timer -= dt) <= 0) { b.state = 'walk'; b.target = roamTarget(b, b.kind == 'moose' ? [terrain.ZONE_MARSH, terrain.ZONE_GRASSLAND, terrain.ZONE_FOREST] : ZONES()); }
 	} else {
 		b.headDown += (0 - b.headDown) * Math.min(dt * 2, 1);
-		if (moveTo(b, b.target, K.walk, dt) < m) { b.state = 'rest'; b.timer = REST[0] + Math.random() * (REST[1] - REST[0]); }
+		if (moveTo(b, b.target, K.walk, dt) < m || (b.blocked ?? 0) > 1.2) { b.state = 'rest'; b.timer = REST[0] + Math.random() * (REST[1] - REST[0]); b.blocked = 0; }
 	}
 }
 
@@ -194,6 +255,9 @@ function stepPack(P, dt) {
 	const m = metre(), K = KINDS.wolf, wolves = beasts.filter((b) => b.pack === P);
 	if (!wolves.length) return;
 	const lead = wolves[0];
+	// (a gunshot heard, not fighting: they run, away from it, all of them)
+	const shot = hearing.gunshotHeard(lead.x, lead.z, P.heardShot ?? 0);
+	if (shot) { P.heardShot = shot.at; if (P.state != 'fight') { const a = Math.atan2(lead.x - shot.x, lead.z - shot.z); P.state = 'roam'; P.prey = null; P.timer = 30; P.target = [lead.x + Math.sin(a) * 150 * m, lead.z + Math.cos(a) * 150 * m]; P.targetAge = 0; P.running = 12; beastStats.fled++; } }
 	// half down: they run
 	if (wolves.length < Math.ceil(P.size / 2) && P.state == 'fight') { P.state = 'roam'; P.enemy = null; P.timer = 40; P.target = [...P.home]; P.targetAge = 0; for (const w of wolves) w.lunging = false; }
 	// (at a kill they only mind one who comes close)
@@ -257,14 +321,17 @@ function stepPack(P, dt) {
 		P.timer = 20;
 	}
 	P.targetAge = (P.targetAge ?? 0) + dt;
+	// (running from a gunshot: at a run, the leader's pace the others' too)
+	P.running = Math.max((P.running ?? 0) - dt, 0);
+	const roamPace = P.running > 0 ? K.run * 0.85 : K.walk * 1.5;
 	if (!P.target || P.targetAge > 45 || Math.hypot(P.target[0] - lead.x, P.target[1] - lead.z) < 4 * m) { P.target = roamTarget(lead, ZONES()); P.targetAge = 0; }
 	wolves.forEach((w, k) => {
 		w.headDown += (0 - w.headDown) * Math.min(dt * 2, 1);
-		if (k == 0) { moveTo(w, P.target, K.walk * 1.5, dt); return; }
+		if (k == 0) { moveTo(w, P.target, roamPace, dt); return; }
 		const back = (2.5 + 1.2 * k) * m, s = k % 2 ? 1 : -1;
 		const place = [lead.x - Math.sin(lead.heading) * back + Math.cos(lead.heading) * s * 1.8 * m, lead.z - Math.cos(lead.heading) * back - Math.sin(lead.heading) * s * 1.8 * m];
 		const far = Math.hypot(place[0] - w.x, place[1] - w.z);
-		if (far > 0.6 * m) moveTo(w, place, K.walk * 1.5 * Math.min(Math.max(far / (2 * m), 0.4), 2.5), dt); else standing(w, dt);
+		if (far > 0.6 * m) moveTo(w, place, roamPace * Math.min(Math.max(far / (2 * m), 0.4), 2.5), dt); else standing(w, dt);
 	});
 }
 
@@ -395,7 +462,7 @@ export function beastsUpdate() {
 	const show = (o, roll) => {
 		if (Math.abs(o.x - cx) > reach || Math.abs(o.z - cz) > reach) return;
 		const K = KINDS[o.kind];
-		props.show(K.model, props.place([o.x, o.y + (roll ? 0.3 * m * Math.abs(Math.sin(roll)) : 0), o.z], o.heading, o.slope, roll), undefined, undefined, [o.stride, Math.min(o.walking, 1.2), o.headDown, K.number]);
+		props.show(K.model, props.place([o.x, o.y + (roll ? 0.3 * m * Math.abs(Math.sin(roll)) : 0), o.z], o.heading, o.slope, roll), undefined, undefined, [o.stride, Math.min(o.walking, 3), o.headDown, K.number]);
 	};
 	if (followed) for (const o of followed) show(o, o.roll);
 	else {

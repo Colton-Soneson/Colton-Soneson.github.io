@@ -24,6 +24,16 @@ import { owned, setOwnedValue } from './owned.js'
 		there by sea (npcShips.js: orderHired). Recall: after the player again.
 	LEFT BEHIND: a horseman far from his place (FAR) while the team is after the player is brought on to just behind them (the player went
 		on by sea or by rail).
+	THE COMMANDS (commands.js: the command wheel, B; command): a team (or all of them) told
+		a formation		formed up in it on the player (after them again)
+		charge			at the nearest the player has to fear (within CHARGE.reach of the team), or where the player looks if there is no one,
+						at a gallop (CHARGE.pace), going after anyone within CHARGE.reach
+		fire at will	going after anyone hostile it sees (as far as the riders' CHASE: npcRiders.js), wherever it is told to be (as ever)
+		hold			where it is now, in its formation, facing the way the player looks, shooting only at those within its revolvers' reach
+						(HOLD_REACH), not riding off after anyone
+		retreat			back to the player at a gallop, after no one, until it is about them again (REGROUP), then firing at will
+		The schooner (a water team) sails at the nearest of the player's foes on the water, or where the player looks (charge), lies where
+		she is (hold), or comes back to the player (retreat).
 	Kept with what the player owns (owned.js: horsemen, teamOf, formations), so in the save file. Only where the people are run (alone, or
 	the host: npcs.runsHere).
 */
@@ -43,11 +53,16 @@ export const FORMATIONS = {
 const SPACING = { gap: 5, behind: 12 };	// metres between horsemen; and the middle of one after the player, behind them
 const PACE = 3.2;						// metres a second a sent land team's anchor moves at
 const FAR = 400;						// metres
+const CHARGE = { reach: 300, pace: 7.5 };	// THE COMMANDS: metres a charging team goes after anyone within; metres a second its middle goes at
+const HOLD_REACH = 60;					// metres (npcRiders.js: RANGE)
+const REGROUP = 30;						// metres from his place that a retreating team's every horseman has to be, for it to fire at will again
 const NAMES = ['Abner', 'Silas', 'Eli', 'Jed', 'Amos', 'Caleb', 'Wade', 'Gus', 'Hollis', 'Rufus', 'Virgil', 'Clem'];
 
 const metre = () => settings.forestUnitsPerMetre;
-const teams = Array.from({ length: TEAMS }, (_, k) => ({ number: k + 1, anchor: null, heading: 0, order: null }));	// order: { to: [x, z], route: [[x, z]...], at }
-const loose = { number: 0, anchor: null, heading: 0, order: null };		// (the unassigned: after the player, loose)
+// order: { to: [x, z], route: [[x, z]...], at, pace (metres a second, PACE if none) }; fire: THE COMMANDS' 'will', 'hold' or 'none' (retreating);
+//		charge: it is charging
+const teams = Array.from({ length: TEAMS }, (_, k) => ({ number: k + 1, anchor: null, heading: 0, order: null, fire: 'will', charge: false }));
+const loose = { number: 0, anchor: null, heading: 0, order: null, fire: 'will', charge: false };		// (the unassigned: after the player, loose)
 const horsemen = [];				// { key, name, r (npcRiders.js's) }
 export const fireStats = { horsemen: 0, orders: 0 };
 
@@ -151,9 +166,10 @@ function spawnFor(u, at = null) {
 	const squad = {
 		spot: () => placeOf(teamFor(h), membersOf(teamFor(h)), h),
 		moving: () => { const t = teamFor(h); return t.order ? !!t.order.route && t.order.at < t.order.route.length : Math.hypot(hunting.hunterPlace().vx ?? 0, hunting.hunterPlace().vz ?? 0) > 0.3 * metre(); },
-		pace: () => teamFor(h).order ? PACE : Math.max(Math.hypot(hunting.hunterPlace().vx ?? 0, hunting.hunterPlace().vz ?? 0) / metre(), 1.5),
+		pace: () => teamFor(h).order ? teamFor(h).order.pace ?? PACE : Math.max(Math.hypot(hunting.hunterPlace().vx ?? 0, hunting.hunterPlace().vz ?? 0) / metre(), 1.5),
 		facing: () => headingOf(teamFor(h)),
 		home: () => homeFor(),
+		rules: () => { const t = teamFor(h); return t.charge ? { reach: CHARGE.reach, charge: true } : t.fire == 'hold' ? { reach: HOLD_REACH } : t.fire == 'none' ? { reach: 0 } : null; },
 	};
 	h.r = npcRiders.addHired(group, at ?? homeFor(), squad, 'your horseman ' + u.name);
 	horsemen.push(h);
@@ -184,8 +200,68 @@ export function order(n, x, z) {
 }
 export function recall(n) {
 	const t = teams[n - 1];
-	t.order = null; t.anchor = null;
+	t.order = null; t.anchor = null; t.charge = false;
 	if (modeOf(n) == 'water') { const b = mySchooner(); if (b) npcShips.cancelHiredOrder(b); }
+}
+
+// THE COMMANDS (see the top): team n (0: all of them with anyone in them) told what ('form:' and a formation, 'charge', 'fire', 'hold',
+//		'retreat'). look: where the player looks, on the ground or the water ([x, z] world units, or null). What was done, said: { ok, said }
+export function command(n, what, look = null) {
+	const list = n ? [n] : teams.map((t) => t.number).filter((k) => modeOf(k));
+	if (!list.length) return { ok: false, said: n ? `Team ${n} has no one in it` : 'No fireteam has anyone in it: the journal\'s Enlisted page puts your men in them' };
+	const done = list.map((k) => commandOne(k, what, look)).filter(Boolean);
+	fireStats.commands = (fireStats.commands ?? 0) + done.length;
+	return done.length ? { ok: true, said: done.join(' · ') } : { ok: false, said: `${n ? 'Team ' + n : 'They'} cannot do that` };
+}
+function commandOne(n, what, look) {
+	const t = teams[n - 1], mode = modeOf(n), m = metre(), name = `Team ${n}`;
+	const members = membersOf(t).filter((h) => h.r?.person.alive && h.r.horse?.exists);
+	const middle = () => members.length ? { x: members.reduce((s, h) => s + h.r.horse.x, 0) / members.length, z: members.reduce((s, h) => s + h.r.horse.z, 0) / members.length } : null;
+	if (what.startsWith('form:')) {
+		const f = what.slice(5);
+		if (mode != 'land' || !FORMATIONS[f]) return null;
+		setFormation(n, f);
+		recall(n);
+		t.fire = 'will';
+		return `${name}: ${FORMATIONS[f].name.toLowerCase()}, on me`;
+	}
+	if (mode == 'water') {
+		const b = mySchooner();
+		if (!b) return null;
+		const at = b.frame.toWorld([0, 0, 0]);
+		if (what == 'charge') {
+			const foe = npcs.foesOfMine(at[0], at[1], at[2]).find((e) => e.d < 1500 * m && terrain.land.heightAt(e.x, e.z) < settings.waterWorldPosY - 2 * m);
+			const to = foe ? [foe.x, foe.z] : look;
+			return to && order(n, to[0], to[1]).ok ? `${name}: she bears down on ${foe ? 'them' : 'where you look'}` : null;
+		}
+		if (what == 'hold') return order(n, at[0], at[2]).ok ? `${name}: she lies where she is` : null;
+		if (what == 'retreat') { recall(n); return `${name}: she comes back to you`; }
+		if (what == 'fire') return `${name}: her guns are free`;
+		return null;
+	}
+	if (mode != 'land') return null;
+	if (what == 'fire') { t.fire = 'will'; return `${name}: fire at will`; }
+	if (what == 'retreat') { recall(n); t.fire = 'none'; return `${name}: fall back to me`; }
+	if (what == 'hold') {
+		const at = middle();
+		if (!at) return null;
+		t.anchor = { ...at };
+		t.heading = me().heading;
+		t.order = { to: [at.x, at.z], route: [], at: 0 };
+		t.fire = 'hold'; t.charge = false;
+		return `${name}: hold here`;
+	}
+	if (what == 'charge') {
+		const at = middle();
+		if (!at) return null;
+		const foe = npcs.foesOfMine(at.x, terrain.land.heightAt(at.x, at.z), at.z).find((e) => e.d < CHARGE.reach * m && terrain.land.heightAt(e.x, e.z) > settings.waterWorldPosY);
+		const to = foe ? [foe.x, foe.z] : look;
+		if (!to || !order(n, to[0], to[1]).ok) return null;
+		t.order.pace = CHARGE.pace;
+		t.fire = 'will'; t.charge = true;
+		return `${name}: charge!`;
+	}
+	return null;
 }
 
 // THE MAP's (survivalMap.js): each team with anyone out, where it is (the middle of its horsemen, or its schooner), its way on (world units, or
@@ -229,13 +305,21 @@ export function fireteamsUpdate() {
 		if (modeOf(t.number) != 'land') { t.order = null; continue; }
 		const R = t.order.route;
 		if (t.order.at >= R.length) continue;
-		const [tx, tz] = R[t.order.at], dx = tx - t.anchor.x, dz = tz - t.anchor.z, d = Math.hypot(dx, dz), step = PACE * m * dt;
+		const [tx, tz] = R[t.order.at], dx = tx - t.anchor.x, dz = tz - t.anchor.z, d = Math.hypot(dx, dz);
 		// (not on ahead of its horsemen: it waits for them)
 		const list = membersOf(t).filter((h) => h.r?.person.alive && h.r.horse?.exists), behind = list.length ? Math.max(...list.map((h) => Math.hypot(h.r.horse.x - t.anchor.x, h.r.horse.z - t.anchor.z))) : 0;
 		if (behind > 45 * m) continue;
 		if (d > 0.01) t.heading = Math.atan2(dx, dz);
+		const step = (t.order.pace ?? PACE) * m * dt;
 		if (d <= step) { t.anchor.x = tx; t.anchor.z = tz; t.order.at++; }
 		else { t.anchor.x += dx / d * step; t.anchor.z += dz / d * step; }
+	}
+	// (THE COMMANDS: a charge over once it is there; a retreat over once they are all about the player again)
+	for (const t of teams) {
+		if (t.charge && (!t.order || t.order.at >= t.order.route.length)) t.charge = false;
+		if (t.fire != 'none') continue;
+		const list = membersOf(t).filter((h) => h.r?.person.alive && h.r.horse?.exists);
+		if (list.every((h) => { const [x, z] = placeOf(t, list, h); return Math.hypot(h.r.horse.x - x, h.r.horse.z - z) < REGROUP * m; })) t.fire = 'will';
 	}
 	// LEFT BEHIND (see the top)
 	for (const h of horsemen) {
@@ -297,4 +381,4 @@ export function act(value) {
 	else if (what == 'recall') recall(Number(a));
 }
 // for testing
-export const fireteamsForTest = () => ({ teams: teams.map((t) => ({ number: t.number, mode: modeOf(t.number), order: t.order && { to: t.order.to, at: t.order.at, of: t.order.route.length }, anchor: t.anchor })), horsemen: horsemen.map((h) => ({ key: h.key, team: teamOf(h.key), x: h.r?.horse?.x, z: h.r?.horse?.z, alive: h.r?.person.alive })) });
+export const fireteamsForTest = () => ({ teams: teams.map((t) => ({ number: t.number, mode: modeOf(t.number), order: t.order && { to: t.order.to, at: t.order.at, of: t.order.route.length, pace: t.order.pace }, anchor: t.anchor, fire: t.fire, charge: t.charge, formation: formationOf(t.number) })), horsemen: horsemen.map((h) => ({ key: h.key, team: teamOf(h.key), x: h.r?.horse?.x, z: h.r?.horse?.z, alive: h.r?.person.alive })) });

@@ -372,9 +372,12 @@ function stepRider(r, dt) {
 	if (!h.exists) { mountNew(r); planRoute(r); }
 	// its enemy: the nearest it is hostile to, in reach (or in sight, to chase)
 	// (looked round for every LOOK, each rider at its own moment; in between the one it has, where it is now)
+	// (the player's own: as far as their fireteam's orders let them go after anyone: fireteams.js, rules)
+	const rules = r.squad?.rules?.() ?? null, reach = rules?.reach ?? CHASE;
+	if (reach <= 0) r.enemyId = null;
 	if ((r.look = (r.look ?? Math.random() * LOOK) - dt) <= 0) {
 		r.look += LOOK;
-		const found = (p.group.hired ? npcs.foesOfMine(h.x, h.y + 2 * m, h.z) : npcs.enemiesOf(p.group, h.x, h.y + 2 * m, h.z)).find((e) => e.d < CHASE * m && (!npcs.war.on || onLand(e)));
+		const found = reach <= 0 ? null : (p.group.hired ? npcs.foesOfMine(h.x, h.y + 2 * m, h.z) : npcs.enemiesOf(p.group, h.x, h.y + 2 * m, h.z)).find((e) => e.d < reach * m && (!npcs.war.on || onLand(e)));
 		r.enemyId = found?.id ?? null;
 		r.seen = !!found && npcs.clearLine(h.frame.toWorld([0, 2.4, 0]), [found.x, found.y, found.z]);
 	}
@@ -388,7 +391,7 @@ function stepRider(r, dt) {
 		// at them: closer if out of reach, then stopped and turned to them, firing
 		const toward = Math.atan2(enemy.x - h.x, enemy.z - h.z), off = npcs.wrap(toward - h.heading);
 		const close = enemy.d < RANGE * m && seen;
-		if (!close) { r.wanted = toward; ({ ahead, turn } = steer(r, dt, 1.6)); }
+		if (!close) { r.wanted = toward; ({ ahead, turn } = steer(r, dt, rules?.charge ? 2.3 : 1.6)); }
 		else {
 			turn = clamp(off * 2, -1, 1);
 			const muzzle = h.frame.toWorld([0.1, 1.6 + 1.32 - 0.9, 0.5]);
@@ -624,7 +627,8 @@ export function addEscort(cart, slot, inn) {
 	return r;
 }
 // THE PLAYER'S OWN (see the top): one hired (fireteams.js), its group (hired), where it starts ({ x, z, heading }), and its squad ({ spot(r):
-//		[x, z] its place, moving(), pace() metres a second, facing() radians, home(): { x, z, heading } where it comes back })
+//		[x, z] its place, moving(), pace() metres a second, facing() radians, home(): { x, z, heading } where it comes back, and rules(): its
+//		orders, { reach (metres it goes after anyone within: 0, no one), charge (at a gallop) } or null, as ever })
 export function addHired(group, at, squad, name = 'your horseman') {
 	const person = npcs.makePerson('rider', { hat: 'stetson', gun: 'revolver', home: at, name, group });
 	const r = { person, inn: at, horse: null, going: { x: at.x, z: at.z }, route: [], along: 0, rest: 0, wanted: at.heading, think: 0, stuck: 0, backing: 0, fire: 1, unseen: 0, turnSign: 1, squad };

@@ -51,6 +51,8 @@ import * as wildBirds from './wildBirds.js'
 import * as painterly from './painterly.js'
 import * as grassThrow from './grassThrow.js'
 import * as fireteams from './fireteams.js'
+import * as tracks from './tracks.js'
+import './commands.js'			//(the command wheel, B: the player's fireteams told what to do)
 import * as deer from './deer.js'
 import * as horde from './horde.js'
 import * as cameraControls from './cameraControls.js'
@@ -527,6 +529,7 @@ export function updateRotatingCubePass() {
 	rabbits.rabbitsUpdate();		//the rabbits, and the snares they walk into
 	beasts.beastsUpdate();			//the moose, the wolves and the bears
 	critters.crittersUpdate();		//the towns' cats, and the rats
+	tracks.tracksUpdate();			//and the animals' tracks near the player
 	flares.flaresUpdate();			//(and the flares in the air)
 	ice.iceUpdate();				//the ponds frozen, in the winter
 	mining.miningUpdate();			//the ore veins and the mushrooms

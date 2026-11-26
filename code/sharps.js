@@ -1,5 +1,4 @@
 import {canvas} from './deviceSelection.js'
-import {onRenderResize} from './deviceSelection.js'
 
 import { mat4 } from 'https://wgpu-matrix.org/dist/3.x/wgpu-matrix.module.js';
 
@@ -7,9 +6,8 @@ import { settings } from './settings.js';
 
 import * as hunting from './hunting.js'
 import * as weapons from './weapons.js'
-import * as transformations from './transformations.js'
-import * as ballistics from './ballistics.js'
 import * as vm from './viewmodel.js'
+import { makeScope } from './scopes.js'
 
 /*
 	THE SHARPS: a Sharps 1874 falling block rifle, .45-70, one shot, with a scope: 3 to 8 power, its reticle in the first focal plane
@@ -50,7 +48,6 @@ const ZOOM_STEP = 0.5;
 const SCOPED = 0.9;					// aimed this far, the view is through the scope
 const SCOPE_FIELD = 20;				// degrees: the scope's field of view across its eyepiece is this over its magnification (6.7 at 3x,
 									//		2.5 at 8x, about a real 3-8 power's)
-const EYEPIECE = 0.92;				// of the picture's height (or width, if narrower) the eyepiece's circle is across
 const MESSAGE_SECONDS = 1.6;
 const CASE = 0.053, BULLET = 0.072;	// a round's case and its whole length
 
@@ -312,113 +309,15 @@ function drawSharps() {
 	view.draw(gunMatrix(), partsNow());
 }
 
-// The scope (see THE RETICLE at the top)
+// The scope (see THE RETICLE at the top: scopes.js draws it)
 //-------------------------------------------------
-// how far the bullet drops below the line of sight, in milliradians, at each range: the same sums as ballistics.js, aimed as vm.shoot aims
-function holdovers() {
-	const R = ballistics.ROUNDS['.45-70'];
-	const time = ZERO / (R.velocity * (1 - R.drag * ZERO / 2));
-	const up = (SCOPE_Y + 0.5 * 9.81 * time * time) / ZERO;
-	let x = 0, y = -SCOPE_Y, vx = R.velocity / Math.hypot(1, up), vy = vx * up;
-	const out = [];
-	const dt = 1 / 2000;
-	for (let t = 0; t < 4 && x < 800; t += dt) {
-		const speed = Math.hypot(vx, vy);
-		const slow = Math.max(1 - R.drag * speed * dt, 0);
-		vx *= slow; vy = vy * slow - 9.81 * dt;
-		x += vx * dt; y += vy * dt;
-		out.push([x, -y / x * 1000]);
-	}
-	return out;
-}
-const HOLD = holdovers();
-// the range (metres) a row this many milliradians down is for, or null past the end of the flight worked out
-function rangeFor(mils) {
-	for (let k = 1; k < HOLD.length; k++) if (HOLD[k][0] > ZERO && HOLD[k][1] >= mils) return HOLD[k][0];
-	return null;
-}
-export const reticleRanges = Array.from({ length: 12 }, (_, k) => [k + 1, rangeFor(k + 1)]);
-
-const scope = document.createElement('canvas');
-scope.style.cssText = 'position: fixed; inset: 0; width: 100%; height: 100%; z-index: 4; pointer-events: none; display: none;';
-document.body.appendChild(scope);
-let drawnFor = '';
-function drawReticle() {
-	const W = scope.clientWidth || innerWidth, H = scope.clientHeight || innerHeight;
-	const dpr = Math.min(devicePixelRatio || 1, 2);
-	scope.width = Math.round(W * dpr); scope.height = Math.round(H * dpr);
-	const c = scope.getContext('2d');
-	c.setTransform(dpr, 0, 0, dpr, 0, 0);
-	const cx = W / 2, cy = H / 2, radius = Math.min(W, H) * EYEPIECE / 2;
-	// black round the eyepiece, a soft dark edge inside it
-	c.fillStyle = '#000';
-	c.beginPath(); c.rect(0, 0, W, H); c.arc(cx, cy, radius, 0, Math.PI * 2, true); c.fill();
-	const edge = c.createRadialGradient(cx, cy, radius * 0.86, cx, cy, radius);
-	edge.addColorStop(0, 'rgba(0,0,0,0)'); edge.addColorStop(1, 'rgba(0,0,0,0.85)');
-	c.fillStyle = edge;
-	c.beginPath(); c.arc(cx, cy, radius, 0, Math.PI * 2); c.fill();
-	// a milliradian in pixels, as the view is magnified now (the reticle is in the first focal plane: it is magnified with it)
-	const mil = H / 2 / Math.tan(transformations.verticalViewAngle / 2) * 0.001;
-	c.save();
-	c.beginPath(); c.arc(cx, cy, radius, 0, Math.PI * 2); c.clip();
-	c.strokeStyle = '#000'; c.fillStyle = '#000';
-	// the thick posts from the edge in to 6 milliradians off the middle, and the fine cross between them
-	c.lineWidth = Math.max(mil * 0.3, 3);
-	for (const [dx, dy] of [[1, 0], [-1, 0], [0, -1]]) { c.beginPath(); c.moveTo(cx + dx * 6 * mil, cy + dy * 6 * mil); c.lineTo(cx + dx * radius, cy + dy * radius); c.stroke(); }
-	c.lineWidth = Math.max(mil * 0.04, 1);
-	c.beginPath(); c.moveTo(cx - 6 * mil, cy); c.lineTo(cx + 6 * mil, cy); c.moveTo(cx, cy - 6 * mil); c.lineTo(cx, cy + 12.5 * mil); c.stroke();
-	// a mark every milliradian along the cross, a longer one every 5
-	for (let k = 1; k <= 5; k++) {
-		const long = k == 5 ? 0.5 : 0.25;
-		c.beginPath();
-		for (const s of [-1, 1]) { c.moveTo(cx + s * k * mil, cy - long * mil); c.lineTo(cx + s * k * mil, cy + long * mil); }
-		c.moveTo(cx - long * mil, cy - k * mil); c.lineTo(cx + long * mil, cy - k * mil);
-		c.stroke();
-	}
-	// the tree: a row every milliradian down, a dot a milliradian apart for the wind, wider each row down, and the range it is for
-	const font = Math.max(Math.min(mil * 0.42, 15), 9);
-	c.font = `${font}px system-ui, sans-serif`;
-	c.textBaseline = 'middle';
-	for (let row = 1; row <= 12; row++) {
-		const y = cy + row * mil;
-		c.beginPath(); c.moveTo(cx - 0.3 * mil, y); c.lineTo(cx + 0.3 * mil, y); c.stroke();
-		const wide = Math.min(1 + Math.floor(row / 2), 6);
-		for (let k = 1; k <= wide; k++) for (const s of [-1, 1]) { c.beginPath(); c.arc(cx + s * k * mil, y, Math.max(mil * 0.07, 1.3), 0, Math.PI * 2); c.fill(); }
-		if (mil >= 7 && (row % 2 == 0 || mil > 22)) {
-			const range = rangeFor(row);
-			c.textAlign = 'right';
-			c.fillText(String(row), cx - (wide + 0.6) * mil, y);
-			if (range) { c.textAlign = 'left'; c.fillText(Math.round(range / 10) * 10 + ' m', cx + (wide + 0.6) * mil, y); }
-		}
-	}
-	c.restore();
-	// the magnification, under the eyepiece
-	c.fillStyle = 'rgba(232, 232, 232, 0.8)';
-	c.font = '13px system-ui, sans-serif';
-	c.textAlign = 'center';
-	c.fillText(`${gun.magnification.toFixed(1)}×   ·   zeroed at ${ZERO} m`, cx, Math.min(cy + radius + 18, H - 12));
-}
-onRenderResize(() => { drawnFor = ''; });
-// how much the view is narrowed through the scope at a magnification: the scope's field across the eyepiece, the picture as wide as that
-//		makes it
-function viewZoom(magnification) {
-	const W = innerWidth, H = innerHeight;
-	const field = SCOPE_FIELD / magnification * Math.PI / 180;		// across the eyepiece's circle
-	const across = Math.min(W, H) * EYEPIECE;						// pixels of it
-	const vertical = 2 * Math.atan(Math.tan(field / 2) * H / across);
-	return Math.tan(transformations.baseVerticalViewAngle / 2) / Math.tan(vertical / 2);
-}
+const scope = makeScope({ round: '.45-70', zero: ZERO, height: SCOPE_Y, field: SCOPE_FIELD });
+export const reticleRanges = scope.ranges;
 // through the scope (or not): the view magnified, the mouse slowed as much, the reticle over it
 function scopeView() {
 	const scoped = active() && gun.aimed >= SCOPED && hunting.hunterPlace().active;
 	sharpsStats.scoped = scoped;
-	const zoom = scoped ? viewZoom(gun.magnification) : 1;
-	transformations.setZoom(zoom);
-	hunting.input.lookScale = 1 / zoom;
-	scope.style.display = scoped ? '' : 'none';
-	if (!scoped) return;
-	const key = [gun.magnification, innerWidth, innerHeight, transformations.verticalViewAngle].join();
-	if (key != drawnFor) { drawnFor = key; drawReticle(); }
+	scope.show(scoped, gun.magnification);
 }
 
 // The ammunition, in the bottom right

@@ -1,5 +1,6 @@
 import { moonShapes } from './f_moon.js';
 import { skyLookupShapes } from './vfc_atmosphere.js';
+import { legIK } from './legIK.js';
 
 /*
 	The other players drawn, as crash test dummies (players.js: the mesh, 90 triangles in metres, and the rifle they carry, 12).
@@ -10,8 +11,8 @@ import { skyLookupShapes } from './vfc_atmosphere.js';
 		2			the neck and the head: tipped up and down with where the player looks (pitch), about the neck
 		3, 4		the left upper arm and forearm		with the rifle, tipped with the look about the shoulders: the rifle
 		5, 6		the right upper arm and forearm		is held where the player is looking
-		7, 8		the left thigh and shin				swing from the hip with the walk, the shin bending back at the knee as
-		9, 10		the right thigh and shin			the leg comes forward
+		7, 8		the left thigh and shin				laid by inverse kinematics (legIK.js) to reach the foot where it is in
+		9, 10		the right thigh and shin			its step, the knee bending forward only (THE LEGS)
 		11			the rifle
 		12 and up	a hat (the townsfolk's, townFolk.js): HAT_COLOURS[part - 12], tipped with the head
 	THE CLOTHES (outfits.js: the Survival mode's, on the players and the NPCs) are drawn with this too (vf_dummyClothes: each instance's
@@ -21,8 +22,16 @@ import { skyLookupShapes } from './vfc_atmosphere.js';
 	Sitting (state.w, 0 to 1: at a dinghy's helm), the thighs come up level and the shins hang down from the knees, and it is let
 	down so its hips are on its place (the seat). Astride a horse (state.w from 1 to 2) the legs go apart round the saddle as well.
 	One that holds nothing (held.y: the townsfolk) has its arms down at its sides, swinging against its legs as it walks.
-	Crouched (held.w, 0 to 1: a player's C, hunting.js), the thighs come forward, the shins back under them, the hips come down
-	CROUCH_DROP and the body leans forward over its knees.
+	THE GESTURES (the townsfolk's greetings, townFolk.js): one that holds nothing (held.x no more than 0) can wave or shake hands with
+	its right arm (parts 3 and 4, at -x: the dummy faces +z, +x its left): held.y's whole part says which (1 neither, 2 a wave, 3 a
+	handshake), its fraction where it is in the wave or the pump (0 to 1 round), and -held.x how far the arm is up for it (0 down at
+	its side, 1 all the way): the arm's two bones turned from hanging to the gesture's, by that much.
+	Crouched (held.w, 0 to 1: a player's C, hunting.js), the hips come down CROUCH_DROP, the feet stay on the ground (so the knees come
+	forward over them) and the body leans forward over its knees.
+	THE LEGS: each foot's place first (its step: STEP_PACE steps to each the walker counts as a stride, STEP_HALF either way of the hip,
+	on the ground going back as fast as the walker goes on, lifted STEP_LIFT coming forward; on the ground crouched; out in front sitting),
+	then the thigh and the shin laid to reach it (legIK.js), within the knee's and the hip's restrictions (KNEE_FLEX, HIP_SWING). Walking,
+	the whole dummy comes down a little (legDrop), so that the feet reach the ground at either end of the step.
 	Then the whole dummy is tipped (tilt: forward, and rolled, as the cockpit or the deck it is on is: npcs.js) and turned to its
 	heading, made its size and put in its place. A dead one has gone over on to its back,
 	about its feet. A hit one flashes red for a moment.
@@ -109,13 +118,16 @@ const dummyShader = (clothes) =>
 	// an arm (part 3 to 6) as it was made, holding the rifle, let down to hang at its side, swung forward by swing (back if less than
 	//		0): the upper arm turned about the shoulder, the forearm about the elbow and taken to where the elbow now is
 	fn hangArm(p: vec3f, part: i32, swing: f32) -> vec3f {
+		let out = select(1.0, -1.0, part <= 4);
+		return armTo(p, part, normalize(vec3f(0.07 * out, -1.0, swing)), normalize(vec3f(0.02 * out, -1.0, swing * 1.4 + 0.18)));
+	}
+	// an arm (part 3 to 6) as it was made, its upper arm turned to point along upper from the shoulder, and its forearm along fore from
+	//		where the elbow now is
+	fn armTo(p: vec3f, part: i32, upper: vec3f, fore: vec3f) -> vec3f {
 		let left = part <= 4;
 		let shoulder = select(vec3f(0.22, 1.45, 0.0), vec3f(-0.22, 1.45, 0.0), left);
 		let elbow = select(vec3f(0.22, 1.2, 0.1), vec3f(-0.2, 1.24, 0.24), left);
 		let hand = select(vec3f(0.07, 1.29, 0.24), vec3f(-0.03, 1.31, 0.5), left);
-		let out = select(1.0, -1.0, left);
-		let upper = normalize(vec3f(0.07 * out, -1.0, swing));
-		let fore = normalize(vec3f(0.02 * out, -1.0, swing * 1.4 + 0.18));
 		if (part == 3 || part == 5) {
 			return shoulder + turnTo(p - shoulder, normalize(elbow - shoulder), upper);
 		}
@@ -123,11 +135,34 @@ const dummyShader = (clothes) =>
 		return elbowNow + turnTo(p - elbow, normalize(hand - elbow), fore);
 	}
 
+	// the right arm (parts 3 and 4) put up for a gesture (THE GESTURES: 2 a wave, 3 a handshake), up by amount from how it hangs
+	//		(swing: hangArm's), round at phase (radians): waved side to side up by the head, or held out to the middle in front and pumped
+	fn gestureArm(p: vec3f, part: i32, gesture: f32, amount: f32, phase: f32, swing: f32) -> vec3f {
+		let upperDown = normalize(vec3f(-0.07, -1.0, swing));
+		let foreDown = normalize(vec3f(-0.02, -1.0, swing * 1.4 + 0.18));
+		let wave = 0.55 * sin(phase);
+		var upper = normalize(vec3f(-0.5, 0.55, 0.22));
+		var fore = normalize(vec3f(-0.1 + sin(wave), cos(wave), 0.18));
+		if (gesture > 2.5) {
+			upper = normalize(vec3f(0.3, -0.55, 0.55));
+			fore = normalize(vec3f(0.25, 0.05 + 0.18 * sin(phase), 1.0));
+		}
+		return armTo(p, part, normalize(mix(upperDown, upper, amount)), normalize(mix(foreDown, fore, amount)));
+	}
+
 	const NECK: vec3f = vec3f(0.0, 1.55, 0.0);
 	const SHOULDERS: vec3f = vec3f(0.0, 1.45, 0.0);
 	const HIP_Y: f32 = 0.95;
 	const KNEE_Y: f32 = 0.5;
 	const CROUCH_DROP: f32 = 0.44;
+	// THE LEGS (see the top): steps to a stride, metres either way, metres up; radians the knee bends (only forward), the thigh swings
+	const STEP_PACE: f32 = 1.8;
+	const STEP_HALF: f32 = 0.38;
+	const STEP_LIFT: f32 = 0.13;
+	const KNEE_FLEX: vec2f = vec2f(0.03, 2.5);
+	const HIP_SWING: vec2f = vec2f(-0.75, 1.75);
+	const SIT_FOOT: vec2f = vec2f(0.396, 0.447);		// (y, z: the shin hanging from a knee out in front, the thigh level)
+	${legIK}
 
 	@vertex
 	fn vertexMain(input: VertexInput) -> VertexOutput {
@@ -137,6 +172,9 @@ const dummyShader = (clothes) =>
 		let sit = min(input.state.w, 1.0);
 		let crouch = input.held.w * (1.0 - sit);
 		let astride = clamp(input.state.w - 1.0, 0.0, 1.0);
+		let walking = input.pose.w * (1.0 - sit);
+		let half = STEP_HALF * walking * (1.0 - 0.5 * crouch);
+		let walkDrop = legDrop(HIP_Y, half, 0.02 * walking);
 
 		if (part == 11) {
 			// what it holds: the long box made 1.1 metres along z from the right shoulder, as long as the gun is (nothing at 0)
@@ -147,27 +185,31 @@ const dummyShader = (clothes) =>
 			p = NECK + turnY(turnX(p - NECK, -0.6 * pitch), input.held.z);
 		} else if (part >= 3 && part <= 6 && input.held.y > 0.5) {
 			// (nothing in its hands: arms down, each swinging against the leg on its side)
-			p = hangArm(p, part, cos(input.pose.z) * 0.4 * input.pose.w * select(1.0, -1.0, part <= 4));
+			let swing = cos(input.pose.z * STEP_PACE) * 0.4 * input.pose.w * select(1.0, -1.0, part <= 4);
+			let gesture = floor(input.held.y);
+			if (gesture >= 2.0 && part <= 4) {
+				p = gestureArm(p, part, gesture, clamp(-input.held.x, 0.0, 1.0), fract(input.held.y) * 6.2831853, swing);
+			} else {
+				p = hangArm(p, part, swing);
+			}
 		} else if ((part >= 3 && part <= 6) || part == 11) {
 			p = SHOULDERS + turnX(p - SHOULDERS, -pitch);
 		} else if (part >= 7 && part <= 10) {
-			// a leg: the left and the right half a stride apart
+			// a leg (THE LEGS): the left and the right half a step apart; the foot on the ground under the hips come down (walking,
+			//		crouched), or out in front sitting; the thigh and the shin laid to reach it
 			let left = part <= 8;
-			let phase = input.pose.z + select(3.14159265, 0.0, left);
-			let walking = input.pose.w;
+			let phase = input.pose.z * STEP_PACE + select(3.14159265, 0.0, left);
 			let hip = vec3f(select(-0.1, 0.1, left), HIP_Y, 0.0);
-			if (part == 8 || part == 10) {
-				let knee = vec3f(p.x, KNEE_Y, 0.0);
-				p = knee + turnX(p - knee, -max(sin(phase), 0.0) * 0.9 * walking + 1.45 * sit + 2.0 * crouch);
-			}
-			p = hip + turnX(p - hip, cos(phase) * 0.5 * walking * (1.0 - 0.5 * crouch) - 1.45 * sit - 1.1 * crouch);
+			let foot = mix(legStep(vec2f(walkDrop + CROUCH_DROP * crouch, 0.0), phase, half, STEP_LIFT * walking), SIT_FOOT, sit);
+			let bones = legReach(hip.yz, HIP_Y - KNEE_Y, KNEE_Y, foot, 1.0, KNEE_FLEX, HIP_SWING);
+			p = legMove(p, vec3f(p.x, HIP_Y, 0.0), KNEE_Y, part == 7 || part == 9, bones);
 			p = hip + turnZ(p - hip, select(-0.45, 0.45, left) * astride);
 		}
 		// crouched: everything above the legs leaning forward over them, and all of it down
 		if (part < 7 || part > 10) {
 			p = vec3f(0.0, HIP_Y, 0.0) + turnX(p - vec3f(0.0, HIP_Y, 0.0), 0.35 * crouch);
 		}
-		p.y -= CROUCH_DROP * crouch;
+		p.y -= CROUCH_DROP * crouch + walkDrop;
 		// sitting: down on to the seat
 		p.y -= (HIP_Y - 0.05) * sit;
 

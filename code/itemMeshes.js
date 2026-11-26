@@ -57,6 +57,40 @@ function spit() {
 	m.strut([0, 0, 0.42], [0.06, 0.02, 0.5], 0.006, 0.002, 3, HANDLE);
 	return m;
 }
+// THE TRACKS (tracks.js): flat on the ground (a hair over it), +z the way the animal went. A cloven hoof's two halves, a paw's pad and four
+//		toes, a splash of blood with a drop or two about it, and the arrow that shows the way (V held). Each under 60
+const PRINT = 112, BLOOD = 113, ARROW = 114;
+function flatBlob(m, cx, cz, rx, rz, sides, material, y = 0.004, wobble = 0) {
+	const at = (k) => { const a = (k + 0.5) / sides * Math.PI * 2, w = 1 + wobble * Math.sin(k * 2.7 + cx * 50); return [cx + Math.cos(a) * rx * w, y, cz + Math.sin(a) * rz * w]; };
+	for (let k = 1; k < sides - 1; k++) m.tri(at(0), at(k + 1), at(k), 0, material);
+}
+function hoofPrint() {
+	const m = vm.meshBuilder();
+	for (const side of [-1, 1]) {
+		// (each half a teardrop, its point forward)
+		const pts = [[0.004, -0.032], [0.016, -0.02], [0.02, 0.005], [0.013, 0.03], [0.003, 0.045], [-0.001, 0.02], [-0.001, -0.02]].map(([x, z]) => [side * (x + 0.003), 0.004, z]);
+		for (let k = 1; k < pts.length - 1; k++) side > 0 ? m.tri(pts[0], pts[k + 1], pts[k], 0, PRINT) : m.tri(pts[0], pts[k], pts[k + 1], 0, PRINT);
+	}
+	return m;
+}
+function pawPrint() {
+	const m = vm.meshBuilder();
+	flatBlob(m, 0, -0.012, 0.024, 0.02, 7, PRINT);
+	for (const [x, z] of [[-0.026, 0.016], [-0.009, 0.03], [0.009, 0.03], [0.026, 0.016]]) flatBlob(m, x, z, 0.008, 0.01, 5, PRINT);
+	return m;
+}
+function bloodDrop() {
+	const m = vm.meshBuilder();
+	flatBlob(m, 0, 0, 0.035, 0.05, 9, BLOOD, 0.005, 0.35);
+	for (const [x, z, r] of [[0.03, 0.075, 0.009], [-0.02, 0.09, 0.006], [0.045, 0.03, 0.006]]) flatBlob(m, x, z, r, r, 5, BLOOD, 0.005);
+	return m;
+}
+function trackArrow() {
+	const m = vm.meshBuilder(), y = 0.02;
+	m.tri([0, y, 0.2], [-0.07, y, 0.08], [0.07, y, 0.08], 0, ARROW);
+	m.quad([-0.022, y, 0.08], [0.022, y, 0.08], [0.022, y, -0.06], [-0.022, y, -0.06], 0, ARROW);
+	return m;
+}
 // a pickaxe, and a hoe: as the hatchet, the handle up y, longer; each under 200
 function longHandle(m) {
 	const rings = [[0, 0.018, 0.014], [0.05, 0.018, 0.014], [0.25, 0.015, 0.012], [0.55, 0.015, 0.012], [0.62, 0.017, 0.014]];
@@ -467,6 +501,6 @@ function grassBit(material) {
 	};
 }
 
-const MAKERS = { grassHand, grassBit: grassBit(GRASS), grassBitDry: grassBit(STRAW), spit, burntMeat: () => venison('burnt'), pickaxe, hoe, journal, tent, tentBundle, stove: () => stoveWithPipe(false), stoveLit: () => stoveWithPipe(true), stovePacked, collector, collectorPacked, waterSurface, compass, watchArm, smokedFish, lighter, hatchet, knife, stone, bread, sausage, venison: () => venison(false), cookedVenison: () => venison(true), flaregun, rabbitMeat: () => rabbitCut(false), cookedRabbit: () => rabbitCut(true), water: () => bottle(false), beer: () => bottle(true), map, firewood, bedroll, bedrollFlat, crate, sack, campfire, campfireFull, campfireHalf, campfireEmbers, campfireDead, campfireLaid };
+const MAKERS = { hoofPrint, pawPrint, bloodDrop, trackArrow, grassHand, grassBit: grassBit(GRASS), grassBitDry: grassBit(STRAW), spit, burntMeat: () => venison('burnt'), pickaxe, hoe, journal, tent, tentBundle, stove: () => stoveWithPipe(false), stoveLit: () => stoveWithPipe(true), stovePacked, collector, collectorPacked, waterSurface, compass, watchArm, smokedFish, lighter, hatchet, knife, stone, bread, sausage, venison: () => venison(false), cookedVenison: () => venison(true), flaregun, rabbitMeat: () => rabbitCut(false), cookedRabbit: () => rabbitCut(true), water: () => bottle(false), beer: () => bottle(true), map, firewood, bedroll, bedrollFlat, crate, sack, campfire, campfireFull, campfireHalf, campfireEmbers, campfireDead, campfireLaid };
 export const MESHES = Object.fromEntries(Object.entries(MAKERS).map(([name, make]) => { const m = make(); return [name, { data: m.done(), triangles: m.count() }]; }));
 export const meshStats = Object.fromEntries(Object.entries(MESHES).map(([name, mesh]) => [name, mesh.triangles]));

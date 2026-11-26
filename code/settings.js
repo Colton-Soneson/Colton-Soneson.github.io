@@ -258,6 +258,7 @@ export const settings = {
 	deerSize: 1.0,						//1 = life size
 	enableRabbits: true,				//rabbits in the woods, and out on to the grassland and the marshes. See rabbits.js
 	enableCritters: true,				//the towns' cats, and rats in the towns and the grassland. See critters.js
+	enableTracks: true,					//the animals' footprints and blood near the player (V shows the way they went). See tracks.js
 	enableBeasts: true,					//moose, wolves and bears, which fight back. See beasts.js
 	enableFish: true,					//schools of fish, six kinds, in the ponds and the sea. See fish.js
 	enableWhales: true,					//a few whales out in the deep, and the schooners after them. See whaling.js

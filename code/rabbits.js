@@ -39,7 +39,8 @@ const DRAW = 180;					// metres
 const SNARE_AHEAD = 1.4;			// metres in front of the walker it is set
 const SPHERES = ANATOMY.rabbit.body;
 const SINEW = 0.12;					// the chance of a little sinew off one, as a small one has
-const SPOOK = 12;					// metres a player is heard from (hearing.js): off it goes
+const SPOOK = 30;					// metres a player at an ordinary walk is heard from (hearing.js): off it goes
+const NEAREST = 15;					// metres no one gets nearer than, however quietly (crouched)
 
 const metre = () => settings.forestUnitsPerMetre;
 const hidden = () => settings.gameMode == 'Horde';
@@ -129,9 +130,11 @@ function advance(frameDt) {
 				rabbitStats.snared++;
 				continue;
 			}
-		} else if (hearing.survivalMode() && r.state != 'scared' && hearing.heardBy(r.x, r.z, SPOOK * m)) {
-			// spooked: off away from them
-			const L = hearing.heardBy(r.x, r.z, SPOOK * m), a = Math.atan2(r.x - L.x, r.z - L.z);
+		} else if (r.state != 'scared' && (hearing.gunshotHeard(r.x, r.z, r.heardShot ?? 0, 0.4) || (hearing.survivalMode() && (hearing.heardBy(r.x, r.z, SPOOK * m) || hearing.listeners().some((L) => Math.hypot(L.x - r.x, L.z - r.z) < NEAREST * m))))) {
+			// spooked (a gunshot, or a player heard, or too near): off away from them
+			const shot = hearing.gunshotHeard(r.x, r.z, r.heardShot ?? 0, 0.4);
+			if (shot) r.heardShot = shot.at;
+			const L = shot ?? hearing.heardBy(r.x, r.z, SPOOK * m) ?? hearing.listeners().find((o) => Math.hypot(o.x - r.x, o.z - r.z) < NEAREST * m), a = Math.atan2(r.x - L.x, r.z - L.z);
 			r.state = 'scared'; r.timer = 4; r.target = [r.x + Math.sin(a) * 25 * m, r.z + Math.cos(a) * 25 * m];
 		} else if (r.state == 'scared') {
 			r.moving += (1 - r.moving) * Math.min(dt * 5, 1);
@@ -264,4 +267,6 @@ export function rabbitsUpdate() {
 	else { for (const r of rabbits) show(r, true); for (const c of corpses) show(c.rabbit, false); }
 }
 // for testing
+// THE TRACKS (tracks.js): every one about, as deer.js's trackList (a rabbit's are small, and it does not bleed long enough to leave a trail)
+export const trackList = () => (followed ?? rabbits).map((r) => ({ id: 'r' + r.id, kind: 'rabbit', name: 'rabbit', x: r.x, y: r.y, z: r.z, size: 1, male: r.id % 2 == 0, weight: Math.round((1.2 + 0.6 * ((r.id * 0.618) % 1)) * 10) / 10, blood: null }));
 export const rabbitsForTest = () => (followed ?? rabbits).map((o) => ({ id: o.id, x: o.x, y: o.y, z: o.z, state: o.state, trap: o.trap }));

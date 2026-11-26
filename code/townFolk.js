@@ -12,6 +12,7 @@ import { ragEntry } from './ragBuffer.js'
 
 import * as transformations from './transformations.js'
 import * as terrain from './terrain.js'
+import * as town from './town.js'
 import * as ballistics from './ballistics.js'
 import * as hunting from './hunting.js'
 import * as players from './players.js'
@@ -24,7 +25,7 @@ import * as outfits from './outfits.js'
 import { addJob, SEEN } from './jobs.js'
 
 //the townsfolk fade into the horizon color, read from the sky view LUT (same as everything else)
-import {skyViewLUTtexture} from './atmosphere.js'
+import {skyViewLUTtexture, timeBoost} from './atmosphere.js'
 
 //GET THE LIGHT CREATION OUT OF THE MAIN
 import {uniformBufferLights} from './rotatingCube.js'
@@ -47,6 +48,17 @@ import {uniformBufferLights} from './rotatingCube.js'
 	street near home). Whether it goes out at all is decided as the errand starts, by the light: by day (each from its own dusk on
 	it stays in), by night (the lamplighter), or always (the innkeeper at the inn's door). So at dusk they finish what they are
 	doing and go in, one by one, and come out again in the morning.
+	THE SHOP HOURS. Those at work (AT_WORK: the traders, and the baker's, the priest's and the like's trades) are at work from
+	SHOP_HOURS[0] to SHOP_HOURS[1] (the game's hours, survival.js: hoursNow): an errand is fitted into the longest stretch of its time
+	outside them (freeOf), back home (at work: their own building) before they open, so that they are behind their counters then
+	(INDOORS). Outside them they wander the town (an errand at their own door is a round of the streets instead: 'wander').
+	THE GREETINGS. Once every GREET.tick of folk time, the people out of doors near a player look about them, a pair at a time, by where
+	their day has them then (so that it is the same everywhere, worked out from the time and their numbers alone): two who pass within
+	WAVE.near of each other (or standing right by each other) may wave (a wave of the right arm, turning to face the other if standing
+	still); two standing a little way apart (MEET.near), with nothing in between, may walk to meet each other (MEET.gap apart), shake
+	hands, talk a moment and go back.
+	Each then waits a while (again) before greeting anyone else. A player who comes within WAVE_YOU.near in front of one is waved at,
+	once (it waits WAVE_YOU.again before waving at anyone that way again). The arm is the dummy's (vf_dummy.js: THE GESTURES).
 	It is all worked out from the time (folkSeconds, which the host shares in a game with others, net.js) and each person's own
 	number: everyone in a game sees the same people in the same places, and nothing about them has to be sent.
 
@@ -83,6 +95,14 @@ const MAKE_ROOM = 1.6;				// metres
 const LOOK_AT = 7;					// metres
 const RUN = 3.4;					// metres a second, home when shot
 const FLINCH = 0.45;				// seconds
+const SHOP_HOURS = [10, 15];		// THE SHOP HOURS: the game's hours, from and to
+const AT_WORK = new Set(['baker', 'librarian', 'fisherman', 'outfitter', 'priest', 'bellhop', 'innkeeper', 'dockworker', 'tailor', 'banker', 'butcher', 'blacksmith']);
+const WANDER = 35;					// metres from home a round of the streets goes
+// THE GREETINGS: folk seconds between looks about; metres from a player a town's people are looked at within
+const GREET = { tick: 1, reach: 450 };
+const WAVE = { near: 7, chance: 0.2, seconds: 2.6, again: 45 };			// metres, a chance a tick, seconds, seconds before greeting again
+const MEET = { near: [2.5, 11], chance: 0.15, gap: 1.04, shake: 2.4, talk: 2.5, again: 120 };	// metres apart, a chance a tick, metres apart shaking hands, seconds, seconds, seconds
+const WAVE_YOU = { near: 9, front: 1.5, again: 40 };						// metres, radians either side of straight ahead, seconds
 // the hitbox, in the dummy's own metres: x, y, z, radius
 const SPHERES = [[0, 1.71, 0.01, 0.14], [0, 1.33, 0, 0.21], [0, 1.0, 0, 0.19], [-0.1, 0.72, 0, 0.1], [0.1, 0.72, 0, 0.1], [-0.1, 0.3, 0, 0.09], [0.1, 0.3, 0, 0.09]];
 
@@ -321,7 +341,7 @@ let folkSeconds = 0;
 export function folkClock() { return folkSeconds; }
 export function setFolkClock(seconds) { folkSeconds = seconds; }
 
-export const townFolkStats = { folk: 0, out: 0, drawn: 0, triangles: 0, errands: 0, shot: 0 };
+export const townFolkStats = { folk: 0, out: 0, drawn: 0, triangles: 0, errands: 0, shot: 0, waves: 0, meets: 0, wavedAtYou: 0 };
 let folk = [];					// { town, ways, building, profession, seed, period, offset, side, dusk, hue, home (a spot), k, errand }
 // (in a world of tiles, terrain.js: made again as a tile with towns comes or goes, and a person's number its town's place times FOLK_SLOT and
 //		its building's place in the town, the same whatever else is here; with the one land of old, its place in the list)
@@ -442,6 +462,15 @@ function stopsFor(person, kind, random) {
 			const n = ways.nodes[pick(near)];
 			return [{ at: [n.x, n.y, n.z], node: ways.nearest(n.x, n.z), heading: random() * Math.PI * 2, onWay: true }];
 		}
+		case 'wander': {
+			// a round of the streets near home (THE SHOP HOURS): a corner of them or two (two with the time for it), a little while at each
+			const near = ways.nodes.map((n, k) => k).filter((k) => Math.hypot(ways.nodes[k].x - home.at[0], ways.nodes[k].z - home.at[2]) < WANDER * metre());
+			if (near.length < 2) return null;
+			return Array.from({ length: person.period > 100 && random() < 0.6 ? 2 : 1 }, () => {
+				const n = ways.nodes[pick(near)];
+				return { at: [n.x, n.y, n.z], node: ways.nearest(n.x, n.z), heading: random() * Math.PI * 2, onWay: true, share: 0.3 };
+			});
+		}
 		case 'garden': {
 			const roses = (town.roses ?? []).filter(([x, , z]) => Math.hypot(x - home.at[0], z - home.at[2]) < 90);
 			if (!roses.length) return null;
@@ -515,14 +544,36 @@ function goesOut(person) {
 	return hours == 'always' || (hours == 'night' ? day < 0.6 : day > person.dusk);
 }
 
+// THE SHOP HOURS (see the top): the hour of the game's day (survival.js: hoursNow), and how many go by a second of folk time
+const hourNow = () => (6 + settings.sunCycleAngle / (Math.PI * 2) * 24) % 24;
+const hoursASecond = () => 24 * settings.timeCycleMultiplier * timeBoost.factor / Math.max(settings.dayLengthSeconds, 1);
+const atWork = (person) => AT_WORK.has(person.profession.name);
+// the part of errand k it may be out for, [from, to] seconds into it: the longest stretch of it outside the shop hours (all of it, for
+//		one not at work), or null (none). The hours from the hour at the errand's start, so that it comes out the same whenever it is planned
+function freeOf(person, k) {
+	const P = person.period;
+	if (!atWork(person)) return [0, P];
+	const rate = hoursASecond(), h0 = hourNow() - (folkSeconds + person.offset - k * P) * rate;
+	const hour = ((h0 % 24) + 24) % 24, open = hour >= SHOP_HOURS[0] && hour < SHOP_HOURS[1];
+	if (rate <= 0) return open ? null : [0, P];
+	const until = (h) => ((h - hour) % 24 + 24) % 24 / rate;		// (seconds until that hour comes)
+	const gaps = open ? [[until(SHOP_HOURS[1]), until(SHOP_HOURS[0])]] : [[0, until(SHOP_HOURS[0])], [until(SHOP_HOURS[1]), P]];
+	let best = null;
+	for (const [a, b] of gaps) { const g = [Math.min(a, P), Math.min(b, P)]; if (g[1] - g[0] > 0 && (!best || g[1] - g[0] > best[1] - best[0])) best = g; }
+	return best;
+}
+
 // An errand: { legs: [{ t0, t1, walk } or { t0, t1, stand }] } within the period, the rest of it indoors. k: which errand it is
 function planErrand(person, k) {
 	townFolkStats.errands++;
 	if (!goesOut(person)) return { legs: [] };
+	const free = freeOf(person, k);
+	if (!free) return { legs: [] };
 	const random = seededRandom(person.seed + k * 7919);
 	const seconds = WALK * metre();		// world units a second
 	const rest = REST[0] + (REST[1] - REST[0]) * random();
-	const kinds = Object.entries(person.profession.errands);
+	// (one at work, out of its hours: a round of the streets, not standing at its own door)
+	const kinds = Object.entries(person.profession.errands).map(([kind, w]) => [kind == 'door' && atWork(person) ? 'wander' : kind, w]);
 	for (let tries = 0; tries < 6; tries++) {
 		// which, by how likely each is
 		let r = random() * kinds.reduce((s, [, w]) => s + w, 0), kind = kinds[0][0];
@@ -536,11 +587,11 @@ function planErrand(person, k) {
 		for (let j = 0; j < places.length - 1; j++) walks.push(kind == 'door' ? { points: [stops[0].at], along: [0], length: 0 } : walkBetween(person, places[j], places[j + 1]));
 		if (walks.some((w) => !w)) continue;
 		const walking = walks.reduce((s, w) => s + w.length, 0) / seconds;
-		const standing = person.period - rest - walking;
+		const standing = free[1] - free[0] - rest - walking;
 		if (standing < 8) continue;
-		// out of the door at rest / 2, then walk, stand, walk...
+		// out of the door at rest / 2 (into the time it is free), then walk, stand, walk...
 		const legs = [];
-		let t = rest / 2;
+		let t = free[0] + rest / 2;
 		const shares = stops.map((s) => s.share ?? 1), whole = shares.reduce((s, x) => s + x, 0);
 		walks.forEach((w, j) => {
 			if (w.length > 0) { legs.push({ t0: t, t1: t + w.length / seconds, walk: w }); t += w.length / seconds; }
@@ -590,6 +641,129 @@ function fleeingAt(flee, t) {
 	const p = placeAt({ errand: { legs: [leg] } }, s / run);
 	return p && { ...p, stride: p.stride * 0.8, lean: 0 };
 }
+// THE GREETINGS (see the top)
+//-------------------------------------------------
+const wrap = (a) => a - Math.PI * 2 * Math.round(a / (Math.PI * 2));
+const smooth = (x) => { const t = Math.min(Math.max(x, 0), 1); return t * t * (3 - 2 * t); };
+// up from 0 and back, edge seconds at either end of seconds
+const envelope = (s, seconds, edge = 0.35) => smooth(s / edge) * smooth((seconds - s) / edge);
+// a number from 0 to 1 for three whole numbers, the same everywhere
+function hash(a, b, c) {
+	let h = (a * 374761393 + b * 668265263 + c * 1274126177) | 0;
+	h = Math.imul(h ^ (h >>> 13), 1103515245);
+	h ^= h >>> 16;
+	return (h >>> 0) / 4294967296;
+}
+// where its day has it at folk time at (and the leg of its errand, and how far into it), or null: indoors, or busy otherwise
+function baseAt(person, at) {
+	const time = at + person.offset, k = Math.floor(time / person.period);
+	if (k != person.k || !person.errand || person.flee || person.fight || person.led || person.turned || person.gone || person.dead) return null;
+	const tau = time - k * person.period, p = placeAt(person, tau);
+	if (!p) return null;
+	return { ...p, tau, leg: person.errand.legs.find((l) => tau >= l.t0 && tau < l.t1) };
+}
+const freeToGreet = (person, at) => !person.meet && !person.wave && (person.greetAgain ?? -Infinity) <= at;
+// nothing tall in the way from a to b (places), on foot
+function clearBetween(a, b) {
+	const m = metre(), d = Math.hypot(b.x - a.x, b.z - a.z), n = Math.ceil(d / (0.5 * m));
+	for (let j = 1; j < n; j++) {
+		const x = a.x + (b.x - a.x) * j / n, z = a.z + (b.z - a.z) * j / n, y = a.y + (b.y - a.y) * j / n;
+		let blocked = false;
+		town.boxesNear(x, z, 0.4 * m, (bx, bz, half, bottom, top) => {
+			if (!blocked && top > y + 0.3 * m && bottom < y + 1.6 * m && Math.abs(x - bx) < half + 0.3 * m && Math.abs(z - bz) < half + 0.3 * m) blocked = true;
+		});
+		if (blocked) return false;
+	}
+	return true;
+}
+function startWave(person, other, at) {
+	person.wave = { t0: at, t1: at + WAVE.seconds, partner: other };
+	person.greetAgain = at + WAVE.seconds + WAVE.again;
+	townFolkStats.waves++;
+}
+// two standing (where their days have them, a and b) to meet half way and shake hands: false if they cannot (not standing there long
+//		enough, or something in the way)
+function startMeet(A, a, B, b, at) {
+	const m = metre(), d = Math.hypot(b.x - a.x, b.z - a.z), ux = (b.x - a.x) / d, uz = (b.z - a.z) / d;
+	const walk = (d - MEET.gap * m) / 2 / (WALK * m), whole = 2 * walk + MEET.shake + MEET.talk;
+	if (!a.leg?.stand || !b.leg?.stand || a.leg.t1 - a.tau < whole + 1 || b.leg.t1 - b.tau < whole + 1 || !clearBetween(a, b)) return false;
+	const mid = [(a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2], half = MEET.gap * m / 2;
+	A.meet = { t0: at, walk, whole, from: [a.x, a.y, a.z], to: laid([mid[0] - ux * half, mid[1], mid[2] - uz * half]), face: Math.atan2(ux, uz), partner: B };
+	B.meet = { t0: at, walk, whole, from: [b.x, b.y, b.z], to: laid([mid[0] + ux * half, mid[1], mid[2] + uz * half]), face: Math.atan2(-ux, -uz), partner: A };
+	A.greetAgain = B.greetAgain = at + whole + MEET.again;
+	townFolkStats.meets++;
+	return true;
+}
+function endMeet(person) {
+	const other = person.meet?.partner;
+	if (other?.meet?.partner === person) other.meet = null;
+	person.meet = null;
+}
+// where one meeting another is: out to the place they meet, there (shaking hands, then talking), back again; null once it is over
+function meetPlace(person, t) {
+	const M = person.meet, s = t - M.t0, m = metre();
+	if (s < 0 || s >= M.whole) { person.meet = null; return null; }
+	const out = s < M.walk, back = s > M.whole - M.walk;
+	if (!out && !back) return { x: M.to[0], y: M.to[1], z: M.to[2], heading: M.face, stride: 0, walking: 0 };
+	const f = out ? s / M.walk : (M.whole - s) / M.walk, walked = (out ? s : M.walk + s - (M.whole - M.walk)) * WALK * m;
+	return { x: M.from[0] + (M.to[0] - M.from[0]) * f, y: M.from[1] + (M.to[1] - M.from[1]) * f, z: M.from[2] + (M.to[2] - M.from[2]) * f,
+		heading: out ? M.face : M.face + Math.PI, stride: walked / (STRIDE * m) * Math.PI, walking: 1 };
+}
+// the pairs of them out of doors near the players, looked at for a greeting at tick (see THE GREETINGS at the top)
+function greet(tick, about) {
+	const at = tick * GREET.tick, m = metre(), reach = GREET.reach * m, out = [];
+	for (const person of folk) {
+		if (!about.some(([x, z]) => Math.abs(x - person.home.at[0]) < reach && Math.abs(z - person.home.at[2]) < reach)) continue;
+		const p = baseAt(person, at);
+		if (p) out.push([person, p]);
+	}
+	for (let i = 0; i < out.length; i++) for (let j = i + 1; j < out.length; j++) {
+		const [A, a] = out[i], [B, b] = out[j];
+		if (A.town !== B.town || !freeToGreet(A, at) || !freeToGreet(B, at)) continue;
+		const d = Math.hypot(a.x - b.x, a.z - b.z) / m, lo = Math.min(A.index, B.index), hi = Math.max(A.index, B.index);
+		// (two standing a little way apart may meet; two passing, or standing right by each other, may wave)
+		const standing = !!a.leg?.stand && !!b.leg?.stand;
+		if (standing && d >= MEET.near[0] && d <= MEET.near[1]) { if (hash(lo, hi, tick) < MEET.chance) startMeet(A, a, B, b, at); }
+		else if (d < WAVE.near && hash(hi, lo, tick) < WAVE.chance) { startWave(A, B, at); startWave(B, A, at); }
+	}
+}
+// its arm now: { kind (vf_dummy.js: 2 a wave, 3 a handshake), amount, phase (turns), face (how far it turns to the one it greets) } or null
+function gestureOf(person, t) {
+	const M = person.meet;
+	if (M) {
+		const s = t - M.t0 - M.walk;
+		return s >= 0 && s < MEET.shake ? { kind: 3, amount: envelope(s, MEET.shake), phase: s * 1.6, face: 0 } : null;
+	}
+	const W = person.wave;
+	if (!W) return null;
+	if (t >= W.t1 || t < W.t0) { person.wave = null; return null; }
+	const e = envelope(t - W.t0, W.t1 - W.t0);
+	return { kind: 2, amount: e, phase: (t - W.t0) * 1.7, face: e };
+}
+// the place it looks to, greeting (x, z), or null
+function greetTarget(person, nearest) {
+	const other = person.meet?.partner ?? (person.wave && !person.wave.player ? person.wave.partner : null);
+	if (other) return other.place ? [other.place.x, other.place.z] : null;
+	return person.wave?.player && nearest ? [nearest.x, nearest.z] : null;
+}
+// for testing: a and b (their numbers) to meet now, and one to wave at another or at the player
+export function meetForTest(i, j) {
+	const A = personOf(i), B = personOf(j), a = A && baseAt(A, folkSeconds), b = B && baseAt(B, folkSeconds);
+	if (!a || !b) return 'not out';
+	A.meet = B.meet = A.wave = B.wave = null;
+	return startMeet(A, a, B, b, folkSeconds) ? 'meeting' : 'cannot';
+}
+export function waveForTest(i, j = null) {
+	const A = personOf(i);
+	if (!A) return false;
+	if (j === null) A.wave = { t0: folkSeconds, t1: folkSeconds + WAVE.seconds, player: true };
+	else startWave(A, personOf(j), folkSeconds);
+	return true;
+}
+export const greetingsForTest = () => folk.filter((p) => p.meet || p.wave || p.gesture).map((p) => ({ index: p.index, meet: !!p.meet, wave: !!p.wave, gesture: p.gesture, at: p.place && [p.place.x, p.place.z] }));
+export const personForTest = (i) => personOf(i);
+export const shopHoursForTest = () => ({ hour: hourNow(), rate: hoursASecond(), atWork: [...AT_WORK] });
+
 // shot here: fn(index, at) (net.js tells the others)
 const shotListeners = [];
 export function onFolkShot(fn) { shotListeners.push(fn); }
@@ -699,6 +873,7 @@ export function folkCount() { return settings.enableTownFolk ? { all: folk.lengt
 
 let indoorSpot = null;
 export function setIndoorSpot(fn) { indoorSpot = fn; }
+let greetTick = null;		// THE GREETINGS: the last tick looked at
 let lastTime = performance.now();
 export function townFolkUpdate() {
 	const now = performance.now();
@@ -708,6 +883,10 @@ export function townFolkUpdate() {
 	if (terrain.land && (terrain.land !== builtFor || folkRebuild)) { const was = new Map(folk.map((p) => [p.index, { dead: p.dead, turned: p.turned, gone: p.gone }])); const t0 = performance.now(); build(); townFolkStats.buildMs = Math.round(performance.now() - t0); for (const p of folk) Object.assign(p, was.get(p.index) ?? {}); }
 	if (!settings.enableTownFolk) return;
 	const m = metre(), about = playersAbout(), ease = Math.min(elapsed * 6, 1);
+	// (THE GREETINGS: each tick gone by since the last frame looked at, but no more than a few: after a jump of the clock, from there)
+	const tick = Math.floor(folkSeconds / GREET.tick);
+	if (greetTick === null || tick - greetTick > 4 || tick < greetTick) greetTick = tick;
+	while (greetTick < tick) greet(++greetTick, about);
 	let out = 0, planned = 0;
 	for (const person of folk) {
 		const time = folkSeconds + person.offset, k = Math.floor(time / person.period);
@@ -717,10 +896,12 @@ export function townFolkUpdate() {
 		if (person.flee && person.flee.k != k) person.flee = null;		// (out again with the next errand)
 		const f = person.fight;
 		const gone = person.turned || person.gone || person.dead;
+		if (person.meet && (gone || f || person.led || person.flee)) endMeet(person);
 		const place = (gone ? null : person.led ? { ...person.led } : f ? { x: f.x, y: f.y, z: f.z, heading: f.heading, stride: 0, walking: 0 }
-			: person.flee ? fleeingAt(person.flee, folkSeconds - person.flee.t0) : person.k == k ? placeAt(person, time - k * person.period) : null) ?? (gone ? null : indoorSpot?.(person) ?? null);
+			: person.flee ? fleeingAt(person.flee, folkSeconds - person.flee.t0) : (person.meet ? meetPlace(person, folkSeconds) : null)
+			?? (person.k == k ? placeAt(person, time - k * person.period) : null)) ?? (gone ? null : indoorSpot?.(person) ?? null);
 		person.hit = Math.max(person.hit - elapsed * 2, 0);
-		if (!place) { person.place = null; person.push = [0, 0]; person.look = 0; continue; }
+		if (!place) { person.place = null; person.push = [0, 0]; person.look = 0; person.gesture = null; person.wave = null; person.near = false; continue; }
 		out++;
 		// out of the way of the players near it, and looking at the nearest
 		let px = 0, pz = 0, nearest = null;
@@ -732,12 +913,22 @@ export function townFolkUpdate() {
 		person.push = [person.push[0] + (px - person.push[0]) * ease, person.push[1] + (pz - person.push[1]) * ease];
 		place.x += person.push[0];
 		place.z += person.push[1];
-		let look = 0;
-		if (nearest && !person.flee && !f) {
-			look = Math.atan2(nearest.x - place.x, nearest.z - place.z) - place.heading;
-			look -= Math.PI * 2 * Math.round(look / (Math.PI * 2));
-			look = Math.min(Math.max(look, -1.1), 1.1);
+		// THE GREETINGS: a player come near, in front of it, waved at; the arm, and turned to face the one it greets (standing still)
+		const busy = person.flee || f || person.led;
+		const close = !!nearest && nearest.d < WAVE_YOU.near * m;
+		if (close && !person.near && !busy && !person.meet && !person.wave && folkSeconds >= (person.waveYou ?? -Infinity)
+			&& Math.abs(wrap(Math.atan2(nearest.x - place.x, nearest.z - place.z) - place.heading)) < WAVE_YOU.front) {
+			person.wave = { t0: folkSeconds, t1: folkSeconds + WAVE.seconds, player: true };
+			person.waveYou = folkSeconds + WAVE.seconds + WAVE_YOU.again;
+			townFolkStats.wavedAtYou++;
 		}
+		person.near = close;
+		const gesture = busy ? null : gestureOf(person, folkSeconds), target = busy ? null : greetTarget(person, nearest);
+		if (gesture && target && !place.walking) place.heading += wrap(Math.atan2(target[0] - place.x, target[1] - place.z) - place.heading) * gesture.face;
+		person.gesture = gesture;
+		let look = 0;
+		const lookTo = target ?? (nearest && !person.flee && !f ? [nearest.x, nearest.z] : null);
+		if (lookTo) look = Math.min(Math.max(wrap(Math.atan2(lookTo[0] - place.x, lookTo[1] - place.z) - place.heading), -1.1), 1.1);
 		person.look += (look - person.look) * Math.min(elapsed * 4, 1);
 		person.place = place;
 	}
@@ -810,7 +1001,10 @@ export function townFolkPass(aEncoder, mainpassDepthTexture) {
 		const p = person.place;
 		if (!p || person.rag) continue;
 		const held = HELD_LENGTH[person.fight?.gun] ?? 0;
-		const row = [p.x, p.y, p.z, metre(), p.heading, held ? person.fight.pitch : 0, p.stride, p.walking, p.lean ?? 0, person.hit, person.hue, 0, held, held ? 0 : 1, person.look, 0, 0, 0, 0, 0];
+		// (its arm greeting, with nothing in its hands: vf_dummy.js, THE GESTURES)
+		const g = held ? null : person.gesture;
+		const row = [p.x, p.y, p.z, metre(), p.heading, held ? person.fight.pitch : 0, p.stride, p.walking, p.lean ?? 0, person.hit, person.hue, 0,
+			held || (g ? -g.amount : 0), held ? 0 : g ? g.kind + (((g.phase % 1) + 1) % 1) * 0.999 : 1, person.look, 0, 0, 0, 0, 0];
 		if (take(person.profession.hat + (held ? '+' : ''), p, row)) outfits.wear(row, outfits.npcOutfit(person.profession.name, person.index));
 	}
 	for (const source of extraFolk) source((o) => {

@@ -44,7 +44,7 @@ import * as vm from './viewmodel.js'
 
 	FALLING: coming down on to the ground or a deck faster than FALL.safe metres a second hurts (onFall: players.js takes it off), more
 	the faster, all of it at FALL.deadly (about 15 metres up). Not into the water, nor under a parachute.
-	Ground steeper than STEEPEST cannot be walked up. Water deeper than WADE_DEPTH is swum in: the walker floats with its head out,
+	Ground steeper than STEEPEST cannot be walked up (nor jumped up: in the air its face is a wall). Water deeper than WADE_DEPTH is swum in: the walker floats with its head out,
 	up and down with the waves (the water's surface under the camera, water.cameraWater: the waves are only known on the GPU).
 
 	SAILING is the same walker, with boats in the sea (boat.js, vessels.js: put there with the spawn menu). Where it is:
@@ -90,7 +90,7 @@ const STEP = 0.45;					// metres a walker steps up without jumping
 const GRAVITY = 9.81;				// metres a second, a second
 const RUN = 2.3;					// times the walking pace, with Shift
 const AIR_CONTROL = 2.0;			// how quickly it can change its course in the air (a second to fully change, at 1)
-const STEEPEST = 1.2;				// rise over run: about 50 degrees
+const STEEPEST = 0.9;				// rise over run: about 42 degrees
 const WADE_DEPTH = 1.3;				// metres of water before it swims
 const SWIM_PACE = 0.65;				// of the walking pace
 const GATHER_REACH = 14;			// metres round the walker the boxes are gathered from
@@ -897,6 +897,10 @@ export function updateHunter() {
 			if (went > 0 && (groundUnder(hunter.x, hunter.z) - fromGround) / went > STEEPEST) {
 				hunter.x = fromX; hunter.z = fromZ;
 			}
+		} else if (!hunter.swimming) {
+			// (in the air: a cliff face it comes up against is a wall, not a step up on to it. Jumping, it does not climb what it could not walk up)
+			const went = Math.hypot(hunter.x - fromX, hunter.z - fromZ), ground = groundUnder(hunter.x, hunter.z), was = groundUnder(fromX, fromZ);
+			if (went > 0 && ground > hunter.y + 0.05 * metre && (ground - was) / went > STEEPEST) { hunter.x = fromX; hunter.z = fromZ; }
 		}
 
 		// up and down: on to whatever is under it. Walking down a slope it keeps its feet on it, instead of stepping off into the air
@@ -1288,7 +1292,7 @@ function showControls() {
 			['W A S D', 'walk · Shift run'],
 			['Space', 'jump'],
 			['C', 'crouch, and again to stand'],
-			...(settings.gameMode == 'Hunting' ? [['T', 'what you have equipped, and the map'], ['Tab / I', 'inventory'], ['M', 'map'], ['E', 'search a crate, a body, a pile, a snare · at a lake: drink · at a villager: trade'], ['G', 'throw a pinch of grass: see which way the wind blows'], ['X', 'at a burning campfire or stove: cook meat'], ['V (held)', 'what is what: names over things and people']]
+			...(settings.gameMode == 'Hunting' ? [['T', 'what you have equipped, and the map'], ['Tab / I', 'inventory'], ['M', 'map'], ['E', 'search a crate, a body, a pile, a snare · at a lake: drink · at a villager: trade'], ['G', 'throw a pinch of grass: see which way the wind blows'], ['X', 'at a burning campfire or stove: cook meat'], ['V (held)', 'what is what: names over things and people'], ['B (held)', 'command your fireteams']]
 				: [['T', 'spawn menu: vehicles and weapons'], ['E', 'by your disc: pick it up']]),
 			['F', 'at a horse: get on · at its saddlebags: fill up your ammunition · at a biplane\'s cockpit: climb in · at its wheels: floats or wheels · at a ladder: climb it'],
 			settings.gameMode == 'Hunting' ? ['Esc', 'let go of the mouse'] : ['Tab / Esc', 'let go of the mouse'],

@@ -25,8 +25,9 @@ import { BIRD_KINDS, GULL, OWL, DRAKE, LOON, SWAN, TOM, HAWK, GOOSE } from './wi
 	shot is worked out again by the host, from only where it went in and the way it went (cleanWound)
 */
 
-// how far a round goes through an animal (metres), before it stays in it. The spine's bone takes BONE more
-const PENETRATION = { '7.62x54R': 1.25, '.303 British': 1.15, '.303 Vickers': 1.15, '.45-70': 1.5, '.45 Colt': 0.5, '7.63 Mauser': 0.45, '00 buck': 0.3,
+// how far a round goes through an animal (metres), before it stays in it. The spine's bone takes BONE more. (The rifles' go the length of a
+//		deer, raked from behind; not always a moose's or a bear's)
+const PENETRATION = { '7.62x54R': 1.6, '.303 British': 1.45, '.303 Vickers': 1.45, '.45-70': 1.5, '.45 Colt': 0.5, '7.63 Mauser': 0.45, '00 buck': 0.3,
 	hatchet: 0.14, knife: 0.12, stone: 0.02, chop: 0.12, stab: 0.16 };
 const BONE = 0.3;
 const GAP = 0.08;			// metres between two of the body's balls that are still one body (two that only nearly meet)

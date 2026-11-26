@@ -1,5 +1,6 @@
 import { moonShapes } from './f_moon.js';
 import { skyLookupShapes } from './vfc_atmosphere.js';
+import { legIK } from './legIK.js';
 import { DEER_KINDS, EAR_FOOT, TAIL_FOOT, ANTLER_FOOT } from '../../code/deerKinds.js';
 
 const kindArray = (f) => `array<f32, ${DEER_KINDS.length}>(${DEER_KINDS.map((K) => f(K).toFixed(3)).join(', ')})`;
@@ -11,8 +12,13 @@ const kindArray = (f) => `array<f32, ${DEER_KINDS.length}>(${DEER_KINDS.map((K) 
 		0		the body, the tail
 		1		the neck and the head: swung down about the foot of the neck by how far the deer has its head down (grazing,
 				drinking), 0 up to 1 at the ground
-		2 to 5	the legs: left front, right front, left hind, right hind. Each swings from the hip with the walk, and the lower
-				leg bends back at the knee as it comes forward. The four take turns (a walk: hind, front, other hind, other front)
+		2 to 5	the legs: left front, right front, left hind, right hind. The four take turns (a walk: hind, front, other hind, other
+				front); each hoof goes back on the ground under the deer and is lifted and brought forward again, and the leg is laid
+				to reach it by inverse kinematics (legIK.js): the front knee's point forward, the hind hock's behind, neither bending
+				past straight the wrong way (KNEE_FLEX). Walking, the deer comes down a little, so its hooves reach the ground.
+				THE GAITS (pose.w, deer.js: 0 to 1 a walk, to 2 a trot, to 3 a run): each its legs' order (TIMING), half a stride
+				(STEP_HALF) and how high a hoof is lifted (STEP_LIFT), and at the run the body rocks. LYING (pose.w less than 0, to -1):
+				down on its belly, its legs folded under it (the hooves where they lie, the legs laid to them as ever)
 	(parts 6 on are the antlers, each kind's its own: with the head. Only the deer's kind's drawn, and only on one with antlers; on any other,
 	a female or one whose antlers have been cut off, nothing. A caribou cow's smaller. See deerKinds.js: OWN, state.x here.)
 	THE KINDS (deerKinds.js): each its ears (part 1.25) and its tail (part 0.25) drawn bigger or smaller, about where they grow from, and
@@ -75,6 +81,14 @@ export const vf_deer =
 	const KNEE_Y: f32 = 0.45;
 	const FRONT_HIP_Z: f32 = 0.4;
 	const HIND_HIP_Z: f32 = -0.45;
+	// THE GAITS, the walk's, the trot's and the run's: metres either way of the hip (half the ground it goes over in half a stride: deer.js,
+	//		STRIDES), metres a hoof is lifted
+	const STEP_HALF: vec3f = vec3f(0.35, 0.5, 0.6);
+	const STEP_LIFT: vec3f = vec3f(0.11, 0.16, 0.22);
+	const LIE_DROP: f32 = 0.5;			// metres the body comes down lying
+	const KNEE_FLEX: vec2f = vec2f(0.03, 2.6);
+	const HIP_SWING: vec2f = vec2f(-0.9, 0.9);
+	${legIK}
 	const EAR_FOOT: vec3f = vec3f(${EAR_FOOT.join(', ')});
 	const TAIL_FOOT: vec3f = vec3f(${TAIL_FOOT.join(', ')});
 	const ANTLER_FOOT: vec3f = vec3f(${ANTLER_FOOT.join(', ')});
@@ -83,6 +97,13 @@ export const vf_deer =
 	fn vertexMain(input: VertexInput) -> VertexOutput {
 		var p = input.shape.xyz;
 		let part = input.shape.w;
+		// (THE GAITS, and lying)
+		let lying = clamp(-input.pose.w, 0.0, 1.0);
+		let walking = clamp(input.pose.w, 0.0, 1.0);
+		let gait = clamp(input.pose.w - 1.0, 0.0, 2.0);
+		let half = mix(mix(STEP_HALF.x, STEP_HALF.y, min(gait, 1.0)), STEP_HALF.z, max(gait - 1.0, 0.0)) * walking;
+		let lift = mix(mix(STEP_LIFT.x, STEP_LIFT.y, min(gait, 1.0)), STEP_LIFT.z, max(gait - 1.0, 0.0)) * walking;
+		let walkDrop = legDrop(HIP_Y, half, 0.02 * walking) + LIE_DROP * lying;
 		// its kind and its antlers (deerKinds.js: OWN)
 		let kind = clamp(i32(floor(input.state.x / 4.0)), 0, ${DEER_KINDS.length - 1});
 		let antlers = i32(floor(input.state.x)) % 4;
@@ -98,19 +119,20 @@ export const vf_deer =
 			}
 			p = select(NECK_FOOT, NECK_FOOT + turnX(p - NECK_FOOT, 1.25 * input.pose.z), shown);
 		} else if (part > 1.5) {
-			// a leg: its turn in the walk, its swing from the hip, and the knee bending as it comes forward
+			// a leg: its turn in the walk, the hoof where it is in its step, the leg laid to reach it (the front knee's point forward,
+			//		the hind hock's behind)
 			let leg = i32(part + 0.5) - 2;
-			let turnIn = select(select(0.5, 0.0, leg == 2), select(0.75, 0.25, leg == 0), leg < 2);	// left front, right front, left hind, right hind
+			// (each leg's part of the stride at the walk, the trot and the run: left front, right front, left hind, right hind)
+			var walkOrder = array<f32, 4>(0.75, 0.25, 0.5, 0.0);
+			var trotOrder = array<f32, 4>(1.0, 0.5, 0.5, 0.0);
+			var runOrder = array<f32, 4>(1.15, 1.0, 0.6, 0.45);
+			let turnIn = mix(mix(walkOrder[leg], trotOrder[leg], min(gait, 1.0)), runOrder[leg], max(gait - 1.0, 0.0));
 			let phase = input.pose.y + turnIn * 6.2831853;
-			let walking = input.pose.w;
-			let hip = vec3f(0.0, HIP_Y, select(HIND_HIP_Z, FRONT_HIP_Z, leg < 2));
-			if (p.y < KNEE_Y - 0.01) {
-				let knee = vec3f(p.x, KNEE_Y, hip.z);
-				let bend = max(sin(phase), 0.0) * 0.7 * walking * select(1.0, -1.0, leg < 2);	// (front knees bend back, hind hocks forward)
-				p = knee + turnX(p - knee, bend);
-			}
-			let swing = cos(phase) * 0.42 * walking;
-			p = hip + turnX(p - hip, swing);
+			let hip = vec3f(p.x, HIP_Y, select(HIND_HIP_Z, FRONT_HIP_Z, leg < 2));
+			// (lying, the hooves tucked in under it, a little forward)
+			let foot = legStep(vec2f(walkDrop, hip.z + lying * select(0.18, 0.1, leg < 2)), phase, half, lift);
+			let bones = legReach(hip.yz, HIP_Y - KNEE_Y, KNEE_Y, foot, select(-1.0, 1.0, leg < 2), KNEE_FLEX, HIP_SWING);
+			p = legMove(p, hip, KNEE_Y, p.y >= KNEE_Y - 0.01, bones);
 		} else if (part > 0.5) {
 			// the neck and the head, down to the grass or the water. The ears its kind's size
 			if (part > 1.1) {
@@ -122,6 +144,10 @@ export const vf_deer =
 			p = TAIL_FOOT + (p - TAIL_FOOT) * TAILS[kind];		// the tail
 		}
 
+		// (at the run, rocking nose up and down with the stride)
+		let rock = 0.07 * max(gait - 1.0, 0.0) * cos(input.pose.y);
+		p = vec3f(0.0, 0.9, 0.0) + turnX(p - vec3f(0.0, 0.9, 0.0), rock);
+		p.y -= walkDrop;
 		// a shot deer over on its side, about its feet, and up by the half width of it so it lies on the ground and not in it
 		let rolled = turnZ(p, input.state.z) + vec3f(0.0, 0.2 * abs(sin(input.state.z)), 0.0);
 		let tipped = turnX(rolled, -input.state.y);

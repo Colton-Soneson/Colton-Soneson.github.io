@@ -6,6 +6,7 @@ import { vf_wildBirds } from '../shaders/js/vf_wildBirds.js'
 import * as transformations from './transformations.js'
 import * as terrain from './terrain.js'
 import * as ballistics from './ballistics.js'
+import * as hearing from './hearing.js'
 import * as forest from './forest.js'
 import { addJob } from './jobs.js'
 import { stepFor } from './rates.js'
@@ -42,7 +43,8 @@ const RESPAWN_SECONDS = 120;
 const LIE_SECONDS = 8, SINK_SECONDS = 3, HUNTING_LIE_SECONDS = 600;
 const lieSeconds = () => settings.gameMode == 'Hunting' ? HUNTING_LIE_SECONDS : LIE_SECONDS;
 export const ANATOMY_OF = [['gull'], ['owl'], ['mallard'], ['mallard'], ['loon'], ['swan'], ['turkey'], ['turkey']].map(([k]) => k);	// (each kind's in anatomy.js)
-const SPOOK = { ducks: 18, swans: 14, turkeys: 22, owl: 12, gulls: 6 };	// metres: anyone nearer and they are off
+const SPOOK = { ducks: 35, swans: 30, turkeys: 40, owl: 25, gulls: 18 };	// metres a player at an ordinary walk is heard from (scared): and they are off
+const NEAREST = 15;					// metres no one gets nearer than, however quietly (crouched)
 const GRAVITY = 9.81;
 
 export const wildBirdStats = { groups: 0, birds: 0, kinds: [], killed: 0, dead: 0, looks: 0 };
@@ -66,6 +68,13 @@ function groundOf(b) {
 }
 const surfaceAt = (x, z) => Math.max(terrain.land.groundAt(x, z), sea());
 const camAway = (x, z) => Math.hypot(x - settings.camPosX, z - settings.camPosZ) / M();
+// whether a bird at (x, z) is off: a gunshot just now (hearing.js: GUNSHOTS, half as far as the deer hear one), a player within NEAREST, or
+//		heard within reach metres at a walk (further running, nearer crouched: hearing.js). Outside the Survival mode, the camera within reach
+function scared(x, z, reach) {
+	if (hearing.gunshotHeard(x, z, hearing.hearingClock() - 1.5, 0.5)) return true;
+	if (!hearing.survivalMode()) return camAway(x, z) < reach;
+	return hearing.listeners().some((L) => { const d = Math.hypot(L.x - x, L.z - z) / M(); return d < NEAREST || d < reach * L.moving; });
+}
 function walkable(x, z) {
 	if (!terrain.inWorld(x, z, 20) || wet(x, z, -0.05)) return false;
 	const y = terrain.land.heightAt(x, z), s = 2 * M();
@@ -265,7 +274,7 @@ function gullsMove(g, dt) {
 			settle(b, dt);
 			headOf(b, dt, { yaw: 1.0, down: b.onWater ? 0.1 : 0.35, quick: 4 });
 			if (b.onWater) floatOn(b, seconds); else b.y = groundOf(b);
-			if (b.timer <= 0 || camAway(b.x, b.z) < SPOOK.gulls) { b.state = 'up'; b.timer = 3; b.angle = Math.atan2(b.z - g.home.z, b.x - g.home.x); b.headDown = 0; b.onWater = 0; }
+			if (b.timer <= 0 || scared(b.x, b.z, SPOOK.gulls)) { b.state = 'up'; b.timer = 3; b.angle = Math.atan2(b.z - g.home.z, b.x - g.home.x); b.headDown = 0; b.onWater = 0; }
 		} else if (b.state == 'up') {
 			b.y += 3 * m * dt;
 			b.x += Math.sin(b.heading) * 5 * m * dt; b.z += Math.cos(b.heading) * 5 * m * dt;
@@ -285,7 +294,7 @@ function owlMove(g, dt) {
 			headOf(b, dt, { yaw: 2.6, down: 0.25, quick: 6, often: [1.5, 5] });
 			b.x = b.perch.x; b.y = b.perch.y; b.z = b.perch.z;
 			b.heading += wrap(b.perch.heading - b.heading) * Math.min(dt * 3, 1);
-			const flush = camAway(b.x, b.z) < SPOOK.owl && Math.abs(settings.camPosY - b.y) < 15 * m;
+			const flush = scared(b.x, b.z, SPOOK.owl) && Math.abs(settings.camPosY - b.y) < 15 * m;
 			if (flush || (night() && b.timer <= 0)) {
 				const from = { ...b.perch }, prior = { x: b.x, y: b.y, z: b.z };
 				const a = Math.random() * Math.PI * 2, r = between([30, 90]);
@@ -308,7 +317,7 @@ function waterfowlMove(g, dt) {
 	for (const b of g.birds) {
 		b.timer -= dt;
 		const K = b.kind, swan = K == SWAN, loon = K == LOON, duck = K == DRAKE || K == HEN;
-		const near = camAway(b.x, b.z) < (swan ? SPOOK.swans : SPOOK.ducks);
+		const near = scared(b.x, b.z, swan ? SPOOK.swans : SPOOK.ducks);
 		if (b.state == 'swim') {
 			wingsOf(b, false, 0, 0, dt);
 			settle(b, dt);
@@ -348,7 +357,7 @@ function turkeysMove(g, dt) {
 	g.timer -= dt;
 	const lead = g.birds[0];
 	if (!lead) return;
-	const near = g.birds.some((b) => camAway(b.x, b.z) < SPOOK.turkeys);
+	const near = g.birds.some((b) => scared(b.x, b.z, SPOOK.turkeys));
 	if (near && g.state != 'run') {
 		const a = Math.atan2(lead.x - settings.camPosX, lead.z - settings.camPosZ);
 		g.state = 'run'; g.timer = 6; g.target = [lead.x + Math.sin(a) * 40 * m, lead.z + Math.cos(a) * 40 * m];

@@ -19,15 +19,17 @@ import * as hunting from './hunting.js'
 import * as ballistics from './ballistics.js'
 import * as weapons from './weapons.js'
 import * as vm from './viewmodel.js'
+import { makeScope } from './scopes.js'
 
 /*
 	The hunter's rifle, in the Hunting game mode, while it is the weapon held (weapons.js): a Mosin-Nagant 91/30, the Soviet
 	bolt action of the Second World War.
 		left click			fire (after the trigger's pull, TRIGGER_SECONDS)
-		right click (held)	aim down the sights
+		right click (held)	up to the scope (THE SCOPE)
 		middle click		turn the bolt up (open it), or down again (close it): it only closes when it is all the way forward
 		mouse wheel			with the bolt open, down (towards you) draws it back and up pushes it forward. BOLT_STROKE_PIXELS
-							of scrolling is the whole way: two notches of an ordinary wheel
+							of scrolling is the whole way: two notches of an ordinary wheel. In the scope, with the bolt shut, the
+							magnification (up for more)
 		R					with the bolt all the way back, push a round down into the magazine: one round a press
 	THE BOLT is worked by hand. After a shot: open it, draw it all the way back (the empty case comes out on the bolt's face
 	and is thrown clear), push it all the way forward (it strips the top round off the magazine into the chamber), and close
@@ -55,6 +57,11 @@ import * as vm from './viewmodel.js'
 		4 rounds			each a brass case (13) and a copper bullet (8): parts 3 to 6 (see THE ROUNDS)
 	vf_rifle.js draws it, and moves the bolt, the trigger and the rounds.
 
+	THE SCOPE: 1 to 4 power (MAGNIFICATION), its reticle in the first focal plane, a "Christmas tree" (scopes.js, as the Sharps'), over the
+	receiver on its two rings, SCOPE_Y over the bore (its line of sight the rifle's now: the iron sights under it are not used). Its tube
+	(12), its eyepiece's bell (12) and its objective's (12), the eyepiece's lens (2) and the rings it sits in (20). The rear sight is off
+	(the scope sits where it was); the front sight is left on the barrel.
+
 	THE ROUNDS that can be seen, each placed (in the rifle's space) by a vec4 of the uniforms, w: 0 not there, 1 an empty case,
 	2 a round:
 		A, part 3			on the bolt's face: the one in the chamber, pulled out as the bolt comes back, or the top one off
@@ -64,7 +71,7 @@ import * as vm from './viewmodel.js'
 		D, part 6			on top of the magazine, under the open action (MAG_REAR, MAG_Y)
 
 	WHERE IT IS HELD, in the camera's space: at the hip (HIP, a little to the right and down), or with the sights in front of
-	the eye (AIM: the line of sight along the middle of the view, the rear sight 45 cm in front of the eye, the stock at the cheek), and anywhere
+	the eye (AIM: the scope's line of sight along the middle of the view, the stock at the cheek; aimed SCOPED of the way, the view is the scope's), and anywhere
 	between while it comes up or goes down (aimed, 0 to 1). On top of that: the recoil (back into the shoulder and the
 	muzzle up), its sway as the hunter walks, canted a little while the bolt is open, and rolled over to show the open action
 	while rounds are pushed in (it cannot be aimed then).
@@ -73,8 +80,13 @@ import * as vm from './viewmodel.js'
 	takes for the round to come up through the line of sight and fall back to it at ZERO metres: the sights are set for
 	100 metres, so further off it hits low. From the hip, at the middle of the view ZERO metres off, give or take HIP_SPREAD.
 */
-const SIGHT_HEIGHT = 0.034;			// metres over the bore
-const ZERO = 100;					// metres the sights are set for
+const SIGHT_HEIGHT = 0.034;			// metres over the bore: the iron sights' line
+const SCOPE_Y = 0.062;				// and the scope's (THE SCOPE)
+const ZERO = 100;					// metres the scope is set for
+const MAGNIFICATION = [1, 4];
+const ZOOM_PIXELS = 100, ZOOM_STEP = 0.5;	// of the wheel, a notch: ZOOM_STEP of magnification
+const SCOPED = 0.9;					// aimed this far, the view is through the scope
+const SCOPE_FIELD = 24;				// degrees across the eyepiece, over the magnification (24 at 1x, 6 at 4x)
 const MUZZLE = 0.76;				// metres from the receiver to the muzzle (z)
 const HIP_SPREAD = 0.012;			// radians either way, from the hip
 const TRIGGER_SECONDS = 0.12;
@@ -101,7 +113,7 @@ const ROUND_STACK = 0.013;			// a round's width: how far the top one goes down a
 
 // where it is held: x, y, z of the rifle's origin (the front of the receiver, on the bore) in the camera's space, and the turn of it
 const HIP = { x: 0.15, y: -0.155, z: -0.4, yaw: 0.045, pitch: 0.012 };
-const AIM = { x: 0, y: -SIGHT_HEIGHT, z: -0.33, yaw: 0, pitch: 0 };
+const AIM = { x: 0, y: -SCOPE_Y, z: -0.3, yaw: 0, pitch: 0 };
 
 // The rifle
 //-------------------------------------------------
@@ -149,12 +161,7 @@ const RIFLE_MESH = (() => {
 	m.strut([0, -0.024, 0.6], [0, -0.021, MUZZLE + 0.012], 0.0022, 0.0022, 4, STEEL);
 
 	// THE SIGHTS
-	// the rear sight: its base on the barrel (10), and its leaf across it at zr with a notch in the top (6)
-	const zr = 0.12;
-	m.section(0.1, [0.0115, 0.009, 0.019], 0.17, [0.0115, 0.009, 0.0215], STEEL, 0, [0, 1], [0]);
-	m.quad([-0.012, 0.016, zr], [0.012, 0.016, zr], [0.012, H, zr], [-0.012, H, zr], 0, STEEL);
-	m.quad([-0.012, H, zr], [-0.0025, H, zr], [-0.0025, H + 0.007, zr], [-0.012, H + 0.007, zr], 0, STEEL);
-	m.quad([0.0025, H, zr], [0.012, H, zr], [0.012, H + 0.007, zr], [0.0025, H + 0.007, zr], 0, STEEL);
+	// (the rear sight is off: the scope is over where it was, THE SCOPE)
 	// the front sight: its collar round the barrel (12), the post with its top on the line of sight (4), and the ring of the hood over it (8)
 	const zf = 0.735;
 	m.tube(0, 0, zf - 0.015, 0.0115, zf + 0.012, 0.0115, 6, STEEL);
@@ -162,6 +169,14 @@ const RIFLE_MESH = (() => {
 	m.quad([0, 0.01, zf - 0.0018], [0, 0.01, zf + 0.0018], [0, H, zf + 0.0018], [0, H, zf - 0.0018], 0, STEEL);
 	const hood = Array.from({ length: 5 }, (_, k) => { const a = k / 4 * Math.PI; return [Math.cos(a) * 0.0095, H - 0.002 + Math.sin(a) * 0.0095]; });
 	for (let k = 0; k < 4; k++) m.quad([hood[k][0], hood[k][1], zf - 0.011], [hood[k + 1][0], hood[k + 1][1], zf - 0.011], [hood[k + 1][0], hood[k + 1][1], zf + 0.011], [hood[k][0], hood[k][1], zf + 0.011], 0, STEEL);
+
+	// THE SCOPE: its tube, the bells of its eyepiece (behind) and its objective, the power ring, the lenses, and the rings it sits in
+	const S = SCOPE_Y;
+	m.tube(0, S, -0.13, 0.0125, 0.06, 0.0125, 6, STEEL);
+	m.tube(0, S, -0.2, 0.017, -0.13, 0.0125, 6, STEEL);
+	m.tube(0, S, 0.06, 0.0125, 0.105, 0.0165, 6, STEEL);
+	m.disc(0, S, -0.2, 0.016, 4, DARK);
+	for (const z of [-0.085, 0.03]) m.section(z - 0.007, [0.006, 0.016, S - 0.012], z + 0.007, [0.006, 0.016, S - 0.012], STEEL);
 
 	// THE MOVING PARTS
 	// the bolt: its body in the receiver, up to the chamber at z 0 (12), the cocking piece out of the back of the receiver (22), the
@@ -184,7 +199,7 @@ export const rifleStats = { rounds: MAGAZINE, magazine: MAGAZINE - 1, chamber: '
 // What it is doing
 //-------------------------------------------------
 const rifle = {
-	state: 'ready', timer: 0, aimed: 0, wantsAim: false, kick: 0, bob: 0, trigger: 0, roll: 0, drop: 0, tilt: 0,
+	state: 'ready', timer: 0, aimed: 0, wantsAim: false, kick: 0, bob: 0, trigger: 0, roll: 0, drop: 0, tilt: 0, magnification: 2.5,
 	magazine: MAGAZINE - 1,
 	chamber: 'live',				// 'live', 'spent' (an empty case) or 'empty'
 	lift: 0, liftWanted: 0,			// the bolt turned up, 0 to 1, and which way it is going
@@ -225,13 +240,14 @@ window.addEventListener('keydown', (event) => {
 });
 
 // in the spawn menu's Weapons, and its controls on the left
-weapons.addWeapon('rifle', { label: 'Mosin–Nagant', detail: 'Bolt action rifle, 7.62×54R, 5 rounds', equip: () => { rifle.aimed = 0; },
+weapons.addWeapon('rifle', { label: 'Mosin–Nagant', detail: 'Bolt action rifle, 7.62×54R, 5 rounds, a 1–4 power scope', equip: () => { rifle.aimed = 0; },
 	loaded: () => rifle.magazine + (rifle.chamber == 'live' ? 1 : 0) + (rifle.loading >= 0 ? 1 : 0) + rifle.queued, reset: () => resetRifle(),
 	help: () => ['Mosin–Nagant 91/30', [
 		['Left click', 'fire'],
-		['Right click', 'aim down the sights (hold)'],
+		['Right click', 'the scope (hold) · wheel: magnification 1–4×'],
 		['Middle click', 'turn the bolt up (open) or down (close)'],
 		['Wheel', 'bolt open: down draws it back, up pushes it forward'],
+		['', 'Reticle rows: hold over by a row for its range'],
 		['R', 'bolt all the way back: push a round into the magazine'],
 	]] });
 document.addEventListener('pointerlockchange', () => { if (!locked()) rifle.wantsAim = false; });
@@ -285,7 +301,7 @@ function shoot() {
 	if (rifle.aimed > 0.85) {
 		// along the line of sight, tipped up to come back down on to it at ZERO metres (see THE SHOT at the top)
 		const time = ZERO / (820 * (1 - 0.0009 * ZERO / 2));
-		const up = (SIGHT_HEIGHT + 0.5 * 9.81 * time * time) / ZERO;
+		const up = (SCOPE_Y + 0.5 * 9.81 * time * time) / ZERO;
 		direction = [0, 1, 2].map((k) => axes.forward[k] + axes.up[k] * up);
 	} else {
 		// at the middle of the view ZERO metres off, give or take
@@ -306,7 +322,14 @@ export function rifleUpdate() {
 	lastTime = now;
 	advanceRifle(elapsed);
 	showAmmo();
+	// THE SCOPE: looked through (or not)
+	const scoped = active() && rifle.aimed >= SCOPED && hunting.hunterPlace().active && hunting.hunterLife.alive;
+	rifleStats.scoped = scoped;
+	rifleStats.magnification = rifle.magnification;
+	scope.show(scoped, rifle.magnification);
 }
+const scope = makeScope({ round: '7.62x54R', zero: ZERO, height: SCOPE_Y, field: SCOPE_FIELD });
+export const reticleRanges = scope.ranges;
 
 function advanceRifle(elapsed) {
 	if (!active() || !hunting.hunterLife.alive) {
@@ -435,11 +458,15 @@ function workBolt(elapsed) {
 	}
 	r.sinceLoad += elapsed;
 
-	// the wheel, with the bolt turned all the way up. While a round is being pushed in, or the bolt is still turning up, the
-	//		scrolling waits
+	// the wheel: in the scope with the bolt shut, the magnification (THE SCOPE). With the bolt turned all the way up, the bolt. While a
+	//		round is being pushed in, or the bolt is still turning up, the scrolling waits
 	const turning = r.liftWanted == 1 && r.lift < 1;
 	const busy = r.loading >= 0 || r.queued > 0;
-	if (r.liftWanted == 1 && r.lift == 1 && !busy) {
+	if (r.aimed >= SCOPED && r.lift == 0 && r.liftWanted == 0) {
+		const notches = Math.trunc(wheelPixels / ZOOM_PIXELS);
+		r.magnification = Math.min(Math.max(r.magnification - notches * ZOOM_STEP, MAGNIFICATION[0]), MAGNIFICATION[1]);
+		wheelPixels -= notches * ZOOM_PIXELS;
+	} else if (r.liftWanted == 1 && r.lift == 1 && !busy) {
 		r.backWanted = clamp01(r.backWanted + wheelPixels / BOLT_STROKE_PIXELS);
 		wheelPixels = 0;
 	} else if (!turning && !busy) {
@@ -613,8 +640,8 @@ export function inspectRifle(matrix) { inspectAt = matrix; riflePass(); inspectA
 
 // over the finished frame, in front of everything
 export function riflePass() {
-	if (!inspectAt && (!active() || !hunting.hunterPlace().active || !hunting.hunterLife.alive)) {
-		return;
+	if (!inspectAt && (!active() || !hunting.hunterPlace().active || !hunting.hunterLife.alive || rifle.aimed >= SCOPED)) {
+		return;		// (looking through the scope: the view is the scope's)
 	}
 	const projection = transformations.jittered(mat4.perspective(transformations.baseVerticalViewAngle, drawn.width / drawn.height, 0.01, 10));
 	// the light, turned into the camera's space

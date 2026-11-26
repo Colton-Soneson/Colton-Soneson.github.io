@@ -20,6 +20,9 @@ import * as help from './controlsHelp.js'
 	has only what is in the hands instead (survival.js: setRootSource), but in god mode.
 
 	SPAWNED (onSpawn): told of each boat put in the sea here, for net.js to tell the others.
+	OTHER WHEELS (addWheel): another key's ring of choices, worked the same way (held and let go over one, or clicked; its own key again
+	closes it), with its own choices (a function giving the top of them, each time it opens) and its own say on whether it opens (commands.js:
+	B, the command wheel). One wheel is open at a time.
 */
 const RING_OUT = 165, RING_IN = 62;		// pixels
 const PICK_RADIUS = 28;					// pixels the mouse has to go from the middle for a choice to be picked
@@ -27,6 +30,7 @@ const HOLD_SECONDS = 0.3;				// T held this long: letting go of it takes the cho
 
 const menu = {
 	open: false,
+	wheel: null,			// the wheel open: { key, top() (its choices, from the top), usable() }
 	path: [],				// the choices opened, from the top
 	cursor: [0, 0],			// where the mouse has gone since the ring opened (pixels)
 	hovered: -1,
@@ -80,15 +84,20 @@ const locked = () => document.pointerLockElement == canvas;
 const usable = () => settings.gameMode != 'Observe' && hunting.hunterPlace().active && hunting.hunterLife.alive;
 let rootSource = (top) => top;
 export function setRootSource(fn) { rootSource = fn; }
+// OTHER WHEELS (see the top): key (a KeyboardEvent code), top() the choices ({ label, items }), usable() whether it opens now (false: not;
+//		it may say why itself)
+const wheels = [{ key: 'KeyT', top: () => rootSource(root), usable }];
+export function addWheel(key, top, canOpen = usable) { wheels.push({ key, top, usable: canOpen }); }
 const ring = () => {
-	let at = rootSource(root);
+	let at = menu.wheel.top();
 	for (const k of menu.path) at = at.items.filter((item) => !item.shown || item.shown())[k] ?? at;
 	return at;
 };
 const choices = () => ring().items.filter((item) => !item.shown || item.shown());
 
-function openMenu() {
+function openMenu(wheel = wheels[0]) {
 	menu.open = true;
+	menu.wheel = wheel;
 	menu.path = [];
 	menu.cursor = [0, 0];
 	menu.hovered = -1;
@@ -127,9 +136,10 @@ function back() {
 }
 
 window.addEventListener('keydown', (event) => {
-	if (event.code != 'KeyT' || event.repeat) return;
-	if (menu.open) { closeMenu(); return; }
-	if (usable() && locked()) openMenu();
+	const wheel = wheels.find((w) => w.key == event.code);
+	if (!wheel || event.repeat) return;
+	if (menu.open) { const was = menu.wheel; closeMenu(); if (was === wheel) return; }
+	if (locked() && wheel.usable()) openMenu(wheel);
 });
 // (Tab and F are other things' too: before they hear them, and they do not. hunting.js has heard them first, and leaves them while a menu is open)
 window.addEventListener('keydown', (event) => {
@@ -139,7 +149,7 @@ window.addEventListener('keydown', (event) => {
 	closeMenu();
 }, true);
 window.addEventListener('keyup', (event) => {
-	if (event.code != 'KeyT' || !menu.open || !menu.holding) return;
+	if (!menu.open || event.code != menu.wheel.key || !menu.holding) return;
 	menu.holding = false;
 	// held, and let go over a choice: that one
 	if ((performance.now() - menu.openedAt) / 1000 >= HOLD_SECONDS && menu.hovered >= 0) take();
@@ -229,9 +239,9 @@ function redraw() {
 		: `<div style="font-weight: 700; font-size: 13px;">${html(title)}</div><div style="opacity: 0.6; margin-top: 3px;">${menu.path.length ? 'right click: back' : 'move the mouse, click to choose'}</div>`;
 }
 
-// for testing: open it, go to a choice by its labels (['Vehicles', 'Dinghy']), and take it. Returns what the choice gave back
-export function testChoose(labels) {
-	openMenu();
+// for testing: open it (key: which wheel), go to a choice by its labels (['Vehicles', 'Dinghy']), and take it. Returns what the choice gave back
+export function testChoose(labels, key = 'KeyT') {
+	openMenu(wheels.find((w) => w.key == key));
 	let result;
 	for (const label of labels) {
 		const k = choices().findIndex((item) => item.label == label);
@@ -243,8 +253,8 @@ export function testChoose(labels) {
 	}
 	return result;
 }
-export function testOpen(labels = []) {
-	openMenu();
+export function testOpen(labels = [], key = 'KeyT') {
+	openMenu(wheels.find((w) => w.key == key));
 	for (const label of labels) { menu.hovered = choices().findIndex((item) => item.label == label); take(); }
 	menu.cursor = [60, -40];
 	pick();

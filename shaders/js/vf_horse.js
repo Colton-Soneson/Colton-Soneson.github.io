@@ -1,6 +1,7 @@
 import { motionShapes } from './motionShapes.js';
 import { moonShapes } from './f_moon.js';
 import { skyLookupShapes } from './vfc_atmosphere.js';
+import { legIK } from './legIK.js';
 
 /*
 	The horses drawn. See horse.js for the horse itself (its mesh, in metres, standing on y = 0 and facing +z, +x its left) and how
@@ -10,8 +11,11 @@ import { skyLookupShapes } from './vfc_atmosphere.js';
 		0			the body (the barrel, the chest, the rump)
 		1, 2, 3		the neck, the head (with its ears) and the mane: nodding with the gait, and down to graze, about the foot of the neck
 		4			the tail, swishing
-		5 to 8		the upper legs: left front, right front, left hind, right hind. Each swings from the shoulder or the hip
-		9 to 12		the lower legs and hooves: swing with the leg above, and fold at the knee (the hock behind) as the hoof comes forward
+		5 to 8		the upper legs: left front, right front, left hind, right hind. Each hoof goes back on the ground under the horse for
+		9 to 12		the lower legs and hooves: its part of the stride and is lifted and brought forward again (the higher the faster
+					the gait), and the leg is laid to reach it by inverse kinematics (legIK.js): the front knee's point forward, the
+					hind hock's behind, neither bending past straight the wrong way (KNEE_FLEX). Going, it comes down a little, so its
+					hooves reach the ground at either end
 		13, 14, 17	the saddle and its stirrups, the saddlebags, the blanket: on the body
 		16			the reins: from the bit (with the head) back to the pommel (with the body)
 	THE GAITS (gait, 0 to 3: walk, trot, canter, gallop, in between while it changes) are the order the hooves come down in, each
@@ -78,6 +82,9 @@ export const vf_horse =
 	const KNEE_Y: f32 = 0.52;
 	const FRONT_Z: f32 = 0.55;
 	const HIND_Z: f32 = -0.6;
+	const KNEE_FLEX: vec2f = vec2f(0.03, 2.3);
+	const HIP_SWING: vec2f = vec2f(-1.0, 1.0);
+	${legIK}
 	const BIT: vec3f = vec3f(0.0, 1.55, 1.52);
 
 	// each leg's part of the stride (left front, right front, left hind, right hind), at each gait: the order the hooves come down in
@@ -114,6 +121,9 @@ export const vf_horse =
 		let gait = input.pose.w;
 		let seconds = HU.cameraPosition.w + input.more.y;
 		let swim = input.more.x;
+		// (going: half its stride either way of the shoulder or the hip, and how far it comes down for it)
+		let half = SHOULDER_Y * sin(gaitValue(vec4f(0.3, 0.42, 0.55, 0.75), gait) * min(going * 10.0, 1.0) + 0.5 * swim) * 0.85;
+		let walkDrop = legDrop(SHOULDER_Y, half, 0.02 * min(going * 10.0, 1.0)) * (1.0 - swim);
 
 		if (part >= 5 && part <= 12) {
 			// a leg: its part of the stride, its swing from the shoulder or the hip, the knee folding as the hoof comes forward
@@ -122,15 +132,12 @@ export const vf_horse =
 			let gaitI = i32(clamp(round(gait), 0.0, 3.0));
 			let timing = mix(legTiming(i32(floor(clamp(gait, 0.0, 3.0)))), legTiming(min(i32(floor(clamp(gait, 0.0, 3.0))) + 1, 3)), fract(clamp(gait, 0.0, 2.999)));
 			let legPhase = phase + timing[leg] * 6.2831853;
-			let swingSize = gaitValue(vec4f(0.3, 0.42, 0.55, 0.75), gait) * min(going * 10.0, 1.0) + 0.5 * swim;
-			let foldSize = gaitValue(vec4f(0.9, 1.1, 1.2, 1.4), gait) * min(going * 10.0, 1.0) + 0.8 * swim;
+			let lift = KNEE_Y * 0.22 * (gaitValue(vec4f(0.9, 1.1, 1.2, 1.4), gait) * min(going * 10.0, 1.0) + 0.8 * swim);
 			let hip = vec3f(p.x, SHOULDER_Y, select(HIND_Z, FRONT_Z, front));
-			if (part >= 9) {
-				let knee = vec3f(p.x, KNEE_Y, hip.z);
-				let fold = max(sin(legPhase), 0.0) * foldSize * select(-1.0, 1.0, front);	// (the front knees fold back, the hocks forward)
-				p = knee + turnX(p - knee, fold);
-			}
-			p = hip + turnX(p - hip, -cos(legPhase) * swingSize);
+			// (forward at cos(legPhase) 1, coming forward while sin(legPhase) < 0: legStep's half a turn on)
+			let foot = legStep(vec2f(walkDrop, hip.z), legPhase + 3.14159265, half, lift);
+			let bones = legReach(hip.yz, SHOULDER_Y - KNEE_Y, KNEE_Y, foot, select(-1.0, 1.0, front), KNEE_FLEX, HIP_SWING);
+			p = legMove(p, hip, KNEE_Y, part <= 8, bones);
 		} else if (part >= 1 && part <= 3) {
 			// the neck and the head: nodding with the stride, down to the grass when it grazes
 			let nod = gaitValue(vec4f(0.06, 0.02, 0.12, 0.1), gait) * min(going * 10.0, 1.0) * sin(phase * select(1.0, 2.0, gait < 0.5));
@@ -150,6 +157,7 @@ export const vf_horse =
 
 		// the body bobbing and rocking with the gait, low in the water swimming
 		let motion = bodyMotion(phase, gait, going);
+		p.y -= walkDrop;
 		p = turnX(p - vec3f(0.0, 1.2, 0.0), -motion.y) + vec3f(0.0, 1.2 + motion.x, 0.0);
 
 		let tipped = turnX(p, -input.state.x);

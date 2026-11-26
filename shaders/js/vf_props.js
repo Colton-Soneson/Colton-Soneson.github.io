@@ -1,5 +1,6 @@
 import { motionShapes } from './motionShapes.js';
 import { itemMaterials } from './f_itemMaterials.js';
+import { legIK } from './legIK.js';
 
 /*
 	THE PROPS of the Survival mode (props.js): crates, sacks, campfires, the things thrown and lying about, out in the world. Each vertex is
@@ -7,6 +8,11 @@ import { itemMaterials } from './f_itemMaterials.js';
 	it glows (glow: rgb and how strong, for one that is looked at, or of this player's own lying out, as the discs: discgolf.js).
 	Lit by the sun and the moon, as everything else (no shadows: they are small), or as a room is (extra.x: what is inside a house, interiors.js: no sun
 	on it, the day coming in at the windows, the lamps lit at night). What swims bends as it goes (extra.y: fish.js, whaling.js).
+	What walks on four legs (rig: beasts.js, critters.js) has each hoof or paw where it is in its step, and the leg laid to reach it by
+	inverse kinematics (legIK.js): the front knee's point forward, the hind hock's behind, neither bending past straight the wrong way.
+	Each kind's half a step (steps) is half the ground it goes over in half a stride, so the feet on the ground stay where they are.
+	THE GAITS (rig.y: 0 to 1 a walk, to 2 a trot, to 3 a run, beasts.js): the legs' order in each (as vf_deer.js's), and a longer stride
+	(a third more at the trot, two thirds at the run: no more than its legs reach) and a higher foot the faster it goes.
 */
 export const vf_props =
 `
@@ -34,6 +40,7 @@ export const vf_props =
 	@group(0) @binding(1) var<uniform> Lights: LightsUniforms;
 	struct Instance { model : mat4x4f, glow : vec4f, extra : vec4f, rig : vec4f, }	// extra: x indoors; y how far it bends, z where in the bend it is, w its length (metres, less than 0: up and down)
 	@group(0) @binding(2) var<storage, read> instances: array<Instance>;
+	${legIK}
 
 	struct VertexOutput {
 		@builtin(position) pos: vec4f,
@@ -63,29 +70,32 @@ export const vf_props =
 			// its kind's: its hips' height, its knees', how far forward its front hips are and its hind ones; and the foot of its neck, its height and how far forward
 			var rigs = array<vec4f, 6>(vec4f(0.0), vec4f(1.25, 0.66, 0.68, -0.78), vec4f(0.56, 0.3, 0.38, -0.42), vec4f(0.62, 0.32, 0.56, -0.6), vec4f(0.2, 0.1, 0.12, -0.13), vec4f(0.035, 0.018, 0.035, -0.045));
 			var necks = array<vec2f, 6>(vec2f(0.0), vec2f(1.6, 0.8), vec2f(0.68, 0.46), vec2f(0.88, 0.72), vec2f(0.25, 0.15), vec2f(0.03, 0.03));
+			var steps = array<f32, 6>(0.0, 0.375, 0.24, 0.27, 0.11, 0.025);		// metres (beasts.js: 1.5 a stride; critters.js: a cat's 0.45, a rat's 0.12)
 			let k2 = i32(I.rig.w + 0.5);
 			let R = rigs[k2];
 			let part = i32(shape.w + 0.5) % 32;
+			let walking = min(I.rig.y, 1.0);
+			let gait = clamp(I.rig.y - 1.0, 0.0, 2.0);
+			let half = min(steps[k2] * walking * (1.0 + 0.35 * gait), 0.55 * R.x);
+			let drop = legDrop(R.x, half, 0.02 * walking);
 			if (part >= 2 && part <= 5) {
 				let leg = part - 2;
-				let turnIn = select(select(0.5, 0.0, leg == 2), select(0.75, 0.25, leg == 0), leg < 2);
+				var walkOrder = array<f32, 4>(0.75, 0.25, 0.5, 0.0);
+				var trotOrder = array<f32, 4>(1.0, 0.5, 0.5, 0.0);
+				var runOrder = array<f32, 4>(1.15, 1.0, 0.6, 0.45);
+				let turnIn = mix(mix(walkOrder[leg], trotOrder[leg], min(gait, 1.0)), runOrder[leg], max(gait - 1.0, 0.0));
 				let phase = I.rig.x + turnIn * 6.2831853;
-				let hip = vec3f(0.0, R.x, select(R.w, R.z, leg < 2));
-				if (at.y < R.y - 0.01) {
-					let knee = vec3f(at.x, R.y, hip.z);
-					let bend = max(sin(phase), 0.0) * 0.7 * I.rig.y * select(1.0, -1.0, leg < 2);
-					let d = at - knee;
-					at = knee + vec3f(d.x, d.y * cos(bend) - d.z * sin(bend), d.y * sin(bend) + d.z * cos(bend));
-				}
-				let swing = cos(phase) * 0.42 * I.rig.y;
-				let d2 = at - hip;
-				at = hip + vec3f(d2.x, d2.y * cos(swing) - d2.z * sin(swing), d2.y * sin(swing) + d2.z * cos(swing));
+				let hip = vec3f(at.x, R.x, select(R.w, R.z, leg < 2));
+				let foot = legStep(vec2f(drop, hip.z), phase, half, R.x * walking * (0.13 + 0.06 * gait));
+				let bones = legReach(hip.yz, R.x - R.y, R.y, foot, select(-1.0, 1.0, leg < 2), vec2f(0.03, 2.2), vec2f(-0.9, 0.9));
+				at = legMove(at, hip, R.y, at.y >= R.y - 0.01, bones);
 			} else if (part == 1) {
 				let foot = vec3f(0.0, necks[k2].x, necks[k2].y);
 				let a = 1.05 * I.rig.z;
 				let d = at - foot;
 				at = foot + vec3f(d.x, d.y * cos(a) - d.z * sin(a), d.y * sin(a) + d.z * cos(a));
 			}
+			at.y -= drop;
 		}
 		let world = (I.model * vec4f(at, 1.0)).xyz;
 		var output: VertexOutput;

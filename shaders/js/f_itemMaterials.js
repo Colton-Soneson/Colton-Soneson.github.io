@@ -105,6 +105,10 @@ export const itemMaterials =
 			case 109: { return vec4f(0.035, 0.032, 0.034, 0.35); }
 			case 110: { return vec4f(vec3f(0.3, 0.27, 0.24) * (0.9 + 0.1 * sin(at.z * 90.0)), 0.1); }
 			case 111: { return vec4f(0.78, 0.7, 0.58, 0.06); }
+			// THE TRACKS (tracks.js): a print pressed into the ground (dark, damp), blood (dark red, wet), the arrow (glowing)
+			case 112: { return vec4f(0.1, 0.075, 0.05, 0.05); }
+			case 113: { return vec4f(0.3, 0.015, 0.02, 0.7); }
+			case 114: { return vec4f(0.95, 0.85, 0.45, 0.0); }
 			case 85: { return vec4f(0.85, 0.32, 0.06, 0.5); }
 			case 74: { return vec4f(mix(vec3f(0.3, 0.34, 0.2) * (0.75 + 0.25 * step(0.2, sin(at.x * 300.0) * sin(at.z * 240.0))), vec3f(0.78, 0.66, 0.62), smoothstep(0.012, -0.018, at.y)), 0.7); }
 			case 75: { return vec4f(mix(vec3f(0.62, 0.44, 0.16), vec3f(0.86, 0.72, 0.42), smoothstep(0.02, -0.03, at.y)), 0.8); }
@@ -121,6 +125,7 @@ export const itemMaterials =
 		if (m == 62) { return vec3f(1.5, 1.05, 0.5); }
 		if (m == 84) { return vec3f(9.0, 3.6, 2.4); }
 		if (m == 107) { return vec3f(2.4, 0.95, 0.25); }
+		if (m == 114) { return vec3f(1.6, 1.25, 0.45); }
 		return vec3f(0.0);
 	}
 `;

@@ -5,6 +5,7 @@ import * as inventory from './inventory.js'
 import * as boat from './boat.js'
 import * as npcs from './npcs.js'
 import * as npcRiders from './npcRiders.js'
+import * as footmen from './footmen.js'
 import * as npcShips from './npcShips.js'
 import * as shops from './shops.js'
 import * as help from './controlsHelp.js'
@@ -14,6 +15,8 @@ import { owned, setOwnedValue } from './owned.js'
 	THE ENLISTED (the Survival mode's): the men the player has hired, and their FIRETEAMS.
 		HORSEMEN	hired at any town's inn (HORSEMAN dollars a man, MOST of them), each on a horse of his own (npcRiders.js: addHired), with
 					the player wherever they are on the land. Down, he is back in a while near them, out of sight
+		FOOTMEN		hired at a tavern on a road out in the grasslands (taverns.js: their price their kind's, MOST_FOOT of them all told): riflemen,
+					shotgun raiders and snipers (footmen.js: KINDS), on foot with the player as the horsemen are, by land. Down, the same
 		THE SCHOONER	the player's own, with the crew hired for her (owned.js, npcShips.js: hireCrew), while she is out: one unit
 	FIRETEAMS: TEAMS of them, each a number. A unit is in one or none. A team goes one way only, as its first unit does (by land: the
 		horsemen; by water: the schooner): a unit that goes the other way is not let into it (the Enlisted page says so).
@@ -39,6 +42,7 @@ import { owned, setOwnedValue } from './owned.js'
 */
 export const TEAMS = 4;
 export const MOST = 12;
+export const MOST_FOOT = 12;
 export const HORSEMAN = 20;				// dollars
 export const FORMATIONS = {
 	line: { name: 'Line', about: 'abreast, two deep' },
@@ -56,6 +60,7 @@ const FAR = 400;						// metres
 const CHARGE = { reach: 300, pace: 7.5 };	// THE COMMANDS: metres a charging team goes after anyone within; metres a second its middle goes at
 const HOLD_REACH = 60;					// metres (npcRiders.js: RANGE)
 const REGROUP = 30;						// metres from his place that a retreating team's every horseman has to be, for it to fire at will again
+const FOOT_NAMES = ['Ezra', 'Jonah', 'Levi', 'Otis', 'Booker', 'Mose', 'Tobias', 'Asa', 'Royal', 'Cyrus', 'Hiram', 'Dutch'];
 const NAMES = ['Abner', 'Silas', 'Eli', 'Jed', 'Amos', 'Caleb', 'Wade', 'Gus', 'Hollis', 'Rufus', 'Virgil', 'Clem'];
 
 const metre = () => settings.forestUnitsPerMetre;
@@ -63,14 +68,18 @@ const metre = () => settings.forestUnitsPerMetre;
 //		charge: it is charging
 const teams = Array.from({ length: TEAMS }, (_, k) => ({ number: k + 1, anchor: null, heading: 0, order: null, fire: 'will', charge: false }));
 const loose = { number: 0, anchor: null, heading: 0, order: null, fire: 'will', charge: false };		// (the unassigned: after the player, loose)
-const horsemen = [];				// { key, name, r (npcRiders.js's) }
+const horsemen = [];				// { key, name, foot (a footman's kind, or none), r (npcRiders.js's rider, or footmen.js's man) }
+// (whether one is still out: his rider, or his man; and taken away)
+const isOut = (h) => h.r && (h.foot ? footmen.hasMan(h.r) : npcRiders.hasRider(h.r));
+const takeAway = (h) => { if (!isOut(h)) return; if (h.foot) footmen.removeHired(h.r); else npcRiders.removeHired(h.r); };
 export const fireStats = { horsemen: 0, orders: 0 };
 
-// THE UNITS (see the top): { key, kind ('horseman', 'schooner'), mode ('land', 'water'), name }
+// THE UNITS (see the top): { key, kind ('horseman', 'footman', 'schooner'), foot (a footman's kind), mode ('land', 'water'), name }
 const mySchooner = () => boat.boats.find((b) => b.exists && b.destroyed < 0 && boat.isMine(b) && b.vessel.name == 'Schooner') ?? null;
 export function units() {
 	const list = [];
 	for (let k = 0; k < (owned.horsemen ?? 0); k++) list.push({ key: 'h' + k, kind: 'horseman', mode: 'land', name: NAMES[k % NAMES.length] });
+	(owned.footmen ?? []).forEach((foot, k) => list.push({ key: 'f' + k, kind: 'footman', foot, mode: 'land', name: `${FOOT_NAMES[k % FOOT_NAMES.length]}, ${footmen.KINDS[foot].name.toLowerCase()}` }));
 	if (owned.schooner) list.push({ key: 'schooner', kind: 'schooner', mode: 'water', name: 'Your schooner' });
 	return list;
 }
@@ -106,6 +115,33 @@ export function hireHorseman(townThing) {
 	help.toast(`${NAMES[(owned.horsemen - 1) % NAMES.length]} rides with you (${owned.horsemen} of ${MOST}). The journal's Enlisted page puts him in a fireteam`, 4);
 	return true;
 }
+// HIRED (shops.js: at a tavern, taverns.js): a footman of a kind
+//		from: where he comes from ({ at: { x, z, heading }, via: the way out: a tavern's patron, taverns.js), or a function giving it (asked
+//		once he is paid for), or none: behind the player
+export function hireFootman(kind, from = null) {
+	const K = footmen.KINDS[kind];
+	if (!K) return false;
+	if (!npcs.runsHere()) { help.toast('Your men march only in a game you host', 3); return false; }
+	if ((owned.footmen ?? []).length >= MOST_FOOT) { help.toast(`You have ${MOST_FOOT} footmen: as many as you can lead`); return false; }
+	if (!inventory.pay(K.price * 100)) { help.toast('Not enough money'); return false; }
+	setOwnedValue('footmen', [...(owned.footmen ?? []), kind]);
+	const out = typeof from == 'function' ? from() : from;
+	spawnFor(units().filter((u) => u.kind == 'footman').pop(), out?.at ?? null, out?.via ?? []);
+	help.toast(`${FOOT_NAMES[(owned.footmen.length - 1) % FOOT_NAMES.length]}, a ${K.name.toLowerCase()}, marches with you (${owned.footmen.length} of ${MOST_FOOT}). The journal's Enlisted page puts him in a fireteam`, 4);
+	return true;
+}
+shops.addOffers((tradeName, person) => {
+	if (tradeName != 'tavernkeeper' || !inventory.survivalOn()) return [];
+	const n = (owned.footmen ?? []).length, full = n >= MOST_FOOT;
+	// (the men of each kind sitting in the tavern now: taverns.js, seated; one hired gets up and goes out to the player)
+	return Object.entries(footmen.KINDS).map(([kind, K]) => {
+		const here = person.seated?.(kind) ?? 1;
+		if (full) return { id: 'foot:' + kind, icon: K.gun, tint: '#4a4a3a', name: `${K.name}s: your footmen ${n} of ${MOST_FOOT}`, detail: 'As many as you can lead', price: null, label: null, act: null };
+		if (!here) return { id: 'foot:' + kind, icon: K.gun, tint: '#4a4a3a', name: `No ${K.name.toLowerCase()}s in tonight`, detail: 'More come in, in a while', price: null, label: null, act: null };
+		return { id: 'foot:' + kind, icon: K.gun, tint: '#4a4a3a', name: `Hire a ${K.name.toLowerCase()} (${here} sitting here · yours ${n} of ${MOST_FOOT})`, detail: `${K.about}. Health ${K.health}, reach ${K.reach} m. He marches with you; the journal's Enlisted page puts him in a fireteam`, price: K.price * 100, label: 'Hire',
+			act: () => hireFootman(kind, () => person.recruit?.(kind) ?? null) };
+	});
+});
 shops.addOffers((tradeName, person) => {
 	if (tradeName != 'innkeeper' || !inventory.survivalOn()) return [];
 	const n = owned.horsemen ?? 0;
@@ -159,7 +195,7 @@ function homeFor() {
 	}
 	return { x: P.x, z: P.z, heading: P.heading };
 }
-function spawnFor(u, at = null) {
+function spawnFor(u, at = null, via = []) {
 	if (!u || horsemen.some((h) => h.key === u.key)) return;
 	const h = { key: u.key, name: u.name, r: null };
 	const group = (horsemen[0]?.r?.person.group) ?? Object.assign(npcs.makeGroup(), { hired: true });
@@ -171,7 +207,8 @@ function spawnFor(u, at = null) {
 		home: () => homeFor(),
 		rules: () => { const t = teamFor(h); return t.charge ? { reach: CHARGE.reach, charge: true } : t.fire == 'hold' ? { reach: HOLD_REACH } : t.fire == 'none' ? { reach: 0 } : null; },
 	};
-	h.r = npcRiders.addHired(group, at ?? homeFor(), squad, 'your horseman ' + u.name);
+	if (u.kind == 'footman') { h.foot = u.foot; h.r = footmen.addHired(u.foot, group, at ?? homeFor(), squad, 'your ' + footmen.KINDS[u.foot].name.toLowerCase() + ' ' + FOOT_NAMES[Number(u.key.slice(1)) % FOOT_NAMES.length], via); }
+	else h.r = npcRiders.addHired(group, at ?? homeFor(), squad, 'your horseman ' + u.name);
 	horsemen.push(h);
 }
 
@@ -292,10 +329,10 @@ export function fireteamsUpdate() {
 	const now = performance.now(), dt = Math.min((now - lastTime) / 1000, 0.1);
 	lastTime = now;
 	const on = inventory.survivalOn() && npcs.on() && npcs.runsHere() && hunting.hunterPlace().active && !!terrain.land;
-	if (!on) { for (const h of horsemen.splice(0)) if (h.r && npcRiders.hasRider(h.r)) npcRiders.removeHired(h.r); fireStats.horsemen = 0; return; }
+	if (!on) { for (const h of horsemen.splice(0)) takeAway(h); fireStats.horsemen = 0; return; }
 	// (every horseman hired out with them; one the riders lost (cleared) put out again)
-	const want = units().filter((u) => u.kind == 'horseman');
-	for (const h of [...horsemen]) if (!want.some((u) => u.key === h.key) || !npcRiders.hasRider(h.r)) { if (npcRiders.hasRider(h.r)) npcRiders.removeHired(h.r); horsemen.splice(horsemen.indexOf(h), 1); }
+	const want = units().filter((u) => u.kind == 'horseman' || u.kind == 'footman');
+	for (const h of [...horsemen]) if (!want.some((u) => u.key === h.key && u.foot === h.foot) || !isOut(h)) { takeAway(h); horsemen.splice(horsemen.indexOf(h), 1); }
 	for (const u of want) spawnFor(u);
 	fireStats.horsemen = horsemen.length;
 	// a sent team's middle on along its way, facing the way it goes; there, it stands
@@ -326,7 +363,7 @@ export function fireteamsUpdate() {
 		const t = teamFor(h), r = h.r;
 		if (t.order || !r?.person.alive || !r.horse?.exists) continue;
 		const [x, z] = placeOf(t, membersOf(t), h);
-		if (Math.hypot(r.horse.x - x, r.horse.z - z) > FAR * m) { const home = homeFor(); npcRiders.placeHired(r, home.x, home.z, home.heading); }
+		if (Math.hypot(r.horse.x - x, r.horse.z - z) > FAR * m) { const home = homeFor(); (h.foot ? footmen.placeHired : npcRiders.placeHired)(r, home.x, home.z, home.heading); }
 	}
 }
 
@@ -337,6 +374,7 @@ const INK = '#2b2520', SOFT = 'rgba(43, 37, 32, 0.55)';
 const mark = (label, act, on, shut = null) => `<span ${shut ? `title="${shut}"` : `data-fire="${act}"`} style="display:inline-block; min-width:14px; padding:0 6px; margin:1px 1px; text-align:center; line-height:1.35; cursor:${shut ? 'default' : 'pointer'}; border:1.6px solid ${on ? INK : 'transparent'}; border-radius:52% 46% 55% 44% / 50% 55% 45% 52%; ${on ? 'font-weight:bold;' : ''} ${shut ? `color:${SOFT}; text-decoration:line-through; opacity:0.55;` : ''} filter:url(#charcoal);">${label}</span>`;
 // (little charcoal sketches: a horse's head, a sail over a hull)
 const SKETCH = 'fill="none" stroke="#2b2520" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"';
+const FOOT = `<svg viewBox="0 0 20 18" width="20" height="18" style="vertical-align:-4px; margin-right:5px; filter:url(#charcoal);"><path ${SKETCH} d="M9 3 a1.6 1.6 0 1 0 0.01 0 M9 6 L9 11 L6.5 16.5 M9 11 L11.5 16.5 M9 7.5 L13 9 M6 7.5 L17 1.5"/></svg>`;
 const HORSE = `<svg viewBox="0 0 20 18" width="20" height="18" style="vertical-align:-4px; margin-right:5px; filter:url(#charcoal);"><path ${SKETCH} d="M5 16 L6 9 Q6 4 11 3 L13 1 L13.5 3.5 Q17 5 17.5 9 L15.5 10 L13 8 L11 10 L10 16"/><path ${SKETCH} d="M8 5 Q6 7 6.5 10"/></svg>`;
 const SAIL = `<svg viewBox="0 0 20 18" width="20" height="18" style="vertical-align:-4px; margin-right:5px; filter:url(#charcoal);"><path ${SKETCH} d="M10 1 L10 13 M10 2 L16 12 L10 12 M9 4 L4 12 L9 12 M2 14 Q10 18 18 14"/></svg>`;
 export function journalHtml(html) {
@@ -353,7 +391,7 @@ export function journalHtml(html) {
 			const mode = k ? modeOf(k) : null, shut = k && mode && mode != u.mode && n != k ? `Team ${k} goes by ${mode}` : null;
 			return mark(k || '–', `assign:${u.key}:${k}`, k == n, shut);
 		}).join('');
-		return `<div style="display:flex; align-items:center; justify-content:space-between; gap:16px; padding:5px 0; border-bottom:1px solid rgba(43,37,32,0.18);"><span>${u.kind == 'schooner' ? SAIL : HORSE}${html(u.name)} <span style="font-size:11px; color:${SOFT};">by ${u.mode}</span></span><span style="white-space:nowrap;">${choices}</span></div>`;
+		return `<div style="display:flex; align-items:center; justify-content:space-between; gap:16px; padding:5px 0; border-bottom:1px solid rgba(43,37,32,0.18);"><span>${u.kind == 'schooner' ? SAIL : u.kind == 'footman' ? FOOT : HORSE}${html(u.name)} <span style="font-size:11px; color:${SOFT};">by ${u.mode}</span></span><span style="white-space:nowrap;">${choices}</span></div>`;
 	};
 	const teamBox = (t) => {
 		const mode = modeOf(t.number), f = formationOf(t.number), men = list.filter((u) => teamOf(u.key) == t.number);
@@ -362,7 +400,7 @@ export function journalHtml(html) {
 			: Object.entries(FORMATIONS).map(([k, F]) => `<span title="${F.about}">${mark(F.name, `form:${t.number}:${k}`, k == f)}</span>`).join(' ');
 		return `<div class="jr-box" style="padding:8px 12px; margin-bottom:12px; width:340px;">
 			<div style="display:flex; justify-content:space-between; align-items:baseline; border-bottom:1.6px solid ${INK}; filter:url(#charcoal); padding-bottom:2px;"><b style="font-size:16px;">Team ${t.number}</b><span style="font-size:11px; color:${SOFT};">${mode ? 'by ' + mode + ' · ' : ''}${status(t.number)}</span></div>
-			<div style="margin:6px 0 4px; font-size:13px;">${men.length ? men.map((u) => (u.kind == 'schooner' ? SAIL : HORSE) + html(u.name)).join(' &nbsp; ') : `<span style="color:${SOFT};">Put men in it on the left</span>`}</div>
+			<div style="margin:6px 0 4px; font-size:13px;">${men.length ? men.map((u) => (u.kind == 'schooner' ? SAIL : u.kind == 'footman' ? FOOT : HORSE) + html(u.name)).join(' &nbsp; ') : `<span style="color:${SOFT};">Put men in it on the left</span>`}</div>
 			<div style="font-size:12px; margin-top:6px;">Formation:</div><div style="font-size:13px; line-height:1.7;">${forms}</div>
 			${mode ? `<div style="margin-top:6px; font-size:13px;"><span data-fire="recall:${t.number}" style="text-decoration:underline; cursor:pointer;">recall them: with me</span></div>` : ''}
 		</div>`;

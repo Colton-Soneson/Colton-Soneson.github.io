@@ -1,6 +1,7 @@
 import { canvas } from './deviceSelection.js'
 import { settings } from './settings.js';
-import { imguiParams, gui } from './imguiLoader.js';
+import { imguiParams, gui, guiShown } from './imguiLoader.js';
+import * as help from './controlsHelp.js'
 import * as atmosphere from './atmosphere.js'
 import * as hunting from './hunting.js'
 import * as ballistics from './ballistics.js'
@@ -448,7 +449,8 @@ export function setName(name) {
 const nameOf = (id) => names.get(id) ?? 'someone';
 // the thrower's name over each golf disc, in a game
 discgolf.setNameLookup((id) => role == 'host' || role == 'joined' ? nameOf(id) : null);
-const say = (status) => { netStats.status = status; refreshPanel(); };
+// (and, with the panels hidden, said in the middle of the screen: joining from the main menu, menu.js)
+const say = (status) => { netStats.status = status; refreshPanel(); if (status && !guiShown.on) help.toast(status, 4); };
 
 // (the save file's: saveGame.js) the world's settings, as a joiner would be given them
 export const worldSettings = () => worldNow();

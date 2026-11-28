@@ -26,12 +26,14 @@ export const PRICES = { schooner: 400, crewman: 25, plane: 300, horse: 30 };
 export const CREW_MOST = VESSELS.Schooner.guns.length + VESSELS.Schooner.nests.length;
 const SAVED = 'survivalOwned';
 
-export const owned = { schooner: false, crew: 0, plane: false, horse: false, horsemen: 0, teamOf: {}, formations: [] };	// (horsemen, teamOf, formations: fireteams.js's)
+export const owned = { schooner: false, crew: 0, plane: false, horse: false, horsemen: 0, footmen: [], teamOf: {}, formations: [] };	// (horsemen, footmen, teamOf, formations: fireteams.js's)
 try { Object.assign(owned, JSON.parse(localStorage.getItem(SAVED) ?? '{}')); } catch (e) { /* (none) */ }
 owned.crew = Math.min(Math.max(Math.floor(owned.crew) || 0, 0), CREW_MOST);
 owned.horsemen = Math.min(Math.max(Math.floor(owned.horsemen) || 0, 0), 12);
 if (!owned.teamOf || typeof owned.teamOf != 'object' || Array.isArray(owned.teamOf)) owned.teamOf = {};
 if (!Array.isArray(owned.formations)) owned.formations = [];
+if (!Array.isArray(owned.footmen)) owned.footmen = [];
+owned.footmen = owned.footmen.filter((k) => ['rifleman', 'raider', 'sniper'].includes(k)).slice(0, 12);
 const keep = () => { try { localStorage.setItem(SAVED, JSON.stringify(owned)); } catch (e) { /* (nowhere to keep it) */ } };
 // (the save file's: saveGame.js, as it is kept here)
 export const ownedRecord = () => ({ key: SAVED, text: JSON.stringify(owned) });

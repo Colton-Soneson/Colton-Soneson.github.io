@@ -23,10 +23,19 @@ import * as vm from './viewmodel.js'
 		wagon			a trading cart (carts.js): its bed of boards on its axles, a canvas cover on four hoops, the driver's seat at the front, the
 						shafts out to the horse, and the strongbox at its tail. Forward is +z, the ground under its middle y = 0. Under 400
 		wagonWheel		a spoked wheel, its iron tyre, a unit in radius, its axle along x through 0 (scaled to each, and turned as it rolls). Under 200
+		tavern			a tavern on a road out in the grasslands (taverns.js): TAVERN
 		farmCabin		a river town's farm's (farmsteads.js): a cabin of boards, FARM_CABIN across and deep, its door in the middle of its +z side,
 						a window each side, a gabled roof (its ridge along x) and a stone chimney at its -x end. Under 250
 */
 export const FARM_CABIN = { w: 5, d: 4, h: 2.6, door: 0.5, doorTop: 2.0, roof: 1.6, eave: 0.4 };
+// a tavern on a road (taverns.js): TAVERN across (x) and deep (z), two storeys, its door in the middle of its +z side under a porch roof,
+//		a sign hanging out on a post by the road (sign: its post's place, x and z), the chimney at the -x end
+export const TAVERN = { w: 10, d: 7, h: 5.6, door: 0.6, doorTop: 2.2, roof: 2.6, eave: 0.5, sign: [3.6, 6.2] };
+// and its room downstairs (tavernInside, lit as a room is: taverns.js): its floor and ceiling (metres up), the counter (x, z from, z to, its
+//		height), the tables (their middles, half across, height), each with a bench either side (BENCH: off the table's middle, its seat's
+//		height, half its length), the hearth on the -x wall, and a tankard (mug: a patron's, taverns.js)
+export const TAVERN_ROOM = { floor: 0.45, ceiling: 3.0, counter: { x: 2.4, z: [-2.45, -1.95], h: 1.05 }, tables: [[-2.9, 0.7], [2.6, 0.9]], table: { half: 0.5, h: 0.75 },
+	bench: { off: 0.72, h: 0.45, half: 0.75, deep: 0.17 } };
 /*
 	THE TRAIN (trains.js): an old western one, its cars each under 1500 triangles, forward +z, their middles at 0, standing on the rails' tops (y = 0):
 		trainLoco		a 4-4-0 and its tender: the boiler, the balloon stack, the domes, the cab, the cowcatcher, the headlamp, four drivers
@@ -406,6 +415,80 @@ function farmCabin() {
 	box(m, -X - 0.5, -X + 0.3, 0, top + 0.5, -0.45, 0.45, FIRE_STONE);
 	return m;
 }
+// a tavern (TAVERN: see the top): plastered walls on a stone footing, a band of boards between the storeys, windows on both (the glass
+//		lit from inside by night: vf_props.js, m 99), its door and the porch roof over it on two posts, the roof, the chimney, and the sign
+//		on its post and arm. Under 400
+function tavern() {
+	const m = vm.meshBuilder(), { w, d, h, door, doorTop, roof, eave, sign } = TAVERN, X = w / 2, Z = d / 2, t = 0.2;
+	box(m, -X - 0.1, X + 0.1, -1.3, 0.45, -Z - 0.1, Z + 0.1, FIRE_STONE);
+	box(m, -X, X, 0.45, h, -Z, -Z + t, WALL);
+	box(m, -X, -X + t, 0.45, h, -Z, Z, WALL); box(m, X - t, X, 0.45, h, -Z, Z, WALL);
+	box(m, -X, -door, 0.45, h, Z - t, Z, WALL); box(m, door, X, 0.45, h, Z - t, Z, WALL); box(m, -door, door, doorTop, h, Z - t, Z, WALL);
+	// (the door stands open: a frame round it, the leaf swung back against the wall inside)
+	box(m, -door - 0.06, -door, 0.45, doorTop, Z - t - 0.02, Z + 0.02, BOARDS); box(m, door, door + 0.06, 0.45, doorTop, Z - t - 0.02, Z + 0.02, BOARDS);
+	box(m, door, door + 0.05, 0.47, doorTop - 0.05, Z - t - 1.15, Z - t - 0.02, BOARDS);
+	box(m, -X - 0.03, X + 0.03, h / 2 - 0.12, h / 2 + 0.12, -Z - 0.03, Z + 0.03, BOARDS);
+	// the windows: three a storey on the front (none over the door below), two on the back
+	for (const [x, y, z, s] of [[-3.2, 1.3, Z, 1], [3.2, 1.3, Z, 1], [-3.2, 3.9, Z, 1], [0, 3.9, Z, 1], [3.2, 3.9, Z, 1], [-2.5, 1.3, -Z, -1], [2.5, 3.9, -Z, -1]]) {
+		m.quad([x - 0.5, y, z + s * 0.01], [x + 0.5, y, z + s * 0.01], [x + 0.5, y + 1.0, z + s * 0.01], [x - 0.5, y + 1.0, z + s * 0.01], 0, WINDOW);
+		box(m, x - 0.58, x + 0.58, y - 0.08, y, z - 0.03, z + 0.07, STAKE);
+	}
+	// the two steps up to the door (its middle on the highest of the ground under it: it may be lower all round)
+	box(m, -1.5, 1.5, -1.3, 0.1, Z, Z + 0.55, FIRE_STONE);
+	box(m, -1.5, 1.5, -1.3, -0.25, Z + 0.55, Z + 1.1, FIRE_STONE);
+	// the porch: its roof over the door, and its two posts
+	m.quad([-1.6, 2.9, Z], [1.6, 2.9, Z], [1.6, 2.5, Z + 1.6], [-1.6, 2.5, Z + 1.6], 0, ROOF);
+	for (const s of [-1, 1]) box(m, s * 1.5 - 0.08, s * 1.5 + 0.08, 0, 2.55, Z + 1.45, Z + 1.61, BOARDS);
+	// the roof and the gables
+	const top = h + roof, E = X + eave, F = Z + eave;
+	m.quad([-E, h - 0.15, -F], [E, h - 0.15, -F], [E, top, 0], [-E, top, 0], 0, ROOF);
+	m.quad([-E, h - 0.15, F], [-E, top, 0], [E, top, 0], [E, h - 0.15, F], 0, ROOF);
+	for (const s of [-1, 1]) m.tri([s * (X - 0.02), h, -Z], [s * (X - 0.02), h, Z], [s * (X - 0.02), top, 0], 0, WALL);
+	box(m, -X - 0.7, -X + 0.4, 0, top + 0.7, -0.55, 0.55, FIRE_STONE);
+	// the sign by the road: its post, its arm, the board hanging from it on two chains
+	const [sx, sz] = sign;
+	box(m, sx - 0.1, sx + 0.1, 0, 3.4, sz - 0.1, sz + 0.1, BOARDS);
+	box(m, sx - 0.06, sx + 1.3, 3.1, 3.22, sz - 0.05, sz + 0.05, BOARDS);
+	for (const u of [0.35, 1.15]) m.strut([sx + u, 3.1, sz], [sx + u, 2.75, sz], 0.012, 0.012, 3, CAST_IRON);
+	box(m, sx + 0.2, sx + 1.3, 2.05, 2.75, sz - 0.04, sz + 0.04, STAKE);
+	return m;
+}
+// the tavern's room downstairs (TAVERN_ROOM): drawn lit as a room is. Its floor, its ceiling, the inside of its walls (round the door), the
+//		counter, the tables and their benches, the hearth with its fire. Under 300
+function tavernInside() {
+	const m = vm.meshBuilder(), { w, d, door, doorTop } = TAVERN, R = TAVERN_ROOM, X = w / 2 - 0.21, Z = d / 2 - 0.21, f = R.floor, c = R.ceiling;
+	m.quad([-X, f + 0.012, -Z], [X, f + 0.012, -Z], [X, f + 0.012, Z], [-X, f + 0.012, Z], 0, FLOOR);		// (a hair over the stone footing's top)
+	m.quad([-X, c, Z], [X, c, Z], [X, c, -Z], [-X, c, -Z], 0, INNER);
+	m.quad([-X, f, -Z], [-X, c, -Z], [X, c, -Z], [X, f, -Z], 0, INNER);
+	for (const s of [-1, 1]) m.quad([s * X, f, -Z], [s * X, f, Z], [s * X, c, Z], [s * X, c, -Z], 0, INNER);
+	m.quad([-X, f, Z], [-door, f, Z], [-door, c, Z], [-X, c, Z], 0, INNER); m.quad([door, f, Z], [X, f, Z], [X, c, Z], [door, c, Z], 0, INNER);
+	m.quad([-door, doorTop, Z], [door, doorTop, Z], [door, c, Z], [-door, c, Z], 0, INNER);
+	// the counter, its top board over it; the tables, each on its legs, and its benches
+	const C = R.counter;
+	box(m, -C.x, C.x, f, f + C.h - 0.05, C.z[0], C.z[1], BOARDS); box(m, -C.x - 0.05, C.x + 0.05, f + C.h - 0.05, f + C.h, C.z[0] - 0.05, C.z[1] + 0.05, STAKE);
+	for (const [tx, tz] of R.tables) {
+		const T = R.table, B = R.bench;
+		box(m, tx - T.half, tx + T.half, f + T.h - 0.05, f + T.h, tz - T.half, tz + T.half, STAKE);
+		box(m, tx - 0.06, tx + 0.06, f, f + T.h - 0.05, tz - 0.06, tz + 0.06, BOARDS);
+		for (const s of [-1, 1]) {
+			box(m, tx - B.half, tx + B.half, f + B.h - 0.05, f + B.h, tz + s * B.off - B.deep, tz + s * B.off + B.deep, BOARDS);
+			for (const e of [-1, 1]) box(m, tx + e * (B.half - 0.08) - 0.04, tx + e * (B.half - 0.08) + 0.04, f, f + B.h - 0.05, tz + s * B.off - 0.04, tz + s * B.off + 0.04, BOARDS);
+		}
+	}
+	// the hearth on the -x wall, and its fire
+	box(m, -X, -X + 0.45, f, f + 1.4, -0.75, 0.75, FIRE_STONE);
+	m.quad([-X + 0.46, f + 0.05, -0.45], [-X + 0.46, f + 0.05, 0.45], [-X + 0.46, f + 0.75, 0.45], [-X + 0.46, f + 0.75, -0.45], 0, EMBER);
+	return m;
+}
+// a tankard: a tube of boards with a handle, its foot at the origin. Under 40
+function mug() {
+	const m = vm.meshBuilder();
+	m.strut([0, 0, 0], [0, 0.13, 0], 0.042, 0.04, 6, STAKE);
+	const top = Array.from({ length: 6 }, (_, k) => { const a = (k + 0.5) / 6 * Math.PI * 2; return [Math.cos(a) * 0.038, 0.12, Math.sin(a) * 0.038]; });
+	for (let k = 1; k < 5; k++) m.tri(top[0], top[k], top[k + 1], 0, SOOT);
+	m.strut([0.04, 0.03, 0], [0.075, 0.065, 0], 0.008, 0.008, 3, CAST_IRON); m.strut([0.075, 0.065, 0], [0.04, 0.105, 0], 0.008, 0.008, 3, CAST_IRON);
+	return m;
+}
 // (a pair of wheels on their axle across x, radius r, at z: each wheel a short tube; and a truck: two pairs and its frame)
 function trainWheels(m, z, r, gauge = 0.72) {
 	for (const s of [-1, 1]) m.strut([s * (gauge - 0.06), r, z], [s * (gauge + 0.06), r, z], r, r, 10, CAST_IRON);
@@ -490,6 +573,6 @@ const MAKERS = { spiralStair, railing, cornerBoard, iceTile, oreSmall, oreMid, o
 	wheat1: () => wheat(0.12, 40, WHEAT_GREEN), wheat2: () => wheat(0.32, 70, WHEAT_GREEN), wheat3: () => wheat(0.62, 100, WHEAT_GREEN), wheat4: () => wheat(0.85, 90, WHEAT_GOLD, WHEAT_GOLD), stake, twine,
 	wallOut: () => outside(null), wallIn: () => inside(null), windowOut, windowIn, doorOut: () => outside(DOOR_HOLE, STAKE), doorIn, gapIn: () => inside(GAP_HOLE),
 	roofOut: () => roofPiece(ROOF, 8), roofIn: () => roofPiece(INNER, 0), gableOut: () => gable(WALL, 8), gableIn: () => gable(INNER, 0), floorTile, block: () => block(PLINTH), plank: () => block(FLOOR), ridge, dormer, porch, hearth,
-	wagon, wagonWheel, farmCabin, trainLoco, trainCoach, trainExpress };
+	wagon, wagonWheel, farmCabin, tavern, tavernInside, mug, trainLoco, trainCoach, trainExpress };
 export const WORK_MESHES = Object.fromEntries(Object.entries(MAKERS).map(([name, make]) => { const m = make(); return [name, { data: m.done(), triangles: m.count() }]; }));
 export const workStats = Object.fromEntries(Object.entries(WORK_MESHES).map(([name, mesh]) => [name, mesh.triangles]));

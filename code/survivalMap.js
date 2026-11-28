@@ -2,7 +2,8 @@ import {canvas} from './deviceSelection.js'
 
 import { mat4 } from 'https://wgpu-matrix.org/dist/3.x/wgpu-matrix.module.js';
 
-import { settings } from './settings.js';
+import { settings, savedWorld } from './settings.js';
+import { mapReady, onLoaded } from './loading.js'
 
 import * as terrain from './terrain.js'
 import * as town from './town.js'
@@ -47,6 +48,9 @@ import * as fireteams from './fireteams.js'
 		THE SEA		every tile of sea, and all round the world, hatched across
 	IN A WORLD OF TILES (terrain.js, world.js): in a corner THE CHART of the whole world: each land tile (shaded by its continent) and each
 	tile of sea, the towns the world knows of (as the survey found them, terrain.js) each a dot and its name, and what the map shows now ringed.
+	THE LOADING SCREEN (loading.js): the map is drawn on it as the world loads (mapReady: its paper, and the drawing on the tile where the
+	player comes in, comeIn: a save's place, the walker's, or the camera's), that place ringed and come down on to; and once the loading is
+	done the map is put away in the hands (putAway: in the Survival mode, on foot), as it is when the map is shut.
 */
 const SIZE = 1600;					// pixels across the map's drawing (a tile's close drawing too)
 const GRID = 300;					// heights looked at across a tile, close
@@ -503,14 +507,15 @@ function mapFrame(dt) {
 	view.wanted = [];
 	if (view.dirty || shownTeams.length || hunting.hunterPlace().active) { compose(); view.dirty = false; }
 }
-// opened: the paper and the marks drawn again, the view on the walker's tile filling the paper (as the map always opened), that tile drawn
-function prepare() {
+// opened: the paper and the marks drawn again, the view on the walker's tile filling the paper (as the map always opened), that tile drawn.
+//		at: another place's tile ([x, z] world units: THE LOADING SCREEN's)
+function prepare(at = null) {
 	if (!terrain.land) return;
 	if (inksFor !== terrain.land) { inks.clear(); inksFor = terrain.land; }
 	drawPaper();
 	drawMarks();
-	const S = TILE(), p0 = hunting.hunterPlace();
-	const tile = terrain.world ? [Math.round(p0.x / S), Math.round(p0.z / S)] : [0, 0];
+	const S = TILE(), p0 = hunting.hunterPlace(), [px, pz] = at ?? [p0.x, p0.z];
+	const tile = terrain.world ? [Math.round(px / S), Math.round(pz / S)] : [0, 0];
 	Object.assign(view, { x: tile[0] * S, z: tile[1] * S, scale: SIZE / S, toScale: SIZE / S, anchor: null, vx: 0, vz: 0, drag: null, dirty: true });
 	const key = keyOf(tile[0], tile[1]), e = inkOf(key);
 	if (e && !e.close) drawInk(key, e, true);
@@ -656,3 +661,20 @@ export function viewMapForTest(x, z, scale) {
 export const mapFrameForTest = (dt) => mapFrame(dt);
 export const mapViewForTest = () => view;
 export const mapSquaresForTest = () => shownTeams.map((t) => ({ ...t }));
+
+// THE LOADING SCREEN (see the top): where the player comes in (world units), the map drawn for it, and put away once it is done
+function comeIn() {
+	const P = savedWorld?.player;
+	if (P?.active && Array.isArray(P.at)) return [Number(P.at[0]), Number(P.at[2])];
+	const p = hunting.hunterPlace();
+	return p.active ? [p.x, p.z] : [settings.camPosX, settings.camPosZ];
+}
+function putAway() {
+	if (!inventory.survivalOn() || !hunting.hunterPlace().active || !hunting.hunterLife.alive || state.phase != 'away') return;
+	state.before = weapons.weaponState.current;
+	if (state.before != 'none') weapons.equipWeapon('none');
+	state.phase = 'putting'; state.t = 0;
+	hunting.input.menuOpen = true;
+}
+mapReady(() => { prepare(comeIn()); return { paper, sheet, at: () => onPaper(...comeIn()) }; });
+onLoaded(() => putAway());

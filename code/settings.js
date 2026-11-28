@@ -383,3 +383,7 @@ export const savedWorld = (() => {
 	settings.gameMode = 'Hunting';
 	return save;
 })();
+// THE MAIN MENU's choice (menu.js: put on globalThis.menuStart before any of the game is loaded, main.js): the game mode to start in. (A
+//		save being loaded is in the Survival mode, whatever it says)
+export const menuStart = globalThis.menuStart ?? null;
+if (menuStart?.mode && !savedWorld) settings.gameMode = menuStart.mode;

@@ -25,7 +25,9 @@ import { legIK } from './legIK.js';
 	THE GESTURES (the townsfolk's greetings, townFolk.js): one that holds nothing (held.x no more than 0) can wave or shake hands with
 	its right arm (parts 3 and 4, at -x: the dummy faces +z, +x its left): held.y's whole part says which (1 neither, 2 a wave, 3 a
 	handshake), its fraction where it is in the wave or the pump (0 to 1 round), and -held.x how far the arm is up for it (0 down at
-	its side, 1 all the way): the arm's two bones turned from hanging to the gesture's, by that much.
+	its side, 1 all the way): the arm's two bones turned from hanging to the gesture's, by that much. 4 drinking (a tavern's patrons,
+	taverns.js): sitting at a table, the hand resting on it (DRINK_REST), and by -held.x lifted to the mouth (DRINK_UP), the tankard in it
+	(taverns.js works out where the hand is, the same sums, to put it there).
 	Crouched (held.w, 0 to 1: a player's C, hunting.js), the hips come down CROUCH_DROP, the feet stay on the ground (so the knees come
 	forward over them) and the body leans forward over its knees.
 	THE LEGS: each foot's place first (its step: STEP_PACE steps to each the walker counts as a stride, STEP_HALF either way of the hip,
@@ -135,6 +137,9 @@ const dummyShader = (clothes) =>
 		return elbowNow + turnTo(p - elbow, normalize(hand - elbow), fore);
 	}
 
+	// drinking (THE GESTURES): the upper arm's way and the forearm's, the hand on the table, and the tankard at the mouth
+	const DRINK_REST: array<vec3f, 2> = array<vec3f, 2>(vec3f(0.1864, -0.5592, 0.8078), vec3f(0.0995, -0.0298, 0.9946));
+	const DRINK_UP: array<vec3f, 2> = array<vec3f, 2>(vec3f(0.3928, -0.3143, 0.8642), vec3f(0.3164, 0.8416, -0.4376));
 	// the right arm (parts 3 and 4) put up for a gesture (THE GESTURES: 2 a wave, 3 a handshake), up by amount from how it hangs
 	//		(swing: hangArm's), round at phase (radians): waved side to side up by the head, or held out to the middle in front and pumped
 	fn gestureArm(p: vec3f, part: i32, gesture: f32, amount: f32, phase: f32, swing: f32) -> vec3f {
@@ -143,6 +148,9 @@ const dummyShader = (clothes) =>
 		let wave = 0.55 * sin(phase);
 		var upper = normalize(vec3f(-0.5, 0.55, 0.22));
 		var fore = normalize(vec3f(-0.1 + sin(wave), cos(wave), 0.18));
+		if (gesture > 3.5) {
+			return armTo(p, part, normalize(mix(DRINK_REST[0], DRINK_UP[0], amount)), normalize(mix(DRINK_REST[1], DRINK_UP[1], amount)));
+		}
 		if (gesture > 2.5) {
 			upper = normalize(vec3f(0.3, -0.55, 0.55));
 			fore = normalize(vec3f(0.25, 0.05 + 0.18 * sin(phase), 1.0));

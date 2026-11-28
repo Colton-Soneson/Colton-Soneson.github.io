@@ -52,6 +52,8 @@ import * as painterly from './painterly.js'
 import * as grassThrow from './grassThrow.js'
 import * as fireteams from './fireteams.js'
 import * as tracks from './tracks.js'
+import * as taverns from './taverns.js'
+import * as footmen from './footmen.js'
 import './commands.js'			//(the command wheel, B: the player's fireteams told what to do)
 import * as deer from './deer.js'
 import * as horde from './horde.js'
@@ -479,6 +481,8 @@ export function updateRotatingCubePass() {
 	campfires.campfiresUpdate();
 	survivalMap.mapUpdate();
 	fireteams.fireteamsUpdate();	//(and the player's own horsemen, and their fireteams: fireteams.js)
+	footmen.footmenUpdate();		//(and the footmen hired at the taverns, footmen.js)
+	taverns.tavernsUpdate();		//the taverns on the roads, and their keepers
 	grassThrow.grassUpdate();		//(and G: a pinch of grass thrown to see the wind, grassThrow.js)
 	inventoryUI.inventoryUIUpdate();
 	journal.journalUpdate();

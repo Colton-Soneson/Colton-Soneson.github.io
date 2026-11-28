@@ -15,28 +15,10 @@ import * as inventory from './inventory.js'
 		pull, put	the journal drawn out of the coat and opened (journal: itemMeshes.js; PULL seconds), and whatever is to be shown shown once it is; and put away. While it is out, the mouse is free.
 		menu		a page of its own for a workstation or a plan: shown at once, Tab, Esc or F shuts it
 */
-export const INK = '#2b2520', SOFT = 'rgba(43, 37, 32, 0.55)', FAINT = 'rgba(43, 37, 32, 0.25)', RED = '#7a2a18';
-export const HAND = '"Segoe Print", "Bradley Hand", "Comic Sans MS", cursive';
+// (the inks, the hand, the paper and the charcoal filter: charcoal.js's, the main menu's too)
+import { INK, SOFT, FAINT, RED, HAND, PAPER } from './charcoal.js'
+export { INK, SOFT, FAINT, RED, HAND, PAPER };
 const PULL = 0.42;
-
-// THE PAPER
-function makePaper() {
-	const c = document.createElement('canvas');
-	c.width = c.height = 512;
-	const ctx = c.getContext('2d');
-	let seed = 7;
-	const random = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
-	ctx.fillStyle = '#e6dcc4';
-	ctx.fillRect(0, 0, 512, 512);
-	for (let k = 0; k < 2600; k++) { ctx.fillStyle = `rgba(${90 + random() * 60}, ${70 + random() * 40}, 40, ${random() * 0.06})`; ctx.fillRect(random() * 512, random() * 512, 2 + random() * 6, 1 + random() * 3); }
-	for (let k = 0; k < 16; k++) {
-		const x = random() * 512, y = random() * 512, r = 30 + random() * 70, g = ctx.createRadialGradient(x, y, 0, x, y, r);
-		g.addColorStop(0, 'rgba(40, 32, 26, 0.05)'); g.addColorStop(1, 'rgba(40, 32, 26, 0)');
-		ctx.fillStyle = g; ctx.fillRect(x - r, y - r, r * 2, r * 2);
-	}
-	return c.toDataURL('image/png');
-}
-export const PAPER = makePaper();
 
 // THE STYLE
 const style = document.createElement('style');
@@ -53,10 +35,6 @@ style.textContent = `
 .jr-short { color: ${RED}; font-weight: bold; }
 `;
 document.head.appendChild(style);
-const defs = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-defs.setAttribute('style', 'position: absolute; width: 0; height: 0;');
-defs.innerHTML = '<filter id="charcoal" x="-5%" y="-5%" width="110%" height="110%"><feTurbulence type="fractalNoise" baseFrequency="0.05 0.08" numOctaves="2" seed="3" result="n"/><feDisplacementMap in="SourceGraphic" in2="n" scale="1.6" xChannelSelector="R" yChannelSelector="G"/></filter>';
-document.body.appendChild(defs);
 
 // PULLED OUT, AND PUT AWAY
 const view = new vm.Viewmodel('held journal', MESHES.journal.data);

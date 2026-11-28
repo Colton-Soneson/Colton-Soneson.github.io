@@ -20,6 +20,7 @@ import * as quests from './quests.js'
 import * as townOpinion from './townOpinion.js'
 import * as spit from './spit.js'
 import * as fireteams from './fireteams.js'
+import * as accounts from './accounts.js'
 
 /*
 	THE INVENTORY of the Survival game mode: in the journal (journalUI.js): pulled out and opened in the hands, its pages written in charcoal. I (or E at a container, loot.js) opens it, I, Tab, Esc or F shuts it. Four columns, and a fifth
@@ -39,7 +40,7 @@ import * as fireteams from './fireteams.js'
 const CELL = 42;					// pixels
 const SLOT = 68;
 
-const ui = { open: false, container: null, camp: null, drag: null, menu: null, crafting: false, aid: false, quests: false, towns: false, enlisted: false, spit: null };
+const ui = { open: false, container: null, camp: null, drag: null, menu: null, crafting: false, aid: false, quests: false, towns: false, enlisted: false, saves: false, spit: null };
 export const uiState = ui;
 const root = document.createElement('div');
 root.style.cssText = `position: fixed; inset: 0; z-index: 20; display: none; background: rgba(12, 10, 8, 0.75); color: ${journal.INK}; font: 12px ${journal.HAND}; user-select: none; overflow: auto;`;
@@ -135,8 +136,10 @@ function render() {
 	const opinions = ui.towns ? townOpinion.journalHtml(html) : null;
 	// (and the Enlisted tab: the men hired and their fireteams, fireteams.js)
 	const enlisted = ui.enlisted ? fireteams.journalHtml(html) : null;
-	const page = enlisted ? `<div style="width:420px;">${panel('ENLISTED', enlisted.left)}</div><div>${panel('FIRETEAMS', enlisted.right)}<div class="jr-need" style="max-width:340px; line-height:1.5;">${enlisted.help}</div></div>` : ui.quests ? `<div>${panel('QUESTS', quests.journalHtml(html))}</div>` : ui.towns ? `<div style="width:620px;">${panel('WHAT THE TOWNS THINK OF YOU', `<div style="columns:2; column-gap:26px;">${opinions.towns}</div>`)}</div><div style="width:300px;">${panel('THE WARS', opinions.wars)}</div>` : null;
-	root.innerHTML = `<div style="position:fixed; left:32px; top:4px; z-index:1;">${tab('bag', 'INVENTORY', !ui.crafting && !ui.aid && !ui.quests && !ui.towns && !ui.enlisted)}${tab('craft', 'CRAFTING', ui.crafting)}${tab('aid', 'FIRST AID', ui.aid)}${tab('quests', 'QUESTS', ui.quests)}${tab('towns', 'TOWNS', ui.towns)}${tab('enlisted', 'ENLISTED', ui.enlisted)}</div><div class="jr-spread" style="position:relative; display:flex; gap:16px; padding:18px 22px 34px; align-items:flex-start; min-width:max-content; margin:auto; margin-top:30px; margin-bottom:12px;">
+	// (and the Saves tab, top right: the account's save slots, and a file on this computer, accounts.js)
+	const saves = ui.saves ? accounts.journalHtml(html) : null;
+	const page = saves ? `<div style="width:460px;">${panel('YOUR SAVES', saves.left)}</div><div>${panel('THIS COMPUTER', saves.right)}</div>` : enlisted ? `<div style="width:420px;">${panel('ENLISTED', enlisted.left)}</div><div>${panel('FIRETEAMS', enlisted.right)}<div class="jr-need" style="max-width:340px; line-height:1.5;">${enlisted.help}</div></div>` : ui.quests ? `<div>${panel('QUESTS', quests.journalHtml(html))}</div>` : ui.towns ? `<div style="width:620px;">${panel('WHAT THE TOWNS THINK OF YOU', `<div style="columns:2; column-gap:26px;">${opinions.towns}</div>`)}</div><div style="width:300px;">${panel('THE WARS', opinions.wars)}</div>` : null;
+	root.innerHTML = `<div style="position:fixed; left:32px; top:4px; z-index:1;">${tab('bag', 'INVENTORY', !ui.crafting && !ui.aid && !ui.quests && !ui.towns && !ui.enlisted && !ui.saves)}${tab('craft', 'CRAFTING', ui.crafting)}${tab('aid', 'FIRST AID', ui.aid)}${tab('quests', 'QUESTS', ui.quests)}${tab('towns', 'TOWNS', ui.towns)}${tab('enlisted', 'ENLISTED', ui.enlisted)}</div><div style="position:fixed; right:32px; top:4px; z-index:1;">${tab('saves', 'SAVES', ui.saves)}</div><div class="jr-spread" style="position:relative; display:flex; gap:16px; padding:18px 22px 34px; align-items:flex-start; min-width:max-content; margin:auto; margin-top:30px; margin-bottom:12px;">
 		${page ?? `<div>${panel('GEAR', gear)}</div>
 		<div style="width:250px;">${panel('EQUIPPED', hands)}${panel('CONDITION', status)}</div>
 		<div>${pack}</div>
@@ -201,6 +204,8 @@ export function openCamp(ref) {
 	render();
 }
 camp.onOpen((ref) => openCamp(ref));
+// (the Saves page written again as the account's slots come in, or are saved to: accounts.js)
+accounts.onChange(() => { if (ui.saves) render(); });
 // a cooking spit's slot (spit.js)
 spit.onOpen((item) => { openInventory(); if (ui.open) { ui.spit = item; render(); } });
 camp.onChange(() => render());
@@ -330,7 +335,9 @@ root.addEventListener('pointerdown', (e) => {
 	if (e.button != 0) return;
 	closeMenu();
 	const tabEl = e.target.closest('[data-tab]');
-	if (tabEl) { ui.crafting = tabEl.dataset.tab == 'craft'; ui.aid = tabEl.dataset.tab == 'aid'; ui.quests = tabEl.dataset.tab == 'quests'; ui.towns = tabEl.dataset.tab == 'towns'; ui.enlisted = tabEl.dataset.tab == 'enlisted'; render(); return; }
+	if (tabEl) { ui.crafting = tabEl.dataset.tab == 'craft'; ui.aid = tabEl.dataset.tab == 'aid'; ui.quests = tabEl.dataset.tab == 'quests'; ui.towns = tabEl.dataset.tab == 'towns'; ui.enlisted = tabEl.dataset.tab == 'enlisted'; ui.saves = tabEl.dataset.tab == 'saves'; if (ui.saves) accounts.shown(); render(); return; }
+	const acctEl = e.target.closest('[data-acct]');
+	if (acctEl) { if (!acctEl.disabled) accounts.act(acctEl.dataset.acct); render(); return; }
 	const fireEl = e.target.closest('[data-fire]');
 	if (fireEl) { if (!fireEl.disabled) fireteams.act(fireEl.dataset.fire); render(); return; }
 	const dropEl = e.target.closest('[data-quest-drop]');

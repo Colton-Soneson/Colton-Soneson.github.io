@@ -62,6 +62,8 @@ export const TRADES = {
 	baker: { title: 'Bakery', sells: ['bread', 'wheat', 'wheatSeeds'], buys: [...FOOD, 'wheat'] },
 	butcher: { title: 'Butcher', sells: ['sausage', 'venison', 'cookedVenison', 'deerHide'], buys: [...FOOD, ...HIDES] },
 	fisherman: { title: 'Fish', sells: ['smokedFish', 'water'], buys: FOOD },
+	// (a tavern's on a road out in the grasslands, taverns.js: drink and a bite, and footmen to hire, fireteams.js)
+	tavernkeeper: { title: 'Tavern', sells: ['beer', 'water', 'bread', 'sausage', 'cookedVenison', ...SPIRITS], buys: [...FOOD, ...SPIRITS] },
 	innkeeper: { title: 'Inn', sells: ['beer', 'water', 'bread', 'sausage', 'cookedVenison', 'alcohol', 'bandage', 'boiledMushroom', ...SPIRITS], buys: [...FOOD, ...MEDICINE, ...SPIRITS, 'mushroom'], room: true },
 	tailor: { title: 'Tailor', sells: TAILORED, buys: [...CLOTHING, ...GEAR] },
 	outfitter: { title: 'Outfitter', sells: OUTFITTED, buys: [...CLOTHING, ...GEAR] },		// (and a horse of your own: owned.js)
@@ -77,6 +79,10 @@ const asked = (type) => Math.round(cents(type) * townOpinion.priceFactor(hereTow
 const GIFTS = [1, 5, 20, 100];		// dollars: what can be given at a town's hall
 const title = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
+// MORE WHO TRADE, besides the townsfolk (taverns.js: a tavern's keeper): fn(each) calls each(person) for each, as the townsfolk are
+//		({ place, profession: { name }, town, index })
+const traders = [];
+export function addTraders(fn) { traders.push(fn); }
 // THE ONE LOOKED AT, within REACH, who trades
 export function traderInView() {
 	if (!inventory.survivalOn() || !settings.enableTownFolk) return null;
@@ -85,14 +91,16 @@ export function traderInView() {
 	const eye = [settings.camPosX, settings.camPosY, settings.camPosZ];
 	const look = [Math.sin(settings.camYaw) * Math.cos(settings.camPitch), Math.sin(settings.camPitch), -Math.cos(settings.camYaw) * Math.cos(settings.camPitch)];
 	let best = null, bestOff = 0.3;
-	townFolk.folkEach((person) => {
+	const each = (person) => {
 		const q = person.place;
 		if (!q || person.turned || person.dead || !TRADES[person.profession.name]) return;
 		const to = [q.x - eye[0], q.y + 1.2 * m - eye[1], q.z - eye[2]], d = Math.hypot(...to);
 		if (d > REACH * m + 0.8 * m) return;
 		const off = 1 - (to[0] * look[0] + to[1] * look[1] + to[2] * look[2]) / (d || 1);
 		if (off < bestOff) { bestOff = off; best = person; }
-	});
+	};
+	townFolk.folkEach(each);
+	for (const fn of traders) fn(each);
 	return best;
 }
 hunting.onUse(() => { const person = traderInView(); if (!person) return false; openShop(person); return true; });

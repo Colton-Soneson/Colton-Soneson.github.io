@@ -314,7 +314,13 @@ export function blast(at, radius, who = 'me') {
 const lastSeen = new Map();		// id -> { x, y, z, v, at }: how fast each is going, from where it was
 let targetList = [], targetIds = new Map();
 // one of the targets by its id, as it is this frame (or undefined)
-export const targetById = (id) => targetIds.get(id);
+// (and one of the people who is not one of those, by its id, where it is now: foesOfMine's, outside a war, for the player's own hired men)
+export const targetById = (id) => targetIds.get(id) ?? personTarget(id);
+function personTarget(id) {
+	const person = typeof id == 'string' && id.startsWith('npc:') ? people.find((one) => one.id === id) : null, p = person?.place;
+	if (!p || !person.alive || person.gone) return null;
+	return { id, kind: 'npc', x: p.x, y: p.y + (p.sit ? 0.5 : 1.2) * metre(), z: p.z, feet: p.y, alive: true, vehicle: person.anchor?.vehicle ?? null, sit: p.sit ?? 0, heading: p.heading, v: foeSeen.get(id)?.v ?? [0, 0, 0] };
+}
 export const targets = () => targetList;
 function gatherTargets() {
 	const m = metre(), list = [];

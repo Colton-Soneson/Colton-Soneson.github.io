@@ -978,7 +978,7 @@ function makeGpu() {
 export const HAT_TRIANGLES = () => gpu ? Object.fromEntries(Object.entries(gpu.meshes).filter(([name]) => !name.endsWith('+')).map(([name, m]) => [name, m.hatTriangles])) : null;
 
 // the others drawn as townsfolk (npcs.js): fn(each) calls each({ x, y, z, heading, pitch, stride, walking, fallen, hit, hue, sit, gun (HELD_LENGTH's
-//		names), armsDown (with no gun: 1 at its sides, 0 held out in front), look, hat, tilt ([forward, rolled]: see vf_dummy.js) }) for every one of them to draw
+//		names), armsDown (with no gun: 1 at its sides, 0 held out in front), look, hat, tilt ([forward, rolled]: see vf_dummy.js), gesture ({ kind, amount, phase }: vf_dummy.js THE GESTURES) }) for every one of them to draw
 const extraFolk = [];
 export function addFolkSource(fn) { extraFolk.push(fn); }
 
@@ -1009,7 +1009,10 @@ export function townFolkPass(aEncoder, mainpassDepthTexture) {
 	}
 	for (const source of extraFolk) source((o) => {
 		const held = HELD_LENGTH[o.gun] ?? 0;
-		const row = [o.x, o.y, o.z, metre(), o.heading, o.pitch ?? 0, o.stride ?? 0, o.walking ?? 0, o.fallen ?? 0, o.hit ?? 0, o.hue ?? 0, o.sit ?? 0, held, held ? 0 : o.armsDown ?? 1, o.look ?? 0, 0, o.tilt?.[0] ?? 0, o.tilt?.[1] ?? 0, o.side ?? 0, o.rag ?? 0];
+		// (a gesture, with nothing in its hands: { kind, amount, phase (turns) }, vf_dummy.js THE GESTURES: a tavern's patron drinking)
+		const g = held ? null : o.gesture;
+		const row = [o.x, o.y, o.z, metre(), o.heading, o.pitch ?? 0, o.stride ?? 0, o.walking ?? 0, o.fallen ?? 0, o.hit ?? 0, o.hue ?? 0, o.sit ?? 0,
+			held || (g ? -g.amount : 0), held ? 0 : g ? g.kind + (((g.phase % 1) + 1) % 1) * 0.999 : o.armsDown ?? 1, o.look ?? 0, 0, o.tilt?.[0] ?? 0, o.tilt?.[1] ?? 0, o.side ?? 0, o.rag ?? 0];
 		if (take(o.hat + (held ? '+' : ''), o, row)) outfits.wear(row, o.outfit);
 	});
 	if (count == 0) return;

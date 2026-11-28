@@ -1,5 +1,10 @@
-import {updateGridPass} from './code/googleTutorial.js'
-import {updateRotatingCubePass} from './code/rotatingCube.js'
+// THE MAIN MENU first (code/menu.js), with none of the game loaded: once something is chosen, the game is (its choice put where the settings
+//		take it from, code/settings.js: menuStart), and the frames start. (Joining a game: once the game is loaded, the room joined, code/net.js)
+import { startMenu } from './code/menu.js'
+const choice = await startMenu();
+globalThis.menuStart = choice;
+const { updateRotatingCubePass } = await import('./code/rotatingCube.js');
+if (choice.join) import('./code/net.js').then((net) => net.joinRoom(choice.join)).catch((error) => console.warn('main: joining', error));
 
 // The loop runs on the browser's frame clock (requestAnimationFrame), not a timer: frames line up with the screen's refreshes,
 //		none are asked for while the GPU is still behind on the last ones, and none while the page is hidden.
@@ -20,7 +25,6 @@ function mainLoop(now) {
 	// (after a pause, start counting again from now, not catch up)
 	due = Math.max(due + FRAME_MILLISECONDS, now);
 
-	//updateGridPass();
 	updateRotatingCubePass();
 
 }

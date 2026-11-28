@@ -1278,7 +1278,7 @@ export function refreshPerformanceWindow() {
 }
 
 //----------------------HIDDEN (H)-------------------------------
-// H hides every window in the dock, and while they are hidden none of them is kept up to date: no controls copied into the settings
+// Hidden from the start (the main menu is the way in now, menu.js), H shows every window in the dock and hides them again. While they are hidden none of them is kept up to date: no controls copied into the settings
 //		(refreshControlsUI: nobody can change them), none redrawn (syncSettingsToParams, refreshEntityFolder, the Performance window, the
 //		preset's status rows; the preset check itself goes on). Shown again, they catch up with the settings first, so that what the game
 //		changed meanwhile is not put back by the controls' old values. Not while typing (a name, the chat)
@@ -1296,6 +1296,7 @@ window.addEventListener('keydown', (event) => {
 	if (typing) return;
 	showGui(!guiShown.on);
 });
+showGui(false);
 
 //----------------------WINDOWS EVENT LISTENERS-------------------------------
 export let guiActive = false;
